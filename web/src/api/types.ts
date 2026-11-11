@@ -518,6 +518,8 @@ export interface UploadCommitIn {
   tracks: UploadTrackIn[];
   cover_from_upload_id?: number | null;
   playlist_id?: string | null;
+  /** the imported tracks go into «Понравившиеся» too */
+  star?: boolean;
 }
 
 export interface UploadCommitOut {

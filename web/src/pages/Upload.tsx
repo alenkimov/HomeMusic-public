@@ -127,6 +127,7 @@ export function UploadPage() {
   const [cover, setCover] = useState<CoverChoice>({ kind: 'none' });
   const [coverTouched, setCoverTouched] = useState(false);
   const [playlist, setPlaylist] = useState<{ id: string; name: string } | null>(null);
+  const [like, setLike] = useState(false);
   const [plPicker, setPlPicker] = useState(false);
   const [plBusy, setPlBusy] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -327,6 +328,7 @@ export function UploadPage() {
             // an album of the library keeps its cover
             cover_from_upload_id: lib ? null : (g.uploads.find((u) => u.tags.has_cover)?.id ?? null),
             playlist_id: playlist?.id ?? null,
+            star: like,
           }, null),
         );
         if (!res) break;
@@ -347,6 +349,7 @@ export function UploadPage() {
             tracks: included.map((u) => trackIn(u, mode === 'new' ? genre.trim() || null : null)),
             cover_from_upload_id: cover.kind === 'upload' ? cover.id : null,
             playlist_id: playlist?.id ?? null,
+            star: like,
           },
           cover.kind === 'file' ? cover.file : null,
         ),
@@ -530,11 +533,20 @@ export function UploadPage() {
               return (
                 <div key={u.id} role="row" className={cx('grid grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-center gap-x-1 border-b border-line/60 py-1 pr-1 last:border-0 md:grid-cols-[2.75rem_minmax(0,3fr)_minmax(0,2fr)_minmax(0,2fr)_3.5rem_3.5rem_2.75rem] md:py-0', !r.include && 'opacity-50')}>
                   <Checkbox checked={r.include} onChange={(v) => setRow(u.id, { include: v })} label={`Импортировать ${u.orig_name}`} />
-                  <div className="min-w-0">
-                    <input className={cx(cell, 'font-medium', bad(r.title))} value={r.title} placeholder="Название" aria-label="Название" onChange={(e) => setRow(u.id, { title: e.target.value })} />
-                    <div className="truncate px-2 pb-1 text-[11px] text-dim" title={u.orig_name}>
-                      {u.orig_name} · {fmtSize(u.size)}
-                      {u.error ? <span className="text-danger"> · {u.error}</span> : null}
+                  <div className="flex min-w-0 items-center gap-1">
+                    {u.tags.has_cover ? (
+                      <img src={uploadCoverUrl(u.id)} alt="" loading="lazy" className="h-10 w-10 shrink-0 rounded-md object-cover" />
+                    ) : (
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-raised text-dim" title="В файле нет обложки">
+                        <Icon name="note" size={18} />
+                      </span>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <input className={cx(cell, 'font-medium', bad(r.title))} value={r.title} placeholder="Название" aria-label="Название" onChange={(e) => setRow(u.id, { title: e.target.value })} />
+                      <div className="truncate px-2 pb-1 text-[11px] text-dim" title={u.orig_name}>
+                        {u.orig_name} · {fmtSize(u.size)}
+                        {u.error ? <span className="text-danger"> · {u.error}</span> : null}
+                      </div>
                     </div>
                   </div>
                   <IconButton icon="trash" label={`Удалить ${u.orig_name}`} size={18} className="text-dim md:order-last" onClick={() => removeUpload(u)} />
@@ -593,18 +605,24 @@ export function UploadPage() {
             </>
           )}
 
-          <div className="flex flex-wrap items-center gap-2 px-4 pt-5">
-            {playlist ? (
-              <>
-                <span className="min-w-0 truncate text-sm">
-                  <Icon name="playlist" size={18} className="mr-2 inline text-muted" />
-                  Ещё и в плейлист «{playlist.name}»
-                </span>
-                <IconButton icon="x" label="Не добавлять в плейлист" onClick={() => setPlaylist(null)} />
-              </>
-            ) : (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-4 pt-5">
+            {like && (
+              <span className="flex items-center text-sm">
+                <Icon name="heart" size={18} filled className="mr-2 text-accent" />
+                В «Понравившиеся»
+                <IconButton icon="x" size={18} label="Не добавлять в понравившиеся" onClick={() => setLike(false)} />
+              </span>
+            )}
+            {playlist && (
+              <span className="flex min-w-0 items-center text-sm">
+                <Icon name="playlist" size={18} className="mr-2 shrink-0 text-muted" />
+                <span className="truncate">В плейлист «{playlist.name}»</span>
+                <IconButton icon="x" size={18} label="Не добавлять в плейлист" onClick={() => setPlaylist(null)} />
+              </span>
+            )}
+            {(!like || !playlist) && (
               <Button small icon="playlist" onClick={() => setPlPicker(true)}>
-                Добавить ещё и в плейлист
+                {like || playlist ? 'Добавить ещё куда-нибудь' : 'Добавить ещё и в плейлист или «Понравившиеся»'}
               </Button>
             )}
           </div>
@@ -621,7 +639,14 @@ export function UploadPage() {
           setAlbumPicker(false);
         }}
       />
-      <PlaylistPicker open={plPicker} onClose={() => setPlPicker(false)} onPick={pickPlaylist} busy={plBusy} title="Добавить в плейлист" />
+      <PlaylistPicker
+        open={plPicker}
+        onClose={() => setPlPicker(false)}
+        onPick={pickPlaylist}
+        busy={plBusy}
+        title="Куда ещё добавить"
+        onLiked={like ? undefined : () => { setLike(true); setPlPicker(false); }}
+      />
       {bulk && (
         <BulkEdit
           count={included.length}

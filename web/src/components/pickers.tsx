@@ -16,10 +16,13 @@ export function PlaylistPicker({
   title = 'В плейлист',
   defaultName = '',
   busy,
+  onLiked,
 }: {
   open: boolean;
   onClose: () => void;
   onPick: (p: PlaylistPick) => void;
+  /** «Понравившиеся» is offered as the first choice (they are not a playlist: the caller sets the ♥ itself) */
+  onLiked?: () => void;
   title?: string;
   defaultName?: string;
   busy?: boolean;
@@ -28,6 +31,17 @@ export function PlaylistPicker({
   const lists = useAsync((s) => api.playlists(s), [], open);
   return (
     <Sheet open={open} onClose={onClose} title={title}>
+      {onLiked && (
+        <button type="button" disabled={busy} onClick={onLiked} className="-mx-4 mb-3 flex min-h-14 w-[calc(100%+2rem)] items-center gap-3 px-4 text-left hover:bg-fg/5 disabled:opacity-50">
+          <span className="flex h-10 w-10 items-center justify-center rounded-md bg-accent/20 text-accent">
+            <Icon name="heart" size={20} filled />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">Понравившиеся</span>
+            <span className="block text-xs text-muted">Поставить ♥ всем импортируемым трекам</span>
+          </span>
+        </button>
+      )}
       <form
         className="flex items-end gap-2"
         onSubmit={(e) => {

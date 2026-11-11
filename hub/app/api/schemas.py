@@ -483,6 +483,7 @@ class UploadCommitIn(BaseModel):
     tracks: list[UploadTrackIn]
     cover_from_upload_id: int | None = None  # use the embedded cover of this upload
     playlist_id: str | None = None
+    star: bool = False  # the imported tracks go into «Понравившиеся» too
 
 
 class UploadCommitOut(BaseModel):
