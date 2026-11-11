@@ -288,7 +288,7 @@ export function PlaylistPage({ id }: { id: string }) {
       <PageHeader title={desktop ? '' : p.name} back="/playlists" right={desktop ? undefined : <IconButton icon="trash" label="Удалить плейлист" onClick={drop} />} />
       <Hero
         kicker="Плейлист"
-        cover={p.tracks[0]?.cover_url}
+        cover={p.cover_art && p.tracks.length ? `/api/nd/cover/${enc(p.cover_art)}?size=600&v=${p.tracks.length}` : p.tracks[0]?.cover_url}
         title={p.name}
         sub={[tracksWord(p.song_count), p.duration_s ? fmtLength(p.duration_s) : null].filter(Boolean).join(' · ')}
       />

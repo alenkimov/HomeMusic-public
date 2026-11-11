@@ -1,12 +1,16 @@
+import { useState } from 'react';
 import { api } from '../api/client';
+import type { NdSongOut } from '../api/types';
 import { useHubEvent } from '../lib/events';
 import { tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { useActiveDownloads } from '../lib/notify';
+import { attempt } from '../lib/ui';
+import { playAll } from './catalog';
 import { Link, enc, useRoute } from '../lib/router';
 import { Icon, type IconName } from './Icon';
 import type { Tab } from './TabBar';
-import { cx } from './ui';
+import { Cover, Spinner, cx } from './ui';
 
 const NAV: Array<{ id: Tab; to: string; label: string; icon: IconName }> = [
   { id: 'home', to: '/home', label: 'Главная', icon: 'home' },
@@ -52,29 +56,57 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
         </Link>
       </div>
       <div className="no-scrollbar min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2 pt-0">
-        <Link to="/liked" aria-current={at('/liked') ? 'page' : undefined} className={cx(item, 'py-1.5', at('/liked') ? 'bg-fg/10 text-fg' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/20 text-accent">
-            <Icon name="heart" size={18} filled />
-          </span>
-          <span className="truncate text-fg">Понравившиеся</span>
-        </Link>
+        <div className="group relative">
+          <Link to="/liked" aria-current={at('/liked') ? 'page' : undefined} className={cx(item, 'py-1.5', at('/liked') ? 'bg-fg/10 text-fg' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/20 text-accent">
+              <Icon name="heart" size={18} filled />
+            </span>
+            <span className="truncate text-fg">Понравившиеся</span>
+          </Link>
+          <PlayOver name="Понравившиеся" context="liked" load={async () => (await api.ndLiked()).songs} />
+        </div>
         {(lists.data ?? []).map((p) => {
           const to = `/playlist/${enc(p.id)}`;
           const on = at(`/playlist/${p.id}`) || at(to);
           return (
-            <Link key={p.id} to={to} aria-current={on ? 'page' : undefined} className={cx(item, 'py-1.5', on ? 'bg-fg/10' : 'hover:bg-fg/5')}>
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-raised text-muted">
-                <Icon name="playlist" size={18} />
-              </span>
-              <span className="min-w-0">
-                <span className={cx('block truncate', on ? 'font-semibold text-accent' : 'text-fg')}>{p.name}</span>
-                <span className="block truncate text-xs text-dim">{tracksWord(p.song_count)}</span>
-              </span>
-            </Link>
+            <div key={p.id} className="group relative">
+              <Link to={to} aria-current={on ? 'page' : undefined} className={cx(item, 'py-1.5', on ? 'bg-fg/10' : 'hover:bg-fg/5')}>
+                {/* the playlist's own picture (Navidrome makes one of its albums' covers); it changes with the tracks */}
+                <Cover src={p.cover_art && p.song_count ? `/api/nd/cover/${enc(p.cover_art)}?size=96&v=${p.song_count}` : null} size={36} icon="playlist" />
+                <span className="min-w-0">
+                  <span className={cx('block truncate', on ? 'font-semibold text-accent' : 'text-fg')}>{p.name}</span>
+                  <span className="block truncate text-xs text-dim">{tracksWord(p.song_count)}</span>
+                </span>
+              </Link>
+              {p.song_count > 0 && <PlayOver name={p.name} context="playlist" load={async () => (await api.playlist(p.id)).tracks} />}
+            </div>
           );
         })}
         {lists.data && !lists.data.length && <p className="px-3 py-2 text-xs text-dim">Плейлистов пока нет</p>}
       </div>
     </aside>
+  );
+}
+
+/** ▶ over a list's picture while the pointer is on its row: plays the list from the top without opening it. */
+function PlayOver({ name, context, load }: { name: string; context: string; load: () => Promise<readonly NdSongOut[]> }) {
+  const [busy, setBusy] = useState(false);
+  const play = async () => {
+    if (busy) return;
+    setBusy(true);
+    const tracks = await attempt(load);
+    setBusy(false);
+    if (tracks) playAll(tracks, { shuffle: false, context });
+  };
+  return (
+    <button
+      type="button"
+      onClick={() => void play()}
+      aria-label={`Слушать: ${name}`}
+      title={`Слушать: ${name}`}
+      className={cx('absolute left-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md bg-black/60 text-white transition focus-visible:opacity-100', busy ? 'opacity-100' : 'opacity-0 group-hover:opacity-100')}
+    >
+      {busy ? <Spinner size={16} /> : <Icon name="play" size={20} filled className="translate-x-px" />}
+    </button>
   );
 }
