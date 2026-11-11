@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api/client';
 import type { AlbumOut } from '../api/types';
-import { ReleaseCard, TrackRow } from '../components/catalog';
+import { ReleaseCard, TrackRow, TrackTableHeader } from '../components/catalog';
 import { LikeButton } from '../components/LikeButton';
 import { Button, Cover, ErrorState, IconButton, Loading, SectionTitle } from '../components/ui';
 import { startDownload } from '../lib/actions';
@@ -98,6 +98,7 @@ export function ArtistPage({ refId }: { refId: string }) {
       {top_tracks.length > 0 && (
         <section aria-label="Популярные треки">
           <SectionTitle>Популярные треки</SectionTitle>
+          <TrackTableHeader numbered album />
           {top.map((t, i) => (
             <TrackRow key={t.ref} track={t} number={i + 1} showAlbum onPlay={() => playList(top_tracks.filter((x) => x.owned), (x) => x.nd_song_id, t)} queue={top_tracks} />
           ))}

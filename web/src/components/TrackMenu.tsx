@@ -50,7 +50,7 @@ export function TrackMenuButton({ track, extra, className, inPlayer }: { track: 
 }
 
 /** Library songs go into the playlist at once; a catalog track is downloaded into it (it appears once imported). */
-async function addToPlaylist(track: MenuTrack, pick: PlaylistPick): Promise<boolean> {
+export async function addToPlaylist(track: MenuTrack, pick: PlaylistPick): Promise<boolean> {
   const name = pick.kind === 'existing' ? pick.playlist.name : pick.name;
   if (track.nd_song_id) {
     const r = await attempt(async () => {

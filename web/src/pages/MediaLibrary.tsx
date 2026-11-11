@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { NdAlbumOut, NdArtistOut, NdSongOut } from '../api/types';
-import { playAll, TrackRow } from '../components/catalog';
+import { playAll, TrackRow, TrackTableHeader } from '../components/catalog';
 import { Icon } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
 import { Button, Cover, Empty, ErrorState, IconButton, PageHeader, SectionTitle, SkeletonRows, Spinner, cx } from '../components/ui';
@@ -100,6 +100,7 @@ export function ListActions({ tracks, context, children }: { tracks: readonly Nd
 function SongList({ tracks, extra }: { tracks: readonly NdSongOut[]; extra?: (t: NdSongOut, i: number) => Parameters<typeof TrackRow>[0]['menuExtra'] }) {
   return (
     <ul>
+      {tracks.length > 0 && <li><TrackTableHeader album /></li>}
       {tracks.map((t, i) => (
         <li key={`${t.ref}:${i}`}>
           <TrackRow track={t} queue={tracks} link={false} showAlbum menuExtra={extra?.(t, i)} />
@@ -343,6 +344,7 @@ export function NdAlbumPage({ id }: { id: string }) {
       />
       <ListActions tracks={tracks} context="album" />
       <ul>
+        {tracks.length > 0 && <li><TrackTableHeader numbered /></li>}
         {tracks.map((t, i) => (
           <li key={`${t.nd_song_id}:${i}`}>
             <TrackRow track={t} number={t.track_no ?? i + 1} queue={tracks} link={false} />

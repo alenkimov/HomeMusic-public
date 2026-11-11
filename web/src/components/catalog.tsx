@@ -1,15 +1,21 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AlbumOut, CatalogArtist, TrackOut } from '../api/types';
 import { fmtDuration, recordTypeLabel, yearOf } from '../lib/format';
-import { downloadRef, listen, listenAll, shuffled, touchTrack, useListen, watchOnScreen, type ListenTrack } from '../lib/listen';
+import { useDesktop } from '../lib/desktop';
+import { addToQueue, downloadRef, listen, listenAll, shuffled, touchTrack, useListen, watchOnScreen, type ListenTrack } from '../lib/listen';
 import { canPlay, canPlayAll, playSongs, playTracks } from '../lib/player';
 import { STANDALONE } from '../lib/embedded';
 import { Link, enc } from '../lib/router';
+import { toggleLike, useLiked } from '../lib/stars';
+import { TRACK_COLUMN_LABELS, setTrackColumn, trackGrid, useTrackColumns, type TrackColumns } from '../lib/trackColumns';
+import { toast } from '../lib/ui';
 import { Icon } from './Icon';
 import { LikeButton } from './LikeButton';
 import { QueueButton } from './QueueButton';
-import { TrackMenuButton, type MenuExtra } from './TrackMenu';
-import { Cover, ExplicitBadge, IconButton, OwnedBadge, Spinner, cx } from './ui';
+import { PlaylistPicker } from './pickers';
+import { SwipeRow } from './SwipeRow';
+import { TrackMenuButton, addToPlaylist, type MenuExtra, type MenuTrack } from './TrackMenu';
+import { Checkbox, Cover, ExplicitBadge, IconButton, OwnedBadge, Spinner, cx } from './ui';
 
 export function TrackStatus({
   owned,
@@ -166,6 +172,149 @@ export function TrackRow({
       <span className="shrink-0 text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>
     </>
   );
+  const desktop = useDesktop();
+  const cols = useTrackColumns();
+  const [picking, setPicking] = useState(false);
+  const [pickBusy, setPickBusy] = useState(false);
+  const likeTarget = { targetType: 'track' as const, songId: track.owned ? track.nd_song_id : null, ref: track.ref, data: { ...track } };
+  const liked = useLiked(likeTarget);
+  const artistLine = track.artists?.length ? track.artists.join(', ') : track.artist;
+  const menuTrack: MenuTrack = {
+    title: track.title,
+    artist: artistLine,
+    ref: track.ref,
+    nd_song_id: track.nd_song_id,
+    artist_ref: track.artist_ref,
+    album_ref: track.album_ref,
+    nd_album_id: track.nd_album_id,
+    nd_artist_id: track.nd_artist_id,
+    listen: listenTrack(track),
+  };
+  // a browser draws its own rows: a table on a computer, a row that is swiped aside on a phone
+  if (STANDALONE) {
+    const action = !track.owned ? listenHere : play;
+    const toAlbum = link && track.owned && track.album_ref ? `/album/${enc(track.album_ref)}` : null;
+    const downloading = track.downloading || dl === 'queued';
+    const titleColor = track.owned || current ? 'text-accent' : 'text-fg';
+    const playMark = waiting ? <Spinner size={18} /> : <Icon name={playing ? 'pause' : 'play'} size={18} filled />;
+    const lead = (hover: boolean): ReactNode =>
+      number !== undefined ? (
+        <span className="relative flex h-10 w-8 shrink-0 items-center justify-center text-sm tabular-nums text-dim">
+          <span className={cx(hover && action && 'group-hover/track:opacity-0', current && 'opacity-0')}>{number}</span>
+          <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center', current ? 'text-accent' : 'text-fg opacity-0', hover && action && 'group-hover/track:opacity-100')}>
+            {playMark}
+          </span>
+        </span>
+      ) : showCover ? (
+        <span className="relative flex h-10 w-10 shrink-0 items-center justify-center">
+          <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />
+          <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !current && 'opacity-0', hover && action && 'group-hover/track:opacity-100')}>
+            {playMark}
+          </span>
+        </span>
+      ) : null;
+    const names = (sub: string) => (
+      <span className="block min-w-0 flex-1">
+        <span className={cx('block truncate text-[15px]', titleColor)}>{track.title}</span>
+        <span className="flex items-center gap-1.5 text-[13px] text-muted">
+          {track.explicit && <ExplicitBadge />}
+          <span className="truncate">{sub}</span>
+        </span>
+      </span>
+    );
+    const tap = (className: string, children: ReactNode) =>
+      toAlbum ? (
+        <Link to={toAlbum} className={className}>{children}</Link>
+      ) : action ? (
+        <button type="button" onClick={action} onPointerDown={track.owned ? undefined : () => touchTrack(track.ref)} className={cx(className, 'cursor-pointer')} aria-label={playLabel}>
+          {children}
+        </button>
+      ) : (
+        <div className={className}>{children}</div>
+      );
+    const shown = 'opacity-0 focus-visible:opacity-100 group-hover/track:opacity-100';
+
+    if (desktop) {
+      const album = showAlbum && cols.album;
+      const albumTo = track.album_ref ? `/album/${enc(track.album_ref)}` : track.nd_album_id ? `/lib/album/${enc(track.nd_album_id)}` : null;
+      return (
+        <div
+          ref={rowRef}
+          className="group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors hover:bg-fg/5 focus-within:bg-fg/5"
+          style={{ gridTemplateColumns: trackGrid(number !== undefined, album, cols.duration) }}
+        >
+          {number !== undefined &&
+            (action ? (
+              <button type="button" onClick={action} aria-label={playLabel} className="cursor-pointer">{lead(true)}</button>
+            ) : (
+              lead(false)
+            ))}
+          {tap('flex min-w-0 items-center gap-3 py-1.5 text-left', (
+            <>
+              {number === undefined && lead(true)}
+              {names([artistLine, showAlbum && !cols.album ? track.album_title : null].filter(Boolean).join(' · '))}
+            </>
+          ))}
+          {album &&
+            (albumTo && track.album_title ? (
+              <Link to={albumTo} className="truncate text-sm text-muted hover:text-fg hover:underline">{track.album_title}</Link>
+            ) : (
+              <span className="truncate text-sm text-muted">{track.album_title}</span>
+            ))}
+          <div className="flex h-11 items-center justify-end">
+            {track.owned || dl === 'done' ? null : downloading ? (
+              <span className="flex h-11 w-9 items-center justify-center text-info" title="Скачивается"><Spinner size={14} /></span>
+            ) : (
+              <IconButton icon="download" size={20} label="Скачать трек" onClick={download} busy={busy} className={cx('w-9 text-muted hover:text-fg', !busy && shown)} />
+            )}
+            <QueueButton track={menuTrack.listen as ListenTrack} className="w-9" />
+            <LikeButton songId={likeTarget.songId} refId={track.ref} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('w-9', !liked && shown)} />
+          </div>
+          {cols.duration && <span className="text-right text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>}
+          <TrackMenuButton track={menuTrack} extra={menuExtra} className={cx('w-8', shown)} />
+        </div>
+      );
+    }
+
+    const extras: MenuExtra[] = [
+      { icon: 'heart', label: liked ? 'Убрать из понравившихся' : 'В понравившиеся', onClick: () => void toggleLike(likeTarget) },
+      ...(!track.owned && dl !== 'done' && !downloading ? [{ icon: 'download' as const, label: 'Скачать', onClick: () => void download() }] : []),
+      ...(menuExtra ?? []),
+    ];
+    return (
+      <div ref={rowRef}>
+        <SwipeRow
+          right={{ icon: 'queue', onAction: () => { addToQueue([menuTrack.listen as ListenTrack]); toast(`В очереди: «${track.title}»`, 'success'); } }}
+          left={{ icon: 'plus', armedIcon: 'check', onAction: () => setPicking(true) }}
+        >
+          <div className="flex min-h-16 items-center gap-1 pl-4 pr-1">
+            {tap('flex min-w-0 flex-1 items-center gap-3 py-2 text-left', (
+              <>
+                {lead(false)}
+                {names([artistLine, showAlbum ? track.album_title : null].filter(Boolean).join(' · '))}
+              </>
+            ))}
+            {downloading && <span className="flex w-6 justify-center text-info" title="Скачивается"><Spinner size={14} /></span>}
+            <TrackMenuButton track={menuTrack} extra={extras} className="w-10" />
+          </div>
+        </SwipeRow>
+        {picking && (
+          <PlaylistPicker
+            open
+            busy={pickBusy}
+            onClose={() => setPicking(false)}
+            onPick={async (pick) => {
+              setPickBusy(true);
+              const ok = await addToPlaylist(menuTrack, pick);
+              setPickBusy(false);
+              if (ok) setPicking(false);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
   const rowClass = cx('flex min-w-0 flex-1 items-center gap-3 py-2 text-left', rowPlays && 'cursor-pointer');
   return (
     <div ref={rowRef} className={cx('flex min-h-16 items-center gap-3 pl-4 pr-1', rowPlays && 'group/track transition-colors hover:bg-fg/5 focus-within:bg-fg/5')}>
@@ -185,7 +334,6 @@ export function TrackRow({
         <div className={rowClass}>{body}</div>
       )}
       <div className="-ml-2 flex shrink-0 items-center">
-        <QueueButton track={listenTrack(track)} hover={rowPlays} className="w-10" />
         <LikeButton songId={track.owned ? track.nd_song_id : null} refId={track.ref} pending={track.star_pending} title={track.title} data={{ ...track }} className="w-10" />
         {track.owned ? (
           // a plain browser: the row itself plays it, a second ▷ would only take the title's room
@@ -250,6 +398,59 @@ export function ReleaseCard({ album, showArtist = false, onDownload, busy }: { a
           <IconButton icon="download" label={`Скачать «${album.title}»`} onClick={onDownload} busy={busy} className="-my-2 -mr-2 ml-auto text-muted" size={20} />
         )}
       </div>
+    </div>
+  );
+}
+
+/** The head of a track list on a computer: the names of the columns over `TrackRow`s (the same grid), and the menu
+ * that switches the optional ones (a click on ⋯ or a right click on the head). `numbered`, `album` — as the rows
+ * of this list are drawn (`number`, `showAlbum`). On a phone and inside the app there is no table and no head. */
+export function TrackTableHeader({ numbered = false, album = false }: { numbered?: boolean; album?: boolean }) {
+  const desktop = useDesktop();
+  const cols = useTrackColumns();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', close);
+    document.addEventListener('keydown', close);
+    return () => {
+      document.removeEventListener('pointerdown', close);
+      document.removeEventListener('keydown', close);
+    };
+  }, [open]);
+  if (!desktop) return null;
+  const offered = (Object.keys(TRACK_COLUMN_LABELS) as (keyof TrackColumns)[]).filter((c) => c !== 'album' || album);
+  return (
+    <div
+      ref={ref}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setOpen(true);
+      }}
+      className="relative mx-2 mb-1 grid h-9 items-center gap-3 border-b border-line/60 px-2 text-xs text-dim"
+      style={{ gridTemplateColumns: trackGrid(numbered, album && cols.album, cols.duration) }}
+    >
+      {numbered && <span className="text-center">#</span>}
+      <span>Название</span>
+      {album && cols.album && <span>Альбом</span>}
+      <span />
+      {cols.duration && <span className="text-right">Время</span>}
+      <IconButton icon="more" size={18} label="Колонки таблицы" aria-expanded={open} onClick={() => setOpen((v) => !v)} className="h-8 w-8 text-dim hover:text-fg" />
+      {open && (
+        <div role="menu" aria-label="Колонки" className="absolute right-0 top-9 z-20 w-56 rounded-xl border border-line bg-raised p-2 shadow-lg">
+          <div className="px-2 pb-1 pt-1 text-xs font-semibold text-muted">Колонки</div>
+          {offered.map((c) => (
+            <label key={c} className="flex cursor-pointer items-center justify-between rounded-lg pl-2 text-sm text-fg hover:bg-fg/5">
+              {TRACK_COLUMN_LABELS[c]}
+              <Checkbox checked={cols[c]} onChange={(v) => setTrackColumn(c, v)} label={TRACK_COLUMN_LABELS[c]} />
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

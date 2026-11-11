@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { TrackOut } from '../api/types';
-import { TrackRow, listenTrack } from '../components/catalog';
+import { TrackRow, TrackTableHeader, listenTrack } from '../components/catalog';
 import { LikeButton } from '../components/LikeButton';
 import { PlaylistPicker, type PlaylistPick } from '../components/pickers';
 import { Button, Cover, ErrorState, ExplicitBadge, IconButton, Loading, OwnedBadge } from '../components/ui';
@@ -183,6 +183,7 @@ export function AlbumPage({ refId }: { refId: string }) {
       </div>
 
       <section aria-label="Треки" className="pt-2">
+        {tracks.length > 0 && <TrackTableHeader numbered />}
         {discs.map(([disc, list]) => (
           <div key={disc}>
             {discs.length > 1 && <div className="px-4 pb-1 pt-3 text-sm font-semibold text-muted">Диск {disc}</div>}

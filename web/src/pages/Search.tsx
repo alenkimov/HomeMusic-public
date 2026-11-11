@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, errorMessage, isAbort, peekCache, withQuery } from '../api/client';
 import type { Candidate, LibTrackOut, ProviderSearchOut, SearchOut, SearchTracksOut, TrackOut } from '../api/types';
-import { ArtistBubble, ReleaseCard, TrackRow, listenTrack } from '../components/catalog';
+import { ArtistBubble, ReleaseCard, TrackRow, TrackTableHeader, listenTrack } from '../components/catalog';
 import { TrackMenuButton } from '../components/TrackMenu';
 import { CandidateRow, fileRef } from '../components/candidate';
 import { Icon } from '../components/Icon';
@@ -337,6 +337,7 @@ function CatalogResults({ q }: { q: string }) {
       {more.tracks.length > 0 && (
         <section aria-label="Треки">
           <SectionTitle>Треки</SectionTitle>
+          <TrackTableHeader album />
           {more.tracks.map((t, i) => (
             <div key={t.ref}>
               {i === more.trigger && <div ref={more.sentinel} aria-hidden />}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ApiError, api } from '../api/client';
 import type { CatalogArtist, MixMode, MixOut, MixSettingsOut, MixTodayOut, MixTrackOut } from '../api/types';
-import { TrackRow, listenTrack } from '../components/catalog';
+import { TrackRow, TrackTableHeader, listenTrack } from '../components/catalog';
 import { Icon } from '../components/Icon';
 import { Button, Cover, ErrorState, IconButton, PageHeader, ProgressBar, Segmented, SkeletonRows, Spinner, cx } from '../components/ui';
 import { fmtLength, plural } from '../lib/format';
@@ -218,6 +218,7 @@ export function MixPage({ id }: { id: number }) {
       {current && <MixModes settings={settings} busy={modeBusy} building={building} isAdmin={me.is_admin} onMode={setMode} onRebuild={rebuild} />}
 
       <section aria-label="Песни микса" className="pt-2">
+        {tracks.length > 0 && <TrackTableHeader />}
         {tracks.map((t) => (
           <TrackRow key={`${t.position}:${t.ref}`} track={t} link={false} onPlay={oldApp ? () => playOld(t) : undefined} queue={tracks} />
         ))}
