@@ -1,3 +1,4 @@
+import type { TelegramStatus } from '../lib/telegram';
 import type {
   AdminUserDetailOut,
   AdminUsersOut,
@@ -362,6 +363,13 @@ export const api = {
     request<NdAlbumOut[]>('GET', withQuery('/api/nd/albums', { type, offset, size }), { signal }),
 
   // imports from music services
+  // the user's own Telegram bot (lib/telegram.ts)
+  telegram: () => request<TelegramStatus>('GET', '/api/telegram'),
+  telegramConnect: (token: string) => request<TelegramStatus>('POST', '/api/telegram/connect', { json: { token } }),
+  telegramCheck: () => request<TelegramStatus>('POST', '/api/telegram/check'),
+  telegramDisconnect: () => request<TelegramStatus>('DELETE', '/api/telegram'),
+  telegramSend: (body: { nd_song_id?: string | null; ref?: string | null }) =>
+    request<{ ok: boolean; title: string; light: boolean }>('POST', '/api/telegram/send', { json: body }),
   imports: (signal?: AbortSignal) => request<ImportOut[]>('GET', '/api/imports', { signal }),
   createImport: (body: ImportIn) => request<ImportOut>('POST', '/api/imports', { json: body }),
   /** Spotify playlists exported to CSV by Exportify: one file is one playlist. */

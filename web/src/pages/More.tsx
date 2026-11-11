@@ -1,3 +1,4 @@
+import { openTelegramSetup } from '../lib/telegram';
 import { useEffect, useState, type ReactNode } from 'react';
 import { STANDALONE } from '../lib/embedded';
 import { useSession } from '../lib/session';
@@ -91,7 +92,8 @@ export function MorePage() {
         )}
         <Item icon="upload" to="/upload" title="Загрузить файлы" sub="Свои аудиофайлы с телефона" />
         <Item icon="playlist" to="/playlists" title="Плейлисты" sub="Ваши плейлисты в Navidrome" />
-        <Item icon="transfer" to="/import" title="Перенести музыку" sub="Из Яндекс Музыки: ♥, плейлисты, альбомы" />
+        <Item icon="transfer" to="/import" title="Перенести музыку" sub="Из Яндекс Музыки и Spotify: ♥, плейлисты, альбомы" />
+        <Item icon="send" title="Telegram" sub="Свой бот: отправка треков из меню ⋯" onClick={() => openTelegramSetup()} />
         {me.is_admin && <Item icon="user" to="/admin" title="Пользователи и приглашения" sub="Расходы на ИИ, песни, коды для новых людей" />}
         {/* the player is here: in the browser, and the app's own on Android */}
         <Item icon="install" href="/app/latest.apk" title="Приложение для Android" sub="HomeMusic: офлайн, плеер в шторке, тот же аккаунт" />

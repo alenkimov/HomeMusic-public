@@ -2,6 +2,7 @@ import { dismissToast, useDialog, useToasts } from '../lib/ui';
 import { navigate } from '../lib/router';
 import { Button, cx } from './ui';
 import { Icon } from './Icon';
+import { TelegramSetup } from './TelegramSetup';
 
 /** Toast stack (above the tab bar) and the global confirm dialog. */
 export function Overlays() {
@@ -40,6 +41,8 @@ export function Overlays() {
           </div>
         ))}
       </div>
+
+      <TelegramSetup />
 
       {dialog && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-5" role="alertdialog" aria-modal="true" aria-labelledby="hm-dialog-title">

@@ -7,6 +7,7 @@ import { addToQueue, next, playNext, stopListening, useListen, type ListenTrack 
 import { canPlayAll } from '../lib/player';
 import { enc, navigate } from '../lib/router';
 import { attempt } from '../lib/ui';
+import { sendToTelegram } from '../lib/telegram';
 import { artistSeed, canWave, startWave, trackSeed } from '../lib/wave';
 import { Icon, type IconName } from './Icon';
 import { PlaylistPicker, type PlaylistPick } from './pickers';
@@ -145,6 +146,17 @@ function TrackMenu({ track, extra, inPlayer, onClose }: { track: MenuTrack; extr
             label="Добавить в плейлист"
             hint={track.nd_song_id ? undefined : 'Трек скачается в библиотеку'}
             onClick={() => setPicking(true)}
+          />
+        )}
+        {(track.nd_song_id || track.ref) && (
+          <MenuItem
+            icon="send"
+            label="Отправить в Telegram"
+            hint="Вашему боту, файлом из библиотеки"
+            onClick={() => {
+              onClose();
+              void sendToTelegram(track);
+            }}
           />
         )}
         {extra?.map((x) => (

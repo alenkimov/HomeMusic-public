@@ -31,6 +31,11 @@ class User(Base):
     # the confirmed email the account registered with (lower case): sign-in by it, too
     email: Mapped[str | None] = mapped_column(String(320), unique=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # the user's own Telegram bot (app/telegram.py): its key (Fernet) and the private chat it sends tracks to
+    tg_bot_token_enc: Mapped[str | None] = mapped_column(Text)
+    tg_bot_username: Mapped[str | None] = mapped_column(String(64))
+    tg_chat_id: Mapped[str | None] = mapped_column(String(32))
+    tg_chat_name: Mapped[str | None] = mapped_column(String(128))
 
 
 class SearchHistory(Base):
