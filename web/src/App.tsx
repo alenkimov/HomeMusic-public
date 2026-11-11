@@ -6,6 +6,7 @@ import { DesktopPlayer } from './components/DesktopPlayer';
 import { MiniPlayer, PlayerSpacer } from './components/MiniPlayer';
 import { Sidebar } from './components/Sidebar';
 import { Overlays } from './components/Overlays';
+import { SelectionBar } from './components/SelectionBar';
 import { TabBar, type Tab } from './components/TabBar';
 import { ErrorState, Spinner, cx } from './components/ui';
 import { useDesktop } from './lib/desktop';
@@ -229,6 +230,7 @@ export function App() {
             <TabBar active={resolved?.tab ?? null} last={lastByTab} />
           </>
         ))}
+      {!fullPlayer && <SelectionBar />}
       <Overlays />
     </SessionContext.Provider>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import type { AlbumOut, CatalogArtist, TrackOut } from '../api/types';
 import { fmtDuration, recordTypeLabel, yearOf } from '../lib/format';
 import { useDesktop } from '../lib/desktop';
@@ -6,6 +6,7 @@ import { addToQueue, downloadRef, listen, listenAll, shuffled, touchTrack, useLi
 import { canPlay, canPlayAll, playSongs, playTracks } from '../lib/player';
 import { STANDALONE } from '../lib/embedded';
 import { Link, enc, navigate } from '../lib/router';
+import { selectRange, toggleSelected, useSelected, useSelectionCount, type SelTrack } from '../lib/selection';
 import { toggleLike, useLiked } from '../lib/stars';
 import { TRACK_COLUMN_LABELS, setTrackColumn, trackGrid, useTrackColumns, type TrackColumns } from '../lib/trackColumns';
 import { toast } from '../lib/ui';
@@ -194,6 +195,25 @@ export function TrackRow({
     nd_artist_id: track.nd_artist_id,
     listen: listenTrack(track),
   };
+  // picking several rows to act on together (`lib/selection.ts`)
+  const selected = useSelected(track.ref);
+  const selecting = useSelectionCount() > 0;
+  const asSel = (t: TrackOut): SelTrack => ({ ref: t.ref, title: t.title, nd_song_id: t.owned ? t.nd_song_id : null, listen: listenTrack(t) });
+  const onPick = (e: MouseEvent) => {
+    // the row's menu is drawn outside the row (a portal), yet its clicks pass through here: they are not the row's
+    if (!(e.currentTarget as HTMLElement).contains(e.target as Node)) return;
+    const mod = e.ctrlKey || e.metaKey || e.shiftKey;
+    if (!mod && !selecting) return;
+    // while rows are being picked the row's own buttons (♥, ⋯) still do their job
+    if (!mod && (e.target as HTMLElement).closest('[data-row-actions]')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.shiftKey && queue?.length) selectRange(queue.map(asSel), asSel(track));
+    else toggleSelected(asSel(track));
+  };
+  const selectExtra: MenuExtra = selected
+    ? { icon: 'x', label: 'Снять выделение', onClick: () => toggleSelected(asSel(track)) }
+    : { icon: 'check', label: 'Выбрать', hint: 'Отметьте несколько треков, чтобы отправить их разом', onClick: () => toggleSelected(asSel(track)) };
   // a browser draws its own rows: a table on a computer, a row that is swiped aside on a phone
   if (STANDALONE) {
     const action = !track.owned ? listenHere : play;
@@ -261,11 +281,16 @@ export function TrackRow({
       return (
         <div
           ref={rowRef}
-          className="group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors hover:bg-fg/5 focus-within:bg-fg/5"
+          onClickCapture={onPick}
+          onMouseDown={(e) => e.shiftKey && e.preventDefault()}
+          aria-selected={selected}
+          className={cx('group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors', selected ? 'bg-accent/15 hover:bg-accent/20' : 'hover:bg-fg/5 focus-within:bg-fg/5')}
           style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration) }}
         >
           {rowNumber !== undefined &&
-            (action ? (
+            (selected ? (
+              <span className="flex h-10 w-8 items-center justify-center text-accent"><Icon name="check" size={18} stroke={3} /></span>
+            ) : action ? (
               <button type="button" onClick={action} aria-label={playLabel} className="cursor-pointer">{numberMark(rowNumber, true)}</button>
             ) : (
               numberMark(rowNumber, false)
@@ -302,7 +327,7 @@ export function TrackRow({
             ) : (
               <span className="truncate text-sm text-muted">{track.album_title}</span>
             ))}
-          <div className="flex h-11 items-center justify-end">
+          <div data-row-actions className="flex h-11 items-center justify-end">
             {track.owned || dl === 'done' ? null : downloading ? (
               <span className="flex h-11 w-9 items-center justify-center text-info" title="Скачивается"><Spinner size={14} /></span>
             ) : (
@@ -312,7 +337,9 @@ export function TrackRow({
             <LikeButton songId={likeTarget.songId} refId={track.ref} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('!w-9', !liked && shown)} />
           </div>
           {cols.duration && <span className="text-right text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>}
-          <TrackMenuButton track={menuTrack} extra={menuExtra} className={cx('!h-8 !w-8', shown)} />
+          <span data-row-actions className="contents">
+            <TrackMenuButton track={menuTrack} extra={[selectExtra, ...(menuExtra ?? [])]} className={cx('!h-8 !w-8', shown)} />
+          </span>
         </div>
       );
     }
@@ -320,15 +347,16 @@ export function TrackRow({
     const extras: MenuExtra[] = [
       { icon: 'heart', label: liked ? 'Убрать из понравившихся' : 'В понравившиеся', onClick: () => void toggleLike(likeTarget) },
       ...(!track.owned && dl !== 'done' && !downloading ? [{ icon: 'download' as const, label: 'Скачать', onClick: () => void download() }] : []),
+      selectExtra,
       ...(menuExtra ?? []),
     ];
     return (
-      <div ref={rowRef}>
+      <div ref={rowRef} onClickCapture={onPick} aria-selected={selected}>
         <SwipeRow
           right={{ icon: 'queue', onAction: () => { addToQueue([menuTrack.listen as ListenTrack]); toast(`В очереди: «${track.title}»`, 'success'); } }}
           left={{ icon: 'plus', armedIcon: 'check', onAction: () => setPicking(true) }}
         >
-          <div className="flex min-h-16 items-center gap-1 pl-4 pr-1">
+          <div className={cx('flex min-h-16 items-center gap-1 pl-4 pr-1', selected && 'bg-accent/15')}>
             {tap('flex min-w-0 flex-1 items-center gap-3 py-2 text-left', (
               <>
                 {lead(false)}
@@ -336,7 +364,10 @@ export function TrackRow({
               </>
             ))}
             {downloading && <span className="flex w-6 justify-center text-info" title="Скачивается"><Spinner size={14} /></span>}
-            <TrackMenuButton track={menuTrack} extra={extras} className="w-10" />
+            {selected && <Icon name="check" size={18} stroke={3} className="shrink-0 text-accent" />}
+            <span data-row-actions className="contents">
+              <TrackMenuButton track={menuTrack} extra={extras} className="w-10" />
+            </span>
           </div>
         </SwipeRow>
         {picking && (

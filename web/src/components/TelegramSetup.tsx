@@ -29,7 +29,7 @@ export function TelegramSetup() {
     setSt(r);
     if (!r.ready) return;
     toast(`Telegram подключён: @${r.bot_username}`, 'success');
-    if (pending) {
+    if (pending.length) {
       closeTelegramSetup();
       void deliverToTelegram(pending);
     }
@@ -74,7 +74,7 @@ export function TelegramSetup() {
           }}
         >
           <p className="text-sm text-muted">
-            Треки отправляет ваш собственный бот — в чат с вами.{pending ? ` Подключите его, и «${pending.title}» уйдёт сразу.` : ''}
+            Треки отправляет ваш собственный бот — в чат с вами.{pending.length === 1 ? ` Подключите его, и «${pending[0].title}» уйдёт сразу.` : pending.length ? ` Подключите его, и выбранные треки (${pending.length}) уйдут сразу.` : ''}
           </p>
           <ol className="list-decimal space-y-1 pl-5 text-sm text-muted">
             <li>
