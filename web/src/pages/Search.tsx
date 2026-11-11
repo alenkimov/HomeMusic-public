@@ -337,11 +337,11 @@ function CatalogResults({ q }: { q: string }) {
       {more.tracks.length > 0 && (
         <section aria-label="Треки">
           <SectionTitle>Треки</SectionTitle>
-          <TrackTableHeader album />
+          <TrackTableHeader numbered album />
           {more.tracks.map((t, i) => (
             <div key={t.ref}>
               {i === more.trigger && <div ref={more.sentinel} aria-hidden />}
-              <TrackRow track={t} showAlbum queue={more.tracks} />
+              <TrackRow track={t} showAlbum queue={more.tracks} index={i + 1} />
             </div>
           ))}
           {more.loading && (

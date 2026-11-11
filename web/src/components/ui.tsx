@@ -56,7 +56,7 @@ export function IconButton({ icon, label, busy, size = 22, filled, className, di
       aria-label={label}
       title={label}
       className={cx(
-        'inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-fg transition hover:bg-fg/10 active:scale-95 disabled:opacity-40',
+        'inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-fg transition hover:scale-115 hover:brightness-125 focus-visible:bg-fg/10 active:scale-95 disabled:opacity-40',
         className,
       )}
       disabled={disabled || busy}

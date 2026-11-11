@@ -100,10 +100,10 @@ export function ListActions({ tracks, context, children }: { tracks: readonly Nd
 function SongList({ tracks, extra }: { tracks: readonly NdSongOut[]; extra?: (t: NdSongOut, i: number) => Parameters<typeof TrackRow>[0]['menuExtra'] }) {
   return (
     <ul>
-      {tracks.length > 0 && <li><TrackTableHeader album /></li>}
+      {tracks.length > 0 && <li><TrackTableHeader numbered album /></li>}
       {tracks.map((t, i) => (
         <li key={`${t.ref}:${i}`}>
-          <TrackRow track={t} queue={tracks} link={false} showAlbum menuExtra={extra?.(t, i)} />
+          <TrackRow track={t} queue={tracks} link={false} showAlbum menuExtra={extra?.(t, i)} index={i + 1} />
         </li>
       ))}
     </ul>

@@ -218,9 +218,9 @@ export function MixPage({ id }: { id: number }) {
       {current && <MixModes settings={settings} busy={modeBusy} building={building} isAdmin={me.is_admin} onMode={setMode} onRebuild={rebuild} />}
 
       <section aria-label="Песни микса" className="pt-2">
-        {tracks.length > 0 && <TrackTableHeader />}
-        {tracks.map((t) => (
-          <TrackRow key={`${t.position}:${t.ref}`} track={t} link={false} onPlay={oldApp ? () => playOld(t) : undefined} queue={tracks} />
+        {tracks.length > 0 && <TrackTableHeader numbered />}
+        {tracks.map((t, i) => (
+          <TrackRow key={`${t.position}:${t.ref}`} track={t} link={false} onPlay={oldApp ? () => playOld(t) : undefined} queue={tracks} index={i + 1} />
         ))}
         {!tracks.length && <p className="px-4 py-6 text-center text-muted">В миксе пока нет песен</p>}
       </section>

@@ -107,6 +107,7 @@ export function TrackRow({
   onPlay,
   queue,
   menuExtra,
+  index,
 }: {
   track: TrackOut & { nd_album_id?: string | null; nd_artist_id?: string | null };
   number?: number;
@@ -119,6 +120,9 @@ export function TrackRow({
   queue?: readonly TrackOut[];
   /** More actions of the row's ⋯ menu (a playlist's «Убрать из плейлиста»). */
   menuExtra?: MenuExtra[];
+  /** The row's place in its list, for the «#» column of the table on a computer (next to the cover; `number` is
+   * drawn instead of the cover everywhere). */
+  index?: number;
 }) {
   const [busy, setBusy] = useState(false);
   const dl = useListen((s) => s.downloads.get(track.ref));
@@ -197,6 +201,15 @@ export function TrackRow({
     const downloading = track.downloading || dl === 'queued';
     const titleColor = track.owned || current ? 'text-accent' : 'text-fg';
     const playMark = waiting ? <Spinner size={18} /> : <Icon name={playing ? 'pause' : 'play'} size={18} filled />;
+    const numberMark = (n: number | undefined, hover: boolean): ReactNode =>
+      n === undefined ? null : (
+        <span className="relative flex h-10 w-8 shrink-0 items-center justify-center text-sm tabular-nums text-dim">
+          <span className={cx(hover && action && 'group-hover/track:opacity-0', current && 'opacity-0')}>{n}</span>
+          <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center', current ? 'text-accent' : 'text-fg opacity-0', hover && action && 'group-hover/track:opacity-100')}>
+            {playMark}
+          </span>
+        </span>
+      );
     const lead = (hover: boolean): ReactNode =>
       number !== undefined ? (
         <span className="relative flex h-10 w-8 shrink-0 items-center justify-center text-sm tabular-nums text-dim">
@@ -236,22 +249,23 @@ export function TrackRow({
 
     if (desktop) {
       const album = showAlbum && cols.album;
+      const rowNumber = number ?? index;
       const albumTo = track.album_ref ? `/album/${enc(track.album_ref)}` : track.nd_album_id ? `/lib/album/${enc(track.nd_album_id)}` : null;
       return (
         <div
           ref={rowRef}
           className="group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors hover:bg-fg/5 focus-within:bg-fg/5"
-          style={{ gridTemplateColumns: trackGrid(number !== undefined, album, cols.duration) }}
+          style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration) }}
         >
-          {number !== undefined &&
+          {rowNumber !== undefined &&
             (action ? (
-              <button type="button" onClick={action} aria-label={playLabel} className="cursor-pointer">{lead(true)}</button>
+              <button type="button" onClick={action} aria-label={playLabel} className="cursor-pointer">{numberMark(rowNumber, true)}</button>
             ) : (
-              lead(false)
+              numberMark(rowNumber, false)
             ))}
           {tap('flex min-w-0 items-center gap-3 py-1.5 text-left', (
             <>
-              {number === undefined && lead(true)}
+              {number === undefined && showCover && <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />}
               {names([artistLine, showAlbum && !cols.album ? track.album_title : null].filter(Boolean).join(' · '))}
             </>
           ))}
