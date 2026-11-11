@@ -6,7 +6,7 @@ import { addToQueue, downloadRef, listen, listenAll, shuffled, touchTrack, useLi
 import { canPlay, canPlayAll, playSongs, playTracks } from '../lib/player';
 import { STANDALONE } from '../lib/embedded';
 import { Link, enc, navigate } from '../lib/router';
-import { selectRange, toggleSelected, useSelected, useSelectionCount, type SelTrack } from '../lib/selection';
+import { beginDragSelect, dragSelectMoved, dragSelectOver, selectRange, toggleSelected, useSelected, useSelectionCount, type SelTrack } from '../lib/selection';
 import { toggleLike, useLiked } from '../lib/stars';
 import { TRACK_COLUMN_LABELS, setTrackColumn, trackGrid, useTrackColumns, type TrackColumns } from '../lib/trackColumns';
 import { toast } from '../lib/ui';
@@ -209,7 +209,7 @@ export function TrackRow({
     const mod = e.ctrlKey || e.metaKey || e.shiftKey;
     if (!mod && !selecting) return;
     // while rows are being picked the row's own buttons (♥, ⋯) still do their job
-    if (!mod && (e.target as HTMLElement).closest('[data-row-actions]')) return;
+    if (!mod && (e.target as HTMLElement).closest('[data-row-actions], [data-row-pick]')) return;
     e.preventDefault();
     e.stopPropagation();
     if (e.shiftKey && queue?.length) selectRange(queue.map(asSel), asSel(track));
@@ -225,15 +225,6 @@ export function TrackRow({
     const downloading = track.downloading || dl === 'queued';
     const titleColor = current ? 'text-accent' : 'text-fg';
     const playMark = waiting ? <Spinner size={18} /> : <Icon name={playing ? 'pause' : 'play'} size={18} filled />;
-    const numberMark = (n: number | undefined, hover: boolean): ReactNode =>
-      n === undefined ? null : (
-        <span className="relative flex h-10 w-8 shrink-0 items-center justify-center text-sm tabular-nums text-dim">
-          <span className={cx(hover && action && 'group-hover/track:opacity-0', current && 'opacity-0')}>{n}</span>
-          <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center', current ? 'text-accent' : 'text-fg opacity-0', hover && action && 'group-hover/track:opacity-100')}>
-            {playMark}
-          </span>
-        </span>
-      );
     const lead = (hover: boolean): ReactNode =>
       number !== undefined ? (
         <span className="relative flex h-10 w-8 shrink-0 items-center justify-center text-sm tabular-nums text-dim">
@@ -288,24 +279,65 @@ export function TrackRow({
           ref={rowRef}
           onClickCapture={onPick}
           onMouseDown={(e) => e.shiftKey && e.preventDefault()}
+          onMouseEnter={() => dragSelectOver(asSel(track))}
           aria-selected={selected}
           className={cx('group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors', selected ? 'bg-accent/15 hover:bg-accent/20' : 'hover:bg-fg/5 focus-within:bg-fg/5')}
           style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration, added) }}
         >
-          {rowNumber !== undefined &&
-            (selected ? (
-              <span className="flex h-10 w-8 items-center justify-center text-accent"><Icon name="check" size={18} stroke={3} /></span>
-            ) : action ? (
-              <button type="button" onClick={action} aria-label={playLabel} className="cursor-pointer">{numberMark(rowNumber, true)}</button>
-            ) : (
-              numberMark(rowNumber, false)
-            ))}
+          {/* the number picks the row; held and dragged over other rows, it picks them all. ▶ is on the cover */}
+          {rowNumber !== undefined && (
+            <button
+              type="button"
+              data-row-pick
+              onMouseDown={(e) => {
+                if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey) return;
+                e.preventDefault(); // no text is selected while the mouse drags
+                beginDragSelect((queue?.length ? queue : [track]).map(asSel), asSel(track));
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!dragSelectMoved()) toggleSelected(asSel(track));
+              }}
+              aria-label={selected ? `Снять выделение: «${track.title}»` : `Выбрать «${track.title}»`}
+              title={selected ? 'Снять выделение' : 'Выбрать. Зажмите и протяните — выберутся все строки по пути'}
+              className="group/num relative flex h-10 w-8 cursor-pointer items-center justify-center text-sm tabular-nums text-dim"
+            >
+              {selected ? (
+                <span className="text-accent"><Icon name="check" size={18} stroke={3} /></span>
+              ) : (
+                <>
+                  <span className={cx('group-hover/num:opacity-0', current && 'text-accent')}>{current && !showCover ? playMark : rowNumber}</span>
+                  <span aria-hidden="true" className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/num:opacity-100">
+                    <span className="h-4 w-4 rounded-[5px] border-2 border-muted" />
+                  </span>
+                </>
+              )}
+            </button>
+          )}
           <div
             onClick={toAlbum ? () => navigate(toAlbum) : action}
             onPointerDown={track.owned ? undefined : () => touchTrack(track.ref)}
             className={cx('flex min-w-0 items-center gap-3 py-1.5 text-left', (toAlbum || action) && 'cursor-pointer')}
           >
-            {number === undefined && showCover && <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />}
+            {number === undefined && showCover &&
+              (action ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    action();
+                  }}
+                  aria-label={playLabel}
+                  className="relative h-10 w-10 shrink-0 cursor-pointer"
+                >
+                  <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />
+                  <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !current && 'opacity-0 group-hover/track:opacity-100')}>
+                    {playMark}
+                  </span>
+                </button>
+              ) : (
+                <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />
+              ))}
             <span className="block min-w-0 flex-1">
               {tap(cx('block max-w-full truncate text-left text-[15px]', titleColor), track.title)}
               <span className="flex items-center gap-1.5 text-[13px] text-muted">

@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from 'react';
 import type { ListenTrack } from './listen';
 
-/** Tracks picked in a list to act on together (`components/SelectionBar.tsx`: send to Telegram, queue). On a
- * computer Ctrl+click picks a row and Shift+click the rows up to it; anywhere «Выбрать» of a row's ⋯ menu starts
- * it, and while something is picked a plain click on a row picks instead of playing. Leaving the page drops it. */
+/** Tracks picked in a list to act on together (`components/SelectionBar.tsx`: ♥, playlists, queue, share). On a
+ * computer a click on a row's number picks it and a drag from the number down or up picks the rows passed; Ctrl+click
+ * picks a row and Shift+click the rows up to it; anywhere «Выбрать» of a row's ⋯ menu starts it, and while something
+ * is picked a plain click on a row picks instead of playing. Leaving the page drops it. */
 export interface SelTrack {
   ref: string;
   title: string;
@@ -44,6 +45,31 @@ export function clearSelection() {
   anchor = null;
   emit();
 }
+
+// --- a drag from a row's number over other rows -----------------------------------------------------------
+
+let drag: { list: readonly SelTrack[]; from: string; base: Map<string, SelTrack>; moved: boolean } | null = null;
+
+/** The mouse went down on a row's number: rows it passes until it comes up are picked, added to what was picked. */
+export function beginDragSelect(list: readonly SelTrack[], t: SelTrack) {
+  drag = { list, from: t.ref, base: new Map(picked), moved: false };
+  // the click that follows the mouse coming up still has to know whether it was a drag
+  window.addEventListener('mouseup', () => window.setTimeout(() => (drag = null), 0), { once: true });
+}
+
+export function dragSelectOver(t: SelTrack) {
+  if (!drag || (t.ref === drag.from && !drag.moved)) return;
+  const a = drag.list.findIndex((x) => x.ref === drag!.from);
+  const b = drag.list.findIndex((x) => x.ref === t.ref);
+  if (a < 0 || b < 0) return;
+  drag.moved = true;
+  picked = new Map(drag.base);
+  for (const x of drag.list.slice(Math.min(a, b), Math.max(a, b) + 1)) picked.set(x.ref, x);
+  anchor = drag.from;
+  emit();
+}
+
+export const dragSelectMoved = (): boolean => !!drag?.moved;
 
 export const selectedTracks = (): SelTrack[] => [...picked.values()];
 export const useSelected = (ref: string): boolean => useSyncExternalStore(subscribe, () => picked.has(ref), () => false);
