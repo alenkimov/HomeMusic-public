@@ -168,7 +168,7 @@ export function TrackRow({
         </span>
       ) : null}
       <div className="min-w-0 flex-1">
-        <div className={cx('truncate text-[15px]', track.owned || current ? 'text-accent' : 'text-fg')}>{track.title}</div>
+        <div className={cx('truncate text-[15px]', current ? 'text-accent' : 'text-fg')}>{track.title}</div>
         <div className="flex items-center gap-1.5 text-[13px] text-muted">
           {track.explicit && <ExplicitBadge />}
           <span className="truncate">{sub}</span>
@@ -219,7 +219,7 @@ export function TrackRow({
     const action = !track.owned ? listenHere : play;
     const toAlbum = link && track.owned && track.album_ref ? `/album/${enc(track.album_ref)}` : null;
     const downloading = track.downloading || dl === 'queued';
-    const titleColor = track.owned || current ? 'text-accent' : 'text-fg';
+    const titleColor = current ? 'text-accent' : 'text-fg';
     const playMark = waiting ? <Spinner size={18} /> : <Icon name={playing ? 'pause' : 'play'} size={18} filled />;
     const numberMark = (n: number | undefined, hover: boolean): ReactNode =>
       n === undefined ? null : (
