@@ -408,7 +408,7 @@ export function UploadPage() {
       )}
 
       {uploads.length > 0 && (
-        <div className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+env(safe-area-inset-bottom))] z-30 mx-auto max-w-2xl border-t border-line bg-surface/95 px-4 py-3 backdrop-blur">
+        <div className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+env(safe-area-inset-bottom))] z-30 mx-auto max-w-(--app-w) border-t border-line bg-surface/95 px-4 py-3 backdrop-blur">
           {invalid.length > 0 && <div className="mb-2"><Notice kind="error">Заполните название и исполнителя у {tracksWord(invalid.length)}</Notice></div>}
           <Button variant="primary" block icon="check" busy={committing} disabled={!canCommit} onClick={commit}>
             Импортировать {included.length ? tracksWord(included.length) : ''}

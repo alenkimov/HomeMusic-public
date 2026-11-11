@@ -196,3 +196,14 @@
     animation: none;
   }
 }
+
+/* The width of the app's column: a phone's on small screens and inside the Android app; on a computer (the same
+ * test as `lib/desktop.ts`) the pages, the tab bar and the mini player use the room of a wide window. */
+:root {
+  --app-w: 42rem;
+}
+@media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
+  html:not(.hm-embedded) {
+    --app-w: 72rem;
+  }
+}

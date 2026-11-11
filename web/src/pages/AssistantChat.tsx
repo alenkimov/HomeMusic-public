@@ -351,7 +351,7 @@ export function AssistantChat({ chatId }: { chatId: number | null }) {
       </ol>
 
       <form
-        className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+env(safe-area-inset-bottom))] z-30 mx-auto flex max-w-2xl items-end gap-2 border-t border-line bg-bg/95 px-3 py-2 backdrop-blur"
+        className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+env(safe-area-inset-bottom))] z-30 mx-auto flex max-w-(--app-w) items-end gap-2 border-t border-line bg-bg/95 px-3 py-2 backdrop-blur"
         onSubmit={(ev) => {
           ev.preventDefault();
           submit();

@@ -283,7 +283,7 @@ function ConfirmCard({ task, onDone }: { task: AssistantTaskOut; onDone: (t: Ass
         </div>
       </section>
 
-      <div className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+env(safe-area-inset-bottom))] z-30 mx-auto max-w-2xl border-t border-line bg-surface/95 px-4 py-3 backdrop-blur">
+      <div className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+env(safe-area-inset-bottom))] z-30 mx-auto max-w-(--app-w) border-t border-line bg-surface/95 px-4 py-3 backdrop-blur">
         <div className="mb-2 text-center text-xs text-muted">
           {stats.unresolved > 0
             ? `Выберите вариант в ${stats.unresolved} ${stats.unresolved === 1 ? 'строке' : 'строках'} или снимите отметку`

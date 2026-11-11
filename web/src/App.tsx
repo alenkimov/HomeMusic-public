@@ -1,4 +1,3 @@
-import { isDesktop } from './lib/desktop';
 import { setListeningAccount } from './lib/plays';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ApiError, UNAUTHORIZED_EVENT, api, errorMessage, invalidateCache } from './api/client';
@@ -205,11 +204,9 @@ export function App() {
   const fullPlayer = route.path === '/player';
   // the admin's analytics are wide (tables, two columns on a desktop)
   const wide = route.path.startsWith('/admin/');
-  // a computer draws track lists as a table (`TrackTableHeader`): it needs more room than a phone's column
-  const table = isDesktop() && /^\/(liked|search|playlist\/|lib\/album\/|album\/|artist\/|mix\/)/.test(route.path);
   return (
     <SessionContext.Provider value={{ me, logout }}>
-      <main className={cx('mx-auto min-h-dvh', wide ? 'max-w-6xl' : table ? 'max-w-4xl' : 'max-w-2xl', !fullPlayer && 'pb-[calc(var(--tabbar-h)+16px+env(safe-area-inset-bottom))]')}>
+      <main className={cx('mx-auto min-h-dvh', wide ? 'max-w-6xl' : 'max-w-(--app-w)', !fullPlayer && 'pb-[calc(var(--tabbar-h)+16px+env(safe-area-inset-bottom))]')}>
         {resolved?.node}
         {!fullPlayer && <PlayerSpacer />}
       </main>

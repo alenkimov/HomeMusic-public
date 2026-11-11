@@ -26,7 +26,7 @@ export function TabBar({ active: routeTab, last }: { active: Tab | null; last: P
 
   return (
     <nav className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-line bg-[#0b0b0b]/95 backdrop-blur" aria-label="Разделы">
-      <ul className="mx-auto flex max-w-2xl">
+      <ul className="mx-auto flex max-w-(--app-w)">
         {TABS.map((t) => {
           const on = active === t.id;
           return (

@@ -200,7 +200,7 @@ export function LibraryAlbumPage({ id }: { id: number }) {
       )}
 
       {selected.size > 0 && (
-        <div className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+env(safe-area-inset-bottom))] z-30 mx-auto flex max-w-2xl items-center gap-2 border-t border-line bg-surface px-4 py-2.5">
+        <div className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+env(safe-area-inset-bottom))] z-30 mx-auto flex max-w-(--app-w) items-center gap-2 border-t border-line bg-surface px-4 py-2.5">
           <IconButton icon="x" label="Снять выбор" onClick={() => setSelected(new Set())} className="-ml-2" />
           <span className="flex-1 whitespace-nowrap text-sm">Выбрано {selected.size}</span>
           <Button small variant="primary" icon="move" className="whitespace-nowrap" onClick={() => setPicker('move')}>
