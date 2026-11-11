@@ -561,6 +561,10 @@ async def handle_scan(job: Job) -> None:
             await nd.aclose()
     log.info("navidrome scan done, linked %s tracks", linked)
     async with session_scope() as s:
+        # new music: its lyrics are looked for in the background, so the player has them at once
+        from app.lyrics.service import enqueue_scan_once
+
+        await enqueue_scan_once(s, delay_s=20)
         # items whose track is now visible in Navidrome are done
         rows = (
             await s.execute(

@@ -36,6 +36,7 @@ class User(Base):
     tg_bot_username: Mapped[str | None] = mapped_column(String(64))
     tg_chat_id: Mapped[str | None] = mapped_column(String(32))
     tg_chat_name: Mapped[str | None] = mapped_column(String(128))
+    tg_with_lyrics: Mapped[bool] = mapped_column(Boolean, default=False)  # send the track's text with it by default
 
 
 class SearchHistory(Base):
@@ -631,3 +632,28 @@ class SmartHidden(Base):
     artist: Mapped[str] = mapped_column(String(256), default="", server_default="")
     title: Mapped[str] = mapped_column(String(256), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Lyrics(Base):
+    """The lyrics of a library track (app/lyrics): kept here so they open at once and without the internet."""
+
+    __tablename__ = "lyrics"
+
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(8), index=True)  # word/synced/plain/none (looked for, not found)
+    source: Mapped[str | None] = mapped_column(String(16))  # file/lrclib/netease/ovh
+    # [{"t": ms, "text": str, "end"?: ms, "words"?: [{"t": ms, "text": str}]}] — a timed text
+    lines_json: Mapped[list[Any] | None] = mapped_column(JSON)
+    plain: Mapped[str | None] = mapped_column(Text)  # a text without timings
+    offset_ms: Mapped[int] = mapped_column(Integer, default=0)  # the user's shift of the timings
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)  # chosen by hand: the search leaves it alone
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AppSetting(Base):
+    """A setting of the whole server that the admin changes in the app (the order of lyrics sources)."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)

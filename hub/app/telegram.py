@@ -11,6 +11,7 @@ The Hub has no bot of its own and many users' bots, so there is no long-lived `B
 
 from __future__ import annotations
 
+import html
 import io
 import logging
 from collections.abc import AsyncIterator
@@ -41,6 +42,9 @@ HOST = "api.telegram.org"
 MAX_FILE_BYTES = 50 * 1024 * 1024  # what a bot may upload
 THUMB_PX = 320  # Telegram's limit for a thumbnail: a JPEG of at most 320 px and 200 kB
 SEND_WAIT_S = 300
+CAPTION_MAX = 1024  # of an audio's caption
+MESSAGE_MAX = 4096
+LYRICS_MESSAGES = 3  # a longer text is cut: nobody reads a wall of messages
 
 
 class TelegramError(Exception):
@@ -147,16 +151,52 @@ def thumbnail(cover: bytes | None) -> bytes | None:
         return None
 
 
+def _quote(text: str) -> str:
+    """A collapsed quote: Telegram shows its first lines and opens the rest on a tap."""
+    return f"<blockquote expandable>{html.escape(text, quote=False)}</blockquote>"
+
+
+def lyrics_messages(text: str) -> tuple[str | None, list[str]]:
+    """How a track's text goes with it: (the audio's caption, the messages after it). A short text fits the
+    caption; a long one follows the audio as collapsed quotes, cut after `LYRICS_MESSAGES` of them."""
+    text = (text or "").strip()
+    if not text:
+        return None, []
+    if len(text) <= CAPTION_MAX - 40:
+        return _quote(text), []
+    room = MESSAGE_MAX - 200
+    chunks: list[str] = []
+    cur = ""
+    for line in text.splitlines():
+        if len(cur) + len(line) + 1 > room and cur:
+            chunks.append(cur)
+            cur = ""
+        cur = f"{cur}\n{line}" if cur else line[:room]
+    if cur:
+        chunks.append(cur)
+    if len(chunks) > LYRICS_MESSAGES:
+        chunks = chunks[:LYRICS_MESSAGES]
+        chunks[-1] += "\n…"
+    return None, [_quote(c) for c in chunks]
+
+
 async def send_audio(token: str, chat_id: str, path: Path, *, filename: str, title: str, performer: str,
-                     duration_s: int | None = None, cover: bytes | None = None) -> None:
+                     duration_s: int | None = None, cover: bytes | None = None, lyrics: str | None = None) -> None:
     thumb = thumbnail(cover)
+    caption, after = lyrics_messages(lyrics or "")
+    chat = int(chat_id) if chat_id.lstrip("-").isdigit() else chat_id
     async with bot_of(token, SEND_WAIT_S) as bot:
-        await bot.send_audio(
-            chat_id=int(chat_id) if chat_id.lstrip("-").isdigit() else chat_id,
+        sent = await bot.send_audio(
+            chat_id=chat,
             audio=FSInputFile(path, filename=filename),
             title=title[:256],
             performer=performer[:256],
             duration=int(duration_s) if duration_s else None,
             thumbnail=BufferedInputFile(thumb, filename="cover.jpg") if thumb else None,
+            caption=caption,
+            parse_mode="HTML" if caption else None,
             request_timeout=SEND_WAIT_S,
         )
+        for text in after:
+            await bot.send_message(chat_id=chat, text=text, parse_mode="HTML",
+                                   reply_to_message_id=getattr(sent, "message_id", None))
