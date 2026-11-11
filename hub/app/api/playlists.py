@@ -1,10 +1,20 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import playlist_dates
 from app.api.medialib import nd_call, songs_out
-from app.api.schemas import PlaylistAddIn, PlaylistCreateIn, PlaylistOut, PlaylistPageOut, PlaylistRemoveIn
+from app.api.schemas import (
+    PlaylistAddIn,
+    PlaylistCreateIn,
+    PlaylistMembershipIn,
+    PlaylistOfSongOut,
+    PlaylistOut,
+    PlaylistPageOut,
+    PlaylistRemoveIn,
+)
 from app.auth import current_user, user_navidrome
 from app.db import get_session
 from app.models import Track, User
@@ -26,6 +36,59 @@ async def list_playlists(user: User = Depends(current_user)):
         await nd.aclose()
     # getPlaylists also returns other users' public playlists: show only own ones
     return [pl_out(p) for p in pls if p.get("owner") in (None, user.nd_username)]
+
+
+# playlist id -> (what it looked like, its songs): asked of Navidrome again only when the playlist has changed
+_songs: dict[str, tuple[str, list[str]]] = {}
+
+
+async def _songs_of(nd, p: dict) -> list[str]:
+    stamp = f"{p.get('changed')}:{p.get('songCount')}"
+    hit = _songs.get(p["id"])
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    ids = [e["id"] for e in (await nd.get_playlist(p["id"])).get("entry") or [] if e.get("id")]
+    _songs[p["id"]] = (stamp, ids)
+    return ids
+
+
+@router.get("/of-song", response_model=list[PlaylistOfSongOut])
+async def of_song(nd_song_id: str, user: User = Depends(current_user)):
+    """The user's playlists for a song's «in playlists» menu: which of them have the song, the ones changed last
+    first."""
+    async def load(nd):
+        pls = [p for p in await nd.get_playlists() if p.get("owner") in (None, user.nd_username)]
+        return pls, await asyncio.gather(*(_songs_of(nd, p) for p in pls))
+
+    pls, songs = await nd_call(user, load)
+    out = [(str(p.get("changed") or ""), PlaylistOfSongOut(**pl_out(p).model_dump(), has=nd_song_id in ids))
+           for p, ids in zip(pls, songs, strict=True)]
+    return [x for _, x in sorted(out, key=lambda pair: pair[0], reverse=True)]
+
+
+@router.post("/membership", response_model=list[PlaylistOfSongOut])
+async def membership(body: PlaylistMembershipIn, user: User = Depends(current_user),
+                     s: AsyncSession = Depends(get_session, scope="function")):
+    """Put a song into some playlists and take it out of others, in one go (every place it has in a playlist it is
+    taken out of)."""
+    async def change(nd):
+        for pid in dict.fromkeys(body.add):
+            if body.nd_song_id not in await _songs_of(nd, {"id": pid}):
+                await nd.update_playlist(pid, add=[body.nd_song_id])
+            _songs.pop(pid, None)
+        for pid in dict.fromkeys(body.remove):
+            _songs.pop(pid, None)
+            at = [i for i, sid in enumerate(await _songs_of(nd, {"id": pid})) if sid == body.nd_song_id]
+            if at:
+                await nd.update_playlist(pid, remove_indexes=at)
+            _songs.pop(pid, None)
+
+    await nd_call(user, change, not_found="Плейлист не найден")
+    track_ids = list((await s.execute(select(Track.id).where(Track.nd_song_id == body.nd_song_id))).scalars())
+    for pid in dict.fromkeys(body.add):
+        await playlist_dates.stamp(s, pid, track_ids)
+    await s.commit()
+    return await of_song(body.nd_song_id, user)
 
 
 @router.post("", response_model=PlaylistOut)

@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import { Icon } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
 import { Lyrics } from '../components/Lyrics';
+import { PlaylistsButton } from '../components/PlaylistsButton';
 import { TrackMenuButton } from '../components/TrackMenu';
 import { Cover, Empty, IconButton, Spinner, cx } from '../components/ui';
 import { fmtDuration, providerLabel } from '../lib/format';
@@ -23,6 +24,7 @@ import {
   type ListenTrack,
 } from '../lib/listen';
 import { Link, enc, goBack } from '../lib/router';
+import { openShare } from '../lib/shareTrack';
 import { addRec, hideRec } from '../lib/smartShuffle';
 
 /** The full player of the PWA in a plain browser (`/player`, from a tap on the mini player): the big cover, seek,
@@ -105,6 +107,7 @@ export function PlayerPage() {
       <div className="flex min-h-14 items-center gap-1 px-2">
         <IconButton icon="down" label="Свернуть" onClick={() => goBack('/home')} />
         <PlayingFrom context={context} page={page} />
+        <IconButton icon="share" label="Поделиться" onClick={() => openShare({ title: track.title, artist: track.artist, ref: track.ref, nd_song_id: info?.nd_song_id })} className="text-muted" />
         <IconButton icon="lyrics" label={lyrics ? 'Скрыть текст' : 'Показать текст'} aria-pressed={lyrics} onClick={toggleLyrics} className={lyrics ? '!text-accent' : 'text-muted'} />
       </div>
 
@@ -147,6 +150,7 @@ export function PlayerPage() {
           </div>
         </div>
         <LikeButton songId={info?.nd_song_id} refId={track.ref} title={track.title} data={{ ...track }} size={26} />
+        {info?.nd_song_id && <PlaylistsButton songId={info.nd_song_id} title={track.title} size={24} className="!h-11 !w-11" />}
         {/* a track that is not in the library yet can be downloaded into it; one that is needs no mark */}
         {owned || dl === 'done' ? null : dl ? (
           <span className="flex h-11 w-11 shrink-0 items-center justify-center text-info" title="Скачивается в библиотеку">
@@ -155,7 +159,7 @@ export function PlayerPage() {
         ) : (
           <IconButton icon="download" label="Скачать в библиотеку" onClick={download} busy={busy} />
         )}
-        <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id }} inPlayer />
+        <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id }} inPlayer lean />
       </div>
 
       {track.rec && (

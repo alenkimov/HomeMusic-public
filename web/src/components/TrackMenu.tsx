@@ -40,12 +40,12 @@ export interface MenuExtra {
  * «по исполнителю» (MIXES.md 7) where the wave can play, and «Не нравится» for the track and for its artist
  * (MIXES.md 3.2) — it keeps them out of mixes and «Моя волна»; set again, it is taken off. A track disliked while
  * the page's player plays it is skipped. */
-export function TrackMenuButton({ track, extra, className, inPlayer }: { track: MenuTrack; extra?: MenuExtra[]; className?: string; inPlayer?: boolean }) {
+export function TrackMenuButton({ track, extra, className, inPlayer, lean }: { track: MenuTrack; extra?: MenuExtra[]; className?: string; inPlayer?: boolean; lean?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <IconButton icon="more" label={`Ещё: «${track.title}»`} onClick={() => setOpen(true)} className={cx('text-muted hover:text-fg', className)} />
-      {open && createPortal(<TrackMenu track={track} extra={extra} inPlayer={inPlayer} onClose={() => setOpen(false)} />, document.body)}
+      {open && createPortal(<TrackMenu track={track} extra={extra} inPlayer={inPlayer} lean={lean} onClose={() => setOpen(false)} />, document.body)}
     </>
   );
 }
@@ -73,8 +73,9 @@ export async function addToPlaylist(track: MenuTrack, pick: PlaylistPick): Promi
   return !!r;
 }
 
-/** `inPlayer`: opened from a player (the mini player, `/player` and its queue): a wave started here is the player's. */
-function TrackMenu({ track, extra, inPlayer, onClose }: { track: MenuTrack; extra?: MenuExtra[]; inPlayer?: boolean; onClose: () => void }) {
+/** `inPlayer`: opened from a player (the mini player, `/player` and its queue): a wave started here is the player's.
+ * `lean`: the playlists and the share have buttons of their own beside this menu (the player) — not repeated here. */
+function TrackMenu({ track, extra, inPlayer, lean, onClose }: { track: MenuTrack; extra?: MenuExtra[]; inPlayer?: boolean; lean?: boolean; onClose: () => void }) {
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
   const trackWave = trackSeed(track);
@@ -140,7 +141,7 @@ function TrackMenu({ track, extra, inPlayer, onClose }: { track: MenuTrack; extr
             />
           </>
         )}
-        {(track.nd_song_id || track.ref) && (
+        {!(lean && track.nd_song_id) && (track.nd_song_id || track.ref) && (
           <MenuItem
             icon="playlist"
             label="Добавить в плейлист"
@@ -148,7 +149,7 @@ function TrackMenu({ track, extra, inPlayer, onClose }: { track: MenuTrack; extr
             onClick={() => setPicking(true)}
           />
         )}
-        {(track.nd_song_id || track.ref) && (
+        {!lean && (track.nd_song_id || track.ref) && (
           <MenuItem
             icon="share"
             label="Поделиться"

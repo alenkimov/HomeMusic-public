@@ -5,6 +5,7 @@ import { Link } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
 import { Icon } from './Icon';
 import { LikeButton } from './LikeButton';
+import { PlaylistsButton } from './PlaylistsButton';
 import { TrackMenuButton } from './TrackMenu';
 import { Cover, IconButton, Spinner, cx } from './ui';
 
@@ -57,6 +58,7 @@ export function DesktopPlayer() {
                 </span>
               </Link>
               <LikeButton songId={info?.nd_song_id} refId={track.ref} title={track.title} data={{ ...track }} size={18} className="ml-1 !w-9" />
+              {info?.nd_song_id && <PlaylistsButton songId={info.nd_song_id} title={track.title} />}
             </>
           ) : (
             <span className="flex items-center gap-3 text-sm text-dim">
@@ -121,8 +123,8 @@ export function DesktopPlayer() {
         </div>
 
         <div className="flex min-w-0 items-center justify-end gap-1">
+          {track && <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id }} className="!h-9 !w-9" inPlayer lean />}
           {track && <IconButton icon="share" size={18} label="Поделиться" onClick={() => openShare({ title: track.title, artist: track.artist, ref: track.ref, nd_song_id: info?.nd_song_id })} className="!h-9 !w-9 text-muted hover:text-fg" />}
-          {track && <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id }} className="!h-9 !w-9" inPlayer />}
           <Link to="/player" title="Очередь" aria-label="Очередь" className={cx('flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg', !track && 'pointer-events-none opacity-40')}>
             <Icon name="queue" size={20} />
           </Link>

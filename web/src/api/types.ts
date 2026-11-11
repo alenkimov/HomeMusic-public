@@ -539,6 +539,11 @@ export interface PlaylistOut {
   cover_art?: string | null;
 }
 
+export interface PlaylistOfSongOut extends PlaylistOut {
+  /** the song is in this playlist */
+  has: boolean;
+}
+
 export interface PlaylistPageOut extends PlaylistOut {
   tracks: NdSongOut[];
 }

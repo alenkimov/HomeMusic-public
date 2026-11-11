@@ -504,6 +504,16 @@ class PlaylistOut(BaseModel):
     cover_art: str | None = None
 
 
+class PlaylistOfSongOut(PlaylistOut):
+    has: bool = False  # the song is in this playlist
+
+
+class PlaylistMembershipIn(BaseModel):
+    nd_song_id: str
+    add: list[str] = Field(default_factory=list, max_length=100)  # playlists to put the song into
+    remove: list[str] = Field(default_factory=list, max_length=100)  # ... and to take it out of
+
+
 class PlaylistCreateIn(BaseModel):
     name: str
 

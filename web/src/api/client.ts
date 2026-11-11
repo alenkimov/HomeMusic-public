@@ -41,6 +41,7 @@ import type {
   PlayEventsOut,
   PlaylistAddIn,
   PlaylistOut,
+  PlaylistOfSongOut,
   PlaylistPageOut,
   NdAlbumList,
   NdAlbumOut,
@@ -349,6 +350,8 @@ export const api = {
   createPlaylist: (name: string) => request<PlaylistOut>('POST', '/api/playlists', { json: { name } }),
   addToPlaylist: (id: string, body: PlaylistAddIn) =>
     request<OkOut>('POST', `/api/playlists/${enc(id)}/add`, { json: body }),
+  playlistsOfSong: (nd_song_id: string, signal?: AbortSignal) => request<PlaylistOfSongOut[]>('GET', withQuery('/api/playlists/of-song', { nd_song_id }), { signal }),
+  playlistMembership: (body: { nd_song_id: string; add: string[]; remove: string[] }) => request<PlaylistOfSongOut[]>('POST', '/api/playlists/membership', { json: body }),
   playlist: (id: string, signal?: AbortSignal) => request<PlaylistPageOut>('GET', `/api/playlists/${enc(id)}`, { signal }),
   removeFromPlaylist: (id: string, indexes: number[]) =>
     request<OkOut>('POST', `/api/playlists/${enc(id)}/remove`, { json: { indexes } }),
