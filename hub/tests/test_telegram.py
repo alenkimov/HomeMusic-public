@@ -48,10 +48,23 @@ class FakeBot:
     async def send_message(self, **kw):
         self.state.setdefault("messages", []).append(kw)
 
+    async def get_chat(self, chat_id):
+        return self.state["chats"][chat_id]  # a chat the test did not describe: no picture, the name stays
+
+    async def download(self, file_id, destination):
+        destination.write(f"jpeg of {file_id}".encode())
+
 
 def update(chat_id: int, kind: str, **chat):
     return SimpleNamespace(message=SimpleNamespace(chat=SimpleNamespace(id=chat_id, type=kind, **{
         "first_name": None, "last_name": None, "username": None, **chat})))
+
+
+def member(chat_id: int, kind: str, status: str, by: int, title: str = "Друзья"):
+    """The bot's place in a chat changed: `by` did it."""
+    chat = SimpleNamespace(id=chat_id, type=kind, title=title, first_name=None, last_name=None, username=None)
+    return SimpleNamespace(message=None, my_chat_member=SimpleNamespace(
+        chat=chat, new_chat_member=SimpleNamespace(status=status), from_user=SimpleNamespace(id=by)))
 
 
 @pytest.fixture
@@ -144,3 +157,34 @@ async def test_a_refused_key_is_not_saved(env):
     r = await c.post("/api/telegram/connect", json={"token": other})
     assert r.status_code == 400 and other not in r.text and "не принял" in r.json()["detail"]
     assert (await c.get("/api/telegram")).json()["connected"] is False
+
+
+async def test_chats_the_owner_added_the_bot_to(env):
+    c, state = env["client"], env["state"]
+    await add_track(env["music"], "nd1")
+    await c.post("/api/telegram/connect", json={"token": TOKEN})
+    assert (await c.get("/api/telegram/chats")).json() == []
+    me = update(42, "private", first_name="Алён", username="alen")
+    state["chats"] = {-100: SimpleNamespace(id=-100, title="Друзья и музыка", first_name=None, last_name=None, username=None,
+                                            photo=SimpleNamespace(small_file_id="f1", small_file_unique_id="u1"))}
+    # the owner's group and channel are in; a stranger's group is not, nor a channel the bot cannot post to
+    state["updates"] = [me, member(-100, "supergroup", "member", by=42), member(-200, "group", "member", by=7),
+                        member(-300, "channel", "member", by=42), member(-400, "channel", "administrator", by=42, title="Канал")]
+    got = (await c.get("/api/telegram/chats")).json()
+    assert [(x["kind"], x["title"], x["photo"]) for x in got] == [
+        ("private", "Алён @alen", None), ("supergroup", "Друзья и музыка", "u1"), ("channel", "Канал", None)]
+    r = await c.get(f"/api/telegram/chats/{got[1]['id']}/photo")
+    assert r.content == b"jpeg of f1" and r.headers["content-type"] == "image/jpeg"
+    assert (await c.get(f"/api/telegram/chats/{got[0]['id']}/photo")).status_code == 404
+
+    assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "chat": got[1]["id"]})).status_code == 200
+    assert state["sent"][-1]["chat_id"] == -100
+    assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1"})).status_code == 200
+    assert state["sent"][-1]["chat_id"] == 42  # no chat named: the private one
+    assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "chat": 99999})).status_code == 404
+
+    # removed from the group: it leaves the list
+    state["updates"].append(member(-100, "supergroup", "left", by=42))
+    assert [x["title"] for x in (await c.post("/api/telegram/chats/refresh")).json()] == ["Алён @alen", "Канал"]
+    await c.delete("/api/telegram")
+    assert (await c.get("/api/telegram/chats")).json() == []

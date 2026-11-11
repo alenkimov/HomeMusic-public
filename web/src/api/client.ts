@@ -1,5 +1,5 @@
 import type { LyricsCandidate, LyricsOut, LyricsSettings } from '../lib/lyrics';
-import type { TelegramStatus } from '../lib/telegram';
+import type { TelegramChat, TelegramStatus } from '../lib/telegram';
 import type {
   AdminUserDetailOut,
   AdminUsersOut,
@@ -370,7 +370,9 @@ export const api = {
   telegramCheck: () => request<TelegramStatus>('POST', '/api/telegram/check'),
   telegramDisconnect: () => request<TelegramStatus>('DELETE', '/api/telegram'),
   telegramPrefs: (with_lyrics: boolean) => request<TelegramStatus>('PUT', '/api/telegram/prefs', { json: { with_lyrics } }),
-  telegramSend: (body: { nd_song_id?: string | null; ref?: string | null; with_lyrics?: boolean | null }) =>
+  telegramChats: () => request<TelegramChat[]>('GET', '/api/telegram/chats'),
+  telegramChatsRefresh: () => request<TelegramChat[]>('POST', '/api/telegram/chats/refresh'),
+  telegramSend: (body: { nd_song_id?: string | null; ref?: string | null; with_lyrics?: boolean | null; chat?: number | null }) =>
     request<{ ok: boolean; title: string; light: boolean; lyrics: boolean }>('POST', '/api/telegram/send', { json: body }),
   // a track on music services («Поделиться ссылкой»)
   links: (q: { nd_song_id?: string | null; ref?: string | null }) =>

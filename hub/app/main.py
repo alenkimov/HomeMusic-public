@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(db.run_migrations)
     db.init_engine()
 
-    from app import listen
+    from app import listen, telegram_chats
     from app.housekeeping import scheduler_loop
     from app.jobs.downloads import playlist_adds_loop
     from app.jobs.queue import WorkerPool, recover_stale
@@ -60,12 +60,14 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(scrobbles_loop(), name="scrobbles"))
         tasks.append(asyncio.create_task(schedule_loop(), name="mixes"))
         tasks.append(asyncio.create_task(playlist_adds_loop(), name="playlist-adds"))
+        await telegram_chats.start_all()
     log.info("hub started")
     try:
         yield
     finally:
         for t in tasks:
             t.cancel()
+        telegram_chats.stop_all()
         await pool.stop()
         await listen.reset()
         await wave.reset()

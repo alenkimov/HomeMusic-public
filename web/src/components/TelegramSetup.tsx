@@ -74,7 +74,7 @@ export function TelegramSetup() {
           }}
         >
           <p className="text-sm text-muted">
-            Треки отправляет ваш собственный бот — в чат с вами.{pending.length === 1 ? ` Подключите его, и «${pending[0].title}» уйдёт сразу.` : pending.length ? ` Подключите его, и выбранные треки (${pending.length}) уйдут сразу.` : ''}
+            Треки отправляет ваш собственный бот — вам в личный чат, в группы и каналы.{pending.length === 1 ? ` Подключите его, и «${pending[0].title}» уйдёт сразу.` : pending.length ? ` Подключите его, и выбранные треки (${pending.length}) уйдут сразу.` : ''}
           </p>
           <ol className="list-decimal space-y-1 pl-5 text-sm text-muted">
             <li>
@@ -141,11 +141,12 @@ export function TelegramSetup() {
               <div className="truncate text-xs text-muted">Отправляет в чат: {st.chat_name}</div>
             </div>
           </div>
-          <p className="text-sm text-muted">Чтобы отправить трек, откройте его меню «⋯» → «Отправить в Telegram».</p>
+          <p className="text-sm text-muted">Чтобы отправить трек, нажмите у него «Поделиться» и выберите чат.</p>
+          <p className="text-sm text-muted">Чтобы отправлять в группу или канал, добавьте туда бота сами (в канал — администратором): чат появится в «Поделиться».</p>
           <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-raised px-3 py-2 text-sm">
             <span>
               Отправлять с текстом песни
-              <span className="block text-xs text-muted">Свёрнутой цитатой под треком; в меню останется и вариант без текста</span>
+              <span className="block text-xs text-muted">Свёрнутой цитатой под треком; эта же галочка есть в «Поделиться»</span>
             </span>
             <Checkbox checked={!!st.with_lyrics} label="Отправлять с текстом песни" onChange={(v) => void attempt(() => api.telegramPrefs(v)).then((r) => r && setSt(r))} />
           </label>

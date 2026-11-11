@@ -3,10 +3,11 @@ import { api, errorMessage } from '../api/client';
 import { tracksWord } from './format';
 import { attempt, toast } from './ui';
 
-/** «Отправить в Telegram»: library tracks go to the user's own bot (the Hub sends the files, `app/telegram.py`).
- * The action is always offered; the first time it opens the window where the bot's key is pasted
- * (`components/TelegramSetup.tsx`), and what was asked for is sent as soon as the bot is ready. Several tracks
- * (a selection, `lib/selection.ts`) go one after another, in their order. */
+/** Sending library tracks with the user's own Telegram bot (the Hub sends the files, `app/telegram.py`): to the
+ * private chat with them or to a group / channel they added the bot to — picked in «Поделиться»
+ * (`components/ShareSheet.tsx`). Without a bot that window opens the one where the bot's key is pasted
+ * (`components/TelegramSetup.tsx`), and what was asked for goes to the private chat as soon as the bot is ready.
+ * Several tracks (a selection, `lib/selection.ts`) go one after another, in their order. */
 
 export interface TelegramStatus {
   connected: boolean;
@@ -17,8 +18,18 @@ export interface TelegramStatus {
   with_lyrics?: boolean;
 }
 
+/** A chat the bot can send to. */
+export interface TelegramChat {
+  id: number;
+  kind: string; // private / group / supergroup / channel
+  title: string;
+  /** the key of its picture (`/api/telegram/chats/{id}/photo`); none — no picture */
+  photo?: string | null;
+}
+
 export interface ShareTrack {
   title: string;
+  artist?: string | null;
   nd_song_id?: string | null;
   ref?: string | null;
 }
@@ -48,30 +59,33 @@ export const closeTelegramSetup = () => set({ open: false, pending: [], withLyri
 
 let sending = false;
 
-/** Sends the files (the bot is ready): one by one, so a big selection neither times out nor trips Telegram's limits. */
-export async function deliverToTelegram(tracks: readonly ShareTrack[], withLyrics: boolean | null = null): Promise<void> {
+/** Sends the files (the bot is ready): one by one, so a big selection neither times out nor trips Telegram's limits.
+ * `chat`: one of the bot's chats; none — the private chat with the user. */
+export async function deliverToTelegram(tracks: readonly ShareTrack[], withLyrics: boolean | null = null, chat: TelegramChat | null = null): Promise<void> {
   if (!tracks.length) return;
+  const to = chat && chat.kind !== 'private' ? `в «${chat.title}»` : 'в Telegram';
+  const chatId = chat?.id ?? null;
   if (sending) return void toast('Предыдущая отправка в Telegram ещё идёт', 'info');
   sending = true;
   try {
     if (tracks.length === 1) {
-      toast(`Отправляю в Telegram: «${tracks[0].title}»…`);
-      const r = await attempt(() => api.telegramSend({ nd_song_id: tracks[0].nd_song_id ?? null, ref: tracks[0].ref ?? null, with_lyrics: withLyrics }));
-      if (r) toast(`Отправлено в Telegram: «${r.title}»${r.lyrics ? ' с текстом' : withLyrics ? ' (текста у трека нет)' : ''}${r.light ? ' — сжатая копия: файл больше 50 МБ' : ''}`, 'success');
+      toast(`Отправляю ${to}: «${tracks[0].title}»…`);
+      const r = await attempt(() => api.telegramSend({ nd_song_id: tracks[0].nd_song_id ?? null, ref: tracks[0].ref ?? null, with_lyrics: withLyrics, chat: chatId }));
+      if (r) toast(`Отправлено ${to}: «${r.title}»${r.lyrics ? ' с текстом' : withLyrics ? ' (текста у трека нет)' : ''}${r.light ? ' — сжатая копия: файл больше 50 МБ' : ''}`, 'success');
       return;
     }
-    toast(`Отправляю в Telegram ${tracksWord(tracks.length)} — это займёт время…`);
+    toast(`Отправляю ${to} ${tracksWord(tracks.length)} — это займёт время…`);
     let ok = 0;
     let firstError = '';
     for (const t of tracks) {
       try {
-        await api.telegramSend({ nd_song_id: t.nd_song_id ?? null, ref: t.ref ?? null, with_lyrics: withLyrics });
+        await api.telegramSend({ nd_song_id: t.nd_song_id ?? null, ref: t.ref ?? null, with_lyrics: withLyrics, chat: chatId });
         ok++;
       } catch (e) {
         firstError ||= `«${t.title}»: ${errorMessage(e)}`;
       }
     }
-    if (ok === tracks.length) toast(`Отправлено в Telegram: ${tracksWord(ok)}`, 'success');
+    if (ok === tracks.length) toast(`Отправлено ${to}: ${tracksWord(ok)}`, 'success');
     else toast(`Отправлено ${ok} из ${tracks.length}. ${firstError}`, ok ? 'info' : 'error');
   } finally {
     sending = false;

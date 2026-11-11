@@ -4,7 +4,7 @@ import { addToQueue } from '../lib/listen';
 import { canPlayAll } from '../lib/player';
 import { useRoute } from '../lib/router';
 import { clearSelection, selectedTracks, useSelectionCount } from '../lib/selection';
-import { sendToTelegram } from '../lib/telegram';
+import { openShare } from '../lib/shareTrack';
 import { toast } from '../lib/ui';
 import { Button, IconButton } from './ui';
 
@@ -31,11 +31,8 @@ export function SelectionBar() {
     <div className="pointer-events-none fixed bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+12px+env(safe-area-inset-bottom))] left-(--side-w) right-0 z-40 flex justify-center px-3" role="region" aria-label="Выбранные треки">
       <div className="anim-up pointer-events-auto flex max-w-full flex-wrap items-center gap-2 rounded-2xl border border-line bg-raised py-2 pl-4 pr-2 shadow-2xl">
         <span className="text-sm font-semibold">Выбрано: {tracksWord(count)}</span>
-        <Button small variant="primary" icon="send" onClick={() => void sendToTelegram(take())}>
-          В Telegram
-        </Button>
-        <Button small icon="lyrics" onClick={() => void sendToTelegram(take(), true)}>
-          В Telegram с текстом
+        <Button small variant="primary" icon="share" onClick={() => openShare(take())}>
+          Поделиться
         </Button>
         {!canPlayAll() && (
           <Button

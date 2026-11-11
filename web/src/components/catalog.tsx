@@ -12,6 +12,7 @@ import { TRACK_COLUMN_LABELS, setTrackColumn, trackGrid, useTrackColumns, type T
 import { toast } from '../lib/ui';
 import { Icon } from './Icon';
 import { LikeButton } from './LikeButton';
+import { openShare } from '../lib/shareTrack';
 import { QueueButton } from './QueueButton';
 import { PlaylistPicker } from './pickers';
 import { SwipeRow } from './SwipeRow';
@@ -332,6 +333,9 @@ export function TrackRow({
               <span className="flex h-11 w-9 items-center justify-center text-info" title="Скачивается"><Spinner size={14} /></span>
             ) : (
               <IconButton icon="download" size={20} label="Скачать трек" onClick={download} busy={busy} className={cx('!w-9 text-muted hover:text-fg', !busy && shown)} />
+            )}
+            {track.owned && (
+              <IconButton icon="share" size={19} label={`Поделиться: «${track.title}»`} onClick={() => openShare(menuTrack)} className={cx('!w-9 text-muted hover:text-fg', shown)} />
             )}
             <QueueButton track={menuTrack.listen as ListenTrack} className="!w-9" />
             <LikeButton songId={likeTarget.songId} refId={track.ref} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('!w-9', !liked && shown)} />

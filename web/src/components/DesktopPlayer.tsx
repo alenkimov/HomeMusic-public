@@ -2,7 +2,7 @@ import { useState, type CSSProperties } from 'react';
 import { fmtDuration, providerLabel } from '../lib/format';
 import { cycleRepeat, cycleShuffle, hasNext, hasPrev, next, prev, seek, setVolume, toggle, useListen } from '../lib/listen';
 import { Link } from '../lib/router';
-import { sendToTelegram } from '../lib/telegram';
+import { openShare } from '../lib/shareTrack';
 import { Icon } from './Icon';
 import { LikeButton } from './LikeButton';
 import { TrackMenuButton } from './TrackMenu';
@@ -121,7 +121,7 @@ export function DesktopPlayer() {
         </div>
 
         <div className="flex min-w-0 items-center justify-end gap-1">
-          {track && <IconButton icon="send" size={18} label="Отправить в Telegram" onClick={() => void sendToTelegram({ title: track.title, ref: track.ref, nd_song_id: info?.nd_song_id })} className="!h-9 !w-9 text-muted hover:text-fg" />}
+          {track && <IconButton icon="share" size={18} label="Поделиться" onClick={() => openShare({ title: track.title, artist: track.artist, ref: track.ref, nd_song_id: info?.nd_song_id })} className="!h-9 !w-9 text-muted hover:text-fg" />}
           {track && <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id }} className="!h-9 !w-9" inPlayer />}
           <Link to="/player" title="Очередь" aria-label="Очередь" className={cx('flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg', !track && 'pointer-events-none opacity-40')}>
             <Icon name="queue" size={20} />

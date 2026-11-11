@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api/client';
 import { setDisliked, useDisliked, type DislikeTarget } from '../lib/dislikes';
@@ -6,9 +6,8 @@ import { STANDALONE } from '../lib/embedded';
 import { addToQueue, next, playNext, stopListening, useListen, type ListenTrack } from '../lib/listen';
 import { canPlayAll } from '../lib/player';
 import { enc, navigate } from '../lib/router';
-import { copyText } from '../lib/share';
-import { attempt, toast } from '../lib/ui';
-import { sendToTelegram } from '../lib/telegram';
+import { openShare } from '../lib/shareTrack';
+import { attempt } from '../lib/ui';
 import { artistSeed, canWave, startWave, trackSeed } from '../lib/wave';
 import { Icon, type IconName } from './Icon';
 import { PlaylistPicker, type PlaylistPick } from './pickers';
@@ -77,7 +76,6 @@ export async function addToPlaylist(track: MenuTrack, pick: PlaylistPick): Promi
 /** `inPlayer`: opened from a player (the mini player, `/player` and its queue): a wave started here is the player's. */
 function TrackMenu({ track, extra, inPlayer, onClose }: { track: MenuTrack; extra?: MenuExtra[]; inPlayer?: boolean; onClose: () => void }) {
   const [picking, setPicking] = useState(false);
-  const [linking, setLinking] = useState(false);
   const [busy, setBusy] = useState(false);
   const trackWave = trackSeed(track);
   const artistWave = artistSeed(track);
@@ -118,8 +116,6 @@ function TrackMenu({ track, extra, inPlayer, onClose }: { track: MenuTrack; extr
       />
     );
 
-  if (linking) return <TrackLinks track={track} onClose={onClose} />;
-
   return (
     <Sheet open onClose={onClose} title={`${track.artist} — ${track.title}`}>
       <div className="-mx-4 -my-3 flex flex-col py-1">
@@ -154,28 +150,14 @@ function TrackMenu({ track, extra, inPlayer, onClose }: { track: MenuTrack; extr
         )}
         {(track.nd_song_id || track.ref) && (
           <MenuItem
-            icon="send"
-            label="Отправить в Telegram"
-            hint="Вашему боту, файлом из библиотеки"
+            icon="share"
+            label="Поделиться"
+            hint="В Telegram — себе, в группу, в канал — или ссылкой"
             onClick={() => {
               onClose();
-              void sendToTelegram(track);
+              openShare(track);
             }}
           />
-        )}
-        {(track.nd_song_id || track.ref) && (
-          <MenuItem
-            icon="lyrics"
-            label="Отправить в Telegram с текстом"
-            hint="Текст песни придёт свёрнутой цитатой"
-            onClick={() => {
-              onClose();
-              void sendToTelegram(track, true);
-            }}
-          />
-        )}
-        {(track.nd_song_id || track.ref) && (
-          <MenuItem icon="link" label="Поделиться ссылкой" hint="Spotify, Яндекс Музыка, YouTube и другие" onClick={() => setLinking(true)} />
         )}
         {extra?.map((x) => (
           <MenuItem
@@ -229,54 +211,6 @@ function TrackMenu({ track, extra, inPlayer, onClose }: { track: MenuTrack; extr
             onClick={() => toggle(artist, artistDisliked)}
           />
         )}
-      </div>
-    </Sheet>
-  );
-}
-
-type Links = Awaited<ReturnType<typeof api.links>>;
-
-/** «Поделиться ссылкой»: the track on the services the Hub knows its id of. A tap copies the link; ↗ opens it. */
-function TrackLinks({ track, onClose }: { track: MenuTrack; onClose: () => void }) {
-  const [data, setData] = useState<Links | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    api.links({ nd_song_id: track.nd_song_id, ref: track.ref })
-      .then((r) => alive && setData(r))
-      .catch(() => alive && setFailed(true));
-    return () => {
-      alive = false;
-    };
-  }, [track.nd_song_id, track.ref]);
-  const copy = async (title: string, url: string) => {
-    const ok = await copyText(url);
-    toast(ok ? `Ссылка скопирована: ${title}` : 'Не получилось скопировать ссылку', ok ? 'success' : 'error');
-    if (ok) onClose();
-  };
-  const rows = data ? [...(data.universal ? [{ service: 'universal', title: 'Все площадки сразу', url: data.universal }] : []), ...data.links] : [];
-  return (
-    <Sheet open onClose={onClose} title={`${track.artist} — ${track.title}`}>
-      <div className="-mx-4 -my-3 flex flex-col py-1">
-        {!data && !failed && <p className="px-4 py-6 text-sm text-muted">Собираем ссылки…</p>}
-        {failed && <p className="px-4 py-6 text-sm text-muted">Не получилось получить ссылки.</p>}
-        {data && !rows.length && (
-          <p className="px-4 py-6 text-sm text-muted">Хаб не знает этот трек ни на одной площадке: он загружен файлом и не встречался в импортах.</p>
-        )}
-        {rows.map((x) => (
-          <div key={x.service} className="flex min-h-14 items-center transition hover:bg-fg/5">
-            <button type="button" onClick={() => void copy(x.title, x.url)} className="flex min-w-0 flex-1 items-center gap-4 px-4 py-2 text-left">
-              <Icon name="link" size={22} className={cx('shrink-0', x.service === 'universal' ? 'text-accent' : 'text-muted')} />
-              <span className="min-w-0 flex-1">
-                <span className="block text-[15px]">{x.title}</span>
-                <span className="block truncate text-[13px] text-muted">{x.service === 'universal' ? 'song.link — откроется там, где слушает получатель' : x.url.replace(/^https?:\/\/(www\.)?/, '')}</span>
-              </span>
-            </button>
-            <a href={x.url} target="_blank" rel="noreferrer" aria-label={`Открыть: ${x.title}`} title="Открыть" className="mr-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted transition hover:text-fg">
-              <Icon name="external" size={18} />
-            </a>
-          </div>
-        ))}
       </div>
     </Sheet>
   );

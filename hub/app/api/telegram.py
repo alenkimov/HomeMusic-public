@@ -6,17 +6,17 @@ import asyncio
 import logging
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import light, telegram
+from app import light, telegram, telegram_chats
 from app.auth import current_user
 from app.config import get_settings
 from app.db import get_session
 from app.library import tagger
 from app.lyrics import service as lyrics_service
-from app.models import User
+from app.models import TgChat, User
 from app.security import decrypt, encrypt
 
 log = logging.getLogger(__name__)
@@ -41,9 +41,17 @@ class TelegramPrefsIn(BaseModel):
     with_lyrics: bool
 
 
+class TelegramChatOut(BaseModel):
+    id: int
+    kind: str  # private/group/supergroup/channel
+    title: str
+    photo: str | None = None  # the picture's key (it changes with the picture); None — the chat has none
+
+
 class TelegramSendIn(BaseModel):
     nd_song_id: str | None = None
     ref: str | None = None
+    chat: int | None = None  # one of the bot's chats (`/chats`); None: the private chat with the user
     with_lyrics: bool | None = None  # None: as the user's setting says
 
 
@@ -65,10 +73,15 @@ async def _me(s: AsyncSession, user: User) -> User:
     return u
 
 
-async def _bind_chat(u: User, token: str) -> None:
-    found = await telegram.find_chat(token)
-    if found:
-        u.tg_chat_id, u.tg_chat_name = found[0], found[1][:128]
+def _listen(u: User) -> None:
+    """The bot's chats are kept fresh in the background from now on."""
+    if u.tg_bot_token_enc and not get_settings().disable_background:
+        telegram_chats.start(u.id)
+
+
+async def _chats_out(s: AsyncSession, u: User) -> list[TelegramChatOut]:
+    return [TelegramChatOut(id=c.id, kind=c.kind, title=c.title, photo=c.photo_key if c.photo else None)
+            for c in await telegram_chats.chats(s, u)]
 
 
 @router.get("", response_model=TelegramOut)
@@ -87,10 +100,12 @@ async def connect(body: TelegramConnectIn, user: User = Depends(current_user),
         u.tg_bot_token_enc = encrypt(token)
         u.tg_bot_username = str(bot.get("username") or "")[:64] or None
         u.tg_chat_id = u.tg_chat_name = None
-        await _bind_chat(u, token)
+        await telegram_chats.forget(s, u.id)
+        await telegram_chats.sync(s, u)
     except telegram.TelegramError as e:
         raise HTTPException(400, str(e)) from e
     await s.commit()
+    _listen(u)
     return _out(u)
 
 
@@ -101,17 +116,56 @@ async def check(user: User = Depends(current_user), s: AsyncSession = Depends(ge
     if not u.tg_bot_token_enc:
         raise HTTPException(409, "Бот не подключён")
     try:
-        await _bind_chat(u, decrypt(u.tg_bot_token_enc))
+        await telegram_chats.sync(s, u)
     except telegram.TelegramError as e:
         raise HTTPException(400, str(e)) from e
     await s.commit()
+    _listen(u)
     return _out(u)
+
+
+@router.get("/chats", response_model=list[TelegramChatOut])
+async def chats(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    """Where the bot can send: the private chat first, then the groups and channels the user added it to."""
+    u = await _me(s, user)
+    try:
+        await telegram_chats.sync(s, u)
+        await s.commit()
+    except telegram.TelegramError as e:  # the list as it was
+        log.info("telegram: chats not synced: %s", e)
+    _listen(u)
+    return await _chats_out(s, u)
+
+
+@router.post("/chats/refresh", response_model=list[TelegramChatOut])
+async def refresh_chats(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    """«Обновить»: names and pictures again; a chat the bot was removed from leaves the list."""
+    u = await _me(s, user)
+    if not u.tg_bot_token_enc:
+        raise HTTPException(409, "Бот не подключён")
+    try:
+        await telegram_chats.sync(s, u)
+        await telegram_chats.refresh(s, u)
+    except telegram.TelegramError as e:
+        raise HTTPException(502, str(e)) from e
+    await s.commit()
+    _listen(u)
+    return await _chats_out(s, u)
+
+
+@router.get("/chats/{chat}/photo")
+async def chat_photo(chat: int, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    row = await s.get(TgChat, chat)
+    if row is None or row.user_id != user.id or not row.photo:
+        raise HTTPException(404, "У чата нет картинки")
+    return Response(row.photo, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.delete("", response_model=TelegramOut)
 async def disconnect(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     u = await _me(s, user)
     u.tg_bot_token_enc = u.tg_bot_username = u.tg_chat_id = u.tg_chat_name = None
+    await telegram_chats.forget(s, u.id)
     await s.commit()
     return _out(u)
 
@@ -131,6 +185,12 @@ async def send(body: TelegramSendIn, user: User = Depends(current_user),
     u = await _me(s, user)
     if not (u.tg_bot_token_enc and u.tg_chat_id):
         raise HTTPException(409, "Сначала подключите своего бота Telegram")
+    target = u.tg_chat_id
+    if body.chat is not None:
+        row = await s.get(TgChat, body.chat)
+        if row is None or row.user_id != u.id:
+            raise HTTPException(404, "Этого чата больше нет в списке бота — обновите список")
+        target = row.chat_id
     track = await lyrics_service.track_of(s, nd_song_id=body.nd_song_id, ref=body.ref)
     if track is None:
         raise HTTPException(404, "Этого трека нет в библиотеке — сначала скачайте его")
@@ -157,7 +217,7 @@ async def send(body: TelegramSendIn, user: User = Depends(current_user),
             log.info("telegram: no lyrics of %s: %r", track.path, e)
     name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', " ", f"{track.artist} - {track.title}").strip()[:120] or "track"
     try:
-        await telegram.send_audio(decrypt(u.tg_bot_token_enc), u.tg_chat_id, path, filename=f"{name}{path.suffix}",
+        await telegram.send_audio(decrypt(u.tg_bot_token_enc), target, path, filename=f"{name}{path.suffix}",
                                   title=track.title, performer=track.artist, duration_s=track.duration_s, cover=cover,
                                   lyrics=text)
     except telegram.TelegramError as e:

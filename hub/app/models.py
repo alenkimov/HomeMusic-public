@@ -5,7 +5,20 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -661,6 +674,23 @@ class TrackLink(Base):
     service: Mapped[str] = mapped_column(String(16), primary_key=True)  # spotify/yandex/ytm
     external_id: Mapped[str] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class TgChat(Base):
+    """A chat the user's Telegram bot can send to (app/telegram_chats.py): the private one, a group, a channel."""
+
+    __tablename__ = "tg_chats"
+    __table_args__ = (UniqueConstraint("user_id", "chat_id", name="uq_tg_chats_user_chat"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    chat_id: Mapped[str] = mapped_column(String(32))  # Telegram's id
+    kind: Mapped[str] = mapped_column(String(16))  # private/group/supergroup/channel
+    title: Mapped[str] = mapped_column(String(256))
+    photo: Mapped[bytes | None] = mapped_column(LargeBinary)  # the chat's small picture (a JPEG)
+    photo_key: Mapped[str | None] = mapped_column(String(64))  # Telegram's id of that picture: changes with it
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class AppSetting(Base):

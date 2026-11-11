@@ -6,7 +6,8 @@ Hub finds that chat in the bot's updates.
 
 The Hub has no bot of its own and many users' bots, so there is no long-lived `Bot`: one is made for a call
 (`bot_of`) and its session is closed after it. Receiving messages (a search from Telegram, group chats) will need a
-`Dispatcher` polling each connected bot; until then nothing polls, which is why `find_chat` may read `getUpdates`.
+long poll of each connected bot: that is `app/telegram_chats.py`, which keeps the list of the chats a bot can send
+to (the private one, groups, channels).
 """
 
 from __future__ import annotations
@@ -83,7 +84,8 @@ def _explain(e: Exception) -> TelegramError:
     if isinstance(e, TelegramUnauthorizedError | TelegramNotFound):
         return TelegramError("Telegram не принял ключ бота — проверьте его или получите новый у @BotFather")
     if isinstance(e, TelegramForbiddenError):
-        return TelegramError("Бот не может написать в этот чат — откройте бота и нажмите Start")
+        return TelegramError("Бот не может написать в этот чат: в личном чате нажмите Start, "
+                             "в группе или канале проверьте, что бот там есть и ему можно писать")
     if isinstance(e, TelegramConflictError):
         return TelegramError("У бота включён webhook или его опрашивает другая программа — нужен отдельный бот")
     if isinstance(e, TelegramEntityTooLarge):
@@ -118,21 +120,10 @@ async def get_me(token: str) -> dict[str, Any]:
     return {"id": me.id, "username": me.username, "first_name": me.first_name}
 
 
-def _chat_name(chat: Any) -> str:
+def chat_name(chat: Any) -> str:
     name = " ".join(x for x in (getattr(chat, "first_name", None), getattr(chat, "last_name", None)) if x).strip()
     user = f"@{chat.username}" if getattr(chat, "username", None) else ""
     return " ".join(x for x in (name, user) if x) or str(chat.id)
-
-
-async def find_chat(token: str) -> tuple[str, str] | None:
-    """The private chat of whoever wrote to the bot last (id, name); None — nobody pressed Start yet."""
-    async with bot_of(token) as bot:
-        updates = await bot.get_updates(limit=100, timeout=0, allowed_updates=["message"])
-    for u in reversed(updates or []):
-        chat = u.message.chat if u.message else None
-        if chat is not None and chat.type == "private":
-            return str(chat.id), _chat_name(chat)
-    return None
 
 
 def thumbnail(cover: bytes | None) -> bytes | None:
