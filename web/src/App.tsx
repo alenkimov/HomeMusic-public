@@ -2,10 +2,13 @@ import { setListeningAccount } from './lib/plays';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ApiError, UNAUTHORIZED_EVENT, api, errorMessage, invalidateCache } from './api/client';
 import type { MeOut } from './api/types';
+import { DesktopPlayer } from './components/DesktopPlayer';
 import { MiniPlayer, PlayerSpacer } from './components/MiniPlayer';
+import { Sidebar } from './components/Sidebar';
 import { Overlays } from './components/Overlays';
 import { TabBar, type Tab } from './components/TabBar';
 import { ErrorState, Spinner, cx } from './components/ui';
+import { useDesktop } from './lib/desktop';
 import { STANDALONE } from './lib/embedded';
 import { hubEvents } from './lib/events';
 import { restoreListening, stopListening } from './lib/listen';
@@ -114,6 +117,8 @@ export function App() {
   const [me, setMe] = useState<MeOut | null | undefined>(undefined);
   const [bootError, setBootError] = useState<string>();
   const route = useRoute();
+  // a computer: the sections and the playlists in a panel on the left, the player in a bar along the bottom
+  const desktop = useDesktop();
 
   const boot = useCallback(() => {
     setBootError(undefined);
@@ -206,16 +211,24 @@ export function App() {
   const wide = route.path.startsWith('/admin/');
   return (
     <SessionContext.Provider value={{ me, logout }}>
-      <main className={cx('mx-auto min-h-dvh', wide ? 'max-w-6xl' : 'max-w-(--app-w)', !fullPlayer && 'pb-[calc(var(--tabbar-h)+16px+env(safe-area-inset-bottom))]')}>
-        {resolved?.node}
-        {!fullPlayer && <PlayerSpacer />}
-      </main>
-      {!fullPlayer && (
-        <>
-          <MiniPlayer />
-          <TabBar active={resolved?.tab ?? null} last={lastByTab} />
-        </>
-      )}
+      <div className={cx(!fullPlayer && 'pl-(--side-w)')}>
+        <main className={cx('mx-auto min-h-dvh', wide ? 'max-w-6xl' : 'max-w-(--app-w)', !fullPlayer && 'pb-[calc(var(--tabbar-h)+16px+env(safe-area-inset-bottom))]')}>
+          {resolved?.node}
+          {!fullPlayer && <PlayerSpacer />}
+        </main>
+      </div>
+      {!fullPlayer &&
+        (desktop ? (
+          <>
+            <Sidebar active={resolved?.tab ?? null} last={lastByTab} />
+            <DesktopPlayer />
+          </>
+        ) : (
+          <>
+            <MiniPlayer />
+            <TabBar active={resolved?.tab ?? null} last={lastByTab} />
+          </>
+        ))}
       <Overlays />
     </SessionContext.Provider>
   );

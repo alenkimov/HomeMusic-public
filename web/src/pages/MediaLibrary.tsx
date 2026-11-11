@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { NdAlbumOut, NdArtistOut, NdSongOut } from '../api/types';
 import { playAll, TrackRow, TrackTableHeader } from '../components/catalog';
-import { Icon } from '../components/Icon';
+import { Icon, type IconName } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
 import { Button, Cover, Empty, ErrorState, IconButton, PageHeader, SectionTitle, SkeletonRows, Spinner, cx } from '../components/ui';
 import { fmtLength, tracksWord } from '../lib/format';
+import { useDesktop } from '../lib/desktop';
 import { useHubEvent } from '../lib/events';
 import { useAsync, useRememberScrollX } from '../lib/hooks';
 import { Link, enc, navigate } from '../lib/router';
@@ -79,7 +80,28 @@ export function NdArtistBubble({ artist, radio = false }: { artist: NdArtistOut;
 /** «Слушать» and «Перемешать» for a whole list. */
 export function ListActions({ tracks, context, children }: { tracks: readonly NdSongOut[]; context?: string; children?: ReactNode }) {
   const smart = useSmartForPage() && (context === 'playlist' || context === 'liked'); // «Перемешать» is the smart shuffle
+  const desktop = useDesktop();
   if (!tracks.length && !children) return null;
+  if (desktop)
+    return (
+      <div className="flex items-center gap-3 px-6 pb-4">
+        {tracks.length > 0 && (
+          <>
+            <button
+              type="button"
+              aria-label="Слушать"
+              title="Слушать"
+              onClick={() => playAll(tracks, { shuffle: false, context })}
+              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition hover:scale-105 active:scale-95"
+            >
+              <Icon name="play" size={26} filled className="translate-x-0.5" />
+            </button>
+            <IconButton icon={smart ? 'shuffleSmart' : 'shuffle'} size={28} label="Перемешать" onClick={() => playAll(tracks, { shuffle: true, context })} className="text-muted hover:text-fg" />
+          </>
+        )}
+        {children}
+      </div>
+    );
   return (
     <div className="flex gap-2 px-4 pb-3 pt-1">
       {tracks.length > 0 && (
@@ -110,7 +132,51 @@ function SongList({ tracks, extra }: { tracks: readonly NdSongOut[]; extra?: (t:
   );
 }
 
-function Hero({ cover, round, title, sub, right }: { cover?: string | null; round?: boolean; title: string; sub?: ReactNode; right?: ReactNode }) {
+/** The ⋯ of a list's actions on a computer: what a phone keeps as icons in the page header. */
+function MoreMenu({ items }: { items: Array<{ icon: IconName; label: string; danger?: boolean; onClick: () => void }> }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('click', close);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('click', close);
+      document.removeEventListener('keydown', key);
+    };
+  }, [open]);
+  return (
+    <div className="relative">
+      <IconButton icon="more" size={28} label="Ещё" aria-expanded={open} onClick={() => setOpen((v) => !v)} className="text-muted hover:text-fg" />
+      {open && (
+        <div role="menu" className="absolute left-0 top-12 z-20 w-60 rounded-xl border border-line bg-raised p-1 shadow-lg">
+          {items.map((x) => (
+            <button key={x.label} type="button" role="menuitem" onClick={x.onClick} className={cx('flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-fg/5', x.danger ? 'text-danger' : 'text-fg')}>
+              <Icon name={x.icon} size={18} />
+              {x.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Hero({ cover, round, title, sub, right, kicker }: { cover?: string | null; round?: boolean; title: string; sub?: ReactNode; right?: ReactNode; kicker?: string }) {
+  const desktop = useDesktop();
+  if (desktop)
+    return (
+      <div className="flex items-end gap-6 px-6 pb-5 pt-3">
+        <Cover src={cover} round={round} icon={round ? 'user' : 'disc'} alt={title} className="aspect-square w-48 shrink-0 shadow-2xl" />
+        <div className="min-w-0 flex-1">
+          {kicker && <div className="text-sm text-muted">{kicker}</div>}
+          <h2 className="line-clamp-2 break-words text-6xl font-black leading-[1.05] tracking-tight">{title}</h2>
+          {sub && <div className="mt-3 text-sm text-muted">{sub}</div>}
+        </div>
+        {right}
+      </div>
+    );
   return (
     <div className="flex flex-col items-center gap-3 px-4 pb-4 pt-2 text-center">
       <Cover src={cover} round={round} icon={round ? 'user' : 'disc'} alt={title} className="aspect-square w-52 shadow-2xl" />
@@ -194,6 +260,7 @@ export function ArtistRow({ artists, rowKey, radio }: { artists: NdArtistOut[]; 
 }
 
 export function PlaylistPage({ id }: { id: string }) {
+  const desktop = useDesktop();
   const res = useAsync((s) => api.playlist(id, s), [id]);
   const p = res.data;
   useSmartPage(`playlist:${id}`, p?.name ?? null);
@@ -211,13 +278,16 @@ export function PlaylistPage({ id }: { id: string }) {
   if (!p) return (<><PageHeader title="Плейлист" back="/playlists" /><ErrorState text={res.error ?? 'Плейлист не найден'} onRetry={() => res.reload()} /></>);
   return (
     <div>
-      <PageHeader title={p.name} back="/playlists" right={<IconButton icon="trash" label="Удалить плейлист" onClick={drop} />} />
+      <PageHeader title={desktop ? '' : p.name} back="/playlists" right={desktop ? undefined : <IconButton icon="trash" label="Удалить плейлист" onClick={drop} />} />
       <Hero
+        kicker="Плейлист"
         cover={p.tracks[0]?.cover_url}
         title={p.name}
         sub={[tracksWord(p.song_count), p.duration_s ? fmtLength(p.duration_s) : null].filter(Boolean).join(' · ')}
       />
-      <ListActions tracks={p.tracks} context="playlist" />
+      <ListActions tracks={p.tracks} context="playlist">
+        {desktop && <MoreMenu items={[{ icon: 'trash', label: 'Удалить плейлист', danger: true, onClick: () => void drop() }]} />}
+      </ListActions>
       {p.tracks.length ? (
         <SongList tracks={p.tracks} extra={(t, i) => [{ icon: 'x', label: 'Убрать из плейлиста', onClick: () => void remove(i, t) }]} />
       ) : (

@@ -201,9 +201,12 @@
  * test as `lib/desktop.ts`) the pages, the tab bar and the mini player use the room of a wide window. */
 :root {
   --app-w: 42rem;
+  --side-w: 0px; /* the left panel of a computer (`Sidebar`); a phone has none */
 }
 @media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
   html:not(.hm-embedded) {
     --app-w: 72rem;
+    --side-w: 16rem;
+    --tabbar-h: 84px; /* a computer has the player bar (`DesktopPlayer`) where a phone has the tab bar */
   }
 }
