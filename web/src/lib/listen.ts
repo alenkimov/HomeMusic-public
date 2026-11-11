@@ -59,6 +59,8 @@ export interface ListenState {
   index: number;
   /** where the list was started from (`routeContext()`, `wave:<id>`) */
   context: string;
+  /** the page the list was started on (`/playlist/<id>`): the player says what it plays and links there */
+  page: string;
   phase: ListenPhase;
   info: ListenOut | null;
   error: string | null;
@@ -106,6 +108,7 @@ let state: ListenState = {
   queue: [],
   index: 0,
   context: 'other',
+  page: '',
   phase: 'paused',
   info: null,
   error: null,
@@ -262,6 +265,7 @@ window.addEventListener('pageshow', (event) => {
 });
 
 /** The screen the playing list was started from. */
+let listPage = '';
 let listContext = 'other';
 /** The launch of the playing list: its tracks' events carry it (INSIGHTS.md 6.5). */
 let listLaunch: Launch = newLaunch(listContext);
@@ -369,7 +373,7 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
   const ctl = new AbortController();
   resolving = ctl;
   pendingSeek = position;
-  set({ track, queue, index, context: listContext, phase: autoplay ? 'resolving' : 'paused', info: null, error: null, position, duration: track.duration_s ?? 0 });
+  set({ track, queue, index, context: listContext, page: listPage, phase: autoplay ? 'resolving' : 'paused', info: null, error: null, position, duration: track.duration_s ?? 0 });
   a.src = listenStreamUrl(track.ref);
   if (autoplay) play(a);
   else a.load();
@@ -490,8 +494,9 @@ export function listen(track: ListenTrack, queue?: readonly ListenTrack[], conte
   startList(track, queue, context, origin);
 }
 
-function startList(track: ListenTrack, queue?: readonly ListenTrack[], context?: string, origin?: LaunchOrigin) {
+function startList(track: ListenTrack, queue?: readonly ListenTrack[], context?: string, origin?: LaunchOrigin, page?: string) {
   listContext = context ?? routeContext();
+  listPage = page ?? location.hash.replace(/^#/, '').split('?')[0];
   listLaunch = newLaunch(listContext, origin);
   const list = queue?.some((t) => t.ref === track.ref) ? queue : [track];
   const at = list.findIndex((t) => t.ref === track.ref);
@@ -515,11 +520,11 @@ function startList(track: ListenTrack, queue?: readonly ListenTrack[], context?:
 }
 
 /** «Слушать» of a whole list: from its first track (with shuffle on, a random one). `shuffle` sets the mode. */
-export function listenAll(list: readonly ListenTrack[], opts: { shuffle?: boolean; context?: string; origin?: LaunchOrigin } = {}) {
+export function listenAll(list: readonly ListenTrack[], opts: { shuffle?: boolean; context?: string; origin?: LaunchOrigin; page?: string } = {}) {
   if (!list.length) return;
   if (opts.shuffle !== undefined) setModes({ shuffle: opts.shuffle });
   // starts over even when the first track is the one playing (listen() would pause it)
-  startList(state.shuffle ? list[Math.floor(Math.random() * list.length)] : list[0], list, opts.context, opts.origin);
+  startList(state.shuffle ? list[Math.floor(Math.random() * list.length)] : list[0], list, opts.context, opts.origin, opts.page);
 }
 
 // --- the queue: shuffle, repeat, «Играть следующим», «В очередь» -----------------------------------------
@@ -536,6 +541,7 @@ interface SavedSession {
   queue: ListenTrack[];
   index: number;
   context: string;
+  page?: string;
   /** the list's launch: a reload goes on with the same one */
   launch?: Launch;
   position: number;
@@ -554,7 +560,7 @@ function persistListening(force = false) {
     if (!state.track) localStorage.removeItem(key);
     else {
       const saved: SavedSession = {
-        version: 1, queue: [...state.queue], index: state.index, context: state.context, launch: listLaunch,
+        version: 1, queue: [...state.queue], index: state.index, context: state.context, page: state.page, launch: listLaunch,
         position: state.position, autoplay: listenBusy(), shuffle: state.shuffle, smart: state.smart, repeat: state.repeat,
         originalOrder: unshuffled?.map((t) => state.queue.indexOf(t)).filter((i) => i >= 0) ?? null,
       };
@@ -579,6 +585,7 @@ export function restoreListening(account: number | null) {
     unshuffled = Array.isArray(saved.originalOrder) && saved.originalOrder.every((i) => Number.isInteger(i) && i >= 0 && i < saved.queue.length)
       ? saved.originalOrder.map((i) => saved.queue[i]) : null;
     listContext = saved.context;
+    listPage = typeof saved.page === 'string' ? saved.page : '';
     listLaunch = saved.launch && typeof saved.launch.id === 'string' && saved.launch.id
       ? { id: saved.launch.id, origin: typeof saved.launch.origin === 'string' ? saved.launch.origin : null }
       : newLaunch(saved.context);

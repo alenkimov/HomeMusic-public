@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { api } from '../api/client';
 import { Icon } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
 import { Lyrics } from '../components/Lyrics';
@@ -40,6 +41,7 @@ export function PlayerPage() {
   const queue = useListen((s) => s.queue);
   const index = useListen((s) => s.index);
   const context = useListen((s) => s.context);
+  const page = useListen((s) => s.page);
   const dl = useListen((s) => (s.track ? s.downloads.get(s.track.ref) : undefined));
   const canNext = useListen((s) => hasNext(s) || (s.repeat === 'all' && !s.context.startsWith('wave:')));
   const canPrev = useListen(hasPrev);
@@ -76,7 +78,8 @@ export function PlayerPage() {
   const waiting = phase === 'resolving' || phase === 'loading';
   const playing = phase === 'playing' || waiting;
   const owned = info?.kind === 'library';
-  const source = info?.kind === 'full' ? providerLabel(info.provider) : owned ? 'из библиотеки' : info?.kind === 'preview' ? 'превью 30 сек' : null;
+  // where the sound comes from is said only when it is not the library's own file (the usual case needs no words)
+  const source = info?.kind === 'full' ? `${providerLabel(info.provider)} · не из библиотеки` : info?.kind === 'preview' ? 'превью 30 сек' : null;
   const shownPos = scrub ?? Math.min(position, duration || position);
   const pct = duration ? Math.min(100, (shownPos / duration) * 100) : 0;
   const commit = () => {
@@ -101,9 +104,8 @@ export function PlayerPage() {
       )}
       <div className="flex min-h-14 items-center gap-1 px-2">
         <IconButton icon="down" label="Свернуть" onClick={() => goBack('/home')} />
-        <div className="min-w-0 flex-1 text-center text-xs uppercase tracking-wide text-muted">{contextLabel(context)}</div>
+        <PlayingFrom context={context} page={page} />
         <IconButton icon="lyrics" label={lyrics ? 'Скрыть текст' : 'Показать текст'} aria-pressed={lyrics} onClick={toggleLyrics} className={lyrics ? '!text-accent' : 'text-muted'} />
-        <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id }} inPlayer />
       </div>
 
       {/* with the text on: a wide screen has it to the right of the cover; where both don't fit, the text takes the
@@ -145,13 +147,15 @@ export function PlayerPage() {
           </div>
         </div>
         <LikeButton songId={info?.nd_song_id} refId={track.ref} title={track.title} data={{ ...track }} size={26} />
-        {owned || dl ? (
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center text-accent" title={owned || dl === 'done' ? 'Есть в библиотеке' : 'В загрузках'}>
-            <Icon name="check" size={22} stroke={2.6} />
+        {/* a track that is not in the library yet can be downloaded into it; one that is needs no mark */}
+        {owned || dl === 'done' ? null : dl ? (
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center text-info" title="Скачивается в библиотеку">
+            <Spinner size={18} />
           </span>
         ) : (
-          <IconButton icon="download" label="Скачать" onClick={download} busy={busy} />
+          <IconButton icon="download" label="Скачать в библиотеку" onClick={download} busy={busy} />
         )}
+        <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id }} inPlayer />
       </div>
 
       {track.rec && (
@@ -227,6 +231,33 @@ export function PlayerPage() {
       </div>
 
       <Queue queue={queue} index={index} onWave={onWave} />
+    </div>
+  );
+}
+
+/** The head of the player: what is playing — «Играет из плейлиста · JAPAN», a link to that list. */
+function PlayingFrom({ context, page }: { context: string; page: string }) {
+  const id = context === 'playlist' ? /^\/playlist\/([^/]+)$/.exec(page)?.[1] : undefined;
+  const [name, setName] = useState<string | null>(null);
+  useEffect(() => {
+    setName(null);
+    if (!id) return;
+    let alive = true;
+    api.playlists()
+      .then((all) => alive && setName(all.find((p) => p.id === decodeURIComponent(id))?.name ?? null))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [id]);
+  const title = context === 'playlist' ? name : context === 'liked' ? 'Понравившиеся' : null;
+  const to = context === 'liked' ? '/liked' : page;
+  if (!title)
+    return <div className="min-w-0 flex-1 text-center text-xs uppercase tracking-wide text-muted">{contextLabel(context)}</div>;
+  return (
+    <div className="min-w-0 flex-1 text-center leading-tight">
+      <div className="text-[11px] uppercase tracking-wide text-muted">{context === 'playlist' ? 'Играет из плейлиста' : 'Играет из'}</div>
+      <Link to={to} className="block truncate text-sm font-semibold hover:underline">{title}</Link>
     </div>
   );
 }

@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import { seek, useListen } from '../lib/listen';
 import { KIND_LABEL, activeLine, type LyricsCandidate, type LyricsLine, type LyricsOut } from '../lib/lyrics';
-import { attempt, toast } from '../lib/ui';
+import { attempt, confirmDialog, toast } from '../lib/ui';
 import { Button, IconButton, Loading, Sheet, Spinner, cx } from './ui';
 
 const STEP_MS = 250;
@@ -11,7 +11,9 @@ const HOLD_MS = 4000; // after the user scrolls the text themselves it stays whe
 /** The lyrics of the playing track in the full player: the line that is sung is lit and kept in the middle, a
  * click on a line seeks to it; where the source times the words they light up one by one. The text comes from the
  * Hub's database (found on the first open, then at once). Under it: where it is from, a shift of the timings for
- * a text that runs early or late, another source's text, «this track has no lyrics». */
+ * a text that runs early or late, and «Другой вариант» — another source's text or, there too, «this track has no
+ * lyrics» (out of the way: it is not «hide»; the mic button of the player hides). A text switched off comes back
+ * with «Вернуть текст». */
 export function Lyrics({ refId, songId }: { refId: string; songId?: string | null }) {
   const [data, setData] = useState<LyricsOut | null>(null);
   const [loading, setLoading] = useState(true);
@@ -77,10 +79,16 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
     const id = data.track_id;
     saver.current = window.setTimeout(() => void api.lyricsOffset(id, next).catch(() => undefined), 600);
   };
-  const none = async () => {
+  const [restoring, setRestoring] = useState(false);
+  const restore = async () => {
     if (!data?.track_id) return;
-    const r = await attempt(() => api.lyricsChoose(data.track_id as number, null), 'Запомнил: у этого трека нет текста');
-    if (r) setData(r);
+    setRestoring(true);
+    const r = await attempt(() => api.lyricsReset(data.track_id as number));
+    setRestoring(false);
+    if (r) {
+      setData(r);
+      if (r.kind === 'none') toast('Источники сейчас не дали текст — попробуйте позже', 'info');
+    }
   };
 
   if (loading)
@@ -108,18 +116,17 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
       <button type="button" onClick={() => setPicking(true)} className="rounded-full px-3 py-1.5 hover:bg-fg/10 hover:text-fg">
         Другой вариант
       </button>
-      {data.kind !== 'none' && (
-        <button type="button" onClick={none} className="rounded-full px-3 py-1.5 hover:bg-fg/10 hover:text-fg">
-          Убрать текст
-        </button>
-      )}
     </div>
   );
 
   return (
     <div className="flex h-full flex-col">
       {data.kind === 'none' ? (
-        <Blank text={data.pinned ? 'Для этого трека текст отключён.' : 'Текст не нашёлся ни в одном источнике.'} />
+        <Blank text={data.pinned ? 'Вы отметили, что у этого трека нет текста.' : 'Текст не нашёлся ни в одном источнике.'}>
+          <Button small busy={restoring} onClick={() => void restore()}>
+            {data.pinned ? 'Вернуть текст' : 'Поискать ещё раз'}
+          </Button>
+        </Blank>
       ) : (
         <div
           ref={box}
@@ -166,8 +173,13 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
   );
 }
 
-function Blank({ text }: { text: string }) {
-  return <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-muted">{text}</div>;
+function Blank({ text, children }: { text: string; children?: ReactNode }) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-sm text-muted">
+      {text}
+      {children}
+    </div>
+  );
 }
 
 /** The sung line by its words: what has been sung is lit, the rest waits. */
@@ -187,20 +199,33 @@ function Words({ line, ms }: { line: LyricsLine; ms: number }) {
 function Variants({ trackId, current, onClose, onPicked }: { trackId: number; current?: string | null; onClose: () => void; onPicked: (r: LyricsOut) => void }) {
   const [list, setList] = useState<LyricsCandidate[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [round, setRound] = useState(0);
+  // asked once per opening (and per «ещё раз»): the player redraws the text many times a second, and `onClose` is a
+  // new function each time — it must not start the search over
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
     let alive = true;
+    setList(null);
     api.lyricsCandidates(trackId)
       .then((r) => alive && setList(r))
       .catch(() => {
         if (alive) {
           toast('Не удалось опросить источники', 'error');
-          onClose();
+          close.current();
         }
       });
     return () => {
       alive = false;
     };
-  }, [trackId, onClose]);
+  }, [trackId, round]);
+  const none = async () => {
+    if (!(await confirmDialog({ title: 'У этого трека нет текста?', body: 'Текст перестанет показываться для этого трека — у всех, кто его слушает. Вернуть можно будет кнопкой «Вернуть текст».', okLabel: 'Не показывать текст', danger: true }))) return;
+    setBusy('none');
+    const r = await attempt(() => api.lyricsChoose(trackId, null));
+    setBusy(null);
+    if (r) onPicked(r);
+  };
   const pick = async (source: string) => {
     setBusy(source);
     const r = await attempt(() => api.lyricsChoose(trackId, source));
@@ -212,7 +237,12 @@ function Variants({ trackId, current, onClose, onPicked }: { trackId: number; cu
       {!list ? (
         <Loading text="Опрашиваю источники…" />
       ) : !list.length ? (
-        <p className="py-6 text-center text-sm text-muted">Ни в одном источнике текста нет.</p>
+        <div className="space-y-3 py-6 text-center text-sm text-muted">
+          <p>Источники не ответили или текста в них нет.</p>
+          <Button small onClick={() => setRound((n) => n + 1)}>
+            Спросить ещё раз
+          </Button>
+        </div>
       ) : (
         <ul className="space-y-2">
           {list.map((c) => (
@@ -233,6 +263,11 @@ function Variants({ trackId, current, onClose, onPicked }: { trackId: number; cu
             </li>
           ))}
         </ul>
+      )}
+      {list && current && (
+        <button type="button" disabled={!!busy} onClick={() => void none()} className="mt-4 block w-full rounded-lg py-2 text-center text-xs text-dim hover:bg-fg/5 hover:text-muted">
+          Это не тот текст, а другого нет — не показывать текст для этого трека
+        </button>
       )}
     </Sheet>
   );

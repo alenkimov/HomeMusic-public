@@ -384,6 +384,7 @@ export const api = {
   lyricsSearch: (q: string) =>
     request<{ track_id: number; nd_song_id?: string | null; ref?: string | null; line: string }[]>('GET', withQuery('/api/lyrics/search', { q })),
   lyricsCandidates: (track_id: number) => request<LyricsCandidate[]>('GET', withQuery('/api/lyrics/candidates', { track_id })),
+  lyricsReset: (track_id: number) => request<LyricsOut>('POST', '/api/lyrics/reset', { json: { track_id } }),
   lyricsChoose: (track_id: number, source: string | null) => request<LyricsOut>('POST', '/api/lyrics/choose', { json: { track_id, source } }),
   lyricsOffset: (track_id: number, offset_ms: number) => request<LyricsOut>('POST', '/api/lyrics/offset', { json: { track_id, offset_ms } }),
   lyricsSettings: (signal?: AbortSignal) => request<LyricsSettings>('GET', '/api/lyrics/settings', { signal }),

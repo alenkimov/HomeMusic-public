@@ -141,6 +141,8 @@ async def test_not_found_is_remembered_and_a_choice_is_kept(env):
     assert (await c.post("/api/lyrics/choose", json={"track_id": track_id, "source": "netease"})).status_code == 404
     r = (await c.post("/api/lyrics/choose", json={"track_id": track_id, "source": None})).json()
     assert (r["kind"], r["pinned"]) == ("none", True)  # «no lyrics for this track» stays
+    r = (await c.post("/api/lyrics/reset", json={"track_id": track_id})).json()
+    assert (r["kind"], r["source"], r["pinned"]) == ("synced", "lrclib", False)  # «Вернуть текст»: found again
 
 
 async def test_settings_order_and_the_background_scan(env):

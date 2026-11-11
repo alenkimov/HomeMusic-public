@@ -125,6 +125,24 @@ async def choose(body: ChooseIn, user: User = Depends(current_user),
     return _out(row)
 
 
+class ResetIn(BaseModel):
+    track_id: int
+
+
+@router.post("/reset", response_model=LyricsOut)
+async def reset(body: ResetIn, user: User = Depends(current_user),
+                s: AsyncSession = Depends(get_session, scope="function")):
+    """Forget the choice made by hand («no lyrics for this track», another source's text) and look for the text
+    again, as for a new track."""
+    track = await _own(s, body.track_id)
+    row = await s.get(Lyrics, track.id)
+    if row is not None:
+        row.pinned = False
+    row = await service.ensure(s, track, force=True)
+    await s.commit()
+    return _out(row)
+
+
 @router.post("/offset", response_model=LyricsOut)
 async def offset(body: OffsetIn, user: User = Depends(current_user),
                  s: AsyncSession = Depends(get_session, scope="function")):

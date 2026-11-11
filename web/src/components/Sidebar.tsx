@@ -63,7 +63,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
             </span>
             <span className="truncate text-fg">Понравившиеся</span>
           </Link>
-          <PlayOver name="Понравившиеся" context="liked" load={async () => (await api.ndLiked()).songs} />
+          <PlayOver name="Понравившиеся" context="liked" page="/liked" load={async () => (await api.ndLiked()).songs} />
         </div>
         {(lists.data ?? []).map((p) => {
           const to = `/playlist/${enc(p.id)}`;
@@ -78,7 +78,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
                   <span className="block truncate text-xs text-dim">{tracksWord(p.song_count)}</span>
                 </span>
               </Link>
-              {p.song_count > 0 && <PlayOver name={p.name} context="playlist" load={async () => (await api.playlist(p.id)).tracks} />}
+              {p.song_count > 0 && <PlayOver name={p.name} context="playlist" page={to} load={async () => (await api.playlist(p.id)).tracks} />}
             </div>
           );
         })}
@@ -89,14 +89,14 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
 }
 
 /** ▶ over a list's picture while the pointer is on its row: plays the list from the top without opening it. */
-function PlayOver({ name, context, load }: { name: string; context: string; load: () => Promise<readonly NdSongOut[]> }) {
+function PlayOver({ name, context, page, load }: { name: string; context: string; page: string; load: () => Promise<readonly NdSongOut[]> }) {
   const [busy, setBusy] = useState(false);
   const play = async () => {
     if (busy) return;
     setBusy(true);
     const tracks = await attempt(load);
     setBusy(false);
-    if (tracks) playAll(tracks, { shuffle: false, context });
+    if (tracks) playAll(tracks, { shuffle: false, context, page });
   };
   return (
     <button
