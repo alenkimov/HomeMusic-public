@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import { seek, useListen } from '../lib/listen';
-import { KIND_LABEL, activeLine, type LyricsCandidate, type LyricsLine, type LyricsOut } from '../lib/lyrics';
+import { KIND_LABEL, activeLine, type LyricsLine, type LyricsOut } from '../lib/lyrics';
 import { attempt, confirmDialog, toast } from '../lib/ui';
+import { Icon } from './Icon';
 import { Button, IconButton, Loading, Sheet, Spinner, cx } from './ui';
 
 const STEP_MS = 250;
@@ -195,30 +196,72 @@ function Words({ line, ms }: { line: LyricsLine; ms: number }) {
   );
 }
 
-/** «Другой вариант»: what each source has for the track. The choice is kept for it. */
+type Probe = Awaited<ReturnType<typeof api.lyricsProbe>>;
+interface Asked {
+  id: string;
+  title: string;
+  /** when the source was asked (a running clock is shown until it answers) */
+  since: number;
+  answer: Probe | null;
+}
+
+const SOURCE_HINT: Record<string, string> = { file: 'теги и .lrc рядом с файлом', lrclib: 'lrclib.net', netease: 'music.163.com', ovh: 'api.lyrics.ovh' };
+const secs = (n: number) => `${n.toFixed(1).replace('.', ',')} с`;
+
+/** «Другой вариант»: every source is asked at once, each on its own line — its clock runs while it looks, then what
+ * it has (to take at once, without waiting for the slow ones), «no text» or «did not answer» with «Ещё раз». The
+ * choice is kept for the track. The last line, apart: «this track has no lyrics». */
 function Variants({ trackId, current, onClose, onPicked }: { trackId: number; current?: string | null; onClose: () => void; onPicked: (r: LyricsOut) => void }) {
-  const [list, setList] = useState<LyricsCandidate[] | null>(null);
+  const [rows, setRows] = useState<Asked[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [round, setRound] = useState(0);
-  // asked once per opening (and per «ещё раз»): the player redraws the text many times a second, and `onClose` is a
-  // new function each time — it must not start the search over
+  const [, setTick] = useState(0);
+  const alive = useRef(true);
+  // the player redraws the text many times a second, and `onClose` is a new function each time: the sources are
+  // asked once per opening, not per redraw
   const close = useRef(onClose);
   close.current = onClose;
+
+  const ask = (id: string) => {
+    setRows((list) => list?.map((r) => (r.id === id ? { ...r, since: performance.now(), answer: null } : r)) ?? list);
+    const put = (answer: Probe) => alive.current && setRows((list) => list?.map((r) => (r.id === id ? { ...r, answer } : r)) ?? list);
+    const started = performance.now();
+    api.lyricsProbe(trackId, id)
+      .then(put)
+      .catch(() => put({ source: id, source_title: '', status: 'error', seconds: (performance.now() - started) / 1000 }));
+  };
   useEffect(() => {
-    let alive = true;
-    setList(null);
-    api.lyricsCandidates(trackId)
-      .then((r) => alive && setList(r))
+    alive.current = true;
+    api.lyricsSources()
+      .then((list) => {
+        if (!alive.current) return;
+        setRows(list.map((x) => ({ id: x.id, title: x.title, since: performance.now(), answer: null })));
+        list.forEach((x) => ask(x.id));
+      })
       .catch(() => {
-        if (alive) {
-          toast('Не удалось опросить источники', 'error');
+        if (alive.current) {
+          toast('Не удалось получить список источников', 'error');
           close.current();
         }
       });
     return () => {
-      alive = false;
+      alive.current = false;
     };
-  }, [trackId, round]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackId]);
+
+  const waiting = rows?.filter((r) => !r.answer).length ?? 0;
+  useEffect(() => {
+    if (!waiting) return;
+    const t = window.setInterval(() => setTick((n) => n + 1), 100);
+    return () => window.clearInterval(t);
+  }, [waiting]);
+
+  const pick = async (source: string) => {
+    setBusy(source);
+    const r = await attempt(() => api.lyricsChoose(trackId, source));
+    setBusy(null);
+    if (r) onPicked(r);
+  };
   const none = async () => {
     if (!(await confirmDialog({ title: 'У этого трека нет текста?', body: 'Текст перестанет показываться для этого трека — у всех, кто его слушает. Вернуть можно будет кнопкой «Вернуть текст».', okLabel: 'Не показывать текст', danger: true }))) return;
     setBusy('none');
@@ -226,48 +269,67 @@ function Variants({ trackId, current, onClose, onPicked }: { trackId: number; cu
     setBusy(null);
     if (r) onPicked(r);
   };
-  const pick = async (source: string) => {
-    setBusy(source);
-    const r = await attempt(() => api.lyricsChoose(trackId, source));
-    setBusy(null);
-    if (r) onPicked(r);
-  };
+  const found = rows?.filter((r) => r.answer?.status === 'found').length ?? 0;
+
   return (
     <Sheet open onClose={onClose} title="Текст из другого источника">
-      {!list ? (
-        <Loading text="Опрашиваю источники…" />
-      ) : !list.length ? (
-        <div className="space-y-3 py-6 text-center text-sm text-muted">
-          <p>Источники не ответили или текста в них нет.</p>
-          <Button small onClick={() => setRound((n) => n + 1)}>
-            Спросить ещё раз
-          </Button>
-        </div>
+      {!rows ? (
+        <Loading />
       ) : (
-        <ul className="space-y-2">
-          {list.map((c) => (
-            <li key={c.source} className="card p-3">
-              <div className="flex items-center gap-2">
-                <div className="min-w-0 flex-1">
-                  <div className="font-semibold">
-                    {c.source_title}
-                    {c.source === current && <span className="ml-2 text-xs font-normal text-accent">сейчас</span>}
+        <div className="-mx-4 -my-3">
+          <p className="px-4 pb-1 pt-3 text-xs text-muted" aria-live="polite">
+            {waiting ? `Опрашиваю одновременно · осталось ${waiting} из ${rows.length}` : found ? `Готово: текст есть в ${found} из ${rows.length}` : 'Готово: текста нет ни в одном источнике'}
+          </p>
+          <ul>
+            {rows.map((r) => {
+              const a = r.answer;
+              return (
+                <li key={r.id} className="flex items-start gap-3 border-t border-line/60 px-4 py-3 first:border-t-0">
+                  <span className="flex h-6 w-5 shrink-0 items-center justify-center">
+                    {!a ? <Spinner size={16} /> : <Icon name={a.status === 'found' ? 'check' : a.status === 'none' ? 'minus' : 'alert'} size={18} className={a.status === 'found' ? 'text-accent' : a.status === 'none' ? 'text-dim' : 'text-warn'} />}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="text-sm font-semibold">{r.title}</span>
+                      {r.id === current && <span className="text-xs text-accent">сейчас</span>}
+                      <span className="text-xs tabular-nums text-muted">
+                        {!a
+                          ? `ищу… ${secs((performance.now() - r.since) / 1000)}`
+                          : a.status === 'found'
+                            ? `${a.kind ? KIND_LABEL[a.kind] : ''} · ${secs(a.seconds)}`
+                            : a.status === 'none'
+                              ? `текста нет · ${secs(a.seconds)}`
+                              : a.status === 'timeout'
+                                ? `не ответил за ${Math.round(a.seconds)} с`
+                                : `ошибка · ${secs(a.seconds)}`}
+                      </span>
+                    </div>
+                    {a?.status === 'found' && a.preview ? (
+                      <p className="mt-1 line-clamp-3 whitespace-pre-line text-xs text-muted">{a.preview}</p>
+                    ) : (
+                      !a && <p className="text-xs text-dim">{SOURCE_HINT[r.id] ?? ''}</p>
+                    )}
                   </div>
-                  <div className="text-xs text-muted">{KIND_LABEL[c.kind]}</div>
-                </div>
-                <Button small variant={c.source === current ? undefined : 'primary'} busy={busy === c.source} disabled={!!busy} onClick={() => void pick(c.source)}>
-                  Взять
-                </Button>
-              </div>
-              <p className="mt-2 line-clamp-4 whitespace-pre-line text-sm text-muted">{c.preview}</p>
-            </li>
-          ))}
-        </ul>
-      )}
-      {list && current && (
-        <button type="button" disabled={!!busy} onClick={() => void none()} className="mt-4 block w-full rounded-lg py-2 text-center text-xs text-dim hover:bg-fg/5 hover:text-muted">
-          Это не тот текст, а другого нет — не показывать текст для этого трека
-        </button>
+                  {a?.status === 'found' && (
+                    <Button small variant={r.id === current ? undefined : 'primary'} busy={busy === r.id} disabled={!!busy} onClick={() => void pick(r.id)}>
+                      Взять
+                    </Button>
+                  )}
+                  {(a?.status === 'timeout' || a?.status === 'error') && (
+                    <Button small disabled={!!busy} onClick={() => ask(r.id)}>
+                      Ещё раз
+                    </Button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          {current && (
+            <button type="button" disabled={!!busy} onClick={() => void none()} className="block w-full border-t border-line/60 px-4 py-3 text-center text-xs text-dim hover:bg-fg/5 hover:text-muted">
+              Это не тот текст, а другого нет — не показывать текст для этого трека
+            </button>
+          )}
+        </div>
       )}
     </Sheet>
   );

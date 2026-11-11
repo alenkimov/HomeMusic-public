@@ -136,6 +136,16 @@ async def test_not_found_is_remembered_and_a_choice_is_kept(env):
     found = (await c.get("/api/lyrics/candidates", params={"track_id": track_id})).json()
     assert [(x["source"], x["kind"], x["preview"]) for x in found] == [("lrclib", "synced", "a"), ("ovh", "plain", "b\nc")]
 
+    # «Другой вариант» asks each source on its own: what it has, or that it failed, and how long it took
+    assert [x["id"] for x in (await c.get("/api/lyrics/sources")).json()] == ["file", "lrclib", "netease", "ovh"]
+    r = (await c.get("/api/lyrics/probe", params={"track_id": track_id, "source": "ovh"})).json()
+    assert (r["status"], r["kind"], r["preview"], r["source_title"]) == ("found", "plain", "b\nc", "lyrics.ovh") and r["seconds"] >= 0
+    assert (await c.get("/api/lyrics/probe", params={"track_id": track_id, "source": "netease"})).json()["status"] == "none"
+    answers["netease"] = RuntimeError("down")
+    assert (await c.get("/api/lyrics/probe", params={"track_id": track_id, "source": "netease"})).json()["status"] == "error"
+    answers.pop("netease")
+    assert (await c.get("/api/lyrics/probe", params={"track_id": track_id, "source": "bogus"})).status_code == 400
+
     r = (await c.post("/api/lyrics/choose", json={"track_id": track_id, "source": "ovh"})).json()
     assert (r["kind"], r["source"], r["plain"], r["pinned"]) == ("plain", "ovh", "b\nc", True)
     assert (await c.post("/api/lyrics/choose", json={"track_id": track_id, "source": "netease"})).status_code == 404

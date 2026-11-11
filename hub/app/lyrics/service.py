@@ -141,6 +141,30 @@ async def candidates(s: AsyncSession, track: Track) -> list[Found]:
     return [f for f in found if f is not None and f.kind != "none"]
 
 
+PROBE_WAIT_S = 15  # «Другой вариант» waits for a source this long, then says it did not answer
+
+
+async def probe(track: Track, source: str) -> tuple[str, Found | None, float]:
+    """One source asked for the track, on the clock: (found / none / timeout / error, the text, seconds)."""
+    from app.lyrics import providers
+
+    fn = providers.PROVIDERS.get(source)
+    started = asyncio.get_running_loop().time()
+    status, found = "none", None
+    try:
+        found = await asyncio.wait_for(fn(query_of(track)), PROBE_WAIT_S) if fn else None
+        if found is not None and found.kind != "none":
+            status = "found"
+        else:
+            found = None
+    except TimeoutError:
+        status = "timeout"
+    except Exception as e:
+        log.info("lyrics: %s failed for %s - %s: %r", source, track.artist, track.title, e)
+        status = "error"
+    return status, found, round(asyncio.get_running_loop().time() - started, 1)
+
+
 async def choose(s: AsyncSession, track: Track, source: str | None) -> Lyrics:
     """The user's own choice: the text of this source, or none at all. It stays until they choose again."""
     row = await s.get(Lyrics, track.id)

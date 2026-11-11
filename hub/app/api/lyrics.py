@@ -112,6 +112,45 @@ async def candidates(track_id: int, user: User = Depends(current_user),
     return [CandidateOut(source=f.source, source_title=TITLES[f.source], kind=f.kind, preview=preview(f)) for f in found]
 
 
+class SourceOut(BaseModel):
+    id: str
+    title: str
+
+
+class ProbeOut(BaseModel):
+    source: str
+    source_title: str
+    status: str  # found / none / timeout / error
+    seconds: float
+    kind: str | None = None
+    preview: str | None = None
+
+
+def _preview(f) -> str:
+    texts = [x["text"] for x in f.lines] if f.lines else (f.plain or "").splitlines()
+    return "\n".join(texts[:4])
+
+
+@router.get("/sources", response_model=list[SourceOut])
+async def sources(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    """The sources that are on, in the admin's order: «Другой вариант» asks each of them itself."""
+    return [SourceOut(id=x, title=TITLES[x]) for x in service.enabled(await service.get_settings_row(s))]
+
+
+@router.get("/probe", response_model=ProbeOut)
+async def probe(track_id: int, source: str, user: User = Depends(current_user),
+                s: AsyncSession = Depends(get_session, scope="function")):
+    """What one source has for the track, and how long it took to say (it is not waited for longer than
+    `PROBE_WAIT_S`): the page asks the sources side by side and shows each as it answers."""
+    if source not in TITLES:
+        raise HTTPException(400, "Неизвестный источник")
+    track = await _own(s, track_id)
+    await s.close()  # nothing of the database is held while a source is slow
+    status, found, seconds = await service.probe(track, source)
+    return ProbeOut(source=source, source_title=TITLES[source], status=status, seconds=seconds,
+                    kind=found.kind if found else None, preview=_preview(found) if found else None)
+
+
 @router.post("/choose", response_model=LyricsOut)
 async def choose(body: ChooseIn, user: User = Depends(current_user),
                  s: AsyncSession = Depends(get_session, scope="function")):
