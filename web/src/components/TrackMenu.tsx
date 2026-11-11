@@ -159,6 +159,17 @@ function TrackMenu({ track, extra, inPlayer, onClose }: { track: MenuTrack; extr
             }}
           />
         )}
+        {(track.nd_song_id || track.ref) && (
+          <MenuItem
+            icon="note"
+            label="Отправить в Telegram с текстом"
+            hint="Текст песни придёт свёрнутой цитатой"
+            onClick={() => {
+              onClose();
+              void sendToTelegram(track, true);
+            }}
+          />
+        )}
         {extra?.map((x) => (
           <MenuItem
             key={x.label}

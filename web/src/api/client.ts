@@ -1,3 +1,4 @@
+import type { LyricsCandidate, LyricsOut, LyricsSettings } from '../lib/lyrics';
 import type { TelegramStatus } from '../lib/telegram';
 import type {
   AdminUserDetailOut,
@@ -368,8 +369,19 @@ export const api = {
   telegramConnect: (token: string) => request<TelegramStatus>('POST', '/api/telegram/connect', { json: { token } }),
   telegramCheck: () => request<TelegramStatus>('POST', '/api/telegram/check'),
   telegramDisconnect: () => request<TelegramStatus>('DELETE', '/api/telegram'),
-  telegramSend: (body: { nd_song_id?: string | null; ref?: string | null }) =>
-    request<{ ok: boolean; title: string; light: boolean }>('POST', '/api/telegram/send', { json: body }),
+  telegramPrefs: (with_lyrics: boolean) => request<TelegramStatus>('PUT', '/api/telegram/prefs', { json: { with_lyrics } }),
+  telegramSend: (body: { nd_song_id?: string | null; ref?: string | null; with_lyrics?: boolean | null }) =>
+    request<{ ok: boolean; title: string; light: boolean; lyrics: boolean }>('POST', '/api/telegram/send', { json: body }),
+  // lyrics of a library track (lib/lyrics.ts)
+  lyrics: (q: { nd_song_id?: string | null; ref?: string | null }, signal?: AbortSignal) =>
+    request<LyricsOut>('GET', withQuery('/api/lyrics', { nd_song_id: q.nd_song_id ?? undefined, ref: q.ref ?? undefined }), { signal }),
+  lyricsCandidates: (track_id: number) => request<LyricsCandidate[]>('GET', withQuery('/api/lyrics/candidates', { track_id })),
+  lyricsChoose: (track_id: number, source: string | null) => request<LyricsOut>('POST', '/api/lyrics/choose', { json: { track_id, source } }),
+  lyricsOffset: (track_id: number, offset_ms: number) => request<LyricsOut>('POST', '/api/lyrics/offset', { json: { track_id, offset_ms } }),
+  lyricsSettings: (signal?: AbortSignal) => request<LyricsSettings>('GET', '/api/lyrics/settings', { signal }),
+  lyricsSaveSettings: (body: { sources: { id: string; on: boolean }[]; retry_days: number; on_add: boolean }) =>
+    request<LyricsSettings>('PUT', '/api/lyrics/settings', { json: body }),
+  lyricsScan: () => request<LyricsSettings>('POST', '/api/lyrics/scan'),
   imports: (signal?: AbortSignal) => request<ImportOut[]>('GET', '/api/imports', { signal }),
   createImport: (body: ImportIn) => request<ImportOut>('POST', '/api/imports', { json: body }),
   /** Spotify playlists exported to CSV by Exportify: one file is one playlist. */

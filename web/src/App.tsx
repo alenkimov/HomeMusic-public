@@ -35,6 +35,7 @@ import { ImportItemsPage, ImportPage, ImportsPage } from './pages/Import';
 import { LibraryPage } from './pages/Library';
 import { LibraryAlbumPage } from './pages/LibraryAlbum';
 import { LoginPage } from './pages/Login';
+import { LyricsSettingsPage } from './pages/LyricsSettings';
 import { ArtistsPage, LikedPage, NdAlbumPage, NdAlbumsPage, NdArtistPage, PlaylistPage } from './pages/MediaLibrary';
 import { MixPage, TastePage } from './pages/Mix';
 import { MorePage } from './pages/More';
@@ -95,6 +96,7 @@ const ROUTES: RouteDef[] = [
   ],
   ['/more', 'more', () => <MorePage />],
   ['/admin', 'more', () => <AdminPage />],
+  ['/lyrics-sources', 'more', () => <LyricsSettingsPage />],
   ['/admin/user/:id', 'more', (p) => <AdminUserPage key={p.id} id={Number(p.id)} />],
   ['/admin/insights', 'more', () => <InsightsOverviewPage />],
   ['/admin/taste', 'more', () => <TasteMatrixPage />],

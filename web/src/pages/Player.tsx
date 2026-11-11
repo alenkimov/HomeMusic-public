@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Icon } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
+import { Lyrics } from '../components/Lyrics';
 import { TrackMenuButton } from '../components/TrackMenu';
 import { Button, Cover, Empty, IconButton, Spinner, cx } from '../components/ui';
 import { fmtDuration, providerLabel } from '../lib/format';
@@ -46,6 +47,22 @@ export function PlayerPage() {
   const [scrub, setScrub] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const { starting } = useWave();
+  const [lyrics, setLyrics] = useState(() => {
+    try {
+      return localStorage.getItem('hm-player-lyrics') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleLyrics = () =>
+    setLyrics((v) => {
+      try {
+        localStorage.setItem('hm-player-lyrics', v ? '0' : '1');
+      } catch {
+        /* the choice lives until the page is closed */
+      }
+      return !v;
+    });
 
   if (!track)
     return (
@@ -77,16 +94,30 @@ export function PlayerPage() {
   const waveSeed = trackSeed({ ...track, nd_song_id: info?.nd_song_id });
 
   return (
-    <div className="pt-safe mx-auto flex min-h-dvh max-w-2xl flex-col">
+    <div className="pt-safe relative isolate mx-auto flex min-h-dvh max-w-2xl flex-col">
+      {(track.cover_small_url || track.cover_url) && (
+        // the cover, blurred, as the page's own light
+        <div aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+          <img src={track.cover_small_url || track.cover_url || ''} alt="" className="h-full w-full scale-125 object-cover opacity-35 blur-3xl" />
+          <div className="absolute inset-0 bg-bg/40" />
+        </div>
+      )}
       <div className="flex min-h-14 items-center gap-1 px-2">
         <IconButton icon="down" label="Свернуть" onClick={() => goBack('/home')} />
         <div className="min-w-0 flex-1 text-center text-xs uppercase tracking-wide text-muted">{contextLabel(context)}</div>
+        <IconButton icon="note" label={lyrics ? 'Показать обложку' : 'Показать текст'} aria-pressed={lyrics} onClick={toggleLyrics} className={lyrics ? '!text-accent' : 'text-muted'} />
         <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id }} inPlayer />
       </div>
 
-      <div className="px-6 pt-2">
-        <Cover src={track.cover_url || track.cover_small_url} alt={track.title} className="mx-auto aspect-square w-full max-w-[22rem] shadow-2xl" />
-      </div>
+      {lyrics ? (
+        <div className="h-[58dvh] min-h-72 px-3 pt-2">
+          <Lyrics refId={track.ref} songId={info?.nd_song_id ?? track.nd_song_id} />
+        </div>
+      ) : (
+        <div className="px-6 pt-2">
+          <Cover src={track.cover_url || track.cover_small_url} alt={track.title} className="mx-auto aspect-square w-full max-w-[22rem] shadow-2xl" />
+        </div>
+      )}
 
       <div className="flex items-center gap-2 px-6 pt-6">
         <div className="min-w-0 flex-1">

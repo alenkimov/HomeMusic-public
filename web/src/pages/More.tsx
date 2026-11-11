@@ -94,6 +94,7 @@ export function MorePage() {
         <Item icon="playlist" to="/playlists" title="Плейлисты" sub="Ваши плейлисты в Navidrome" />
         <Item icon="transfer" to="/import" title="Перенести музыку" sub="Из Яндекс Музыки и Spotify: ♥, плейлисты, альбомы" />
         <Item icon="send" title="Telegram" sub="Свой бот: отправка треков из меню ⋯" onClick={() => openTelegramSetup()} />
+        {me.is_admin && <Item icon="note" to="/lyrics-sources" title="Тексты песен" sub="Источники текстов и их порядок, поиск для библиотеки" />}
         {me.is_admin && <Item icon="user" to="/admin" title="Пользователи и приглашения" sub="Расходы на ИИ, песни, коды для новых людей" />}
         {/* the player is here: in the browser, and the app's own on Android */}
         <Item icon="install" href="/app/latest.apk" title="Приложение для Android" sub="HomeMusic: офлайн, плеер в шторке, тот же аккаунт" />

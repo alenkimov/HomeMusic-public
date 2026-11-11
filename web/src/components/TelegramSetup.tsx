@@ -3,13 +3,13 @@ import { api } from '../api/client';
 import { closeTelegramSetup, deliverToTelegram, useTelegramSetup, type TelegramStatus } from '../lib/telegram';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 import { Icon } from './Icon';
-import { Button, Field, Loading, Notice, Sheet } from './ui';
+import { Button, Checkbox, Field, Loading, Notice, Sheet } from './ui';
 
 /** The window of «Отправить в Telegram»: paste the key of your own bot, press Start in it, and the Hub knows where
  * to send. Opened by a share that found no bot (the track asked for is sent once the bot is ready) and from «Ещё»,
  * where a connected bot can be turned off. The key goes to the Hub and never comes back. */
 export function TelegramSetup() {
-  const { open, pending } = useTelegramSetup();
+  const { open, pending, withLyrics } = useTelegramSetup();
   const [st, setSt] = useState<TelegramStatus | null>(null);
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
@@ -31,7 +31,7 @@ export function TelegramSetup() {
     toast(`Telegram подключён: @${r.bot_username}`, 'success');
     if (pending.length) {
       closeTelegramSetup();
-      void deliverToTelegram(pending);
+      void deliverToTelegram(pending, withLyrics);
     }
   };
   const connect = async () => {
@@ -142,6 +142,13 @@ export function TelegramSetup() {
             </div>
           </div>
           <p className="text-sm text-muted">Чтобы отправить трек, откройте его меню «⋯» → «Отправить в Telegram».</p>
+          <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-raised px-3 py-2 text-sm">
+            <span>
+              Отправлять с текстом песни
+              <span className="block text-xs text-muted">Свёрнутой цитатой под треком; в меню останется и вариант без текста</span>
+            </span>
+            <Checkbox checked={!!st.with_lyrics} label="Отправлять с текстом песни" onChange={(v) => void attempt(() => api.telegramPrefs(v)).then((r) => r && setSt(r))} />
+          </label>
           <Button variant="danger" block onClick={disconnect}>
             Отключить бота
           </Button>
