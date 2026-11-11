@@ -5,6 +5,7 @@ import { playAll, TrackRow, TrackTableHeader, type AddedSort } from '../componen
 import { Icon } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
 import { useListSearch, type Found } from '../components/ListSearch';
+import { TagFilterBar } from '../components/Tags';
 import { Button, Cover, Empty, ErrorState, Field, IconButton, PageHeader, SectionTitle, SkeletonRows, Sheet, Spinner, cx } from '../components/ui';
 import { fmtLength, tracksWord } from '../lib/format';
 import { useDesktop } from '../lib/desktop';
@@ -12,6 +13,7 @@ import { useHubEvent } from '../lib/events';
 import { setShuffle, useListen } from '../lib/listen';
 import { useAsync, useRememberScrollX } from '../lib/hooks';
 import { Link, enc, navigate } from '../lib/router';
+import { filterActive, passes, useTags, type TagFilter } from '../lib/tags';
 import { attempt, confirmDialog } from '../lib/ui';
 import { useSmartForPage, useSmartPage } from '../lib/smartShuffle';
 import { canWave, seedKey, startWave, useWave } from '../lib/wave';
@@ -145,6 +147,19 @@ function byAdded<T extends { t: NdSongOut; i: number }>(list: T[], sort: AddedSo
   });
 }
 
+/** The rows of a list that the search and the tag filter leave (null: neither is on — the whole list). */
+function useShown(tracks: readonly NdSongOut[], found: Found[] | null, filter: TagFilter): Found[] | null {
+  const tags = useTags();
+  return useMemo(() => {
+    if (!filterActive(filter)) return found;
+    const base: Found[] = found ?? tracks.map((_, index) => ({ index }));
+    return base.filter((f) => {
+      const id = tracks[f.index]?.nd_song_id;
+      return passes(id ? tags.map[id] : undefined, filter, tags.byId);
+    });
+  }, [tracks, found, filter, tags.map, tags.byId]);
+}
+
 /** The tracks as the page shows them: what ▶ of the page plays. */
 const inOrder = (tracks: readonly NdSongOut[], sort: AddedSort): readonly NdSongOut[] => (sort ? byAdded(tracks.map((t, i) => ({ t, i })), sort).map((r) => r.t) : tracks);
 
@@ -156,13 +171,13 @@ function SongList({ tracks, extra, found, sort, onSort }: { tracks: readonly NdS
     return byAdded(list, sort);
   }, [tracks, found, sort]);
   const queue = found || sort ? rows.map((r) => r.t) : tracks;
-  if (found && !rows.length) return <p className="px-4 py-10 text-center text-sm text-muted">Ничего не нашлось — ни в названиях, ни в текстах.</p>;
+  if (found && !rows.length) return <p className="px-4 py-10 text-center text-sm text-muted">Ничего не подходит — ни под поиск, ни под выбранные теги.</p>;
   return (
     <ul>
-      {rows.length > 0 && <li><TrackTableHeader numbered album added={dated} sort={sort} onSort={setSort} /></li>}
+      {rows.length > 0 && <li><TrackTableHeader numbered album tags added={dated} sort={sort} onSort={setSort} /></li>}
       {rows.map(({ t, i, line }, at) => (
         <li key={`${t.ref}:${i}`}>
-          <TrackRow track={t} queue={queue} link={false} showAlbum showAdded={dated} menuExtra={extra?.(t, i)} index={sort ? at + 1 : i + 1} />
+          <TrackRow track={t} queue={queue} link={false} showAlbum showTags showAdded={dated} menuExtra={extra?.(t, i)} index={sort ? at + 1 : i + 1} />
           {line !== undefined && (
             <div className="-mt-1 flex items-center gap-1.5 truncate pb-2 pl-16 pr-4 text-xs text-muted">
               <Icon name="lyrics" size={13} className="shrink-0 text-accent" />
@@ -313,6 +328,8 @@ export function LikedPage() {
   const search = useListSearch(songs);
   const q = search.q;
   const [sort, setSort] = useState<AddedSort>(null);
+  const [filter, setFilter] = useState<TagFilter>({});
+  const shown = useShown(songs, search.found, filter);
 
   return (
     <div>
@@ -337,8 +354,9 @@ export function LikedPage() {
         <Empty icon="heart" title="Пока ничего" text="Ставьте ♥ трекам, альбомам и исполнителям — они соберутся здесь." />
       ) : (
         <>
-          <ListActions tracks={inOrder(search.found ? search.found.map((f) => songs[f.index]) : songs, sort)} context="liked" />
-          <SongList tracks={songs} found={search.found} sort={sort} onSort={setSort} />
+          <ListActions tracks={inOrder(shown ? shown.map((f) => songs[f.index]) : songs, sort)} context="liked" />
+          <TagFilterBar songIds={songs.map((t) => t.nd_song_id)} filter={filter} onChange={setFilter} />
+          <SongList tracks={songs} found={shown} sort={sort} onSort={setSort} />
           {songs.length > 0 && search.control}
           {!q && <AlbumRow title="Альбомы" albums={res.data?.albums ?? []} rowKey="liked:albums" />}
           {!q && (res.data?.artists.length ?? 0) > 0 && (
@@ -373,6 +391,8 @@ export function PlaylistPage({ id }: { id: string }) {
   const search = useListSearch(all);
   const [sort, setSort] = useState<AddedSort>(null);
   const [editing, setEditing] = useState(false);
+  const [filter, setFilter] = useState<TagFilter>({});
+  const shown = useShown(all, search.found, filter);
 
   const remove = async (i: number, t: NdSongOut) => {
     if (await attempt(() => api.removeFromPlaylist(id, [i]), `«${t.title}» убран из плейлиста`))
@@ -400,7 +420,7 @@ export function PlaylistPage({ id }: { id: string }) {
         title={p.name}
         sub={[tracksWord(p.song_count), p.duration_s ? fmtLength(p.duration_s) : null].filter(Boolean).join(' · ')}
       />
-      <ListActions tracks={inOrder(p.tracks, sort)} context="playlist">
+      <ListActions tracks={inOrder(shown ? shown.map((f) => p.tracks[f.index]) : p.tracks, sort)} context="playlist">
         {desktop && (
           <>
             <IconButton icon="edit" size={24} label="Изменить название и обложку" onClick={() => setEditing(true)} className="text-muted hover:text-fg" />
@@ -420,7 +440,8 @@ export function PlaylistPage({ id }: { id: string }) {
       )}
       {p.tracks.length ? (
         <>
-          <SongList tracks={p.tracks} found={search.found} sort={sort} onSort={setSort} extra={(t, i) => [{ icon: 'x', label: 'Убрать из плейлиста', onClick: () => void remove(i, t) }]} />
+          <TagFilterBar songIds={p.tracks.map((t) => t.nd_song_id)} filter={filter} onChange={setFilter} />
+          <SongList tracks={p.tracks} found={shown} sort={sort} onSort={setSort} extra={(t, i) => [{ icon: 'x', label: 'Убрать из плейлиста', onClick: () => void remove(i, t) }]} />
           {search.control}
         </>
       ) : (

@@ -84,6 +84,59 @@ def detect(text: str) -> str | None:
     return None
 
 
+LANG_SHARE = 0.15  # of a song's lines: less is a borrowed phrase, not a language of the song
+LANG_LINES = 3
+
+
+def languages(text: str) -> list[str]:
+    """Every language a song is sung in, the main one first: a Japanese song with English verses is both. A line
+    is told by its letters; the Latin lines together are English or (other languages are not told) nothing."""
+    lines = [x for x in text.splitlines() if any(ch.isalpha() for ch in x)]
+    if not lines:
+        return []
+    kinds: dict[str, list[str]] = {}
+    for line in lines:
+        c = {"kana": 0, "hangul": 0, "han": 0, "cyr": 0, "latin": 0}
+        for ch in line:
+            if not ch.isalpha():
+                continue
+            o = ord(ch)
+            if 0x3040 <= o <= 0x30FF or 0x31F0 <= o <= 0x31FF or 0xFF66 <= o <= 0xFF9D:
+                c["kana"] += 1
+            elif 0xAC00 <= o <= 0xD7AF or 0x1100 <= o <= 0x11FF:
+                c["hangul"] += 1
+            elif 0x4E00 <= o <= 0x9FFF or 0x3400 <= o <= 0x4DBF:
+                c["han"] += 1
+            elif 0x0400 <= o <= 0x04FF:
+                c["cyr"] += 1
+            elif "a" <= ch.lower() <= "z" or "LATIN" in unicodedata.name(ch, ""):
+                c["latin"] += 1
+        top = "kana" if c["kana"] else max(c, key=lambda k: c[k])
+        if c[top]:
+            kinds.setdefault(top, []).append(line)
+    if "kana" in kinds and "han" in kinds:  # lines of kanji alone, in a Japanese song, are Japanese
+        kinds["kana"] += kinds.pop("han")
+    found: list[tuple[int, str]] = []
+    for kind, got in kinds.items():
+        if len(got) < LANG_LINES or len(got) < LANG_SHARE * len(lines):
+            continue
+        joined = "\n".join(got)
+        if kind == "kana":
+            code: str | None = "ja"
+        elif kind == "hangul":
+            code = "ko"
+        elif kind == "han":
+            code = "zh"
+        elif kind == "cyr":
+            code = "uk" if sum(joined.count(ch) for ch in "іїєґІЇЄҐ") >= 3 else "ru"
+        else:
+            words = [w.lower() for w in _WORD.findall(joined)]
+            code = "en" if words and sum(1 for w in words if w in _EN) >= 0.18 * len(words) else None
+        if code:
+            found.append((len(got), code))
+    return [code for _, code in sorted(found, reverse=True)]
+
+
 def _same_shape(got: list[str] | None, want: int) -> bool:
     return isinstance(got, list) and len(got) == want and all(isinstance(x, str) for x in got)
 

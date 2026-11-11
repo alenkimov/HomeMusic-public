@@ -14,6 +14,7 @@ import { toast } from '../lib/ui';
 import { Icon } from './Icon';
 import { LikeButton } from './LikeButton';
 import { openShare } from '../lib/shareTrack';
+import { useTags } from '../lib/tags';
 import { QueueButton } from './QueueButton';
 import { PlaylistPicker } from './pickers';
 import { SwipeRow } from './SwipeRow';
@@ -107,6 +108,7 @@ export function TrackRow({
   showCover = true,
   showAlbum = false,
   showAdded = false,
+  showTags = false,
   link = true,
   onPlay,
   queue,
@@ -119,6 +121,8 @@ export function TrackRow({
   showAlbum?: boolean;
   /** the «Дата добавления» column of a playlist (`added_at`) */
   showAdded?: boolean;
+  /** the «Язык», «Жанр» and «Теги» columns of a library list (`lib/tags.ts`) */
+  showTags?: boolean;
   link?: boolean;
   /** Plays with context in the app's player (the rest of the album or list); by default the track alone. */
   onPlay?: () => void;
@@ -202,6 +206,7 @@ export function TrackRow({
   };
   // picking several rows to act on together (`lib/selection.ts`)
   const selected = useSelected(track.ref);
+  const tagState = useTags();
   const dragMark = useDragMark(track.ref); // this row is among the rows a button is being dragged over
   const selecting = useSelectionCount() > 0;
   const asSel = (t: TrackOut): SelTrack => ({ ref: t.ref, title: t.title, nd_song_id: t.owned ? t.nd_song_id : null, listen: listenTrack(t) });
@@ -269,6 +274,19 @@ export function TrackRow({
     if (desktop) {
       const album = showAlbum && cols.album;
       const added = showAdded && cols.added;
+      const tagCols = showTags ? { lang: cols.tagLang, genre: cols.tagGenre, own: cols.tagOwn } : null;
+      const myTags = showTags && track.nd_song_id ? (tagState.map[track.nd_song_id] ?? []).map((id) => tagState.byId.get(id)).filter((t) => !!t) : [];
+      const tagCell = (group: 'lang' | 'genre' | 'own', max: number) => {
+        const list = myTags.filter((t) => t.group === group);
+        return (
+          <span className="flex min-w-0 items-center gap-1 overflow-hidden" title={list.map((t) => t.name).join(', ') || undefined}>
+            {list.slice(0, max).map((t) => (
+              <span key={t.id} className="truncate rounded-full bg-fg/10 px-2 py-0.5 text-[11px] text-muted">{t.name}</span>
+            ))}
+            {list.length > max && <span className="shrink-0 rounded-full bg-fg/10 px-1.5 py-0.5 text-[11px] text-muted">+{list.length - max}</span>}
+          </span>
+        );
+      };
       const rowNumber = number ?? index;
       // every credited artist opens its own page: the catalog's when the Hub knows the ref, else the library's
       const credited = track.artists?.length ? track.artists : [track.artist];
@@ -290,7 +308,7 @@ export function TrackRow({
           data-track-row
           aria-selected={selected}
           className={cx('group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors', selected ? 'bg-accent/15 hover:bg-accent/20' : dragMark ? 'bg-accent/10' : 'hover:bg-fg/5 focus-within:bg-fg/5')}
-          style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration, added) }}
+          style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration, added, tagCols) }}
         >
           {/* the number picks the row; held and dragged over other rows, it picks them all. ▶ is on the cover */}
           {rowNumber !== undefined && (
@@ -372,6 +390,9 @@ export function TrackRow({
             ) : (
               <span className="truncate text-sm text-muted">{track.album_title}</span>
             ))}
+          {tagCols?.lang && tagCell('lang', 2)}
+          {tagCols?.genre && tagCell('genre', 1)}
+          {tagCols?.own && tagCell('own', 2)}
           {added && <span className="truncate text-sm text-muted" title={track.added_at ? parseTime(track.added_at).toLocaleString('ru-RU') : undefined}>{fmtAdded(track.added_at)}</span>}
           <div data-row-actions className="flex h-11 items-center justify-end">
             {track.owned || dl === 'done' ? null : downloading ? (
@@ -537,7 +558,7 @@ export type AddedSort = 'new' | 'old' | null;
 
 /** `added`: the list has «Дата добавления»; a click on that column sorts by it — the newest first, then the oldest
  * first, then the list's own order again (`sort`, `onSort`). */
-export function TrackTableHeader({ numbered = false, album = false, added = false, sort = null, onSort }: { numbered?: boolean; album?: boolean; added?: boolean; sort?: AddedSort; onSort?: (next: AddedSort) => void }) {
+export function TrackTableHeader({ numbered = false, album = false, added = false, tags = false, sort = null, onSort }: { numbered?: boolean; album?: boolean; added?: boolean; tags?: boolean; sort?: AddedSort; onSort?: (next: AddedSort) => void }) {
   const desktop = useDesktop();
   const cols = useTrackColumns();
   const [open, setOpen] = useState(false);
@@ -555,7 +576,7 @@ export function TrackTableHeader({ numbered = false, album = false, added = fals
     };
   }, [open]);
   if (!desktop) return null;
-  const offered = (Object.keys(TRACK_COLUMN_LABELS) as (keyof TrackColumns)[]).filter((c) => (c !== 'album' || album) && (c !== 'added' || added));
+  const offered = (Object.keys(TRACK_COLUMN_LABELS) as (keyof TrackColumns)[]).filter((c) => (c !== 'album' || album) && (c !== 'added' || added) && (!c.startsWith('tag') || tags));
   return (
     <div
       ref={ref}
@@ -564,11 +585,14 @@ export function TrackTableHeader({ numbered = false, album = false, added = fals
         setOpen(true);
       }}
       className="relative mx-2 mb-1 grid h-9 items-center gap-3 border-b border-line/60 px-2 text-xs text-dim"
-      style={{ gridTemplateColumns: trackGrid(numbered, album && cols.album, cols.duration, added && cols.added) }}
+      style={{ gridTemplateColumns: trackGrid(numbered, album && cols.album, cols.duration, added && cols.added, tags ? { lang: cols.tagLang, genre: cols.tagGenre, own: cols.tagOwn } : null) }}
     >
       {numbered && <span className="text-center">#</span>}
       <span>Название</span>
       {album && cols.album && <span>Альбом</span>}
+      {tags && cols.tagLang && <span>Язык</span>}
+      {tags && cols.tagGenre && <span>Жанр</span>}
+      {tags && cols.tagOwn && <span>Теги</span>}
       {added && cols.added && (
         <button
           type="button"

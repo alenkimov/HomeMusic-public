@@ -61,6 +61,7 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(schedule_loop(), name="mixes"))
         tasks.append(asyncio.create_task(playlist_adds_loop(), name="playlist-adds"))
         await telegram_chats.start_all()
+        tasks.append(asyncio.create_task(_sync_tags(), name="tags"))
     log.info("hub started")
     try:
         yield
@@ -74,6 +75,17 @@ async def lifespan(app: FastAPI):
         await smart.reset()
         await svc.stop()
         await db.dispose()
+
+
+async def _sync_tags() -> None:
+    """The tags the Hub tells by itself, for the tracks that came while it was down (and all of them the first time)."""
+    from app import tags as track_tags
+
+    try:
+        async with db.session_scope() as s:
+            await track_tags.sync(s)
+    except Exception:
+        log.exception("tags: the sync at start failed")
 
 
 def create_app() -> FastAPI:
@@ -96,6 +108,7 @@ def create_app() -> FastAPI:
         search,
         smart_shuffle,
         system,
+        tags,
         telegram,
         uploads,
         wave,
@@ -105,7 +118,7 @@ def create_app() -> FastAPI:
                   openapi_url="/api/openapi.json", redoc_url=None)
     for r in (auth.router, search.router, catalog.router, downloads.router, listen.router, library.router, medialib.router,
               uploads.router, playlists.router, plays.router, mixes.router, wave.router, smart_shuffle.router, imports.router, events.router, system.router, admin.router,
-              insights.router, telegram.router, lyrics.router, links.router):
+              insights.router, telegram.router, lyrics.router, links.router, tags.router):
         app.include_router(r)
     try:
         from app.api import assistant

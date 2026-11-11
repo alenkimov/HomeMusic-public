@@ -6,6 +6,7 @@ import { useRoute } from '../lib/router';
 import { clearSelection, selectedTracks, useSelectionCount } from '../lib/selection';
 import { openShare } from '../lib/shareTrack';
 import { isLiked, toggleLike, useLiked } from '../lib/stars';
+import { openTagsSheet } from '../lib/tags';
 import { toast } from '../lib/ui';
 import { BulkPlaylists } from './PlaylistsButton';
 import { IconButton, cx } from './ui';
@@ -55,6 +56,13 @@ export function SelectionBar() {
           size={20}
           label="В плейлисты: добавить или убрать"
           onClick={() => (owned.length ? setLists(owned) : toast('Этих треков ещё нет в библиотеке — сначала скачайте их', 'info'))}
+          className={cx(btn, 'text-muted hover:text-fg')}
+        />
+        <IconButton
+          icon="tag"
+          size={20}
+          label="Теги: поставить или снять"
+          onClick={() => (owned.length ? openTagsSheet(owned, '') : toast('Этих треков ещё нет в библиотеке — сначала скачайте их', 'info'))}
           className={cx(btn, 'text-muted hover:text-fg')}
         />
         {!canPlayAll() && (

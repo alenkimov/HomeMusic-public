@@ -256,3 +256,62 @@ async def test_a_translation_is_made_once_kept_per_language_and_corrected_by_han
     assert [x["id"] for x in r["providers"]] == ["llm", "google", "mymemory"] and {"code": "en", "title": "English"} in r["langs"]
     r = (await c.put("/api/lyrics/translators", json={"providers": [{"id": "google", "on": True}, {"id": "llm", "on": False}]})).json()
     assert [(x["id"], x["on"]) for x in r["providers"]] == [("google", True), ("llm", False), ("mymemory", True)]
+
+
+def test_a_song_may_be_in_several_languages():
+    from app.lyrics.translate import languages
+
+    ja = "君はふてぶてしくつぶやいた\n" * 8
+    assert languages(ja + "永遠\n") == ["ja"]  # a line of kanji alone is still Japanese
+    assert languages(ja + "and I could leave it on a shelf\nyou know that I love you\nit is all for you\n") == ["ja", "en"]
+    assert languages(ja + "oh baby\n") == ["ja"]  # a borrowed phrase is not a language of the song
+    assert languages("Тёплое место, но улицы ждут\n" * 4) == ["ru"]
+    assert languages("la la la\n" * 5) == [] and languages("") == []
+
+
+async def test_tags_languages_genres_and_ones_own(env):
+    from app import tags
+    from app.db import session_scope
+    from app.lyrics.providers import Found
+    from app.models import Track
+
+    c, answers = env["client"], env["answers"]
+    a = await add_track("nd1")
+    b = await add_track("nd2")
+    async with session_scope() as s:
+        (await s.get(Track, a)).genre = "Asian Music"
+    answers["lrclib"] = Found("lrclib", plain="君はふてぶてしくつぶやいた\n" * 6 + "and you know that I love you\n" * 3)
+    await c.get("/api/lyrics", params={"nd_song_id": "nd1"})  # the lyrics are found: the languages are told
+    async with session_scope() as s:
+        await tags.sync(s)
+    r = (await c.get("/api/tags")).json()
+    by = {g["id"]: {t["name"]: t for t in g["tags"]} for g in r["groups"]}
+    assert set(by["lang"]) == {"японский", "английский"} and set(by["genre"]) == {"Asian Music"} and by["own"] == {}
+    assert sorted(r["map"]["nd1"]) == sorted([by["lang"]["японский"]["id"], by["lang"]["английский"]["id"], by["genre"]["Asian Music"]["id"]])
+    assert "nd2" not in r["map"]
+
+    # a tag of one's own, on several tracks at once; the same name again is the same tag
+    chill = (await c.post("/api/tags", json={"name": "  chill "})).json()
+    assert chill["group"] == "own" and (await c.post("/api/tags", json={"name": "CHILL"})).json()["id"] == chill["id"]
+    r = (await c.post("/api/tags/assign", json={"nd_song_ids": ["nd1", "nd2"], "add": [chill["id"]]})).json()
+    assert chill["id"] in r["map"]["nd1"] and r["map"]["nd2"] == [chill["id"]]
+
+    # a tag the Hub set, taken off by hand, stays off; put back by hand, it stays on
+    en = by["lang"]["английский"]["id"]
+    await c.post("/api/tags/assign", json={"nd_song_ids": ["nd1"], "remove": [en, chill["id"]]})
+    async with session_scope() as s:
+        await tags.sync(s)
+    r = (await c.get("/api/tags")).json()
+    assert en not in r["map"]["nd1"] and chill["id"] not in r["map"]["nd1"]
+    await c.post("/api/tags/assign", json={"nd_song_ids": ["nd1"], "add": [en]})
+    async with session_scope() as s:
+        await tags.sync(s)
+    assert en in (await c.get("/api/tags")).json()["map"]["nd1"]
+
+    # «no lyrics for this track» is «без слов», and the languages of the old text are gone
+    await c.post("/api/lyrics/choose", json={"track_id": b, "source": None})
+    await c.post("/api/lyrics/choose", json={"track_id": a, "source": None})
+    r = (await c.get("/api/tags")).json()
+    names = {t["id"]: t["name"] for g in r["groups"] for t in g["tags"]}
+    assert [names[i] for i in r["map"]["nd2"] if names[i] != "chill"] == ["без слов"]
+    assert "японский" not in [names[i] for i in r["map"]["nd1"]] and "английский" in [names[i] for i in r["map"]["nd1"]]

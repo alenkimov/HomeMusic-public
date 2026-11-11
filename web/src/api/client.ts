@@ -1,4 +1,5 @@
 import type { LyricsCandidate, LyricsOut, LyricsSettings, LyricsTranslation, LyricsTranslators } from '../lib/lyrics';
+import type { Tag, TagsData } from '../lib/tags';
 import type { TelegramChat, TelegramStatus } from '../lib/telegram';
 import type {
   AdminUserDetailOut,
@@ -387,6 +388,10 @@ export const api = {
   telegramChatsRefresh: () => request<TelegramChat[]>('POST', '/api/telegram/chats/refresh'),
   telegramSend: (body: { nd_song_id?: string | null; ref?: string | null; with_lyrics?: boolean | null; chat?: number | null }) =>
     request<{ ok: boolean; title: string; light: boolean; lyrics: boolean }>('POST', '/api/telegram/send', { json: body }),
+  // tags of tracks (lib/tags.ts)
+  tags: () => request<TagsData>('GET', '/api/tags'),
+  tagCreate: (name: string) => request<Tag>('POST', '/api/tags', { json: { name } }),
+  tagsAssign: (body: { nd_song_ids: string[]; add: number[]; remove: number[] }) => request<TagsData>('POST', '/api/tags/assign', { json: body }),
   // a track on music services («Поделиться ссылкой»)
   links: (q: { nd_song_id?: string | null; ref?: string | null }) =>
     request<{ links: { service: string; title: string; url: string }[]; universal?: string | null }>(

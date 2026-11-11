@@ -730,6 +730,40 @@ class PlaylistCover(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class Tag(Base):
+    """A tag tracks are filtered by (app/tags.py). `group`: lang / genre — everyone's, set by the Hub itself; own —
+    a user's (`user_id`), set by hand."""
+
+    __tablename__ = "tags"
+    __table_args__ = (Index("ix_tags_group_user", "group", "user_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group: Mapped[str] = mapped_column(String(8))
+    name: Mapped[str] = mapped_column(String(64))
+    code: Mapped[str | None] = mapped_column(String(16))  # of a language (ja, en...), «instrumental»
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class TrackTag(Base):
+    """A tag on a track. `auto`: the Hub set it (and takes it off when it no longer holds)."""
+
+    __tablename__ = "track_tags"
+
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True, index=True)
+    auto: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class TagRemoved(Base):
+    """A tag the Hub would set by itself, taken off this track by hand: it is not set again."""
+
+    __tablename__ = "tags_removed"
+
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
+
+
 class AppSetting(Base):
     """A setting of the whole server that the admin changes in the app (the order of lyrics sources)."""
 

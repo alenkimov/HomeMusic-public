@@ -5,6 +5,7 @@ import { Icon } from './Icon';
 import { useDragAction, type DragKind } from '../lib/dragAction';
 import { tracksWord } from '../lib/format';
 import { ShareSheet } from './ShareSheet';
+import { TagsSheet } from './Tags';
 import { TelegramSetup } from './TelegramSetup';
 
 /** Toast stack (above the tab bar) and the global confirm dialog. */
@@ -46,6 +47,7 @@ export function Overlays() {
       </div>
 
       <DragActionHint />
+      <TagsSheet />
       <TelegramSetup />
       <ShareSheet />
 

@@ -7,6 +7,7 @@ import { addToQueue, next, playNext, stopListening, useListen, type ListenTrack 
 import { canPlayAll } from '../lib/player';
 import { enc, navigate } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
+import { openTagsSheet } from '../lib/tags';
 import { attempt } from '../lib/ui';
 import { artistSeed, canWave, startWave, trackSeed } from '../lib/wave';
 import { Icon, type IconName } from './Icon';
@@ -147,6 +148,17 @@ function TrackMenu({ track, extra, inPlayer, lean, onClose }: { track: MenuTrack
             label="Добавить в плейлист"
             hint={track.nd_song_id ? undefined : 'Трек скачается в библиотеку'}
             onClick={() => setPicking(true)}
+          />
+        )}
+        {track.nd_song_id && (
+          <MenuItem
+            icon="tag"
+            label="Теги"
+            hint="Язык, жанр и свои — по ним фильтруются списки"
+            onClick={() => {
+              onClose();
+              openTagsSheet([track.nd_song_id as string], track.title);
+            }}
           />
         )}
         {!lean && (track.nd_song_id || track.ref) && (

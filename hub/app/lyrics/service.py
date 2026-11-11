@@ -131,7 +131,18 @@ async def ensure(s: AsyncSession, track: Track, *, force: bool = False) -> Lyric
         s.add(row)
     _store(row, found)
     await s.flush()
+    await _retag(s, track.id)
     return row
+
+
+async def _retag(s: AsyncSession, track_id: int) -> None:
+    """The text of a track changed: its language tags follow it (app/tags.py)."""
+    from app import tags
+
+    try:
+        await tags.sync(s, [track_id])
+    except Exception as e:  # the lyrics matter more than their tags
+        log.info("lyrics: tags of track %s not updated: %r", track_id, e)
 
 
 async def candidates(s: AsyncSession, track: Track) -> list[Found]:
@@ -178,6 +189,7 @@ async def choose(s: AsyncSession, track: Track, source: str | None) -> Lyrics:
     row.pinned = True
     row.offset_ms = 0
     await s.flush()
+    await _retag(s, track.id)
     return row
 
 
