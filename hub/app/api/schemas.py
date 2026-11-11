@@ -518,6 +518,7 @@ class NdSongOut(TrackOut):
 
     nd_album_id: str | None = None
     nd_artist_id: str | None = None
+    nd_artist_ids: list[str | None] = []  # the library artists of `artists`, in their order (None: unknown)
 
 
 class NdAlbumOut(BaseModel):

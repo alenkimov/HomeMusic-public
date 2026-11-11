@@ -149,6 +149,8 @@ export interface CatalogTrack {
   title: string;
   artist: string;
   artists?: string[];
+  /** the catalog refs of `artists`, in their order (null: unknown) */
+  artist_refs?: (string | null)[];
   artist_ref?: string | null;
   album_ref?: string | null;
   album_title?: string | null;
@@ -543,6 +545,8 @@ export interface PlaylistPageOut extends PlaylistOut {
 export interface NdSongOut extends TrackOut {
   nd_album_id?: string | null;
   nd_artist_id?: string | null;
+  /** the library artists of `artists`, in their order */
+  nd_artist_ids?: (string | null)[];
 }
 
 export interface NdAlbumOut {

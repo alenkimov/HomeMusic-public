@@ -5,7 +5,7 @@ import { useDesktop } from '../lib/desktop';
 import { addToQueue, downloadRef, listen, listenAll, shuffled, touchTrack, useListen, watchOnScreen, type ListenTrack } from '../lib/listen';
 import { canPlay, canPlayAll, playSongs, playTracks } from '../lib/player';
 import { STANDALONE } from '../lib/embedded';
-import { Link, enc } from '../lib/router';
+import { Link, enc, navigate } from '../lib/router';
 import { toggleLike, useLiked } from '../lib/stars';
 import { TRACK_COLUMN_LABELS, setTrackColumn, trackGrid, useTrackColumns, type TrackColumns } from '../lib/trackColumns';
 import { toast } from '../lib/ui';
@@ -109,7 +109,7 @@ export function TrackRow({
   menuExtra,
   index,
 }: {
-  track: TrackOut & { nd_album_id?: string | null; nd_artist_id?: string | null };
+  track: TrackOut & { nd_album_id?: string | null; nd_artist_id?: string | null; nd_artist_ids?: (string | null)[] };
   number?: number;
   showCover?: boolean;
   showAlbum?: boolean;
@@ -250,6 +250,13 @@ export function TrackRow({
     if (desktop) {
       const album = showAlbum && cols.album;
       const rowNumber = number ?? index;
+      // every credited artist opens its own page: the catalog's when the Hub knows the ref, else the library's
+      const credited = track.artists?.length ? track.artists : [track.artist];
+      const credits = credited.map((name, i) => {
+        const ref = track.artist_refs?.[i] ?? (name === track.artist ? track.artist_ref : null);
+        const nd = track.nd_artist_ids?.[i] ?? (credited.length === 1 ? track.nd_artist_id : null);
+        return { name, to: ref ? `/artist/${enc(ref)}` : nd ? `/lib/artist/${enc(nd)}` : null };
+      });
       const albumTo = track.album_ref ? `/album/${enc(track.album_ref)}` : track.nd_album_id ? `/lib/album/${enc(track.nd_album_id)}` : null;
       return (
         <div
@@ -263,12 +270,32 @@ export function TrackRow({
             ) : (
               numberMark(rowNumber, false)
             ))}
-          {tap('flex min-w-0 items-center gap-3 py-1.5 text-left', (
-            <>
-              {number === undefined && showCover && <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />}
-              {names([artistLine, showAlbum && !cols.album ? track.album_title : null].filter(Boolean).join(' · '))}
-            </>
-          ))}
+          <div
+            onClick={toAlbum ? () => navigate(toAlbum) : action}
+            onPointerDown={track.owned ? undefined : () => touchTrack(track.ref)}
+            className={cx('flex min-w-0 items-center gap-3 py-1.5 text-left', (toAlbum || action) && 'cursor-pointer')}
+          >
+            {number === undefined && showCover && <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />}
+            <span className="block min-w-0 flex-1">
+              {tap(cx('block max-w-full truncate text-left text-[15px]', titleColor), track.title)}
+              <span className="flex items-center gap-1.5 text-[13px] text-muted">
+                {track.explicit && <ExplicitBadge />}
+                <span className="truncate">
+                  {credits.map((a, i) => (
+                    <span key={`${a.name}:${i}`}>
+                      {i > 0 && ', '}
+                      {a.to ? (
+                        <Link to={a.to} onClick={(e) => e.stopPropagation()} className="hover:text-fg hover:underline">{a.name}</Link>
+                      ) : (
+                        a.name
+                      )}
+                    </span>
+                  ))}
+                  {showAlbum && !cols.album && track.album_title ? ` · ${track.album_title}` : ''}
+                </span>
+              </span>
+            </span>
+          </div>
           {album &&
             (albumTo && track.album_title ? (
               <Link to={albumTo} className="truncate text-sm text-muted hover:text-fg hover:underline">{track.album_title}</Link>

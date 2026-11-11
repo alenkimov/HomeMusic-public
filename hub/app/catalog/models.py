@@ -46,6 +46,7 @@ class CatalogTrack(BaseModel):
     title: str  # full title as in the catalog, e.g. "Группа крови (Remastered 2019)"
     artist: str  # main artist name
     artists: list[str] = []  # all credited artists (main first)
+    artist_refs: list[str | None] = []  # their catalog refs, in the order of `artists` (None: unknown)
     artist_ref: str | None = None
     album_ref: str | None = None
     album_title: str | None = None

@@ -63,7 +63,9 @@ async def songs_out(s: AsyncSession, songs: list[dict]) -> list[NdSongOut]:
         t = rows.get(sid)
         ref = library_track(t).ref if t is not None else f"nd:{sid}"
         artist = x.get("artist") or ""
-        names = [a["name"] for a in x.get("artists") or [] if a.get("name")] or ([artist] if artist else [])
+        credited = [a for a in x.get("artists") or [] if a.get("name")]
+        names = [a["name"] for a in credited] or ([artist] if artist else [])
+        artist_ids = [a.get("id") for a in credited] or ([x.get("artistId")] if artist else [])
         out.append(NdSongOut(
             ref=ref, source="dz" if ref.startswith("dz:") else "nd", id=ref.split(":", 1)[1], title=x.get("title") or "",
             artist=artist, artists=names, album_title=x.get("album"), album_artist=x.get("displayAlbumArtist"),
@@ -72,7 +74,7 @@ async def songs_out(s: AsyncSession, songs: list[dict]) -> list[NdSongOut]:
             explicit=t.explicit if t is not None else None,
             cover_url=cover_url(x.get("coverArt"), BIG_COVER), cover_small_url=cover_url(x.get("coverArt")),
             owned=True, library_track_id=t.id if t is not None else None, nd_song_id=sid,
-            nd_album_id=x.get("albumId"), nd_artist_id=x.get("artistId"),
+            nd_album_id=x.get("albumId"), nd_artist_id=x.get("artistId"), nd_artist_ids=artist_ids,
         ))
     return out
 

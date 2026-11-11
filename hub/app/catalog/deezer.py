@@ -118,22 +118,24 @@ def map_album(d: dict[str, Any], artist: dict[str, Any] | None = None) -> Catalo
     )
 
 
-def _artist_names(d: dict[str, Any]) -> tuple[str, list[str]]:
-    """Main artist name and all credited names (track `artist` first, then other Main, then featured)."""
-    main = (d.get("artist") or {}).get("name") or ""
+def _artist_names(d: dict[str, Any]) -> tuple[str, list[str], list[str | None]]:
+    """Main artist name, all credited names (track `artist` first, then other Main, then featured) and their refs."""
+    art = d.get("artist") or {}
+    main = art.get("name") or ""
     contributors = d.get("contributors") or []
     ordered = sorted(contributors, key=lambda c: c.get("role", "Main") != "Main")  # stable
-    names = [main] if main else []
+    ids: dict[str, Any] = {main: art.get("id")} if main else {}
     for c in ordered:
         n = c.get("name")
-        if n and n not in names:
-            names.append(n)
-    return main or (names[0] if names else ""), names
+        if n and not ids.get(n):
+            ids[n] = c.get("id") or ids.get(n)
+    names = list(ids)
+    return main or (names[0] if names else ""), names, [make_ref("dz", ids[n]) if ids[n] else None for n in names]
 
 
 def map_track(d: dict[str, Any], album: CatalogAlbum | None = None) -> CatalogTrack:
     """Map a track object; `album` supplies album fields for album/{id}/tracks items."""
-    main, names = _artist_names(d)
+    main, names, refs = _artist_names(d)
     alb = d.get("album") or {}
     art = d.get("artist") or {}
     album_id = alb.get("id") or (album.id if album else None)
@@ -144,6 +146,7 @@ def map_track(d: dict[str, Any], album: CatalogAlbum | None = None) -> CatalogTr
         title=d.get("title") or d.get("title_short") or "",
         artist=main,
         artists=names,
+        artist_refs=refs,
         artist_ref=make_ref("dz", art["id"]) if art.get("id") else None,
         album_ref=make_ref("dz", album_id) if album_id else None,
         album_title=alb.get("title") or (album.title if album else None),
