@@ -544,6 +544,11 @@ export interface PlaylistOfSongOut extends PlaylistOut {
   has: boolean;
 }
 
+export interface PlaylistOfSongsOut extends PlaylistOut {
+  /** how many of the asked songs are in this playlist */
+  count: number;
+}
+
 export interface PlaylistPageOut extends PlaylistOut {
   tracks: NdSongOut[];
 }

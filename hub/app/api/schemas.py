@@ -514,6 +514,19 @@ class PlaylistMembershipIn(BaseModel):
     remove: list[str] = Field(default_factory=list, max_length=100)  # ... and to take it out of
 
 
+class PlaylistOfSongsOut(PlaylistOut):
+    count: int = 0  # how many of the asked songs are in this playlist
+
+
+class PlaylistSongsIn(BaseModel):
+    nd_song_ids: list[str] = Field(min_length=1, max_length=1000)
+
+
+class PlaylistMembershipManyIn(PlaylistSongsIn):
+    add: list[str] = Field(default_factory=list, max_length=100)  # playlists to put the songs into (the missing ones)
+    remove: list[str] = Field(default_factory=list, max_length=100)  # ... and to take them all out of
+
+
 class PlaylistCreateIn(BaseModel):
     name: str
 

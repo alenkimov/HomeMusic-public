@@ -116,7 +116,7 @@ function apiTarget(t: LikeTarget): FavoriteTarget {
 }
 
 /** Track ♥ may download one song; album/artist ♥ only records the typed favorite. */
-export async function toggleLike(t: LikeTarget): Promise<void> {
+export async function toggleLike(t: LikeTarget, quiet = false): Promise<void> {
   const keys = aliases(t);
   const key = keys[0];
   if (!key || keys.some((a) => busy.has(a))) return;
@@ -154,7 +154,7 @@ export async function toggleLike(t: LikeTarget): Promise<void> {
     retries.delete(key);
     if (!liked && t.ref) pendingRefs.delete(t.ref);
     window.dispatchEvent(new CustomEvent('hm:hub-favorite', { detail: { ref: t.ref, star: liked } }));
-    toast(liked ? 'Добавлено в понравившиеся' : 'Убрано из понравившихся', 'success');
+    if (!quiet) toast(liked ? 'Добавлено в понравившиеся' : 'Убрано из понравившихся', 'success');
   } catch (e) {
     if (generation !== epoch) return;
     if (previous) local.set(key, previous);

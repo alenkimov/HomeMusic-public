@@ -71,3 +71,13 @@ async def test_where_a_song_is_and_changing_it_at_once(env):
     assert state["playlists"]["b"]["songs"] == ["s3", "s1"]
     await c.post("/api/playlists/membership", json={"nd_song_id": "s1", "add": ["b"]})
     assert state["playlists"]["b"]["songs"] == ["s3", "s1"]  # not added twice
+
+
+async def test_several_songs_at_once(env):
+    c, state = env
+    r = (await c.post("/api/playlists/of-songs", json={"nd_song_ids": ["s1", "s2", "s3", "s9"]})).json()
+    assert [(x["name"], x["count"]) for x in r] == [("JAPAN", 1), ("Уважаемые", 2)]  # distinct songs, not places
+    r = (await c.post("/api/playlists/membership-many", json={"nd_song_ids": ["s1", "s3", "s9"], "add": ["b"], "remove": ["a"]})).json()
+    assert state["playlists"]["b"]["songs"] == ["s3", "s1", "s9"]  # only the missing ones, in the order picked
+    assert state["playlists"]["a"]["songs"] == ["s2"]  # every place of every picked song
+    assert {x["name"]: x["count"] for x in r} == {"JAPAN": 3, "Уважаемые": 0}

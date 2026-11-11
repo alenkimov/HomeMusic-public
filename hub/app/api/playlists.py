@@ -10,10 +10,13 @@ from app.api.schemas import (
     PlaylistAddIn,
     PlaylistCreateIn,
     PlaylistMembershipIn,
+    PlaylistMembershipManyIn,
     PlaylistOfSongOut,
+    PlaylistOfSongsOut,
     PlaylistOut,
     PlaylistPageOut,
     PlaylistRemoveIn,
+    PlaylistSongsIn,
 )
 from app.auth import current_user, user_navidrome
 from app.db import get_session
@@ -89,6 +92,56 @@ async def membership(body: PlaylistMembershipIn, user: User = Depends(current_us
         await playlist_dates.stamp(s, pid, track_ids)
     await s.commit()
     return await of_song(body.nd_song_id, user)
+
+
+async def _of_songs(user: User, song_ids: list[str]) -> list[PlaylistOfSongsOut]:
+    async def load(nd):
+        pls = [p for p in await nd.get_playlists() if p.get("owner") in (None, user.nd_username)]
+        return pls, await asyncio.gather(*(_songs_of(nd, p) for p in pls))
+
+    want = set(song_ids)
+    pls, songs = await nd_call(user, load)
+    out = [(str(p.get("changed") or ""), PlaylistOfSongsOut(**pl_out(p).model_dump(), count=len(want.intersection(ids))))
+           for p, ids in zip(pls, songs, strict=True)]
+    return [x for _, x in sorted(out, key=lambda pair: pair[0], reverse=True)]
+
+
+@router.post("/of-songs", response_model=list[PlaylistOfSongsOut])
+async def of_songs(body: PlaylistSongsIn, user: User = Depends(current_user)):
+    """The user's playlists for several picked songs: how many of them each has, the ones changed last first."""
+    return await _of_songs(user, list(dict.fromkeys(body.nd_song_ids)))
+
+
+@router.post("/membership-many", response_model=list[PlaylistOfSongsOut])
+async def membership_many(body: PlaylistMembershipManyIn, user: User = Depends(current_user),
+                          s: AsyncSession = Depends(get_session, scope="function")):
+    """Several songs at once: into some playlists (the ones a playlist lacks, in the order given) and out of
+    others (every place of every one of them)."""
+    song_ids = list(dict.fromkeys(body.nd_song_ids))
+    want = set(song_ids)
+    added: dict[str, list[str]] = {}
+
+    async def change(nd):
+        for pid in dict.fromkeys(body.add):
+            have = set(await _songs_of(nd, {"id": pid}))
+            _songs.pop(pid, None)
+            missing = [x for x in song_ids if x not in have]
+            if missing:
+                await nd.update_playlist(pid, add=missing)
+                added[pid] = missing
+        for pid in dict.fromkeys(body.remove):
+            _songs.pop(pid, None)
+            at = [i for i, sid in enumerate(await _songs_of(nd, {"id": pid})) if sid in want]
+            _songs.pop(pid, None)
+            if at:
+                await nd.update_playlist(pid, remove_indexes=at)
+
+    await nd_call(user, change, not_found="Плейлист не найден")
+    for pid, ids in added.items():
+        track_ids = list((await s.execute(select(Track.id).where(Track.nd_song_id.in_(ids)))).scalars())
+        await playlist_dates.stamp(s, pid, track_ids)
+    await s.commit()
+    return await _of_songs(user, song_ids)
 
 
 @router.post("", response_model=PlaylistOut)
