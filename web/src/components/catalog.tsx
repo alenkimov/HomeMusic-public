@@ -263,7 +263,7 @@ export function TrackRow({
         <div className={className}>{children}</div>
       );
     const shown = 'opacity-0 focus-visible:opacity-100 group-hover/track:opacity-100';
-    const marked = '!opacity-100 ring-2 ring-inset ring-accent rounded-full';
+    const marked = '!opacity-100'; // shown on every row the drag passes, in the accent colour
     const dragList = () => (queue?.length ? queue : [track]).map(asSel);
 
     if (desktop) {
@@ -386,7 +386,7 @@ export function TrackRow({
               </span>
             )}
             <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('queue', dragList(), asSel(track))}>
-              <QueueButton track={menuTrack.listen as ListenTrack} className={cx('!w-9', dragMark === 'queue' && cx(marked, '!text-accent'))} />
+              <QueueButton track={menuTrack.listen as ListenTrack} className={cx('!w-9', dragMark === 'queue' ? cx(marked, '!text-accent') : dragMark === 'unqueue' && cx(marked, '!text-muted'))} />
             </span>
             <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('like', dragList(), asSel(track))}>
               <LikeButton songId={likeTarget.songId} refId={track.ref} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('!w-9', dragMark === 'like' ? cx(marked, '!text-accent') : dragMark === 'unlike' ? cx(marked, '!text-muted') : !liked && shown)} />

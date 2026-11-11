@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { tracksWord } from './format';
-import { addToQueue } from './listen';
+import { addToQueue, queuedRefs, unqueue } from './listen';
 import type { SelTrack } from './selection';
 import { openShare } from './shareTrack';
 import { isLiked, toggleLike } from './stars';
@@ -10,9 +10,10 @@ import { toast } from './ui';
  * row passed is marked, and the action is done to all of them when the mouse comes up (`components/catalog.tsx`
  * starts it, `components/Overlays.tsx` says what will happen). Nothing is done before that: Esc, or the mouse coming
  * up outside the rows, calls it off. A press without a drag is the button's own click.
- * ♥ started on a track without one likes those that lack it; started on a liked track it takes the ♥ off. */
+ * ♥ started on a track without one likes those that lack it; started on a liked track it takes the ♥ off. The queue
+ * the same way: started on a queued track, the drag takes the tracks out of the queue. */
 
-export type DragKind = 'like' | 'unlike' | 'queue' | 'share';
+export type DragKind = 'like' | 'unlike' | 'queue' | 'unqueue' | 'share';
 
 interface Drag {
   kind: DragKind;
@@ -49,11 +50,17 @@ const likeTarget = (t: SelTrack) => ({ songId: t.nd_song_id, ref: t.ref, data: {
 async function apply(kind: DragKind, tracks: SelTrack[]) {
   if (kind === 'share') return openShare(tracks);
   if (kind === 'queue') {
-    addToQueue(tracks.map((t) => t.listen));
-    return toast(`В очереди: ${tracksWord(tracks.length)}`, 'success');
+    const have = queuedRefs();
+    const add = tracks.filter((t) => !have.has(t.ref));
+    addToQueue(add.map((t) => t.listen));
+    return toast(add.length ? `В очереди: ${tracksWord(add.length)}` : 'Эти треки уже в очереди', add.length ? 'success' : 'info');
+  }
+  if (kind === 'unqueue') {
+    const n = unqueue(tracks.map((t) => t.ref));
+    return toast(n ? `Убрано из очереди: ${tracksWord(n)}` : 'Этих треков в очереди нет', n ? 'success' : 'info');
   }
   const todo = tracks.map(likeTarget).filter((t) => isLiked(t) === (kind === 'unlike'));
-  for (const t of todo) await toggleLike(t, true);
+  await Promise.all(todo.map((t) => toggleLike(t, true))); // at once: the hearts fill together, not one by one
   toast(todo.length ? `${kind === 'like' ? 'В понравившихся' : 'Убрано из понравившихся'}: ${tracksWord(todo.length)}` : kind === 'like' ? 'Все эти треки уже в понравившихся' : 'Ни у одного из этих треков нет ♥', todo.length ? 'success' : 'info');
 }
 
@@ -84,7 +91,8 @@ function key(e: KeyboardEvent) {
 /** The mouse went down on a row's button. */
 export function beginDragAction(kind: 'like' | 'queue' | 'share', list: readonly SelTrack[], t: SelTrack) {
   if (drag) stop();
-  drag = { kind: kind === 'like' && isLiked(likeTarget(t)) ? 'unlike' : kind, list, from: t.ref, to: t.ref };
+  const real: DragKind = kind === 'like' && isLiked(likeTarget(t)) ? 'unlike' : kind === 'queue' && queuedRefs().has(t.ref) ? 'unqueue' : kind;
+  drag = { kind: real, list, from: t.ref, to: t.ref };
   document.body.style.userSelect = 'none';
   window.addEventListener('mouseup', up, true);
   window.addEventListener('keydown', key, true);

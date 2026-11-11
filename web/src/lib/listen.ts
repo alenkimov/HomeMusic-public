@@ -750,6 +750,25 @@ export function removeFromQueue(index: number) {
   prefetchNext();
 }
 
+/** The refs of the tracks the user queued by hand that are still to play. */
+export function queuedRefs(): Set<string> {
+  const out = new Set<string>();
+  for (let i = state.index + 1; i < state.queue.length; i++) if (state.queue[i].queued) out.add(state.queue[i].ref);
+  return out;
+}
+
+/** Takes these tracks out of what the user queued by hand (the list that plays keeps its own tracks). */
+export function unqueue(refs: readonly string[]): number {
+  const drop = new Set(refs);
+  const queue = state.queue.filter((t, i) => !(i > state.index && t.queued && drop.has(t.ref)));
+  const removed = state.queue.length - queue.length;
+  if (removed) {
+    set({ queue });
+    prefetchNext();
+  }
+  return removed;
+}
+
 /** Moves a track of the queue to another place (the current one too). */
 export function moveInQueue(from: number, to: number) {
   const q = [...state.queue];

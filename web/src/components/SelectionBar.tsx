@@ -40,7 +40,7 @@ export function SelectionBar() {
   const like = async () => {
     setLiking(true);
     const todo = targets.filter((t) => allLiked || !isLiked(t));
-    for (const t of todo) await toggleLike(t, true);
+    await Promise.all(todo.map((t) => toggleLike(t, true)));
     setLiking(false);
     toast(allLiked ? `Убрано из понравившихся: ${tracksWord(todo.length)}` : `В понравившихся: ${tracksWord(todo.length)}`, 'success');
   };
