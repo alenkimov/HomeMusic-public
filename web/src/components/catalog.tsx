@@ -6,6 +6,7 @@ import { addToQueue, downloadRef, listen, listenAll, shuffled, touchTrack, useLi
 import { canPlay, canPlayAll, playSongs, playTracks } from '../lib/player';
 import { STANDALONE } from '../lib/embedded';
 import { Link, enc, navigate } from '../lib/router';
+import { beginDragAction, dragActionOver, useDragMark } from '../lib/dragAction';
 import { beginDragSelect, dragSelectMoved, dragSelectOver, selectRange, toggleSelected, useSelected, useSelectionCount, type SelTrack } from '../lib/selection';
 import { toggleLike, useLiked } from '../lib/stars';
 import { TRACK_COLUMN_LABELS, setTrackColumn, trackGrid, useTrackColumns, type TrackColumns } from '../lib/trackColumns';
@@ -201,6 +202,7 @@ export function TrackRow({
   };
   // picking several rows to act on together (`lib/selection.ts`)
   const selected = useSelected(track.ref);
+  const dragMark = useDragMark(track.ref); // this row is among the rows a button is being dragged over
   const selecting = useSelectionCount() > 0;
   const asSel = (t: TrackOut): SelTrack => ({ ref: t.ref, title: t.title, nd_song_id: t.owned ? t.nd_song_id : null, listen: listenTrack(t) });
   const onPick = (e: MouseEvent) => {
@@ -261,6 +263,8 @@ export function TrackRow({
         <div className={className}>{children}</div>
       );
     const shown = 'opacity-0 focus-visible:opacity-100 group-hover/track:opacity-100';
+    const marked = '!opacity-100 ring-2 ring-inset ring-accent rounded-full';
+    const dragList = () => (queue?.length ? queue : [track]).map(asSel);
 
     if (desktop) {
       const album = showAlbum && cols.album;
@@ -279,9 +283,13 @@ export function TrackRow({
           ref={rowRef}
           onClickCapture={onPick}
           onMouseDown={(e) => e.shiftKey && e.preventDefault()}
-          onMouseEnter={() => dragSelectOver(asSel(track))}
+          onMouseEnter={() => {
+            dragSelectOver(asSel(track));
+            dragActionOver(asSel(track));
+          }}
+          data-track-row
           aria-selected={selected}
-          className={cx('group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors', selected ? 'bg-accent/15 hover:bg-accent/20' : 'hover:bg-fg/5 focus-within:bg-fg/5')}
+          className={cx('group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors', selected ? 'bg-accent/15 hover:bg-accent/20' : dragMark ? 'bg-accent/10' : 'hover:bg-fg/5 focus-within:bg-fg/5')}
           style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration, added) }}
         >
           {/* the number picks the row; held and dragged over other rows, it picks them all. ▶ is on the cover */}
@@ -371,11 +379,18 @@ export function TrackRow({
             ) : (
               <IconButton icon="download" size={20} label="Скачать трек" onClick={download} busy={busy} className={cx('!w-9 text-muted hover:text-fg', !busy && shown)} />
             )}
+            {/* held and dragged over other rows, a button is theirs too: done to all of them when let go (lib/dragAction.ts) */}
             {track.owned && (
-              <IconButton icon="share" size={19} label={`Поделиться: «${track.title}»`} onClick={() => openShare(menuTrack)} className={cx('!w-9 text-muted hover:text-fg', shown)} />
+              <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('share', dragList(), asSel(track))}>
+                <IconButton icon="share" size={19} label={`Поделиться: «${track.title}»`} onClick={() => openShare(menuTrack)} className={cx('!w-9', dragMark === 'share' ? cx(marked, '!text-accent') : cx('text-muted hover:text-fg', shown))} />
+              </span>
             )}
-            <QueueButton track={menuTrack.listen as ListenTrack} className="!w-9" />
-            <LikeButton songId={likeTarget.songId} refId={track.ref} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('!w-9', !liked && shown)} />
+            <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('queue', dragList(), asSel(track))}>
+              <QueueButton track={menuTrack.listen as ListenTrack} className={cx('!w-9', dragMark === 'queue' && cx(marked, '!text-accent'))} />
+            </span>
+            <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('like', dragList(), asSel(track))}>
+              <LikeButton songId={likeTarget.songId} refId={track.ref} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('!w-9', dragMark === 'like' ? cx(marked, '!text-accent') : dragMark === 'unlike' ? cx(marked, '!text-muted') : !liked && shown)} />
+            </span>
           </div>
           {cols.duration && <span className="text-right text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>}
           <span data-row-actions className="contents">

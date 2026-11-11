@@ -2,6 +2,8 @@ import { dismissToast, useDialog, useToasts } from '../lib/ui';
 import { navigate } from '../lib/router';
 import { Button, cx } from './ui';
 import { Icon } from './Icon';
+import { useDragAction, type DragKind } from '../lib/dragAction';
+import { tracksWord } from '../lib/format';
 import { ShareSheet } from './ShareSheet';
 import { TelegramSetup } from './TelegramSetup';
 
@@ -43,6 +45,7 @@ export function Overlays() {
         ))}
       </div>
 
+      <DragActionHint />
       <TelegramSetup />
       <ShareSheet />
 
@@ -66,5 +69,21 @@ export function Overlays() {
         </div>
       )}
     </>
+  );
+}
+
+const DRAG_VERB: Record<DragKind, string> = { like: 'лайкнуть', unlike: 'снять ♥', queue: 'добавить в очередь', share: 'поделиться' };
+
+/** While a row's button is dragged over other rows: what letting go will do, and how to call it off. */
+function DragActionHint() {
+  const drag = useDragAction();
+  if (!drag) return null;
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+16px+env(safe-area-inset-bottom))] z-50 flex justify-center px-3" role="status">
+      <div className="rounded-full border border-line bg-raised px-4 py-2 text-sm shadow-2xl">
+        Отпустите, чтобы {DRAG_VERB[drag.kind]}: <span className="font-semibold">{tracksWord(drag.count)}</span>
+        <span className="text-muted"> · Esc — отмена</span>
+      </div>
+    </div>
   );
 }
