@@ -161,7 +161,7 @@ function TrackMenu({ track, extra, inPlayer, onClose }: { track: MenuTrack; extr
         )}
         {(track.nd_song_id || track.ref) && (
           <MenuItem
-            icon="mic"
+            icon="lyrics"
             label="Отправить в Telegram с текстом"
             hint="Текст песни придёт свёрнутой цитатой"
             onClick={() => {

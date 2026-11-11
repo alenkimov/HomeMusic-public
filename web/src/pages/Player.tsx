@@ -102,7 +102,7 @@ export function PlayerPage() {
       <div className="flex min-h-14 items-center gap-1 px-2">
         <IconButton icon="down" label="Свернуть" onClick={() => goBack('/home')} />
         <div className="min-w-0 flex-1 text-center text-xs uppercase tracking-wide text-muted">{contextLabel(context)}</div>
-        <IconButton icon="mic" label={lyrics ? 'Скрыть текст' : 'Показать текст'} aria-pressed={lyrics} onClick={toggleLyrics} className={lyrics ? '!text-accent' : 'text-muted'} />
+        <IconButton icon="lyrics" label={lyrics ? 'Скрыть текст' : 'Показать текст'} aria-pressed={lyrics} onClick={toggleLyrics} className={lyrics ? '!text-accent' : 'text-muted'} />
         <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id }} inPlayer />
       </div>
 
