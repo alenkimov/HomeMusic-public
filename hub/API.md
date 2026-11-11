@@ -292,7 +292,7 @@ session the app makes again after a `404`. The Hub keeps them with the session, 
 | `catalog_card` | the «Моя волна» card of the PWA's catalog (`/search` without a query; the app's «Хаб» tab) |
 | `track_menu` | «Волна по треку» in a track's menu (lists, album, mix, search) |
 | `artist_menu` | «Волна по исполнителю» in a track's menu |
-| `player` | from a player: «Моя волна по треку» on `/player`, the menu of the mini player and the queue, the app's player menu |
+| `player` | from a player: the menu of the mini player and the queue, the app's player menu |
 | `artist_page` | «Волна по исполнителю» on an artist's page |
 | `radio` | the app's «Радиостанции», the PWA's library artists (`nd_artist_id`) |
 | `search_file` | the ⋯ menu of a Files search result (`file:<provider>:<id>`) |

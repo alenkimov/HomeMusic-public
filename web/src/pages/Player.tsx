@@ -3,7 +3,7 @@ import { Icon } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
 import { Lyrics } from '../components/Lyrics';
 import { TrackMenuButton } from '../components/TrackMenu';
-import { Button, Cover, Empty, IconButton, Spinner, cx } from '../components/ui';
+import { Cover, Empty, IconButton, Spinner, cx } from '../components/ui';
 import { fmtDuration, providerLabel } from '../lib/format';
 import {
   cycleRepeat,
@@ -23,7 +23,6 @@ import {
 } from '../lib/listen';
 import { Link, enc, goBack } from '../lib/router';
 import { addRec, hideRec } from '../lib/smartShuffle';
-import { canWave, seedKey, startWave, trackSeed, useWave } from '../lib/wave';
 
 /** The full player of the PWA in a plain browser (`/player`, from a tap on the mini player): the big cover, seek,
  * shuffle / repeat, ♥, ⋯ and the queue — a tap plays a track, ↑ moves it up, × takes it out. Inside the app the
@@ -46,7 +45,6 @@ export function PlayerPage() {
   const canPrev = useListen(hasPrev);
   const [scrub, setScrub] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
-  const { starting } = useWave();
   const [lyrics, setLyrics] = useState(() => {
     try {
       return localStorage.getItem('hm-player-lyrics') === '1';
@@ -91,7 +89,6 @@ export function PlayerPage() {
     setBusy(false);
   };
   const firstArtist = track.artists?.find((a) => a.ref);
-  const waveSeed = trackSeed({ ...track, nd_song_id: info?.nd_song_id });
 
   return (
     <div className="pt-safe relative isolate mx-auto flex min-h-dvh max-w-2xl flex-col">
@@ -223,14 +220,6 @@ export function PlayerPage() {
           className={repeat !== 'off' ? '!text-accent' : 'text-muted'}
         />
       </div>
-
-      {canWave() && waveSeed && (
-        <div className="px-6 pt-4">
-          <Button icon="wave" block disabled={starting !== null} busy={starting === seedKey(waveSeed)} onClick={() => void startWave(waveSeed, 'player')}>
-            Моя волна по треку
-          </Button>
-        </div>
-      )}
 
       <Queue queue={queue} index={index} onWave={onWave} />
     </div>
