@@ -53,7 +53,7 @@ async def next_(session_id: str, body: SmartNextIn, user: User = Depends(current
 
 @router.post("/{session_id}/hide")
 async def hide(session_id: str, body: SmartTrackIn, user: User = Depends(current_user)):
-    """«−»: do not recommend this track in this playlist («Понравившиеся») any more."""
+    """«−»: do not recommend this track in this playlist («Любимое») any more."""
     try:
         await smart.hide(user, session_id, body.ref, body.nd_song_id)
     except smart.SmartError as e:
@@ -65,7 +65,7 @@ async def hide(session_id: str, body: SmartTrackIn, user: User = Depends(current
 async def add(session_id: str, body: SmartTrackIn, user: User = Depends(current_user),
               s: AsyncSession = Depends(get_session, scope="function")):
     """«+»: put the recommendation in the playlist (not in the library yet: download it, then put it in). In
-    «Понравившиеся» the client likes the track itself (its own ♥ path); the Hub only notes it."""
+    «Любимое» the client likes the track itself (its own ♥ path); the Hub only notes it."""
     from app.api.downloads import create_batch
     from app.jobs.queue import notify
 

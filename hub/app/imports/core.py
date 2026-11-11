@@ -361,7 +361,7 @@ async def _next_batch(s: AsyncSession, imp: Import) -> list[tuple[ImportItem, Im
         .join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
         .where(ImportItem.import_id == imp.id, ImportItem.status == "pending", ImportCollection.selected.is_(True))
     )).all()
-    # likes from the oldest: each downloaded one then lands on top of «Понравившиеся» (`apply.sync_likes`)
+    # likes from the oldest: each downloaded one then lands on top of «Любимое» (`apply.sync_likes`)
     rows = sorted(rows, key=lambda r: (KIND_ORDER.get(r[1].kind, 9), r[1].position,
                                        -r[0].position if r[1].kind == "likes" else r[0].position))
     return [(it, c) for it, c in rows[:RESOLVE_BATCH]]

@@ -580,7 +580,7 @@ class WaveItem(Base):
 
 
 class SmartSession(Base):
-    """One run of the smart shuffle of a playlist or of «Понравившиеся» (MIXES.md 8): the order of the own songs
+    """One run of the smart shuffle of a playlist or of «Любимое» (MIXES.md 8): the order of the own songs
     and the recommendations the Hub put between them. `state_json` — what the session needs to go on after a
     restart (`app.mixes.smart`); the rest is for the analytics."""
 

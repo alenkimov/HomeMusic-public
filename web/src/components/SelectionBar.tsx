@@ -42,14 +42,14 @@ export function SelectionBar() {
     const todo = targets.filter((t) => allLiked || !isLiked(t));
     await Promise.all(todo.map((t) => toggleLike(t, true)));
     setLiking(false);
-    toast(allLiked ? `Убрано из понравившихся: ${tracksWord(todo.length)}` : `В понравившихся: ${tracksWord(todo.length)}`, 'success');
+    toast(allLiked ? `Убрано из любимого: ${tracksWord(todo.length)}` : `В любимом: ${tracksWord(todo.length)}`, 'success');
   };
   const btn = '!h-10 !w-10';
   return (
     <div className="pointer-events-none fixed bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+12px+env(safe-area-inset-bottom))] left-(--side-w) right-0 z-40 flex justify-center px-3" role="region" aria-label="Выбранные треки">
       <div className="anim-up pointer-events-auto flex max-w-full items-center gap-1 rounded-2xl border border-line bg-raised py-1.5 pl-4 pr-1.5 shadow-2xl">
         <span className="mr-2 whitespace-nowrap text-sm font-semibold">{tracksWord(count)}</span>
-        <IconButton icon="heart" filled={allLiked} size={20} busy={liking} label={allLiked ? 'Убрать все из понравившихся' : 'Все — в понравившиеся'} onClick={() => void like()} className={cx(btn, allLiked ? '!text-accent' : 'text-muted hover:text-fg')} />
+        <IconButton icon="heart" filled={allLiked} size={20} busy={liking} label={allLiked ? 'Убрать все из любимого' : 'Все — в любимое'} onClick={() => void like()} className={cx(btn, allLiked ? '!text-accent' : 'text-muted hover:text-fg')} />
         <IconButton
           icon="playlist"
           size={20}

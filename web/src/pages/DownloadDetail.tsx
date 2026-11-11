@@ -81,7 +81,7 @@ export function DownloadDetailPage({ id }: { id: number }) {
             <Notice kind="info">Подходящий файл не найден автоматически. Выберите вариант ниже или вставьте ссылку на страницу трека.</Notice>
           )}
           {item.liked && item.status !== 'done' && (
-            <Notice kind="info">Загрузка по ♥: песня попадёт в «Понравившиеся», когда файл скачается.</Notice>
+            <Notice kind="info">Загрузка по ♥: песня попадёт в «Любимое», когда файл скачается.</Notice>
           )}
           <div className="flex flex-wrap gap-2 pt-1">
             {active ? (

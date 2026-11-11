@@ -48,7 +48,7 @@ CONFIRM_TOOLS = {"delete_playlist", "delete_library_tracks"}
 SONGS_FROM = ("starred", "starred_from_imports", "playlist:<id>", "import_collection:<id>")
 
 SYSTEM = """You are the HomeMusic assistant: a personal music library on the user's home server (Navidrome).
-Answer in Russian, briefly. You manage the user's account with full rights: ♥ («Понравившиеся», starred songs),
+Answer in Russian, briefly. You manage the user's account with full rights: ♥ («Любимое», starred songs),
 playlists, downloads. Do what the user asks right away with the tools, then say in one or two lines what was done;
 don't ask for permission. Deleting a playlist or files of the library needs the user's confirmation: call the tool,
 the app shows a button — never say it is deleted.

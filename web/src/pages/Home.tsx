@@ -38,7 +38,7 @@ export function HomePage() {
         </>
       )}
       <div className="grid grid-cols-2 gap-2 px-4 pt-3">
-        <Shortcut to="/liked" icon="heart" title="Понравившиеся" />
+        <Shortcut to="/liked" icon="heart" title="Любимое" />
         <Shortcut to="/playlists" icon="playlist" title="Плейлисты" />
         <Shortcut to="/artists" icon="user" title="Исполнители" />
         <Shortcut to="/lib/albums" icon="disc" title="Все альбомы" />
@@ -60,7 +60,7 @@ export function HomePage() {
           )}
           <AlbumRow title="Недавно слушали" albums={d.recent} rowKey="home:recent" />
           <AlbumRow title="Часто слушаете" albums={d.frequent} rowKey="home:frequent" />
-          <AlbumRow title="Понравившиеся альбомы" albums={d.starred} rowKey="home:starred" more="/liked" />
+          <AlbumRow title="Любимые альбомы" albums={d.starred} rowKey="home:starred" more="/liked" />
           <AlbumRow title="Новое в библиотеке" albums={d.newest} rowKey="home:newest" more="/lib/albums" />
         </>
       ) : null}

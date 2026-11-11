@@ -506,7 +506,7 @@ function startList(track: ListenTrack, queue?: readonly ListenTrack[], context?:
     unshuffled = list;
     set({ smart: false });
     start([list[at], ...shuffled(list.filter((_, i) => i !== at))], 0);
-    // the smart shuffle chosen and this list is a playlist / «Понравившиеся»: the Hub orders it and puts recommendations
+    // the smart shuffle chosen and this list is a playlist / «Любимое»: the Hub orders it and puts recommendations
     // in, a moment after the tapped track has started (the plain shuffle plays until then)
     if (smartChosen && smartHooks?.canStart()) {
       set({ smart: true });
@@ -650,7 +650,7 @@ export function setShuffle(on: boolean) {
 }
 
 /** The shuffle button: off → shuffle → smart shuffle (only where the playing list can have one: a playlist or
- * «Понравившиеся», and the setting on) → off. */
+ * «Любимое», and the setting on) → off. */
 export function cycleShuffle() {
   if (onWave()) return;
   if (!state.shuffle) return setShuffle(true);
@@ -667,7 +667,7 @@ export function cycleShuffle() {
 
 /** The smart shuffle's own calls (`lib/smartShuffle.ts` registers them). */
 export interface SmartHooks {
-  /** a new list was started: its screen's smart context (a playlist, «Понравившиеся») is noted, an old session ends */
+  /** a new list was started: its screen's smart context (a playlist, «Любимое») is noted, an old session ends */
   listStarted(context: string): void;
   /** the playing list can have a smart shuffle (and the setting is on) */
   canStart(): boolean;

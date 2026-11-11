@@ -71,7 +71,7 @@ export function listenTrack(t: TrackOut): ListenTrack {
   };
 }
 
-/** «Слушать» / «Перемешать» of a whole list (an album, a playlist, «Понравившиеся»): in the app's player when it
+/** «Слушать» / «Перемешать» of a whole list (an album, a playlist, «Любимое»): in the app's player when it
  * plays catalog tracks (1.2.0+), otherwise in the page's own one. */
 export function playAll(list: readonly TrackOut[], opts: { shuffle?: boolean; context?: string; page?: string } = {}) {
   if (!list.length) return;
@@ -401,7 +401,7 @@ export function TrackRow({
     }
 
     const extras: MenuExtra[] = [
-      { icon: 'heart', label: liked ? 'Убрать из понравившихся' : 'В понравившиеся', onClick: () => void toggleLike(likeTarget) },
+      { icon: 'heart', label: liked ? 'Убрать из любимого' : 'В любимое', onClick: () => void toggleLike(likeTarget) },
       ...(!track.owned && dl !== 'done' && !downloading ? [{ icon: 'download' as const, label: 'Скачать', onClick: () => void download() }] : []),
       selectExtra,
       ...(menuExtra ?? []),

@@ -85,7 +85,7 @@ export function MorePage() {
           <Item
             icon="shuffleSmart"
             title="Умное перемешивание в режимах"
-            sub="Кнопка перемешивания в плейлисте и «Понравившихся» добавляет рекомендации"
+            sub="Кнопка перемешивания в плейлисте и «Любимом» добавляет рекомендации"
             onClick={() => setSmartEnabled(!smart)}
             right={<Switch on={smart} />}
           />

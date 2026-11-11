@@ -21,7 +21,7 @@ export function PlaylistPicker({
   open: boolean;
   onClose: () => void;
   onPick: (p: PlaylistPick) => void;
-  /** «Понравившиеся» is offered as the first choice (they are not a playlist: the caller sets the ♥ itself) */
+  /** «Любимое» is offered as the first choice (they are not a playlist: the caller sets the ♥ itself) */
   onLiked?: () => void;
   title?: string;
   defaultName?: string;
@@ -37,7 +37,7 @@ export function PlaylistPicker({
             <Icon name="heart" size={20} filled />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate">Понравившиеся</span>
+            <span className="block truncate">Любимое</span>
             <span className="block text-xs text-muted">Поставить ♥ всем импортируемым трекам</span>
           </span>
         </button>

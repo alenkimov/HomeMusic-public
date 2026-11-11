@@ -61,7 +61,7 @@ async function apply(kind: DragKind, tracks: SelTrack[]) {
   }
   const todo = tracks.map(likeTarget).filter((t) => isLiked(t) === (kind === 'unlike'));
   await Promise.all(todo.map((t) => toggleLike(t, true))); // at once: the hearts fill together, not one by one
-  toast(todo.length ? `${kind === 'like' ? 'В понравившихся' : 'Убрано из понравившихся'}: ${tracksWord(todo.length)}` : kind === 'like' ? 'Все эти треки уже в понравившихся' : 'Ни у одного из этих треков нет ♥', todo.length ? 'success' : 'info');
+  toast(todo.length ? `${kind === 'like' ? 'В любимом' : 'Убрано из любимого'}: ${tracksWord(todo.length)}` : kind === 'like' ? 'Все эти треки уже в любимом' : 'Ни у одного из этих треков нет ♥', todo.length ? 'success' : 'info');
 }
 
 function stop() {

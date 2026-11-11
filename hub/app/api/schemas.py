@@ -282,7 +282,7 @@ class StarIn(BaseModel):
 
 
 class StarredOut(BaseModel):
-    """The current user's Navidrome stars (♥ in the Hub and the app's «Понравившиеся»)."""
+    """The current user's Navidrome stars (♥ in the Hub and the app's «Любимое»)."""
 
     song_ids: list[str] = []
     album_ids: list[str] = []
@@ -485,7 +485,7 @@ class UploadCommitIn(BaseModel):
     tracks: list[UploadTrackIn]
     cover_from_upload_id: int | None = None  # use the embedded cover of this upload
     playlist_id: str | None = None
-    star: bool = False  # the imported tracks go into «Понравившиеся» too
+    star: bool = False  # the imported tracks go into «Любимое» too
 
 
 class UploadCommitOut(BaseModel):
@@ -1029,7 +1029,7 @@ class WaveOut(BaseModel):
 
 class SmartStartIn(BaseModel):
     context: str = Field(max_length=80, pattern=r"^(liked|playlist:\S{1,64})$")  # "liked" or "playlist:<Navidrome id>"
-    # the context's songs in its order (a playlist: new ones at the end; «Понравившиеся»: the newest first): a
+    # the context's songs in its order (a playlist: new ones at the end; «Любимое»: the newest first): a
     # Navidrome song id, or a catalog ref (has a colon) for a ♥ not downloaded yet
     songs: list[str] = Field(min_length=1, max_length=5000)
     current: str | None = Field(default=None, max_length=80)  # the song tapped or playing now: it plays first
@@ -1082,7 +1082,7 @@ class SmartOut(BaseModel):
 class SmartAddOut(BaseModel):
     ok: bool = True
     # added — put in the playlist; downloading — not in the library yet, it is downloaded and put in the playlist
-    # after; liked — «Понравившиеся»: the Hub only noted it, the client likes the track itself
+    # after; liked — «Любимое»: the Hub only noted it, the client likes the track itself
     status: Literal["added", "downloading", "liked"]
     playlist_id: str | None = None
 

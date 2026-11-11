@@ -286,7 +286,7 @@ const codeLabel = (map: Record<string, string>, fallback?: string) => (code?: st
 
 /** What a launch played (`source`). */
 export const sourceLabel = codeLabel({
-  mix: 'Микс дня', wave: 'Моя волна', smart: 'Умное перемешивание', playlist: 'Плейлист', album: 'Альбом', artist: 'Исполнитель', liked: 'Понравившиеся',
+  mix: 'Микс дня', wave: 'Моя волна', smart: 'Умное перемешивание', playlist: 'Плейлист', album: 'Альбом', artist: 'Исполнитель', liked: 'Любимое',
   search: 'Поиск', queue: 'Очередь', continuous: 'Продолжение похожими', library: 'Библиотека', other: 'Другое',
   unknown: 'Без контекста', scrobble: 'История Navidrome',
 }, 'Без контекста');
@@ -301,7 +301,7 @@ export const waveOriginLabel = codeLabel({
 /** Where a list was launched (`launch_origin`). */
 export const launchOriginLabel = codeLabel({
   mix_page: 'Страница микса', mix_page_track: 'Трек на странице микса', mix_card: 'Карточка микса', nd_playlist: 'Плейлист микса',
-  album: 'Альбом', artist: 'Исполнитель', playlist: 'Плейлист', liked: 'Понравившиеся', search: 'Поиск', queue: 'Очередь',
+  album: 'Альбом', artist: 'Исполнитель', playlist: 'Плейлист', liked: 'Любимое', search: 'Поиск', queue: 'Очередь',
   library: 'Библиотека', wave: 'Волна',
 }, 'не записано');
 

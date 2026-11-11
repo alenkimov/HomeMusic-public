@@ -164,7 +164,7 @@ SEED_PER_ARTIST = 2  # when the artists run out
 def choose_seeds(songs: Sequence[OwnSong], rng: random.Random, newest_last: bool, n: int = SEEDS) -> list[str]:
     """Up to `n` songs of the playlist to ask for similar ones: the newest few first (the playlist's mood moves
     with what was added lately), then random ones, of different artists while there are any. `songs` — in the
-    playlist's order; `newest_last` — new songs are added at the end (a playlist), not put first («Понравившиеся»)."""
+    playlist's order; `newest_last` — new songs are added at the end (a playlist), not put first («Любимое»)."""
     ordered = list(songs)
     newest = (ordered[-RECENT_WINDOW:][::-1] if newest_last else ordered[:RECENT_WINDOW])
     chosen: list[OwnSong] = []

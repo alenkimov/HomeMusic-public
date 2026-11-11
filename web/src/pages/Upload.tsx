@@ -609,8 +609,8 @@ export function UploadPage() {
             {like && (
               <span className="flex items-center text-sm">
                 <Icon name="heart" size={18} filled className="mr-2 text-accent" />
-                В «Понравившиеся»
-                <IconButton icon="x" size={18} label="Не добавлять в понравившиеся" onClick={() => setLike(false)} />
+                В «Любимое»
+                <IconButton icon="x" size={18} label="Не добавлять в любимое" onClick={() => setLike(false)} />
               </span>
             )}
             {playlist && (
@@ -622,7 +622,7 @@ export function UploadPage() {
             )}
             {(!like || !playlist) && (
               <Button small icon="playlist" onClick={() => setPlPicker(true)}>
-                {like || playlist ? 'Добавить ещё куда-нибудь' : 'Добавить ещё и в плейлист или «Понравившиеся»'}
+                {like || playlist ? 'Добавить ещё куда-нибудь' : 'Добавить ещё и в плейлист или «Любимое»'}
               </Button>
             )}
           </div>

@@ -166,7 +166,7 @@ export function PlayerPage() {
         <div className="mx-6 mt-4 flex items-center gap-1 rounded-xl bg-accent/10 py-1 pl-3 pr-1" role="group" aria-label="Рекомендация">
           <Icon name="sparkle" size={18} className="shrink-0 text-accent" />
           <span className="min-w-0 flex-1 text-[13px] leading-tight">{track.rec.label}</span>
-          <IconButton icon="plus" label={track.rec.label.includes('любим') ? 'В понравившиеся' : 'Добавить в плейлист'} onClick={() => void addRec(track)} className="!text-accent" />
+          <IconButton icon="plus" label={track.rec.label.includes('любим') ? 'В любимое' : 'Добавить в плейлист'} onClick={() => void addRec(track)} className="!text-accent" />
           <IconButton icon="minus" label="Не рекомендовать здесь" onClick={() => void hideRec(track)} className="text-muted" />
         </div>
       )}
@@ -254,7 +254,7 @@ function PlayingFrom({ context, page }: { context: string; page: string }) {
       alive = false;
     };
   }, [id]);
-  const title = context === 'playlist' ? name : context === 'liked' ? 'Понравившиеся' : null;
+  const title = context === 'playlist' ? name : context === 'liked' ? 'Любимое' : null;
   const to = context === 'liked' ? '/liked' : page;
   if (!title)
     return <div className="min-w-0 flex-1 text-center text-xs uppercase tracking-wide text-muted">{contextLabel(context)}</div>;
@@ -270,7 +270,7 @@ function contextLabel(context: string): string {
   if (context.startsWith('wave:')) return 'Моя волна';
   if (context.startsWith('mix:')) return 'Микс дня';
   return (
-    { album: 'Альбом', artist: 'Исполнитель', playlist: 'Плейлист', liked: 'Понравившиеся', search: 'Поиск', queue: 'Очередь' } as Record<string, string>
+    { album: 'Альбом', artist: 'Исполнитель', playlist: 'Плейлист', liked: 'Любимое', search: 'Поиск', queue: 'Очередь' } as Record<string, string>
   )[context] ?? 'Сейчас играет';
 }
 

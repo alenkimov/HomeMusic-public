@@ -154,7 +154,7 @@ export async function toggleLike(t: LikeTarget, quiet = false): Promise<void> {
     retries.delete(key);
     if (!liked && t.ref) pendingRefs.delete(t.ref);
     window.dispatchEvent(new CustomEvent('hm:hub-favorite', { detail: { ref: t.ref, star: liked } }));
-    if (!quiet) toast(liked ? 'Добавлено в понравившиеся' : 'Убрано из понравившихся', 'success');
+    if (!quiet) toast(liked ? 'Добавлено в любимое' : 'Убрано из любимого', 'success');
   } catch (e) {
     if (generation !== epoch) return;
     if (previous) local.set(key, previous);

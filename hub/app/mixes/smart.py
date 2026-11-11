@@ -1,4 +1,4 @@
-"""«Умное перемешивание» (MIXES.md 8): a playlist or «Понравившиеся» played shuffled, with recommendations "in the
+"""«Умное перемешивание» (MIXES.md 8): a playlist or «Любимое» played shuffled, with recommendations "in the
 mood of the playlist" put between its own songs — Spotify's Smart Shuffle.
 
 - The Hub keeps all the logic, the clients only show. `start` gets the context (`playlist:<Navidrome id>` or
@@ -601,7 +601,7 @@ async def hide(user: User, sid: str, ref: str | None, nd_song_id: str | None) ->
 
 async def accept(user: User, sid: str, ref: str | None, nd_song_id: str | None) -> tuple[SmartItem, str | None]:
     """«+»: marks the recommendation as taken (what it raises in the next picks). Returns the item and the
-    Navidrome playlist the track has to be put in (`None` in «Понравившиеся»: the client likes it itself)."""
+    Navidrome playlist the track has to be put in (`None` in «Любимое»: the client likes it itself)."""
     rt = await _runtime(sid, user)
     item = await _item(sid, ref, nd_song_id)
     async with rt.lock:

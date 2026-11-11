@@ -107,7 +107,7 @@ async def create_batch(
             await s.flush()
             return DownloadBatchOut(batch_id=batch.id, queued=0, already_owned=0)
         origin, title = "favorite-app", body.favorite_event_id
-    # ♥ downloads stay out of playlists: the song is in «Понравившиеся» anyway, and the app keeps a batch's playlist
+    # ♥ downloads stay out of playlists: the song is in «Любимое» anyway, and the app keeps a batch's playlist
     # on the phone
     playlist_id = None if body.star else await resolve_playlist(user, body.playlist_id, body.new_playlist_name)
     track_refs = list(body.track_refs)

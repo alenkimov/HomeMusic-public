@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import type { NdSongOut } from '../api/types';
 import { useHubEvent } from '../lib/events';
@@ -20,7 +20,7 @@ const NAV: Array<{ id: Tab; to: string; label: string; icon: IconName }> = [
 ];
 
 /** The left panel of a computer (instead of the tab bar of a phone): the sections on top, then the user's own
- * music — «Понравившиеся» and the playlists, one click away from any screen. Its width is `--side-w`, it ends
+ * music — «Любимое» and the playlists, one click away from any screen. Its width is `--side-w`, it ends
  * above the player bar (`--tabbar-h`). */
 export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Record<Tab, string>> }) {
   const route = useRoute();
@@ -29,6 +29,21 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
   useHubEvent('library', () => lists.reload(true));
   useHubEvent('import', () => lists.reload(true));
   useHubEvent('reconnect', () => lists.reload(true));
+  // «Любимое» is a playlist too: its number of tracks, kept fresh as ♥ are set
+  const liked = useAsync((s) => api.ndLiked(s), []);
+  useHubEvent('library', () => liked.reload(true));
+  useEffect(() => {
+    let timer: number | undefined;
+    const changed = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => liked.reload(true), 1500); // after the Hub has written the ♥
+    };
+    window.addEventListener('hm:hub-favorite', changed);
+    return () => {
+      window.removeEventListener('hm:hub-favorite', changed);
+      window.clearTimeout(timer);
+    };
+  }, [liked.reload]);
   const shown = active === 'assistant' ? 'more' : active;
   const item = 'flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm transition-colors';
   const at = (to: string) => route.path === to;
@@ -61,9 +76,12 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/20 text-accent">
               <Icon name="heart" size={18} filled />
             </span>
-            <span className="truncate text-fg">Понравившиеся</span>
+            <span className="min-w-0">
+              <span className={cx('block truncate', at('/liked') ? 'font-semibold text-accent' : 'text-fg')}>Любимое</span>
+              {liked.data && <span className="block truncate text-xs text-dim">{tracksWord(liked.data.songs.length)}</span>}
+            </span>
           </Link>
-          <PlayOver name="Понравившиеся" context="liked" page="/liked" load={async () => (await api.ndLiked()).songs} />
+          <PlayOver name="Любимое" context="liked" page="/liked" load={async () => (await api.ndLiked()).songs} />
         </div>
         {(lists.data ?? []).map((p) => {
           const to = `/playlist/${enc(p.id)}`;

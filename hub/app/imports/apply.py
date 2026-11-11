@@ -290,7 +290,7 @@ _likes_lock = asyncio.Lock()
 
 
 async def sync_likes(s: AsyncSession, imp: Import) -> None:
-    """♥ of the import's likes in the service's order. Navidrome lists «Понравившиеся» by the time of the star, newest
+    """♥ of the import's likes in the service's order. Navidrome lists «Любимое» by the time of the star, newest
     first, so the songs are starred one by one from the oldest like; a song that arrives later (a download) is starred
     with the likes newer than it again (`restar_plan`). A song the user has unstarred since is left alone."""
     user = await s.get(User, imp.user_id)

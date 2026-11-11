@@ -212,7 +212,7 @@ async def commit(payload: str = Form(...), cover: UploadFile | None = File(None)
 
 @handler("upload_playlist_add")
 async def handle_playlist_add(job: Job) -> None:
-    """«Добавить ещё и в плейлист» / «в Понравившиеся» of an import: the imported tracks go into the playlist and
+    """«Добавить ещё и в плейлист» / «в Любимое» of an import: the imported tracks go into the playlist and
     get their ♥ in their order once the library scan has given them Navidrome song ids. After `until` the ones that
     have ids go, the rest are left out."""
     from app.api.schemas import FavoriteTarget
@@ -238,7 +238,7 @@ async def handle_playlist_add(job: Job) -> None:
         if p.get("playlist_id"):
             await nd.update_playlist(p["playlist_id"], add=ready)
         if p.get("star"):
-            # through the favorites journal, as a ♥ set by hand: mixes and «Понравившиеся» see it the same way
+            # through the favorites journal, as a ♥ set by hand: mixes and «Любимое» see it the same way
             async with session_scope() as s:
                 await command(s, user, [FavoriteTarget(nd_song_id=x, target_data=names.get(x)) for x in ready],
                               liked=True, client="hub", context="upload", nd=nd)

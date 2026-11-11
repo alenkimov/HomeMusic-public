@@ -11,7 +11,7 @@ export interface Found {
   line?: string;
 }
 
-/** The search inside a list of tracks (a playlist, «Понравившиеся»): by title, artist and album, and inside the
+/** The search inside a list of tracks (a playlist, «Любимое»): by title, artist and album, and inside the
  * lyrics the Hub keeps (`/api/lyrics/search`). A round button floats at the bottom right of the page; a click on it
  * or Ctrl+F (instead of the browser's own find, which sees only the rows on the page, not their texts) opens the
  * field. Esc closes it and brings the whole list back.

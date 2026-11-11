@@ -63,7 +63,7 @@ export function LibraryPage({ initialQuery }: { initialQuery: string }) {
         // a browser has no app around it: the Navidrome library a player shows, then the files the Hub keeps
         <>
           <ul className="mx-4 mb-2 overflow-hidden rounded-xl bg-surface">
-            <LibraryLink to="/liked" icon="heart" title="Понравившиеся" />
+            <LibraryLink to="/liked" icon="heart" title="Любимое" />
             <LibraryLink to="/playlists" icon="playlist" title="Плейлисты" />
             <LibraryLink to="/artists" icon="user" title="Исполнители" />
             <LibraryLink to="/lib/albums" icon="disc" title="Все альбомы" />

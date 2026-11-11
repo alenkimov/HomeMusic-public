@@ -39,7 +39,7 @@ export function LikeButton({
       filled={liked}
       size={size}
       aria-pressed={liked}
-      label={liked ? `Убрать «${title}» из понравившихся` : `«${title}» — в понравившиеся`}
+      label={liked ? `Убрать «${title}» из любимого` : `«${title}» — в любимое`}
       disabled={busy}
       onClick={async () => {
         setBusy(true);

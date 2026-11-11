@@ -188,12 +188,13 @@ function MoreMenu({ items }: { items: Array<{ icon: IconName; label: string; dan
   );
 }
 
-function Hero({ cover, round, title, sub, right, kicker }: { cover?: string | null; round?: boolean; title: string; sub?: ReactNode; right?: ReactNode; kicker?: string }) {
+/** `art`: a picture of the page's own in place of the cover («Любимое»: the heart). */
+function Hero({ cover, round, title, sub, right, kicker, art }: { cover?: string | null; round?: boolean; title: string; sub?: ReactNode; right?: ReactNode; kicker?: string; art?: ReactNode }) {
   const desktop = useDesktop();
   if (desktop)
     return (
       <div className="flex items-end gap-6 px-6 pb-5 pt-3">
-        <Cover src={cover} round={round} icon={round ? 'user' : 'disc'} alt={title} className="aspect-square w-48 shrink-0 shadow-2xl" />
+        {art ? <div className="aspect-square w-48 shrink-0 overflow-hidden rounded-md shadow-2xl">{art}</div> : <Cover src={cover} round={round} icon={round ? 'user' : 'disc'} alt={title} className="aspect-square w-48 shrink-0 shadow-2xl" />}
         <div className="min-w-0 flex-1">
           {kicker && <div className="text-sm text-muted">{kicker}</div>}
           <h2 className="line-clamp-2 break-words text-6xl font-black leading-[1.05] tracking-tight">{title}</h2>
@@ -204,7 +205,7 @@ function Hero({ cover, round, title, sub, right, kicker }: { cover?: string | nu
     );
   return (
     <div className="flex flex-col items-center gap-3 px-4 pb-4 pt-2 text-center">
-      <Cover src={cover} round={round} icon={round ? 'user' : 'disc'} alt={title} className="aspect-square w-52 shadow-2xl" />
+      {art ? <div className="aspect-square w-52 overflow-hidden rounded-md shadow-2xl">{art}</div> : <Cover src={cover} round={round} icon={round ? 'user' : 'disc'} alt={title} className="aspect-square w-52 shadow-2xl" />}
       <div className="min-w-0">
         <h2 className="line-clamp-2 text-2xl font-bold leading-tight">{title}</h2>
         {sub && <div className="mt-1 text-sm text-muted">{sub}</div>}
@@ -236,12 +237,26 @@ export function LikedPage() {
     };
   }, [res.reload]);
   const songs = useMemo(() => res.data?.songs ?? [], [res.data]);
+  const length = useMemo(() => songs.reduce((sum, t) => sum + (t.duration_s ?? 0), 0), [songs]);
+  const desktop = useDesktop();
   const search = useListSearch(songs);
   const q = search.q;
 
   return (
     <div>
-      <PageHeader title="Понравившиеся" back="/library" sub={res.data ? tracksWord(songs.length) : undefined} right={<IconButton icon="refresh" label="Обновить" onClick={() => res.reload(true)} />} />
+      <PageHeader title={desktop ? '' : 'Любимое'} back="/library" right={<IconButton icon="refresh" label="Обновить" onClick={() => res.reload(true)} />} />
+      {res.data && (
+        <Hero
+          kicker="Плейлист"
+          title="Любимое"
+          art={
+            <div className="flex h-full w-full items-center justify-center bg-accent/20 text-accent">
+              <Icon name="heart" size={84} filled />
+            </div>
+          }
+          sub={[tracksWord(songs.length), length ? fmtLength(length) : null].filter(Boolean).join(' · ')}
+        />
+      )}
       {res.loading ? (
         <SkeletonRows />
       ) : res.error ? (

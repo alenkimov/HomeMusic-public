@@ -520,7 +520,7 @@ export interface UploadCommitIn {
   tracks: UploadTrackIn[];
   cover_from_upload_id?: number | null;
   playlist_id?: string | null;
-  /** the imported tracks go into «Понравившиеся» too */
+  /** the imported tracks go into «Любимое» too */
   star?: boolean;
 }
 
@@ -1074,7 +1074,7 @@ export interface WaveTrackOut extends TrackOut {
 export interface SmartStartIn {
   /** `liked` or `playlist:<Navidrome id>` */
   context: string;
-  /** the context's songs in its order (a playlist: new ones at the end; «Понравившиеся»: the newest first): a Navidrome
+  /** the context's songs in its order (a playlist: new ones at the end; «Любимое»: the newest first): a Navidrome
    * song id, or a catalog ref for a ♥ not downloaded yet */
   songs: string[];
   /** the song tapped or playing now: it plays first */
@@ -1110,7 +1110,7 @@ export interface SmartOut {
 
 export interface SmartAddOut {
   ok: boolean;
-  /** added to the playlist / downloading and will be added / «Понравившиеся»: the client likes it itself */
+  /** added to the playlist / downloading and will be added / «Любимое»: the client likes it itself */
   status: 'added' | 'downloading' | 'liked';
   playlist_id?: string | null;
 }
