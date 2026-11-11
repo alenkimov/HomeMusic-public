@@ -1,29 +1,46 @@
-"""Sending library tracks to the user's own Telegram bot.
+"""Sending library tracks to the user's own Telegram bot (aiogram).
 
 Each user connects a bot of their own: the token BotFather gave (kept encrypted, as the Navidrome password is) and
 the private chat the bot may write to — a bot cannot start a conversation, so the user presses Start in it and the
-Hub finds that chat in the bot's updates. The Hub talks to the official Bot API over HTTPS itself (`getMe`,
-`getUpdates`, `sendAudio`): three plain requests with a per-user token need no bot framework.
+Hub finds that chat in the bot's updates.
+
+The Hub has no bot of its own and many users' bots, so there is no long-lived `Bot`: one is made for a call
+(`bot_of`) and its session is closed after it. Receiving messages (a search from Telegram, group chats) will need a
+`Dispatcher` polling each connected bot; until then nothing polls, which is why `find_chat` may read `getUpdates`.
 """
 
 from __future__ import annotations
 
 import io
 import logging
-import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-import httpx
+from aiogram import Bot
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramConflictError,
+    TelegramEntityTooLarge,
+    TelegramForbiddenError,
+    TelegramNetworkError,
+    TelegramNotFound,
+    TelegramRetryAfter,
+    TelegramUnauthorizedError,
+)
+from aiogram.types import BufferedInputFile, FSInputFile
+from aiogram.utils.token import TokenValidationError, validate_token
 
-from app.net import make_client
+from app.config import get_settings
 
 log = logging.getLogger(__name__)
 
-API = "https://api.telegram.org"
-TOKEN_RE = re.compile(r"^\d{5,15}:[A-Za-z0-9_-]{30,60}$")
+HOST = "api.telegram.org"
 MAX_FILE_BYTES = 50 * 1024 * 1024  # what a bot may upload
 THUMB_PX = 320  # Telegram's limit for a thumbnail: a JPEG of at most 320 px and 200 kB
+SEND_WAIT_S = 300
 
 
 class TelegramError(Exception):
@@ -32,56 +49,85 @@ class TelegramError(Exception):
 
 def clean_token(value: str) -> str:
     token = (value or "").strip()
-    if not TOKEN_RE.match(token):
-        raise TelegramError("Это не похоже на ключ бота. Скопируйте его целиком из сообщения @BotFather")
+    try:
+        validate_token(token)
+    except TokenValidationError:
+        raise TelegramError("Это не похоже на ключ бота. Скопируйте его целиком из сообщения @BotFather") from None
     return token
 
 
-async def _call(token: str, method: str, *, wait_s: float = 30, **kw: Any) -> Any:
+def _proxy() -> str | None:
+    """The Hub's outbound proxy, when Telegram is among the hosts it is set for (needs `aiohttp-socks`)."""
+    s = get_settings()
+    if not (s.outbound_proxy and HOST in s.proxy_hosts):
+        return None
     try:
-        async with make_client(http2=False, timeout=wait_s) as c:
-            r = await c.post(f"{API}/bot{token}/{method}", **kw)
-    except httpx.HTTPError as e:
-        # never the URL: it carries the token
-        raise TelegramError(f"Telegram не отвечает ({type(e).__name__})") from None
+        import aiohttp_socks  # noqa: F401
+    except ImportError:
+        log.warning("telegram: OUTBOUND_PROXY is set for %s but aiohttp-socks is not installed — going direct", HOST)
+        return None
+    return s.outbound_proxy
+
+
+def make_bot(token: str, wait_s: float = 30) -> Bot:
+    """A bot for one call; the caller closes its session (`bot_of`). Tests replace this."""
+    return Bot(token, session=AiohttpSession(proxy=_proxy(), timeout=wait_s))
+
+
+def _explain(e: Exception) -> TelegramError:
+    # never str(e) of a network error: it may carry the URL with the token
+    if isinstance(e, TelegramUnauthorizedError | TelegramNotFound):
+        return TelegramError("Telegram не принял ключ бота — проверьте его или получите новый у @BotFather")
+    if isinstance(e, TelegramForbiddenError):
+        return TelegramError("Бот не может написать в этот чат — откройте бота и нажмите Start")
+    if isinstance(e, TelegramConflictError):
+        return TelegramError("У бота включён webhook или его опрашивает другая программа — нужен отдельный бот")
+    if isinstance(e, TelegramEntityTooLarge):
+        return TelegramError("Файл слишком большой для Telegram (боты отправляют до 50 МБ)")
+    if isinstance(e, TelegramRetryAfter):
+        return TelegramError("Telegram просит подождать — попробуйте через минуту")
+    if isinstance(e, TelegramNetworkError | TimeoutError):
+        return TelegramError(f"Telegram не отвечает ({type(e).__name__})")
+    if isinstance(e, TelegramAPIError):
+        return TelegramError(f"Telegram: {e.message}"[:300])
+    return TelegramError(f"Не удалось связаться с Telegram ({type(e).__name__})")
+
+
+@asynccontextmanager
+async def bot_of(token: str, wait_s: float = 30) -> AsyncIterator[Bot]:
+    """`async with bot_of(token) as bot:` — aiogram's errors come out as `TelegramError`."""
+    bot = make_bot(token, wait_s)
     try:
-        body = r.json()
-    except ValueError:
-        body = {}
-    if r.status_code == 200 and body.get("ok"):
-        return body.get("result")
-    desc = str(body.get("description") or f"HTTP {r.status_code}")
-    if r.status_code in (401, 404):
-        raise TelegramError("Telegram не принял ключ бота — проверьте его или получите новый у @BotFather")
-    if r.status_code == 403:
-        raise TelegramError("Бот не может написать в этот чат — откройте бота и нажмите Start")
-    if r.status_code == 409:
-        raise TelegramError("У бота включён webhook или его опрашивает другая программа — нужен отдельный бот")
-    if r.status_code == 413:
-        raise TelegramError("Файл слишком большой для Telegram (боты отправляют до 50 МБ)")
-    if r.status_code == 429:
-        raise TelegramError("Telegram просит подождать — попробуйте через минуту")
-    raise TelegramError(f"Telegram: {desc}"[:300])
+        yield bot
+    except TelegramError:
+        raise
+    except (TelegramAPIError, TimeoutError, OSError) as e:
+        raise _explain(e) from None
+    finally:
+        await bot.session.close()
 
 
 async def get_me(token: str) -> dict[str, Any]:
     """The bot of a token: {id, username, first_name}."""
-    return await _call(token, "getMe")
+    async with bot_of(token) as bot:
+        me = await bot.get_me()
+    return {"id": me.id, "username": me.username, "first_name": me.first_name}
 
 
-def _chat_name(chat: dict[str, Any]) -> str:
-    name = " ".join(x for x in (chat.get("first_name"), chat.get("last_name")) if x).strip()
-    user = f"@{chat['username']}" if chat.get("username") else ""
-    return " ".join(x for x in (name, user) if x) or str(chat.get("id"))
+def _chat_name(chat: Any) -> str:
+    name = " ".join(x for x in (getattr(chat, "first_name", None), getattr(chat, "last_name", None)) if x).strip()
+    user = f"@{chat.username}" if getattr(chat, "username", None) else ""
+    return " ".join(x for x in (name, user) if x) or str(chat.id)
 
 
 async def find_chat(token: str) -> tuple[str, str] | None:
     """The private chat of whoever wrote to the bot last (id, name); None — nobody pressed Start yet."""
-    updates = await _call(token, "getUpdates", json={"limit": 100, "timeout": 0, "allowed_updates": ["message"]})
+    async with bot_of(token) as bot:
+        updates = await bot.get_updates(limit=100, timeout=0, allowed_updates=["message"])
     for u in reversed(updates or []):
-        chat = ((u.get("message") or {}).get("chat")) or {}
-        if chat.get("type") == "private" and chat.get("id"):
-            return str(chat["id"]), _chat_name(chat)
+        chat = u.message.chat if u.message else None
+        if chat is not None and chat.type == "private":
+            return str(chat.id), _chat_name(chat)
     return None
 
 
@@ -103,11 +149,14 @@ def thumbnail(cover: bytes | None) -> bytes | None:
 
 async def send_audio(token: str, chat_id: str, path: Path, *, filename: str, title: str, performer: str,
                      duration_s: int | None = None, cover: bytes | None = None) -> None:
-    data: dict[str, Any] = {"chat_id": chat_id, "title": title[:256], "performer": performer[:256]}
-    if duration_s:
-        data["duration"] = str(int(duration_s))
-    with path.open("rb") as f:
-        files: dict[str, Any] = {"audio": (filename, f, "application/octet-stream")}
-        if thumb := thumbnail(cover):
-            files["thumbnail"] = ("cover.jpg", thumb, "image/jpeg")
-        await _call(token, "sendAudio", wait_s=300, data=data, files=files)
+    thumb = thumbnail(cover)
+    async with bot_of(token, SEND_WAIT_S) as bot:
+        await bot.send_audio(
+            chat_id=int(chat_id) if chat_id.lstrip("-").isdigit() else chat_id,
+            audio=FSInputFile(path, filename=filename),
+            title=title[:256],
+            performer=performer[:256],
+            duration=int(duration_s) if duration_s else None,
+            thumbnail=BufferedInputFile(thumb, filename="cover.jpg") if thumb else None,
+            request_timeout=SEND_WAIT_S,
+        )
