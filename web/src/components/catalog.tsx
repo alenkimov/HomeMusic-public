@@ -265,13 +265,13 @@ export function TrackRow({
             {track.owned || dl === 'done' ? null : downloading ? (
               <span className="flex h-11 w-9 items-center justify-center text-info" title="Скачивается"><Spinner size={14} /></span>
             ) : (
-              <IconButton icon="download" size={20} label="Скачать трек" onClick={download} busy={busy} className={cx('w-9 text-muted hover:text-fg', !busy && shown)} />
+              <IconButton icon="download" size={20} label="Скачать трек" onClick={download} busy={busy} className={cx('!w-9 text-muted hover:text-fg', !busy && shown)} />
             )}
-            <QueueButton track={menuTrack.listen as ListenTrack} className="w-9" />
-            <LikeButton songId={likeTarget.songId} refId={track.ref} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('w-9', !liked && shown)} />
+            <QueueButton track={menuTrack.listen as ListenTrack} className="!w-9" />
+            <LikeButton songId={likeTarget.songId} refId={track.ref} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('!w-9', !liked && shown)} />
           </div>
           {cols.duration && <span className="text-right text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>}
-          <TrackMenuButton track={menuTrack} extra={menuExtra} className={cx('w-8', shown)} />
+          <TrackMenuButton track={menuTrack} extra={menuExtra} className={cx('!h-8 !w-8', shown)} />
         </div>
       );
     }
@@ -439,7 +439,7 @@ export function TrackTableHeader({ numbered = false, album = false }: { numbered
       {album && cols.album && <span>Альбом</span>}
       <span />
       {cols.duration && <span className="text-right">Время</span>}
-      <IconButton icon="more" size={18} label="Колонки таблицы" aria-expanded={open} onClick={() => setOpen((v) => !v)} className="h-8 w-8 text-dim hover:text-fg" />
+      <IconButton icon="more" size={18} label="Колонки таблицы" aria-expanded={open} onClick={() => setOpen((v) => !v)} className="!h-8 !w-8 text-dim hover:text-fg" />
       {open && (
         <div role="menu" aria-label="Колонки" className="absolute right-0 top-9 z-20 w-56 rounded-xl border border-line bg-raised p-2 shadow-lg">
           <div className="px-2 pb-1 pt-1 text-xs font-semibold text-muted">Колонки</div>
