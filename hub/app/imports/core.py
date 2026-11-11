@@ -23,6 +23,7 @@ from typing import Any
 from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import links
 from app.api.schemas import (
     ImportAuthOut,
     ImportCollectionOut,
@@ -506,6 +507,7 @@ async def downloads_done(s: AsyncSession, items: list[DownloadItem]) -> None:
 async def remove(s: AsyncSession, imp: Import) -> None:
     """The import and its rows go; the music, the ♥ and the playlists stay. Its queued downloads are cancelled."""
     await apply.cancel_downloads(s, imp)
+    await links.collect(s)  # the service ids of its tracks stay with the tracks
     await s.execute(delete(ImportItem).where(ImportItem.import_id == imp.id))
     await s.execute(delete(ImportCollection).where(ImportCollection.import_id == imp.id))
     await s.delete(imp)

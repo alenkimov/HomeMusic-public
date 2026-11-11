@@ -651,6 +651,18 @@ class Lyrics(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class TrackLink(Base):
+    """A library track's id on a music service (app/links.py): what «Поделиться ссылкой» is made of."""
+
+    __tablename__ = "track_links"
+    __table_args__ = (Index("ix_track_links_external", "service", "external_id"),)
+
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
+    service: Mapped[str] = mapped_column(String(16), primary_key=True)  # spotify/yandex/ytm
+    external_id: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AppSetting(Base):
     """A setting of the whole server that the admin changes in the app (the order of lyrics sources)."""
 

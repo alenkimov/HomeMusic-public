@@ -372,6 +372,10 @@ export const api = {
   telegramPrefs: (with_lyrics: boolean) => request<TelegramStatus>('PUT', '/api/telegram/prefs', { json: { with_lyrics } }),
   telegramSend: (body: { nd_song_id?: string | null; ref?: string | null; with_lyrics?: boolean | null }) =>
     request<{ ok: boolean; title: string; light: boolean; lyrics: boolean }>('POST', '/api/telegram/send', { json: body }),
+  // a track on music services («Поделиться ссылкой»)
+  links: (q: { nd_song_id?: string | null; ref?: string | null }) =>
+    request<{ links: { service: string; title: string; url: string }[]; universal?: string | null }>(
+      'GET', withQuery('/api/links', { nd_song_id: q.nd_song_id ?? undefined, ref: q.ref ?? undefined })),
   // lyrics of a library track (lib/lyrics.ts)
   lyrics: (q: { nd_song_id?: string | null; ref?: string | null }, signal?: AbortSignal) =>
     request<LyricsOut>('GET', withQuery('/api/lyrics', { nd_song_id: q.nd_song_id ?? undefined, ref: q.ref ?? undefined }), { signal }),
