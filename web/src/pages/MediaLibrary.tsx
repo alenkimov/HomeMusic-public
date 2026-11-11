@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
-import type { NdAlbumOut, NdArtistOut, NdSongOut } from '../api/types';
+import type { NdAlbumOut, NdArtistOut, NdSongOut, PlaylistOut } from '../api/types';
 import { playAll, TrackRow, TrackTableHeader, type AddedSort } from '../components/catalog';
-import { Icon, type IconName } from '../components/Icon';
+import { Icon } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
 import { useListSearch, type Found } from '../components/ListSearch';
-import { Button, Cover, Empty, ErrorState, IconButton, PageHeader, SectionTitle, SkeletonRows, Spinner, cx } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, Field, IconButton, PageHeader, SectionTitle, SkeletonRows, Sheet, Spinner, cx } from '../components/ui';
 import { fmtLength, tracksWord } from '../lib/format';
 import { useDesktop } from '../lib/desktop';
 import { useHubEvent } from '../lib/events';
+import { setShuffle, useListen } from '../lib/listen';
 import { useAsync, useRememberScrollX } from '../lib/hooks';
 import { Link, enc, navigate } from '../lib/router';
 import { attempt, confirmDialog } from '../lib/ui';
@@ -82,6 +83,7 @@ export function NdArtistBubble({ artist, radio = false }: { artist: NdArtistOut;
 export function ListActions({ tracks, context, children }: { tracks: readonly NdSongOut[]; context?: string; children?: ReactNode }) {
   const smart = useSmartForPage() && (context === 'playlist' || context === 'liked'); // «Перемешать» is the smart shuffle
   const desktop = useDesktop();
+  const shuffleOn = useListen((s) => s.shuffle);
   if (!tracks.length && !children) return null;
   if (desktop)
     return (
@@ -92,12 +94,20 @@ export function ListActions({ tracks, context, children }: { tracks: readonly Nd
               type="button"
               aria-label="Слушать"
               title="Слушать"
-              onClick={() => playAll(tracks, { shuffle: false, context })}
+              onClick={() => playAll(tracks, { context })}
               className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition hover:scale-105 active:scale-95"
             >
               <Icon name="play" size={26} filled className="translate-x-0.5" />
             </button>
-            <IconButton icon={smart ? 'shuffleSmart' : 'shuffle'} size={28} label="Перемешать" onClick={() => playAll(tracks, { shuffle: true, context })} className="text-muted hover:text-fg" />
+            {/* a switch, as the player's: ▶ starts the list shuffled while it is on, in the order shown while it is off */}
+            <IconButton
+              icon={smart ? 'shuffleSmart' : 'shuffle'}
+              size={28}
+              aria-pressed={shuffleOn}
+              label={shuffleOn ? 'Перемешивание включено — выключить' : 'Включить перемешивание'}
+              onClick={() => setShuffle(!shuffleOn)}
+              className={shuffleOn ? '!text-accent' : 'text-muted hover:text-fg'}
+            />
           </>
         )}
         {children}
@@ -122,20 +132,28 @@ export function ListActions({ tracks, context, children }: { tracks: readonly Nd
 
 /** `found`: the rows a search of the list left (`useListSearch`) — they keep their places in the whole list: the
  * number shown, and what `extra` gets (a playlist removes a track by its place). */
-function SongList({ tracks, extra, found }: { tracks: readonly NdSongOut[]; extra?: (t: NdSongOut, i: number) => Parameters<typeof TrackRow>[0]['menuExtra']; found?: Found[] | null }) {
-  const [sort, setSort] = useState<AddedSort>(null);
+/** The rows of a list by «Дата добавления» (`sort`: null — the list's own order); each keeps its place in the list.
+ * Tracks of one moment (an import) keep the list's order, undated ones go last. */
+function byAdded<T extends { t: NdSongOut; i: number }>(list: T[], sort: AddedSort): T[] {
+  if (!sort) return list;
+  const at = (t: NdSongOut) => (t.added_at ? Date.parse(/T[\d:.]+$/.test(t.added_at) ? t.added_at + 'Z' : t.added_at) : NaN);
+  return [...list].sort((a, b) => {
+    const x = at(a.t);
+    const y = at(b.t);
+    if (Number.isNaN(x) || Number.isNaN(y)) return Number.isNaN(x) === Number.isNaN(y) ? a.i - b.i : Number.isNaN(x) ? 1 : -1;
+    return (sort === 'new' ? y - x : x - y) || a.i - b.i;
+  });
+}
+
+/** The tracks as the page shows them: what ▶ of the page plays. */
+const inOrder = (tracks: readonly NdSongOut[], sort: AddedSort): readonly NdSongOut[] => (sort ? byAdded(tracks.map((t, i) => ({ t, i })), sort).map((r) => r.t) : tracks);
+
+function SongList({ tracks, extra, found, sort, onSort }: { tracks: readonly NdSongOut[]; extra?: (t: NdSongOut, i: number) => Parameters<typeof TrackRow>[0]['menuExtra']; found?: Found[] | null; sort: AddedSort; onSort: (next: AddedSort) => void }) {
+  const setSort = onSort;
   const dated = useMemo(() => tracks.some((t) => t.added_at), [tracks]);
   const rows = useMemo(() => {
     const list = found ? found.map((f) => ({ t: tracks[f.index], i: f.index, line: f.line })) : tracks.map((t, i) => ({ t, i, line: undefined as string | undefined }));
-    if (!sort) return list;
-    // by «Дата добавления»; tracks of one moment (an import) keep the list's order, undated ones go last
-    const at = (t: NdSongOut) => (t.added_at ? Date.parse(/T[\d:.]+$/.test(t.added_at) ? t.added_at + 'Z' : t.added_at) : NaN);
-    return [...list].sort((a, b) => {
-      const x = at(a.t);
-      const y = at(b.t);
-      if (Number.isNaN(x) || Number.isNaN(y)) return Number.isNaN(x) === Number.isNaN(y) ? a.i - b.i : Number.isNaN(x) ? 1 : -1;
-      return (sort === 'new' ? y - x : x - y) || a.i - b.i;
-    });
+    return byAdded(list, sort);
   }, [tracks, found, sort]);
   const queue = found || sort ? rows.map((r) => r.t) : tracks;
   if (found && !rows.length) return <p className="px-4 py-10 text-center text-sm text-muted">Ничего не нашлось — ни в названиях, ни в текстах.</p>;
@@ -158,33 +176,86 @@ function SongList({ tracks, extra, found }: { tracks: readonly NdSongOut[]; extr
 }
 
 /** The ⋯ of a list's actions on a computer: what a phone keeps as icons in the page header. */
-function MoreMenu({ items }: { items: Array<{ icon: IconName; label: string; danger?: boolean; onClick: () => void }> }) {
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
-    document.addEventListener('click', close);
-    document.addEventListener('keydown', key);
-    return () => {
-      document.removeEventListener('click', close);
-      document.removeEventListener('keydown', key);
-    };
-  }, [open]);
+/** «Изменить плейлист»: its name and its picture — the user's own instead of the one made of the albums' covers. */
+function PlaylistEdit({ playlist, onClose, onSaved }: { playlist: PlaylistOut; onClose: () => void; onSaved: (p: PlaylistOut) => void }) {
+  const [name, setName] = useState(playlist.name);
+  const [cover, setCover] = useState(playlist.cover_url ?? null);
+  const [busy, setBusy] = useState(false);
+  const own = !!cover && cover.startsWith('/api/playlists/');
+  const picture = async (file: File | undefined) => {
+    if (!file) return;
+    setBusy(true);
+    const r = await attempt(() => api.setPlaylistCover(playlist.id, file), 'Обложка обновлена');
+    setBusy(false);
+    if (r) {
+      setCover(r.cover_url ?? null);
+      onSaved({ ...r, name: playlist.name });
+    }
+  };
+  const noPicture = async () => {
+    setBusy(true);
+    const r = await attempt(() => api.dropPlaylistCover(playlist.id), 'Своя обложка убрана');
+    setBusy(false);
+    if (r) {
+      setCover(r.cover_url ?? null);
+      onSaved({ ...r, name: playlist.name });
+    }
+  };
+  const save = async () => {
+    const next = name.trim();
+    if (!next || next === playlist.name) return onClose();
+    setBusy(true);
+    const r = await attempt(() => api.renamePlaylist(playlist.id, next), 'Плейлист переименован');
+    setBusy(false);
+    if (r) {
+      onSaved({ ...r, cover_url: cover });
+      onClose();
+    }
+  };
   return (
-    <div className="relative">
-      <IconButton icon="more" size={28} label="Ещё" aria-expanded={open} onClick={() => setOpen((v) => !v)} className="text-muted hover:text-fg" />
-      {open && (
-        <div role="menu" className="absolute left-0 top-12 z-20 w-60 rounded-xl border border-line bg-raised p-1 shadow-lg">
-          {items.map((x) => (
-            <button key={x.label} type="button" role="menuitem" onClick={x.onClick} className={cx('flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-fg/5', x.danger ? 'text-danger' : 'text-fg')}>
-              <Icon name={x.icon} size={18} />
-              {x.label}
-            </button>
-          ))}
+    <Sheet
+      open
+      onClose={onClose}
+      title="Изменить плейлист"
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose}>Закрыть</Button>
+          <Button variant="primary" busy={busy} disabled={!name.trim()} onClick={() => void save()}>
+            Сохранить
+          </Button>
         </div>
-      )}
-    </div>
+      }
+    >
+      <form
+        className="flex gap-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <div className="shrink-0">
+          <Cover src={cover ? `${cover}&size=300` : null} icon="playlist" alt="" className="h-32 w-32" />
+        </div>
+        <div className="min-w-0 flex-1 space-y-3">
+          <Field label="Название">
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={200} autoFocus />
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <label className={cx('inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-full bg-fg/10 px-3 text-sm font-semibold hover:bg-fg/15', busy && 'pointer-events-none opacity-60')}>
+              <Icon name="image" size={16} />
+              {own ? 'Другая картинка' : 'Своя обложка'}
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => void picture(e.target.files?.[0])} />
+            </label>
+            {own && (
+              <Button small disabled={busy} onClick={() => void noPicture()}>
+                Убрать свою
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-dim">Картинка обрежется до квадрата. Без своей обложки показывается коллаж из обложек альбомов.</p>
+        </div>
+      </form>
+    </Sheet>
   );
 }
 
@@ -241,6 +312,7 @@ export function LikedPage() {
   const desktop = useDesktop();
   const search = useListSearch(songs);
   const q = search.q;
+  const [sort, setSort] = useState<AddedSort>(null);
 
   return (
     <div>
@@ -265,8 +337,8 @@ export function LikedPage() {
         <Empty icon="heart" title="Пока ничего" text="Ставьте ♥ трекам, альбомам и исполнителям — они соберутся здесь." />
       ) : (
         <>
-          <ListActions tracks={search.found ? search.found.map((f) => songs[f.index]) : songs} context="liked" />
-          <SongList tracks={songs} found={search.found} />
+          <ListActions tracks={inOrder(search.found ? search.found.map((f) => songs[f.index]) : songs, sort)} context="liked" />
+          <SongList tracks={songs} found={search.found} sort={sort} onSort={setSort} />
           {songs.length > 0 && search.control}
           {!q && <AlbumRow title="Альбомы" albums={res.data?.albums ?? []} rowKey="liked:albums" />}
           {!q && (res.data?.artists.length ?? 0) > 0 && (
@@ -299,6 +371,8 @@ export function PlaylistPage({ id }: { id: string }) {
   useSmartPage(`playlist:${id}`, p?.name ?? null);
   const all = useMemo(() => p?.tracks ?? [], [p]);
   const search = useListSearch(all);
+  const [sort, setSort] = useState<AddedSort>(null);
+  const [editing, setEditing] = useState(false);
 
   const remove = async (i: number, t: NdSongOut) => {
     if (await attempt(() => api.removeFromPlaylist(id, [i]), `«${t.title}» убран из плейлиста`))
@@ -313,19 +387,40 @@ export function PlaylistPage({ id }: { id: string }) {
   if (!p) return (<><PageHeader title="Плейлист" back="/playlists" /><ErrorState text={res.error ?? 'Плейлист не найден'} onRetry={() => res.reload()} /></>);
   return (
     <div>
-      <PageHeader title={desktop ? '' : p.name} back="/playlists" right={desktop ? undefined : <IconButton icon="trash" label="Удалить плейлист" onClick={drop} />} />
+      <PageHeader title={desktop ? '' : p.name} back="/playlists" right={desktop ? undefined : (
+          <>
+            <IconButton icon="edit" label="Изменить плейлист" onClick={() => setEditing(true)} />
+            <IconButton icon="trash" label="Удалить плейлист" onClick={drop} />
+          </>
+        )}
+      />
       <Hero
         kicker="Плейлист"
-        cover={p.cover_art && p.tracks.length ? `/api/nd/cover/${enc(p.cover_art)}?size=600&v=${p.tracks.length}` : p.tracks[0]?.cover_url}
+        cover={p.cover_url ? `${p.cover_url}&size=600` : p.tracks[0]?.cover_url}
         title={p.name}
         sub={[tracksWord(p.song_count), p.duration_s ? fmtLength(p.duration_s) : null].filter(Boolean).join(' · ')}
       />
-      <ListActions tracks={p.tracks} context="playlist">
-        {desktop && <MoreMenu items={[{ icon: 'trash', label: 'Удалить плейлист', danger: true, onClick: () => void drop() }]} />}
+      <ListActions tracks={inOrder(p.tracks, sort)} context="playlist">
+        {desktop && (
+          <>
+            <IconButton icon="edit" size={24} label="Изменить название и обложку" onClick={() => setEditing(true)} className="text-muted hover:text-fg" />
+            <IconButton icon="trash" size={24} label="Удалить плейлист" onClick={() => void drop()} className="text-muted hover:text-danger" />
+          </>
+        )}
       </ListActions>
+      {editing && (
+        <PlaylistEdit
+          playlist={p}
+          onClose={() => setEditing(false)}
+          onSaved={(next) => {
+            res.setData((prev) => (prev ? { ...prev, name: next.name, cover_url: next.cover_url } : prev));
+            window.dispatchEvent(new Event('hm:playlists-changed'));
+          }}
+        />
+      )}
       {p.tracks.length ? (
         <>
-          <SongList tracks={p.tracks} found={search.found} extra={(t, i) => [{ icon: 'x', label: 'Убрать из плейлиста', onClick: () => void remove(i, t) }]} />
+          <SongList tracks={p.tracks} found={search.found} sort={sort} onSort={setSort} extra={(t, i) => [{ icon: 'x', label: 'Убрать из плейлиста', onClick: () => void remove(i, t) }]} />
           {search.control}
         </>
       ) : (

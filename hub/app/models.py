@@ -719,6 +719,17 @@ class LyricsTranslation(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class PlaylistCover(Base):
+    """A picture the user gave a playlist (app/api/playlists.py): shown instead of the one Navidrome makes."""
+
+    __tablename__ = "playlist_covers"
+
+    nd_playlist_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    image: Mapped[bytes] = mapped_column(LargeBinary)  # a square JPEG
+    key: Mapped[str] = mapped_column(String(16))  # changes with the picture: the page's cache follows it
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AppSetting(Base):
     """A setting of the whole server that the admin changes in the app (the order of lyrics sources)."""
 

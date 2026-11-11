@@ -358,6 +358,13 @@ export const api = {
   playlist: (id: string, signal?: AbortSignal) => request<PlaylistPageOut>('GET', `/api/playlists/${enc(id)}`, { signal }),
   removeFromPlaylist: (id: string, indexes: number[]) =>
     request<OkOut>('POST', `/api/playlists/${enc(id)}/remove`, { json: { indexes } }),
+  renamePlaylist: (id: string, name: string) => request<PlaylistOut>('PUT', `/api/playlists/${enc(id)}`, { json: { name } }),
+  setPlaylistCover: (id: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request<PlaylistOut>('PUT', `/api/playlists/${enc(id)}/cover`, { form });
+  },
+  dropPlaylistCover: (id: string) => request<PlaylistOut>('DELETE', `/api/playlists/${enc(id)}/cover`),
   deletePlaylist: (id: string) => request<OkOut>('DELETE', `/api/playlists/${enc(id)}`),
 
   // the Navidrome library (a browser shows it; the app has it natively)

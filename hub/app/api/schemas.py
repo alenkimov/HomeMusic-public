@@ -502,6 +502,12 @@ class PlaylistOut(BaseModel):
     song_count: int = 0
     duration_s: int = 0
     cover_art: str | None = None
+    # the playlist's picture: the user's own, else the one Navidrome makes of its albums (add `&size=`)
+    cover_url: str | None = None
+
+
+class PlaylistRenameIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
 
 
 class PlaylistOfSongOut(PlaylistOut):

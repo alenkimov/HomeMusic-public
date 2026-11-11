@@ -81,3 +81,38 @@ async def test_several_songs_at_once(env):
     assert state["playlists"]["b"]["songs"] == ["s3", "s1", "s9"]  # only the missing ones, in the order picked
     assert state["playlists"]["a"]["songs"] == ["s2"]  # every place of every picked song
     assert {x["name"]: x["count"] for x in r} == {"JAPAN": 3, "Уважаемые": 0}
+
+
+async def test_a_playlist_is_renamed_and_given_a_picture_of_its_own(env):
+    import io
+
+    from PIL import Image
+
+    c, state = env
+    state["playlists"]["a"]["coverArt"] = "pl-a"
+
+    async def get_playlist(self, pid):
+        p = state["playlists"][pid]
+        return {"id": pid, "name": p["name"], "owner": p.get("owner"), "songCount": len(p["songs"]),
+                "coverArt": p.get("coverArt"), "entry": [{"id": x} for x in p["songs"]]}
+
+    async def update_playlist(self, pid, *, name=None, add=None, remove_indexes=None, **kw):
+        if name:
+            state["playlists"][pid]["name"] = name
+
+    FakeNd.get_playlist, FakeNd.update_playlist = get_playlist, update_playlist
+    r = (await c.put("/api/playlists/a", json={"name": "  Любимые  "})).json()
+    assert r["name"] == "Любимые" and state["playlists"]["a"]["name"] == "Любимые"
+    assert r["cover_url"] == "/api/nd/cover/pl-a?v=3"  # Navidrome's own picture, until the user gives one
+    assert (await c.put("/api/playlists/c", json={"name": "x"})).status_code == 404  # someone else's
+    assert (await c.put("/api/playlists/a", json={"name": "   "})).status_code in (400, 422)
+
+    png = io.BytesIO()
+    Image.new("RGB", (900, 500), "red").save(png, "PNG")
+    r = (await c.put("/api/playlists/a/cover", files={"file": ("x.png", png.getvalue(), "image/png")})).json()
+    assert r["cover_url"].startswith("/api/playlists/a/cover?v=")
+    got = await c.get(r["cover_url"])
+    assert got.headers["content-type"] == "image/jpeg" and Image.open(io.BytesIO(got.content)).size == (500, 500)
+    assert (await c.put("/api/playlists/a/cover", files={"file": ("x.txt", b"not a picture", "text/plain")})).status_code == 400
+    r = (await c.delete("/api/playlists/a/cover")).json()
+    assert r["cover_url"] == "/api/nd/cover/pl-a?v=3" and (await c.get("/api/playlists/a/cover")).status_code == 404

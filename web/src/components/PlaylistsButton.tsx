@@ -92,7 +92,7 @@ function Picker({ songId, title, lists, onClose, onSaved }: { songId: string; ti
     return (
       <li key={p.id}>
         <button type="button" role="checkbox" aria-checked={on} onClick={() => setWant((w) => ({ ...w, [p.id]: !on }))} className="flex min-h-14 w-full items-center gap-3 px-4 py-1.5 text-left transition hover:bg-fg/5">
-          <Cover src={p.cover_art && p.song_count ? `/api/nd/cover/${encodeURIComponent(p.cover_art)}?size=96&v=${p.song_count}` : null} size={40} icon="playlist" />
+          <Cover src={p.cover_url ? `${p.cover_url}&size=96` : null} size={40} icon="playlist" />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[15px]">{p.name}</span>
             <span className="block text-xs text-muted">{tracksWord(p.song_count)}</span>
@@ -249,7 +249,7 @@ export function BulkPlaylists({ songIds, onClose }: { songIds: string[]; onClose
               return (
                 <li key={p.id}>
                   <button type="button" role="checkbox" aria-checked={at === 'all' ? true : at === 'some' ? 'mixed' : false} onClick={() => tap(p)} className="flex min-h-14 w-full items-center gap-3 px-4 py-1.5 text-left transition hover:bg-fg/5">
-                    <Cover src={p.cover_art && p.song_count ? `/api/nd/cover/${encodeURIComponent(p.cover_art)}?size=96&v=${p.song_count}` : null} size={40} icon="playlist" />
+                    <Cover src={p.cover_url ? `${p.cover_url}&size=96` : null} size={40} icon="playlist" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[15px]">{p.name}</span>
                       <span className={cx('block text-xs', at !== was(p) ? 'text-accent' : 'text-muted')}>{sub}</span>

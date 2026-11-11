@@ -537,6 +537,8 @@ export interface PlaylistOut {
   song_count: number;
   duration_s: number;
   cover_art?: string | null;
+  /** the playlist's picture, the user's own or Navidrome's (add `&size=`) */
+  cover_url?: string | null;
 }
 
 export interface PlaylistOfSongOut extends PlaylistOut {

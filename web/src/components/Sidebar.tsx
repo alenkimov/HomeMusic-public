@@ -29,6 +29,11 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
   useHubEvent('library', () => lists.reload(true));
   useHubEvent('import', () => lists.reload(true));
   useHubEvent('reconnect', () => lists.reload(true));
+  useEffect(() => {
+    const changed = () => lists.reload(true); // a playlist was renamed or given a picture
+    window.addEventListener('hm:playlists-changed', changed);
+    return () => window.removeEventListener('hm:playlists-changed', changed);
+  }, [lists.reload]);
   // «Любимое» is a playlist too: its number of tracks, kept fresh as ♥ are set
   const liked = useAsync((s) => api.ndLiked(s), []);
   useHubEvent('library', () => liked.reload(true));
@@ -90,7 +95,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
             <div key={p.id} className="group relative">
               <Link to={to} aria-current={on ? 'page' : undefined} className={cx(item, 'py-1.5', on ? 'bg-fg/10' : 'hover:bg-fg/5')}>
                 {/* the playlist's own picture (Navidrome makes one of its albums' covers); it changes with the tracks */}
-                <Cover src={p.cover_art && p.song_count ? `/api/nd/cover/${enc(p.cover_art)}?size=96&v=${p.song_count}` : null} size={36} icon="playlist" />
+                <Cover src={p.cover_url ? `${p.cover_url}&size=96` : null} size={36} icon="playlist" />
                 <span className="min-w-0">
                   <span className={cx('block truncate', on ? 'font-semibold text-accent' : 'text-fg')}>{p.name}</span>
                   <span className="block truncate text-xs text-dim">{tracksWord(p.song_count)}</span>

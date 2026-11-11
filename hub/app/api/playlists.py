@@ -1,6 +1,9 @@
 import asyncio
+import io
+import uuid
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,18 +19,37 @@ from app.api.schemas import (
     PlaylistOut,
     PlaylistPageOut,
     PlaylistRemoveIn,
+    PlaylistRenameIn,
     PlaylistSongsIn,
 )
 from app.auth import current_user, user_navidrome
-from app.db import get_session
-from app.models import Track, User
+from app.db import get_session, session_scope
+from app.models import PlaylistCover, Track, User
 
 router = APIRouter(prefix="/api/playlists", tags=["playlists"])
 
 
-def pl_out(p: dict) -> PlaylistOut:
-    return PlaylistOut(id=p["id"], name=p.get("name", ""), song_count=p.get("songCount", 0),
-                       duration_s=p.get("duration", 0), cover_art=p.get("coverArt"))
+COVER_PX = 600
+COVER_MAX_BYTES = 20 * 1024 * 1024
+
+
+async def _custom() -> dict[str, str]:
+    """playlist id -> the key of the picture the user gave it."""
+    async with session_scope() as s:
+        return dict((await s.execute(select(PlaylistCover.nd_playlist_id, PlaylistCover.key))).all())
+
+
+def pl_out(p: dict, custom: dict[str, str] | None = None) -> PlaylistOut:
+    key = (custom or {}).get(p["id"])
+    count = p.get("songCount", 0)
+    if key:
+        cover = f"/api/playlists/{quote(p['id'], safe='')}/cover?v={key}"
+    elif p.get("coverArt") and count:
+        cover = f"/api/nd/cover/{quote(p['coverArt'], safe='')}?v={count}"  # it changes with the songs
+    else:
+        cover = None
+    return PlaylistOut(id=p["id"], name=p.get("name", ""), song_count=count,
+                       duration_s=p.get("duration", 0), cover_art=p.get("coverArt"), cover_url=cover)
 
 
 @router.get("", response_model=list[PlaylistOut])
@@ -37,8 +59,9 @@ async def list_playlists(user: User = Depends(current_user)):
         pls = await nd.get_playlists()
     finally:
         await nd.aclose()
+    custom = await _custom()
     # getPlaylists also returns other users' public playlists: show only own ones
-    return [pl_out(p) for p in pls if p.get("owner") in (None, user.nd_username)]
+    return [pl_out(p, custom) for p in pls if p.get("owner") in (None, user.nd_username)]
 
 
 # playlist id -> (what it looked like, its songs): asked of Navidrome again only when the playlist has changed
@@ -64,7 +87,8 @@ async def of_song(nd_song_id: str, user: User = Depends(current_user)):
         return pls, await asyncio.gather(*(_songs_of(nd, p) for p in pls))
 
     pls, songs = await nd_call(user, load)
-    out = [(str(p.get("changed") or ""), PlaylistOfSongOut(**pl_out(p).model_dump(), has=nd_song_id in ids))
+    custom = await _custom()
+    out = [(str(p.get("changed") or ""), PlaylistOfSongOut(**pl_out(p, custom).model_dump(), has=nd_song_id in ids))
            for p, ids in zip(pls, songs, strict=True)]
     return [x for _, x in sorted(out, key=lambda pair: pair[0], reverse=True)]
 
@@ -101,7 +125,8 @@ async def _of_songs(user: User, song_ids: list[str]) -> list[PlaylistOfSongsOut]
 
     want = set(song_ids)
     pls, songs = await nd_call(user, load)
-    out = [(str(p.get("changed") or ""), PlaylistOfSongsOut(**pl_out(p).model_dump(), count=len(want.intersection(ids))))
+    custom = await _custom()
+    out = [(str(p.get("changed") or ""), PlaylistOfSongsOut(**pl_out(p, custom).model_dump(), count=len(want.intersection(ids))))
            for p, ids in zip(pls, songs, strict=True)]
     return [x for _, x in sorted(out, key=lambda pair: pair[0], reverse=True)]
 
@@ -190,7 +215,7 @@ async def get_playlist(playlist_id: str, user: User = Depends(current_user),
     for t in tracks:  # a track without a date of its own keeps the day it came into the library
         if t.library_track_id in dates:
             t.added_at = dates[t.library_track_id]
-    return PlaylistPageOut(**pl_out(p).model_dump(), tracks=tracks)
+    return PlaylistPageOut(**pl_out(p, await _custom()).model_dump(), tracks=tracks)
 
 
 @router.post("/{playlist_id}/remove")
@@ -202,6 +227,86 @@ async def remove(playlist_id: str, body: PlaylistRemoveIn, user: User = Depends(
 
 
 @router.delete("/{playlist_id}")
-async def delete(playlist_id: str, user: User = Depends(current_user)):
+async def delete(playlist_id: str, user: User = Depends(current_user),
+                 s: AsyncSession = Depends(get_session, scope="function")):
     await nd_call(user, lambda nd: nd.delete_playlist(playlist_id), not_found="Плейлист не найден")
+    row = await s.get(PlaylistCover, playlist_id)
+    if row is not None:
+        await s.delete(row)
+        await s.commit()
     return {"ok": True}
+
+
+async def _own(user: User, playlist_id: str) -> dict:
+    """The playlist, if it is this user's to change."""
+    p = await nd_call(user, lambda nd: nd.get_playlist(playlist_id), not_found="Плейлист не найден")
+    if not p.get("id") or p.get("owner") not in (None, user.nd_username):
+        raise HTTPException(404, "Плейлист не найден")
+    return p
+
+
+@router.put("/{playlist_id}", response_model=PlaylistOut)
+async def rename(playlist_id: str, body: PlaylistRenameIn, user: User = Depends(current_user)):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "Введите название")
+    await _own(user, playlist_id)
+    await nd_call(user, lambda nd: nd.update_playlist(playlist_id, name=name), not_found="Плейлист не найден")
+    _songs.pop(playlist_id, None)
+    return pl_out({**await _own(user, playlist_id), "name": name}, await _custom())
+
+
+def _square_jpeg(data: bytes) -> bytes:
+    from PIL import Image, ImageOps
+
+    im = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+    side = min(im.size)
+    left, top = (im.width - side) // 2, (im.height - side) // 2
+    im = im.crop((left, top, left + side, top + side))
+    if side > COVER_PX:
+        im = im.resize((COVER_PX, COVER_PX), Image.LANCZOS)
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=88)
+    return out.getvalue()
+
+
+@router.put("/{playlist_id}/cover", response_model=PlaylistOut)
+async def put_cover(playlist_id: str, file: UploadFile = File(...), user: User = Depends(current_user),
+                    s: AsyncSession = Depends(get_session, scope="function")):
+    """The user's own picture for the playlist: cut to a square, kept in the Hub."""
+    p = await _own(user, playlist_id)
+    data = await file.read()
+    if len(data) > COVER_MAX_BYTES:
+        raise HTTPException(413, "Картинка слишком большая")
+    try:
+        image = await asyncio.to_thread(_square_jpeg, data)
+    except Exception as e:
+        raise HTTPException(400, "Не удалось прочитать картинку — нужен JPEG, PNG или WebP") from e
+    row = await s.get(PlaylistCover, playlist_id)
+    if row is None:
+        row = PlaylistCover(nd_playlist_id=playlist_id, image=image, key="")
+        s.add(row)
+    row.image, row.key = image, uuid.uuid4().hex[:12]
+    await s.commit()
+    return pl_out(p, {playlist_id: row.key})
+
+
+@router.delete("/{playlist_id}/cover", response_model=PlaylistOut)
+async def drop_cover(playlist_id: str, user: User = Depends(current_user),
+                     s: AsyncSession = Depends(get_session, scope="function")):
+    """Back to the picture Navidrome makes of the playlist's albums."""
+    p = await _own(user, playlist_id)
+    row = await s.get(PlaylistCover, playlist_id)
+    if row is not None:
+        await s.delete(row)
+        await s.commit()
+    return pl_out(p)
+
+
+@router.get("/{playlist_id}/cover")
+async def get_cover(playlist_id: str, user: User = Depends(current_user),
+                    s: AsyncSession = Depends(get_session, scope="function")):
+    row = await s.get(PlaylistCover, playlist_id)
+    if row is None:
+        raise HTTPException(404, "У плейлиста нет своей обложки")
+    return Response(row.image, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"})
