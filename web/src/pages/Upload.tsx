@@ -1,14 +1,21 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, errorMessage, libraryCoverUrl, uploadCoverUrl } from '../api/client';
-import type { LibAlbumOut, ReleaseType, UploadOut, UploadTrackIn } from '../api/types';
+import type { LibAlbumOut, ReleaseType, UploadCommitIn, UploadOut, UploadTrackIn } from '../api/types';
 import { Icon } from '../components/Icon';
 import { AlbumPicker, PlaylistPicker, type PlaylistPick } from '../components/pickers';
-import { Button, Checkbox, Cover, ErrorState, Field, IconButton, Loading, Notice, PageHeader, ProgressBar, Radio, SectionTitle, cx } from '../components/ui';
-import { fmtDuration, fmtSize, stripExt, toIntOrNull, tracksWord } from '../lib/format';
+import { Button, Checkbox, Cover, ErrorState, Field, IconButton, Loading, Notice, PageHeader, ProgressBar, SectionTitle, Sheet, cx } from '../components/ui';
+import { fmtDuration, fmtSize, plural, stripExt, toIntOrNull, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { navigate } from '../lib/router';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 import { ReleaseTypeSelect } from './Library';
+
+/** «Загрузить файлы»: the user's own audio files into the library. Files are dropped anywhere on the page (a folder
+ * too) or picked; the Hub reads their tags and the page shows them as a table that can be edited in place. By
+ * default every file goes to the album its tags name («Из тегов»): the files are grouped by album and album artist,
+ * a group whose album the library already has is added to it, a file without an album becomes a single. The whole
+ * batch can go into one new album or one existing album instead. The server takes one album per commit, so the
+ * page commits group by group. */
 
 export const AUDIO_ACCEPT = 'audio/*,.mp3,.m4a,.flac,.ogg,.opus,.wav';
 const MAX_SIZE = 500 * 1024 * 1024;
@@ -33,33 +40,82 @@ interface RowState {
   include: boolean;
   title: string;
   artist: string;
+  album: string;
+  albumArtist: string;
+  year: string;
+  genre: string;
   trackNo: string;
   discNo: string;
 }
 
+type AlbumMode = 'tags' | 'new' | 'existing';
 type CoverChoice = { kind: 'none' } | { kind: 'upload'; id: number } | { kind: 'file'; file: File; url: string };
 
+/** The files of one album of the «Из тегов» mode. */
+interface Group {
+  key: string;
+  title: string;
+  albumArtist: string;
+  year: string;
+  genre: string;
+  single: boolean;
+  uploads: UploadOut[];
+}
+
 const str = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '');
+const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 function rowFromUpload(u: UploadOut): RowState {
   return {
     include: true,
     title: str(u.tags.title) || stripExt(u.orig_name),
     artist: str(u.tags.artist) || str(u.tags.album_artist),
+    album: str(u.tags.album),
+    albumArtist: str(u.tags.album_artist),
+    year: str(u.tags.year).slice(0, 4),
+    genre: str(u.tags.genre),
     trackNo: str(u.tags.track_no),
     discNo: str(u.tags.disc_no),
   };
 }
+
+/** The files of a drop: plain files and, through the entries API, everything inside dropped folders. */
+async function filesFromDrop(dt: DataTransfer): Promise<File[]> {
+  type Entry = { isFile: boolean; isDirectory: boolean; file?: (ok: (f: File) => void, err: () => void) => void; createReader?: () => { readEntries: (ok: (e: Entry[]) => void, err: () => void) => void } };
+  const entries = Array.from(dt.items ?? [])
+    .map((i) => (i.kind === 'file' ? ((i as unknown as { webkitGetAsEntry?: () => Entry | null }).webkitGetAsEntry?.() ?? null) : null))
+    .filter((e): e is Entry => !!e);
+  if (!entries.some((e) => e.isDirectory)) return Array.from(dt.files ?? []);
+  const out: File[] = [];
+  const walk = async (e: Entry): Promise<void> => {
+    if (e.isFile && e.file) {
+      const f = await new Promise<File | null>((res) => e.file!(res, () => res(null)));
+      if (f) out.push(f);
+    } else if (e.isDirectory && e.createReader) {
+      const reader = e.createReader();
+      for (;;) {
+        const batch = await new Promise<Entry[]>((res) => reader.readEntries(res, () => res([])));
+        if (!batch.length) break;
+        for (const child of batch) await walk(child);
+      }
+    }
+  };
+  for (const e of entries) await walk(e);
+  return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+}
+
+const cell = 'w-full min-w-0 truncate rounded-md bg-transparent px-2 py-1.5 text-sm outline-none transition hover:bg-fg/5 focus:bg-raised focus:ring-1 focus:ring-accent';
 
 export function UploadPage() {
   const pendingRes = useAsync((s) => api.uploads('uploaded', s), []);
   const [uploads, setUploads] = useState<UploadOut[]>([]);
   const [rows, setRows] = useState<Record<number, RowState>>({});
   const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const coverRef = useRef<HTMLInputElement>(null);
 
-  const [mode, setMode] = useState<'new' | 'existing'>('new');
+  const [mode, setMode] = useState<AlbumMode>('tags');
   const [albumTitle, setAlbumTitle] = useState('');
   const [albumArtist, setAlbumArtist] = useState('');
   const [year, setYear] = useState('');
@@ -74,6 +130,9 @@ export function UploadPage() {
   const [plPicker, setPlPicker] = useState(false);
   const [plBusy, setPlBusy] = useState(false);
   const [committing, setCommitting] = useState(false);
+  const [bulk, setBulk] = useState(false);
+  /** group key → the library album with the same title and artist (null: the library has none) */
+  const [known, setKnown] = useState<Record<string, LibAlbumOut | null>>({});
 
   const addUploads = useCallback((list: UploadOut[]) => {
     setUploads((prev) => {
@@ -91,7 +150,7 @@ export function UploadPage() {
     if (pendingRes.data) addUploads(pendingRes.data);
   }, [pendingRes.data, addUploads]);
 
-  // Pre-fill the new album form and the cover from the first file's tags (once).
+  // Pre-fill the «one new album» form and its cover from the first file's tags (once).
   useEffect(() => {
     if (prefilled || uploads.length === 0) return;
     const t = uploads[0].tags;
@@ -113,11 +172,13 @@ export function UploadPage() {
   const startUpload = useCallback(
     async (files: File[]) => {
       const ok: File[] = [];
+      let skipped = 0;
       for (const f of files) {
         if (f.size > MAX_SIZE) toast(`«${f.name}» больше 500 МБ — пропущен`, 'error');
-        else if (!isAudioFile(f)) toast(`«${f.name}» — не аудиофайл`, 'error');
+        else if (!isAudioFile(f)) skipped++;
         else ok.push(f);
       }
+      if (skipped) toast(ok.length ? `Не аудио, пропущено: ${skipped}` : 'Здесь нет аудиофайлов', ok.length ? 'info' : 'error');
       const batch: Transfer[] = ok.map((file, i) => ({ key: `${Date.now()}-${i}-${file.name}`, file, progress: 0 }));
       setTransfers((prev) => [...prev, ...batch]);
       // Sequential: one slow mobile uplink is better used by one file at a time.
@@ -142,6 +203,41 @@ export function UploadPage() {
     }
   }, [startUpload]);
 
+  // Files dropped anywhere on the page.
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+    const enter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth++;
+      setDragging(true);
+    };
+    const over = (e: DragEvent) => hasFiles(e) && e.preventDefault();
+    const leave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (!depth) setDragging(false);
+    };
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e) || !e.dataTransfer) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      void filesFromDrop(e.dataTransfer).then((files) => { if (files.length) void startUpload(files); });
+    };
+    window.addEventListener('dragenter', enter);
+    window.addEventListener('dragover', over);
+    window.addEventListener('dragleave', leave);
+    window.addEventListener('drop', drop);
+    return () => {
+      window.removeEventListener('dragenter', enter);
+      window.removeEventListener('dragover', over);
+      window.removeEventListener('dragleave', leave);
+      window.removeEventListener('drop', drop);
+    };
+  }, [startUpload]);
+
   const removeUpload = async (u: UploadOut) => {
     const ok = await confirmDialog({ title: 'Удалить файл?', body: u.orig_name, okLabel: 'Удалить', danger: true });
     if (!ok) return;
@@ -155,7 +251,41 @@ export function UploadPage() {
 
   const included = uploads.filter((u) => rows[u.id]?.include);
   const invalid = included.filter((u) => !rows[u.id].title.trim() || !rows[u.id].artist.trim());
-  const albumOk = mode === 'existing' ? !!existing : !!albumTitle.trim() && !!albumArtist.trim();
+
+  const groups = useMemo<Group[]>(() => {
+    const map = new Map<string, Group>();
+    for (const u of uploads) {
+      const r = rows[u.id];
+      if (!r?.include) continue;
+      const title = r.album.trim();
+      const by = (r.albumArtist || r.artist).trim();
+      const key = title ? `${title.toLowerCase()}|${by.toLowerCase()}` : `single:${u.id}`;
+      const g = map.get(key) ?? { key, title: title || r.title.trim(), albumArtist: by, year: r.year, genre: r.genre, single: !title, uploads: [] };
+      g.uploads.push(u);
+      map.set(key, g);
+    }
+    return [...map.values()];
+  }, [uploads, rows]);
+
+  // Which of the albums the library already has: their files are added to it instead of making a twin.
+  useEffect(() => {
+    if (mode !== 'tags') return;
+    const todo = groups.filter((g) => !g.single && g.albumArtist && !(g.key in known));
+    if (!todo.length) return;
+    const ctl = new AbortController();
+    const timer = window.setTimeout(() => {
+      for (const g of todo)
+        void api.libAlbums(g.title, 0, 20, ctl.signal)
+          .then((list) => setKnown((prev) => ({ ...prev, [g.key]: list.find((a) => same(a.title, g.title) && same(a.album_artist, g.albumArtist)) ?? null })))
+          .catch(() => undefined);
+    }, 400);
+    return () => {
+      window.clearTimeout(timer);
+      ctl.abort();
+    };
+  }, [groups, known, mode]);
+
+  const albumOk = mode === 'tags' ? true : mode === 'existing' ? !!existing : !!albumTitle.trim() && !!albumArtist.trim();
   const uploadingNow = transfers.some((t) => !t.error);
   const canCommit = included.length > 0 && invalid.length === 0 && albumOk && !uploadingNow;
 
@@ -174,44 +304,101 @@ export function UploadPage() {
     }
   };
 
+  const trackIn = (u: UploadOut, g: string | null): UploadTrackIn => {
+    const r = rows[u.id];
+    return { upload_id: u.id, title: r.title.trim(), artist: r.artist.trim(), track_no: toIntOrNull(r.trackNo), disc_no: toIntOrNull(r.discNo), genre: g };
+  };
+
   const commit = async () => {
-    const tracks: UploadTrackIn[] = included.map((u) => {
-      const r = rows[u.id];
-      return {
-        upload_id: u.id,
-        title: r.title.trim(),
-        artist: r.artist.trim(),
-        track_no: toIntOrNull(r.trackNo),
-        disc_no: toIntOrNull(r.discNo),
-        genre: mode === 'new' ? genre.trim() || null : null,
-      };
-    });
     setCommitting(true);
-    const res = await attempt(() =>
-      api.commitUploads(
-        {
-          album:
-            mode === 'existing'
-              ? { mode: 'existing', album_id: existing!.id }
-              : { mode: 'new', title: albumTitle.trim(), album_artist: albumArtist.trim(), year: toIntOrNull(year), genre: genre.trim() || null, release_type: type },
-          tracks,
-          cover_from_upload_id: cover.kind === 'upload' ? cover.id : null,
-          playlist_id: playlist?.id ?? null,
-        },
-        cover.kind === 'file' ? cover.file : null,
-      ),
-    );
+    let imported = 0;
+    let lastAlbum: number | null = null;
+    let albums = 0;
+    if (mode === 'tags') {
+      for (const g of groups) {
+        const lib = g.single ? null : known[g.key];
+        const album: UploadCommitIn['album'] = lib
+          ? { mode: 'existing', album_id: lib.id }
+          : { mode: 'new', title: g.title, album_artist: g.albumArtist, year: toIntOrNull(g.year), genre: g.genre.trim() || null, release_type: g.single ? 'single' : 'album' };
+        const res = await attempt(() =>
+          api.commitUploads({
+            album,
+            tracks: g.uploads.map((u) => trackIn(u, lib ? null : rows[u.id].genre.trim() || null)),
+            // an album of the library keeps its cover
+            cover_from_upload_id: lib ? null : (g.uploads.find((u) => u.tags.has_cover)?.id ?? null),
+            playlist_id: playlist?.id ?? null,
+          }, null),
+        );
+        if (!res) break;
+        imported += res.imported;
+        lastAlbum = res.album_id;
+        albums++;
+        const done = new Set(g.uploads.map((u) => u.id));
+        setUploads((prev) => prev.filter((u) => !done.has(u.id)));
+      }
+    } else {
+      const res = await attempt(() =>
+        api.commitUploads(
+          {
+            album:
+              mode === 'existing'
+                ? { mode: 'existing', album_id: existing!.id }
+                : { mode: 'new', title: albumTitle.trim(), album_artist: albumArtist.trim(), year: toIntOrNull(year), genre: genre.trim() || null, release_type: type },
+            tracks: included.map((u) => trackIn(u, mode === 'new' ? genre.trim() || null : null)),
+            cover_from_upload_id: cover.kind === 'upload' ? cover.id : null,
+            playlist_id: playlist?.id ?? null,
+          },
+          cover.kind === 'file' ? cover.file : null,
+        ),
+      );
+      if (res) {
+        imported = res.imported;
+        lastAlbum = res.album_id;
+        albums = 1;
+      }
+    }
     setCommitting(false);
-    if (!res) return;
-    toast(`Импортировано: ${tracksWord(res.imported)}`, 'success');
-    navigate(`/library/album/${res.album_id}`, { replace: true });
+    if (!albums) return;
+    toast(`Импортировано: ${tracksWord(imported)}`, 'success');
+    if (albums === 1 && lastAlbum !== null && (mode !== 'tags' || groups.length === 1)) navigate(`/library/album/${lastAlbum}`, { replace: true });
+    else if (mode !== 'tags' || albums === groups.length) navigate('/library', { replace: true });
   };
 
   const coversAvailable = uploads.filter((u) => u.tags.has_cover);
+  const totalSize = included.reduce((n, u) => n + u.size, 0);
+  const allOn = uploads.length > 0 && included.length === uploads.length;
+  const oneAlbumName = mode === 'new' ? albumTitle.trim() || 'Новый альбом' : (existing?.title ?? 'Альбом не выбран');
+
+  const summary = (() => {
+    if (mode !== 'tags' || !groups.length) return null;
+    const fresh = groups.filter((g) => !g.single && !known[g.key]).length;
+    const into = groups.filter((g) => !g.single && known[g.key]).reduce((n, g) => n + g.uploads.length, 0);
+    const singles = groups.filter((g) => g.single).length;
+    return [
+      fresh ? `${plural(fresh, ['Создастся', 'Создадутся', 'Создадутся'])} ${fresh} ${plural(fresh, ['альбом', 'альбома', 'альбомов'])}` : null,
+      into ? `${tracksWord(into)} ${plural(into, ['добавится', 'добавятся', 'добавятся'])} в альбомы библиотеки` : null,
+      singles ? `${tracksWord(singles)} без альбома ${plural(singles, ['станет синглом', 'станут синглами', 'станут синглами'])}` : null,
+    ].filter(Boolean).join(' · ');
+  })();
+
+  const importButton = uploads.length > 0 && (
+    <Button variant="primary" small icon="check" busy={committing} disabled={!canCommit} onClick={commit}>
+      Импортировать{included.length ? ` ${tracksWord(included.length)}` : ''}
+    </Button>
+  );
 
   return (
-    <div className="pb-28">
-      <PageHeader title="Загрузить файлы" back="/more" />
+    <div className="pb-10">
+      <PageHeader title="Загрузить файлы" back="/more" sub={included.length ? `${plural(included.length, ['Выбран', 'Выбрано', 'Выбрано'])} ${included.length} из ${uploads.length} · ${fmtSize(totalSize)}` : undefined} right={importButton || undefined} />
+
+      {dragging && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" aria-hidden="true">
+          <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-accent bg-surface px-10 py-8 text-accent">
+            <Icon name="upload" size={32} />
+            <span className="font-semibold">Отпустите, чтобы загрузить</span>
+          </div>
+        </div>
+      )}
 
       <div className="px-4">
         <input
@@ -229,13 +416,18 @@ export function UploadPage() {
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
-          className="flex w-full flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-line bg-surface px-4 py-7 text-center transition hover:border-accent"
+          className={cx(
+            'flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-line bg-surface text-left transition hover:border-accent',
+            uploads.length ? 'px-4 py-3' : 'flex-col px-4 py-8 text-center',
+          )}
         >
-          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-accent text-on-accent">
-            <Icon name="upload" />
+          <span className={cx('flex shrink-0 items-center justify-center rounded-full bg-accent text-on-accent', uploads.length ? 'h-9 w-9' : 'h-12 w-12')}>
+            <Icon name="upload" size={uploads.length ? 18 : 24} />
           </span>
-          <span className="font-semibold">Выбрать аудиофайлы</span>
-          <span className="text-xs text-muted">MP3, M4A, FLAC, OGG/Opus, WAV · до 500 МБ на файл</span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-semibold">{uploads.length ? 'Добавить ещё файлы' : 'Перетащите сюда аудиофайлы или папку'}</span>
+            <span className="block text-xs text-muted">{uploads.length ? 'Перетащите в любое место страницы или нажмите' : 'или нажмите, чтобы выбрать · MP3, M4A, FLAC, OGG/Opus, WAV · до 500 МБ на файл'}</span>
+          </span>
         </button>
       </div>
 
@@ -259,142 +451,154 @@ export function UploadPage() {
       ) : pendingRes.error && !uploads.length ? (
         <ErrorState text={pendingRes.error} onRetry={() => pendingRes.reload()} />
       ) : uploads.length === 0 ? (
-        <p className="px-6 py-8 text-center text-sm text-muted">Загруженные файлы появятся здесь — затем выберите альбом и нажмите «Импортировать».</p>
+        <p className="px-6 py-8 text-center text-sm text-muted">Загруженные файлы появятся здесь таблицей: проверьте названия и альбомы и нажмите «Импортировать».</p>
       ) : (
         <>
-          <SectionTitle>
-            Файлы <span className="text-base font-normal text-dim">{included.length}/{uploads.length}</span>
-          </SectionTitle>
-          <ul className="space-y-2 px-4">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-5">
+            <span className="text-sm text-muted">Альбомы</span>
+            <div className="flex overflow-hidden rounded-full bg-surface p-0.5 text-sm" role="radiogroup" aria-label="Куда импортировать">
+              {([['tags', 'Из тегов файлов'], ['new', 'Один новый альбом'], ['existing', 'В существующий']] as const).map(([m, label]) => (
+                <button key={m} type="button" role="radio" aria-checked={mode === m} onClick={() => setMode(m)} className={cx('min-h-9 rounded-full px-3 transition', mode === m ? 'bg-raised font-semibold text-fg' : 'text-muted hover:text-fg')}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span className="flex-1" />
+            <Button small icon="edit" disabled={!included.length} onClick={() => setBulk(true)}>
+              Изменить выбранные
+            </Button>
+          </div>
+
+          {mode === 'new' && (
+            <div className="card mx-4 mt-3 grid gap-3 p-3 md:grid-cols-[2fr_2fr_5rem_1fr_9rem]">
+              <Field label="Название альбома">
+                <input className="input" value={albumTitle} onChange={(e) => setAlbumTitle(e.target.value)} />
+              </Field>
+              <Field label="Исполнитель альбома">
+                <input className="input" value={albumArtist} onChange={(e) => setAlbumArtist(e.target.value)} />
+              </Field>
+              <Field label="Год">
+                <input className="input" inputMode="numeric" value={year} onChange={(e) => setYear(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+              </Field>
+              <Field label="Жанр">
+                <input className="input" value={genre} onChange={(e) => setGenre(e.target.value)} />
+              </Field>
+              <Field label="Тип">
+                <ReleaseTypeSelect value={type} onChange={setType} />
+              </Field>
+            </div>
+          )}
+          {mode === 'existing' && (
+            <div className="card mx-4 mt-3 flex items-center gap-3 p-3">
+              {existing ? (
+                <>
+                  <Cover src={existing.has_cover ? libraryCoverUrl(existing.id, 100) : null} size={48} icon="disc" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate">{existing.title}</div>
+                    <div className="truncate text-xs text-muted">{[existing.album_artist, existing.year, tracksWord(existing.track_count)].filter(Boolean).join(' · ')}</div>
+                  </div>
+                  <Button small onClick={() => setAlbumPicker(true)}>
+                    Изменить
+                  </Button>
+                </>
+              ) : (
+                <Button small icon="search" onClick={() => setAlbumPicker(true)}>
+                  Выбрать альбом
+                </Button>
+              )}
+            </div>
+          )}
+
+          {invalid.length > 0 && <div className="px-4 pt-3"><Notice kind="error">Заполните название и исполнителя у {tracksWord(invalid.length)}</Notice></div>}
+
+          <div className="mx-4 mt-3 overflow-hidden rounded-xl bg-surface" role="table" aria-label="Файлы">
+            <div role="row" className="hidden grid-cols-[2.75rem_minmax(0,3fr)_minmax(0,2fr)_minmax(0,2fr)_3.5rem_3.5rem_2.75rem] items-center gap-1 border-b border-line/60 pr-1 text-xs text-dim md:grid">
+              <Checkbox checked={allOn} onChange={(v) => setRows((prev) => Object.fromEntries(Object.entries(prev).map(([id, r]) => [id, { ...r, include: v }])))} label="Выбрать все файлы" />
+              <span className="px-2">Название</span>
+              <span className="px-2">Исполнитель</span>
+              <span className="px-2">Альбом</span>
+              <span className="px-2">№</span>
+              <span className="px-2 text-right">Время</span>
+              <span />
+            </div>
             {uploads.map((u) => {
               const r = rows[u.id];
               if (!r) return null;
-              const bad = r.include && (!r.title.trim() || !r.artist.trim());
+              const bad = (v: string) => r.include && !v.trim() && 'ring-1 ring-danger/70';
+              const g = mode === 'tags' && r.include ? groups.find((x) => x.uploads.includes(u)) : undefined;
+              const inLibrary = g && !g.single && known[g.key];
               return (
-                <li key={u.id} className={cx('card p-3', !r.include && 'opacity-50', bad && 'ring-1 ring-danger/60')}>
-                  <div className="-ml-2 -mt-2 flex items-center gap-1">
-                    <Checkbox checked={r.include} onChange={(v) => setRow(u.id, { include: v })} label={`Импортировать ${u.orig_name}`} />
-                    <span className="min-w-0 flex-1 truncate text-xs text-muted">
+                <div key={u.id} role="row" className={cx('grid grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-center gap-x-1 border-b border-line/60 py-1 pr-1 last:border-0 md:grid-cols-[2.75rem_minmax(0,3fr)_minmax(0,2fr)_minmax(0,2fr)_3.5rem_3.5rem_2.75rem] md:py-0', !r.include && 'opacity-50')}>
+                  <Checkbox checked={r.include} onChange={(v) => setRow(u.id, { include: v })} label={`Импортировать ${u.orig_name}`} />
+                  <div className="min-w-0">
+                    <input className={cx(cell, 'font-medium', bad(r.title))} value={r.title} placeholder="Название" aria-label="Название" onChange={(e) => setRow(u.id, { title: e.target.value })} />
+                    <div className="truncate px-2 pb-1 text-[11px] text-dim" title={u.orig_name}>
                       {u.orig_name} · {fmtSize(u.size)}
-                      {u.tags.duration_s ? ` · ${fmtDuration(u.tags.duration_s)}` : ''}
-                    </span>
-                    <IconButton icon="trash" label={`Удалить ${u.orig_name}`} size={18} className="-mr-2 text-dim" onClick={() => removeUpload(u)} />
-                  </div>
-                  {r.include && (
-                    <div className="grid grid-cols-[1fr_4.5rem] gap-2">
-                      <Field label="Название">
-                        <input className="input" value={r.title} onChange={(e) => setRow(u.id, { title: e.target.value })} />
-                      </Field>
-                      <Field label="№">
-                        <input className="input" inputMode="numeric" value={r.trackNo} onChange={(e) => setRow(u.id, { trackNo: e.target.value.replace(/\D/g, '') })} />
-                      </Field>
-                      <Field label="Исполнитель">
-                        <input className="input" value={r.artist} onChange={(e) => setRow(u.id, { artist: e.target.value })} />
-                      </Field>
-                      <Field label="Диск">
-                        <input className="input" inputMode="numeric" value={r.discNo} onChange={(e) => setRow(u.id, { discNo: e.target.value.replace(/\D/g, '') })} />
-                      </Field>
+                      {u.error ? <span className="text-danger"> · {u.error}</span> : null}
                     </div>
+                  </div>
+                  <IconButton icon="trash" label={`Удалить ${u.orig_name}`} size={18} className="text-dim md:order-last" onClick={() => removeUpload(u)} />
+                  <input className={cx(cell, 'col-start-2 md:col-start-auto', bad(r.artist))} value={r.artist} placeholder="Исполнитель" aria-label="Исполнитель" onChange={(e) => setRow(u.id, { artist: e.target.value })} />
+                  {mode === 'tags' ? (
+                    <div className="col-start-2 flex min-w-0 items-center gap-1 md:col-start-auto">
+                      <input className={cell} value={r.album} placeholder="Без альбома — сингл" aria-label="Альбом" onChange={(e) => setRow(u.id, { album: e.target.value })} />
+                      {inLibrary && <span className="shrink-0 rounded-full bg-info/15 px-2 py-0.5 text-[11px] text-info" title="Такой альбом уже есть в библиотеке — трек добавится в него">уже есть</span>}
+                    </div>
+                  ) : (
+                    <span className="col-start-2 truncate px-2 py-1.5 text-sm text-muted md:col-start-auto">{oneAlbumName}</span>
                   )}
-                  {u.error && <div className="mt-2 text-xs text-danger">{u.error}</div>}
-                </li>
+                  <input className={cx(cell, 'hidden md:block')} inputMode="numeric" value={r.trackNo} placeholder="—" aria-label="Номер трека" onChange={(e) => setRow(u.id, { trackNo: e.target.value.replace(/\D/g, '') })} />
+                  <span className="hidden px-2 text-right text-xs tabular-nums text-dim md:block">{u.tags.duration_s ? fmtDuration(u.tags.duration_s) : ''}</span>
+                </div>
               );
             })}
-          </ul>
+          </div>
+          {summary && <p className="px-5 pt-2 text-xs text-muted">{summary}. Обложки берутся из самих файлов.</p>}
 
-          <SectionTitle>Альбом</SectionTitle>
-          <div className="space-y-2 px-4">
-            <button type="button" className="flex min-h-11 w-full items-center gap-3 text-left" onClick={() => setMode('new')} aria-pressed={mode === 'new'}>
-              <Radio checked={mode === 'new'} />
-              Новый альбом
-            </button>
-            {mode === 'new' && (
-              <div className="card space-y-3 p-3">
-                <Field label="Название альбома">
-                  <input className="input" value={albumTitle} onChange={(e) => setAlbumTitle(e.target.value)} />
-                </Field>
-                <Field label="Исполнитель альбома">
-                  <input className="input" value={albumArtist} onChange={(e) => setAlbumArtist(e.target.value)} />
-                </Field>
-                <div className="grid grid-cols-3 gap-2">
-                  <Field label="Год">
-                    <input className="input" inputMode="numeric" value={year} onChange={(e) => setYear(e.target.value.replace(/\D/g, '').slice(0, 4))} />
-                  </Field>
-                  <Field label="Жанр">
-                    <input className="input" value={genre} onChange={(e) => setGenre(e.target.value)} />
-                  </Field>
-                  <Field label="Тип">
-                    <ReleaseTypeSelect value={type} onChange={setType} />
-                  </Field>
-                </div>
-              </div>
-            )}
-            <button type="button" className="flex min-h-11 w-full items-center gap-3 text-left" onClick={() => setMode('existing')} aria-pressed={mode === 'existing'}>
-              <Radio checked={mode === 'existing'} />В существующий альбом
-            </button>
-            {mode === 'existing' && (
-              <div className="card flex items-center gap-3 p-3">
-                {existing ? (
-                  <>
-                    <Cover src={existing.has_cover ? libraryCoverUrl(existing.id, 100) : null} size={48} icon="disc" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate">{existing.title}</div>
-                      <div className="truncate text-xs text-muted">{[existing.album_artist, existing.year, tracksWord(existing.track_count)].filter(Boolean).join(' · ')}</div>
-                    </div>
-                    <Button small onClick={() => setAlbumPicker(true)}>
-                      Изменить
-                    </Button>
-                  </>
-                ) : (
-                  <Button small icon="search" onClick={() => setAlbumPicker(true)}>
-                    Выбрать альбом
-                  </Button>
+          {mode !== 'tags' && (
+            <>
+              <SectionTitle>Обложка</SectionTitle>
+              <div className="no-scrollbar flex gap-3 overflow-x-auto px-4 pb-1">
+                <CoverOption selected={cover.kind === 'none'} label={mode === 'existing' ? 'Как у альбома' : 'Без обложки'} onClick={() => { setCoverTouched(true); setCover({ kind: 'none' }); }}>
+                  <Icon name="x" className="text-dim" />
+                </CoverOption>
+                {coversAvailable.map((u) => (
+                  <CoverOption key={u.id} selected={cover.kind === 'upload' && cover.id === u.id} label={`Из «${stripExt(u.orig_name)}»`} onClick={() => { setCoverTouched(true); setCover({ kind: 'upload', id: u.id }); }}>
+                    <img src={uploadCoverUrl(u.id)} alt="" className="h-full w-full object-cover" />
+                  </CoverOption>
+                ))}
+                {cover.kind === 'file' && (
+                  <CoverOption selected label="Своя картинка" onClick={() => coverRef.current?.click()}>
+                    <img src={cover.url} alt="" className="h-full w-full object-cover" />
+                  </CoverOption>
                 )}
+                <CoverOption selected={false} label="Выбрать картинку" onClick={() => coverRef.current?.click()}>
+                  <Icon name="image" className="text-muted" />
+                </CoverOption>
+                <input
+                  ref={coverRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (f) {
+                      setCoverTouched(true);
+                      setCover({ kind: 'file', file: f, url: URL.createObjectURL(f) });
+                    }
+                  }}
+                />
               </div>
-            )}
-          </div>
+            </>
+          )}
 
-          <SectionTitle>Обложка</SectionTitle>
-          <div className="no-scrollbar flex gap-3 overflow-x-auto px-4 pb-1">
-            <CoverOption selected={cover.kind === 'none'} label={mode === 'existing' ? 'Как у альбома' : 'Без обложки'} onClick={() => { setCoverTouched(true); setCover({ kind: 'none' }); }}>
-              <Icon name="x" className="text-dim" />
-            </CoverOption>
-            {coversAvailable.map((u) => (
-              <CoverOption key={u.id} selected={cover.kind === 'upload' && cover.id === u.id} label={`Из «${stripExt(u.orig_name)}»`} onClick={() => { setCoverTouched(true); setCover({ kind: 'upload', id: u.id }); }}>
-                <img src={uploadCoverUrl(u.id)} alt="" className="h-full w-full object-cover" />
-              </CoverOption>
-            ))}
-            {cover.kind === 'file' && (
-              <CoverOption selected label="Своя картинка" onClick={() => coverRef.current?.click()}>
-                <img src={cover.url} alt="" className="h-full w-full object-cover" />
-              </CoverOption>
-            )}
-            <CoverOption selected={false} label="Выбрать картинку" onClick={() => coverRef.current?.click()}>
-              <Icon name="image" className="text-muted" />
-            </CoverOption>
-            <input
-              ref={coverRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                e.target.value = '';
-                if (f) {
-                  setCoverTouched(true);
-                  setCover({ kind: 'file', file: f, url: URL.createObjectURL(f) });
-                }
-              }}
-            />
-          </div>
-
-          <SectionTitle>Плейлист</SectionTitle>
-          <div className="flex items-center gap-2 px-4">
+          <div className="flex flex-wrap items-center gap-2 px-4 pt-5">
             {playlist ? (
               <>
-                <span className="min-w-0 flex-1 truncate">
+                <span className="min-w-0 truncate text-sm">
                   <Icon name="playlist" size={18} className="mr-2 inline text-muted" />
-                  {playlist.name}
+                  Ещё и в плейлист «{playlist.name}»
                 </span>
                 <IconButton icon="x" label="Не добавлять в плейлист" onClick={() => setPlaylist(null)} />
               </>
@@ -405,15 +609,6 @@ export function UploadPage() {
             )}
           </div>
         </>
-      )}
-
-      {uploads.length > 0 && (
-        <div className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+env(safe-area-inset-bottom))] z-30 mx-auto max-w-(--app-w) border-t border-line bg-surface/95 px-4 py-3 backdrop-blur">
-          {invalid.length > 0 && <div className="mb-2"><Notice kind="error">Заполните название и исполнителя у {tracksWord(invalid.length)}</Notice></div>}
-          <Button variant="primary" block icon="check" busy={committing} disabled={!canCommit} onClick={commit}>
-            Импортировать {included.length ? tracksWord(included.length) : ''}
-          </Button>
-        </div>
       )}
 
       <AlbumPicker
@@ -427,7 +622,64 @@ export function UploadPage() {
         }}
       />
       <PlaylistPicker open={plPicker} onClose={() => setPlPicker(false)} onPick={pickPlaylist} busy={plBusy} title="Добавить в плейлист" />
+      {bulk && (
+        <BulkEdit
+          count={included.length}
+          withAlbum={mode === 'tags'}
+          onClose={() => setBulk(false)}
+          onApply={(patch) => {
+            setRows((prev) => Object.fromEntries(Object.entries(prev).map(([id, r]) => [id, r.include ? { ...r, ...patch } : r])));
+            setBulk(false);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** One value for every checked file: only the fields that were filled in are changed. */
+function BulkEdit({ count, withAlbum, onClose, onApply }: { count: number; withAlbum: boolean; onClose: () => void; onApply: (patch: Partial<RowState>) => void }) {
+  const [artist, setArtist] = useState('');
+  const [album, setAlbum] = useState('');
+  const [albumArtist, setAlbumArtist] = useState('');
+  const [year, setYear] = useState('');
+  const patch: Partial<RowState> = {
+    ...(artist.trim() ? { artist: artist.trim() } : {}),
+    ...(withAlbum && album.trim() ? { album: album.trim() } : {}),
+    ...(withAlbum && albumArtist.trim() ? { albumArtist: albumArtist.trim() } : {}),
+    ...(withAlbum && year ? { year } : {}),
+  };
+  return (
+    <Sheet
+      open
+      onClose={onClose}
+      title={`Изменить ${tracksWord(count)}`}
+      footer={
+        <Button variant="primary" block disabled={!Object.keys(patch).length} onClick={() => onApply(patch)}>
+          Применить
+        </Button>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-sm text-muted">Заполните только то, что нужно поменять у всех отмеченных файлов.</p>
+        <Field label="Исполнитель">
+          <input className="input" value={artist} onChange={(e) => setArtist(e.target.value)} />
+        </Field>
+        {withAlbum && (
+          <>
+            <Field label="Альбом">
+              <input className="input" value={album} onChange={(e) => setAlbum(e.target.value)} />
+            </Field>
+            <Field label="Исполнитель альбома">
+              <input className="input" value={albumArtist} onChange={(e) => setAlbumArtist(e.target.value)} placeholder="Если отличается от исполнителя трека" />
+            </Field>
+            <Field label="Год">
+              <input className="input" inputMode="numeric" value={year} onChange={(e) => setYear(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+            </Field>
+          </>
+        )}
+      </div>
+    </Sheet>
   );
 }
 
