@@ -303,6 +303,8 @@ class TrackOut(CatalogTrack):
     nd_song_id: str | None = None
     downloading: bool = False  # a download of it is under way (not counting ones queued only for ♥)
     star_pending: bool = False  # the user ♥ it and a download that stars it is under way: show it liked
+    # in a list: when the track was added to it (a playlist, the likes); else when it came into the library
+    added_at: datetime | None = None
 
 
 class AlbumOut(CatalogAlbum):

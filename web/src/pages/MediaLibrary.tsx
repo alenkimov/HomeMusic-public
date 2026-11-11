@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { NdAlbumOut, NdArtistOut, NdSongOut } from '../api/types';
-import { playAll, TrackRow, TrackTableHeader } from '../components/catalog';
+import { playAll, TrackRow, TrackTableHeader, type AddedSort } from '../components/catalog';
 import { Icon, type IconName } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
 import { useListSearch, type Found } from '../components/ListSearch';
@@ -123,15 +123,28 @@ export function ListActions({ tracks, context, children }: { tracks: readonly Nd
 /** `found`: the rows a search of the list left (`useListSearch`) — they keep their places in the whole list: the
  * number shown, and what `extra` gets (a playlist removes a track by its place). */
 function SongList({ tracks, extra, found }: { tracks: readonly NdSongOut[]; extra?: (t: NdSongOut, i: number) => Parameters<typeof TrackRow>[0]['menuExtra']; found?: Found[] | null }) {
-  const rows = found ? found.map((f) => ({ t: tracks[f.index], i: f.index, line: f.line })) : tracks.map((t, i) => ({ t, i, line: undefined as string | undefined }));
-  const queue = found ? rows.map((r) => r.t) : tracks;
+  const [sort, setSort] = useState<AddedSort>(null);
+  const dated = useMemo(() => tracks.some((t) => t.added_at), [tracks]);
+  const rows = useMemo(() => {
+    const list = found ? found.map((f) => ({ t: tracks[f.index], i: f.index, line: f.line })) : tracks.map((t, i) => ({ t, i, line: undefined as string | undefined }));
+    if (!sort) return list;
+    // by «Дата добавления»; tracks of one moment (an import) keep the list's order, undated ones go last
+    const at = (t: NdSongOut) => (t.added_at ? Date.parse(/T[\d:.]+$/.test(t.added_at) ? t.added_at + 'Z' : t.added_at) : NaN);
+    return [...list].sort((a, b) => {
+      const x = at(a.t);
+      const y = at(b.t);
+      if (Number.isNaN(x) || Number.isNaN(y)) return Number.isNaN(x) === Number.isNaN(y) ? a.i - b.i : Number.isNaN(x) ? 1 : -1;
+      return (sort === 'new' ? y - x : x - y) || a.i - b.i;
+    });
+  }, [tracks, found, sort]);
+  const queue = found || sort ? rows.map((r) => r.t) : tracks;
   if (found && !rows.length) return <p className="px-4 py-10 text-center text-sm text-muted">Ничего не нашлось — ни в названиях, ни в текстах.</p>;
   return (
     <ul>
-      {rows.length > 0 && <li><TrackTableHeader numbered album /></li>}
-      {rows.map(({ t, i, line }) => (
+      {rows.length > 0 && <li><TrackTableHeader numbered album added={dated} sort={sort} onSort={setSort} /></li>}
+      {rows.map(({ t, i, line }, at) => (
         <li key={`${t.ref}:${i}`}>
-          <TrackRow track={t} queue={queue} link={false} showAlbum menuExtra={extra?.(t, i)} index={i + 1} />
+          <TrackRow track={t} queue={queue} link={false} showAlbum showAdded={dated} menuExtra={extra?.(t, i)} index={sort ? at + 1 : i + 1} />
           {line !== undefined && (
             <div className="-mt-1 flex items-center gap-1.5 truncate pb-2 pl-16 pr-4 text-xs text-muted">
               <Icon name="lyrics" size={13} className="shrink-0 text-accent" />

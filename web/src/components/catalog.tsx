@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import type { AlbumOut, CatalogArtist, TrackOut } from '../api/types';
-import { fmtDuration, recordTypeLabel, yearOf } from '../lib/format';
+import { fmtAdded, fmtDuration, parseTime, recordTypeLabel, yearOf } from '../lib/format';
 import { useDesktop } from '../lib/desktop';
 import { addToQueue, downloadRef, listen, listenAll, shuffled, touchTrack, useListen, watchOnScreen, type ListenTrack } from '../lib/listen';
 import { canPlay, canPlayAll, playSongs, playTracks } from '../lib/player';
@@ -105,6 +105,7 @@ export function TrackRow({
   number,
   showCover = true,
   showAlbum = false,
+  showAdded = false,
   link = true,
   onPlay,
   queue,
@@ -115,6 +116,8 @@ export function TrackRow({
   number?: number;
   showCover?: boolean;
   showAlbum?: boolean;
+  /** the «Дата добавления» column of a playlist (`added_at`) */
+  showAdded?: boolean;
   link?: boolean;
   /** Plays with context in the app's player (the rest of the album or list); by default the track alone. */
   onPlay?: () => void;
@@ -270,6 +273,7 @@ export function TrackRow({
 
     if (desktop) {
       const album = showAlbum && cols.album;
+      const added = showAdded && cols.added;
       const rowNumber = number ?? index;
       // every credited artist opens its own page: the catalog's when the Hub knows the ref, else the library's
       const credited = track.artists?.length ? track.artists : [track.artist];
@@ -286,7 +290,7 @@ export function TrackRow({
           onMouseDown={(e) => e.shiftKey && e.preventDefault()}
           aria-selected={selected}
           className={cx('group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors', selected ? 'bg-accent/15 hover:bg-accent/20' : 'hover:bg-fg/5 focus-within:bg-fg/5')}
-          style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration) }}
+          style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration, added) }}
         >
           {rowNumber !== undefined &&
             (selected ? (
@@ -328,6 +332,7 @@ export function TrackRow({
             ) : (
               <span className="truncate text-sm text-muted">{track.album_title}</span>
             ))}
+          {added && <span className="truncate text-sm text-muted" title={track.added_at ? parseTime(track.added_at).toLocaleString('ru-RU') : undefined}>{fmtAdded(track.added_at)}</span>}
           <div data-row-actions className="flex h-11 items-center justify-end">
             {track.owned || dl === 'done' ? null : downloading ? (
               <span className="flex h-11 w-9 items-center justify-center text-info" title="Скачивается"><Spinner size={14} /></span>
@@ -481,7 +486,11 @@ export function ReleaseCard({ album, showArtist = false, onDownload, busy }: { a
 /** The head of a track list on a computer: the names of the columns over `TrackRow`s (the same grid), and the menu
  * that switches the optional ones (a click on ⋯ or a right click on the head). `numbered`, `album` — as the rows
  * of this list are drawn (`number`, `showAlbum`). On a phone and inside the app there is no table and no head. */
-export function TrackTableHeader({ numbered = false, album = false }: { numbered?: boolean; album?: boolean }) {
+export type AddedSort = 'new' | 'old' | null;
+
+/** `added`: the list has «Дата добавления»; a click on that column sorts by it — the newest first, then the oldest
+ * first, then the list's own order again (`sort`, `onSort`). */
+export function TrackTableHeader({ numbered = false, album = false, added = false, sort = null, onSort }: { numbered?: boolean; album?: boolean; added?: boolean; sort?: AddedSort; onSort?: (next: AddedSort) => void }) {
   const desktop = useDesktop();
   const cols = useTrackColumns();
   const [open, setOpen] = useState(false);
@@ -499,7 +508,7 @@ export function TrackTableHeader({ numbered = false, album = false }: { numbered
     };
   }, [open]);
   if (!desktop) return null;
-  const offered = (Object.keys(TRACK_COLUMN_LABELS) as (keyof TrackColumns)[]).filter((c) => c !== 'album' || album);
+  const offered = (Object.keys(TRACK_COLUMN_LABELS) as (keyof TrackColumns)[]).filter((c) => (c !== 'album' || album) && (c !== 'added' || added));
   return (
     <div
       ref={ref}
@@ -508,11 +517,22 @@ export function TrackTableHeader({ numbered = false, album = false }: { numbered
         setOpen(true);
       }}
       className="relative mx-2 mb-1 grid h-9 items-center gap-3 border-b border-line/60 px-2 text-xs text-dim"
-      style={{ gridTemplateColumns: trackGrid(numbered, album && cols.album, cols.duration) }}
+      style={{ gridTemplateColumns: trackGrid(numbered, album && cols.album, cols.duration, added && cols.added) }}
     >
       {numbered && <span className="text-center">#</span>}
       <span>Название</span>
       {album && cols.album && <span>Альбом</span>}
+      {added && cols.added && (
+        <button
+          type="button"
+          onClick={() => onSort?.(sort === null ? 'new' : sort === 'new' ? 'old' : null)}
+          title={sort === 'new' ? 'Сначала новые — нажмите: сначала старые' : sort === 'old' ? 'Сначала старые — нажмите: порядок плейлиста' : 'Сортировать: сначала новые'}
+          className={cx('flex items-center gap-1.5 text-left transition hover:text-fg', sort && 'text-fg')}
+        >
+          Дата добавления
+          {sort && <span className="text-[10px] text-accent" aria-hidden="true">{sort === 'new' ? '▼' : '▲'}</span>}
+        </button>
+      )}
       <span />
       {cols.duration && <span className="text-right">Время</span>}
       <IconButton icon="more" size={18} label="Колонки таблицы" aria-expanded={open} onClick={() => setOpen((v) => !v)} className="!h-8 !w-8 text-dim hover:text-fg" />

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import playlist_dates
 from app.api.medialib import nd_call, songs_out
 from app.api.schemas import PlaylistAddIn, PlaylistCreateIn, PlaylistOut, PlaylistPageOut, PlaylistRemoveIn
 from app.auth import current_user, user_navidrome
@@ -47,6 +48,7 @@ async def add(playlist_id: str, body: PlaylistAddIn, user: User = Depends(curren
         rows = (await s.execute(select(Track.id, Track.nd_song_id).where(Track.id.in_(body.library_track_ids)))).all()
         by_id = dict(rows)
         ids += [by_id[i] for i in body.library_track_ids if by_id.get(i)]
+    dated = list((await s.execute(select(Track.id).where(Track.nd_song_id.in_(ids)))).scalars()) if ids else []
     if not ids:
         raise HTTPException(400, "Эти треки ещё не появились в Navidrome")
     nd = user_navidrome(user)
@@ -54,6 +56,8 @@ async def add(playlist_id: str, body: PlaylistAddIn, user: User = Depends(curren
         await nd.update_playlist(playlist_id, add=ids)
     finally:
         await nd.aclose()
+    await playlist_dates.stamp(s, playlist_id, dated)
+    await s.commit()
     return {"ok": True, "added": len(ids)}
 
 
@@ -63,7 +67,14 @@ async def get_playlist(playlist_id: str, user: User = Depends(current_user),
     p = await nd_call(user, lambda nd: nd.get_playlist(playlist_id), not_found="Плейлист не найден")
     if not p.get("id"):
         raise HTTPException(404, "Плейлист не найден")
-    return PlaylistPageOut(**pl_out(p).model_dump(), tracks=await songs_out(s, p.get("entry") or []))
+    tracks = await songs_out(s, p.get("entry") or [])
+    await playlist_dates.collect(s, user.id, playlist_id, p.get("name") or "")
+    await s.commit()
+    dates = await playlist_dates.of(s, playlist_id)
+    for t in tracks:  # a track without a date of its own keeps the day it came into the library
+        if t.library_track_id in dates:
+            t.added_at = dates[t.library_track_id]
+    return PlaylistPageOut(**pl_out(p).model_dump(), tracks=tracks)
 
 
 @router.post("/{playlist_id}/remove")

@@ -693,6 +693,17 @@ class TgChat(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class PlaylistDate(Base):
+    """When a track was added to a Navidrome playlist (app/playlist_dates.py): Navidrome keeps no such date."""
+
+    __tablename__ = "playlist_dates"
+
+    nd_playlist_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime)
+    source: Mapped[str] = mapped_column(String(16))  # hub (added here) / import (the service's own date)
+
+
 class AppSetting(Base):
     """A setting of the whole server that the admin changes in the app (the order of lyrics sources)."""
 

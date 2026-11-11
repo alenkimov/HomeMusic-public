@@ -193,6 +193,8 @@ export interface TrackOut extends CatalogTrack {
   downloading: boolean;
   /** the user ♥ it and a download that stars it is under way: the ♥ shows filled */
   star_pending?: boolean;
+  /** in a list: when the track was added to it; else when it came into the library */
+  added_at?: string | null;
 }
 
 export interface AlbumOut extends CatalogAlbum {

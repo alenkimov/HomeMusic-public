@@ -74,6 +74,7 @@ async def songs_out(s: AsyncSession, songs: list[dict]) -> list[NdSongOut]:
             explicit=t.explicit if t is not None else None,
             cover_url=cover_url(x.get("coverArt"), BIG_COVER), cover_small_url=cover_url(x.get("coverArt")),
             owned=True, library_track_id=t.id if t is not None else None, nd_song_id=sid,
+            added_at=t.acquired_at if t is not None else None,
             nd_album_id=x.get("albumId"), nd_artist_id=x.get("artistId"), nd_artist_ids=artist_ids,
         ))
     return out
@@ -214,7 +215,9 @@ async def liked(user: User = Depends(current_user), s: AsyncSession = Depends(ge
         return st is None or st.liked
 
     ranked.sort(key=lambda pair: pair[0] or datetime.min, reverse=True)
-    return NdLikedOut(songs=[song for _, song in ranked],
+    from app.playlist_dates import naive
+
+    return NdLikedOut(songs=[song.model_copy(update={"added_at": naive(at) or song.added_at}) for at, song in ranked],
                       albums=[album_out(a) for a in sorted(body.get("album") or [], key=lambda x: x.get("starred") or "", reverse=True)
                               if visible("album", a)],
                       artists=[artist_out(a) for a in body.get("artist") or [] if visible("artist", a)])

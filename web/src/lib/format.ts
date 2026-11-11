@@ -27,6 +27,21 @@ export function fmtDate(iso?: string | null): string {
   return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
+/** «Дата добавления» of a track: how long ago while it is recent (as Spotify does), then the date. */
+export function fmtAdded(iso?: string | null): string {
+  if (!iso) return '';
+  const d = parseTime(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return 'только что';
+  const ago = new Intl.RelativeTimeFormat('ru', { numeric: 'auto' });
+  if (diff < 3600) return ago.format(-Math.floor(diff / 60), 'minute');
+  if (diff < 86400) return ago.format(-Math.floor(diff / 3600), 'hour');
+  if (diff < 7 * 86400) return ago.format(-Math.floor(diff / 86400), 'day');
+  if (diff < 28 * 86400) return ago.format(-Math.floor(diff / (7 * 86400)), 'week');
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' }).replace(' г.', '');
+}
+
 export function todayRu(): string {
   return new Date().toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
