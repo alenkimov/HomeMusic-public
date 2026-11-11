@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.catalog.models import make_ref, split_ref
 from app.config import get_settings
+from app.imports.sources.spotify_csv import clean_isrc
 from app.library.owned import find_existing
 from app.matching.normalize import has_cyrillic, normalize_artist, split_version
 from app.matching.score import score
@@ -30,6 +31,7 @@ from app.services import svc
 log = logging.getLogger(__name__)
 
 VERDICT = {"auto": "exact", "confirm": "probable", "not_found": "not_found"}
+ISRC_DURATION_TOLERANCE_S = 5  # the same recording; a wider gap is another edit under a reused code
 NOT_FOUND_TTL_DAYS = 7  # a catalog miss is looked up again after this long (catalogs and sources grow)
 
 
@@ -80,6 +82,16 @@ async def catalog_track(raw: dict[str, Any]) -> Resolution:
     main = (raw.get("artists") or [artist])[0]
     base, _ = split_version(title)
     best: list = []
+    if svc.deezer is not None and (isrc := clean_isrc(raw.get("isrc"))):
+        # the recording's code is exact where names are not (Deezer romanizes Japanese titles)
+        try:
+            by_code = await svc.deezer.get_track_by_isrc(isrc)
+        except Exception as e:
+            raise CatalogDown(repr(e)) from e
+        want = raw.get("duration_s")
+        if by_code is not None and (not want or not by_code.duration_s
+                                    or abs(by_code.duration_s - want) <= ISRC_DURATION_TOLERANCE_S):
+            return Resolution("exact", by_code.ref, 1.0)
     if svc.deezer is not None:
         for qa, qt in dict.fromkeys([(main, title), (main, base), (artist, title)]):
             try:

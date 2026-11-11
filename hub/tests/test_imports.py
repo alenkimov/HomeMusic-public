@@ -459,3 +459,76 @@ async def test_dislikes_of_the_service_become_the_users_dislikes(env):
     assert (rows["Группа крови"]["ref"], rows["Группа крови"]["source"]) == ("dz:100", "yandex_import")
     assert (rows["Город золотой"]["nd_song_id"], rows["Город золотой"]["source"]) == ("ndA", "yandex_import")
     assert await jobs("download_item") == [] and state["stars"] == []  # still never downloaded nor ♥
+
+
+# --- Spotify playlists exported to CSV (Exportify) ----------------------------------------------------
+
+CSV_HEAD = "Track URI,Track Name,Artist Name(s),Album Name,Track Duration (ms),ISRC,Added At"
+JAPAN_CSV = "\n".join([
+    CSV_HEAD,
+    # the catalog knows this recording under other names: only the ISRC finds it
+    'spotify:track:aaa,"血液型","キノ, Guest",Album,245000,RUA1D8800001,2024-09-08T10:00:00Z',
+    "spotify:track:bbb,Нет такого,Неизвестный,,180000,,2024-09-08T10:00:01Z",
+    "spotify:track:ccc,Город золотой,Аквариум,,190000,,2024-09-08T10:00:02Z",
+    "spotify:track:aaa,duplicate row,キノ,,245000,RUA1D8800001,",
+    ",,,,,,",
+]).encode()
+
+
+def test_spotify_csv_is_read_as_a_playlist():
+    from app.imports.sources import spotify_csv
+    from app.imports.sources.base import SourceError
+
+    snap = spotify_csv.parse([("C:\\dl\\My_Japan_mix.csv", b"\xef\xbb\xbf" + JAPAN_CSV),
+                              ("Liked_Songs.csv", JAPAN_CSV)])
+    likes, playlist = snap.collections  # the likes first
+    assert (likes.kind, likes.title) == ("likes", "Любимые треки")
+    assert (playlist.kind, playlist.title, playlist.external_id) == ("playlist", "My Japan mix", "csv:my japan mix")
+    assert [i.external_id for i in playlist.items] == ["aaa", "bbb", "ccc"]  # the order; no duplicates, no blanks
+    first = playlist.items[0].raw
+    assert first == {"artist": "キノ, Guest", "artists": ["キノ", "Guest"], "title": "血液型", "album": "Album",
+                     "duration_s": 245, "isrc": "RUA1D8800001", "liked_at": "2024-09-08T10:00:00Z"}
+    assert "isrc" not in playlist.items[1].raw
+    assert spotify_csv.clean_isrc("ru-a1d-88-00001") == "RUA1D8800001" and spotify_csv.clean_isrc("../x") is None
+    for bad in ([], [("x.csv", b"a,b\n1,2\n")], [("x.csv", CSV_HEAD.encode())]):
+        with pytest.raises(SourceError):
+            spotify_csv.parse(bad)
+
+
+async def test_spotify_csv_import_matches_by_isrc(env):
+    from app.services import svc
+
+    c = env["client"]
+    r = await c.post("/api/imports/csv", files=[("files", ("JAPAN.csv", JAPAN_CSV, "text/csv"))])
+    assert r.status_code == 200, r.text
+    imp = r.json()
+    assert (imp["source"], imp["method"], imp["status"], imp["account"]) == ("spotify", "csv", "preview", "JAPAN")
+    assert not imp["has_token"] and env["state"]["fetches"] == []  # no sign-in, nothing is fetched
+    [coll] = imp["collections"]
+    assert (coll["kind"], coll["title"], coll["count"], coll["owned"]) == ("playlist", "JAPAN", 3, 1)
+
+    r = await c.post(f"/api/imports/{imp['id']}/start", json={"collection_ids": [coll["id"]], "mode": "full"})
+    assert r.status_code == 200, r.text
+    await run_imports()
+    rows = {x["title"]: x for x in await items(c, imp)}
+    assert (rows["血液型"]["match"], rows["血液型"]["ref"], rows["血液型"]["status"]) == ("exact", "dz:100", "queued")
+    assert svc.deezer.by_isrc == 1
+    assert (rows["Нет такого"]["match"], rows["Город золотой"]["match"]) == ("not_found", "owned")
+    [dl] = (await c.get("/api/downloads")).json()
+    assert dl["import_id"] == imp["id"]
+
+    assert (await c.post(f"/api/imports/{imp['id']}/sync")).status_code == 409  # a file is not read again
+    r = await c.post("/api/imports/csv", files=[("files", ("x.csv", b"not,a,playlist\n", "text/csv"))])
+    assert r.status_code == 400 and "Exportify" in r.json()["detail"]
+
+
+async def test_isrc_of_another_edit_falls_back_to_the_names(env):
+    """A reused code on a recording of another length is not trusted: the names decide."""
+    from app.imports.resolve import catalog_track
+
+    r = await catalog_track({"artist": "キノ", "artists": ["キノ"], "title": "血液型", "duration_s": 400,
+                             "isrc": "RUA1D8800001"})
+    assert r.match == "not_found"
+    r = await catalog_track({"artist": "Кино", "artists": ["Кино"], "title": "Группа крови", "duration_s": 245,
+                             "isrc": "XX0000000000"})
+    assert (r.match, r.ref) == ("exact", "dz:100")

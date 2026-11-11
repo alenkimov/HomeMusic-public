@@ -213,6 +213,16 @@ async def create(s: AsyncSession, user_id: int, *, source: str, method: str, tok
     return imp
 
 
+async def create_from_snapshot(s: AsyncSession, user_id: int, *, source: str, method: str, snap: Snapshot) -> Import:
+    """An import whose collection came with the request (a file): no sign-in, no fetch — straight to the preview."""
+    imp = Import(user_id=user_id, source=source, method=method, status="preview", account=snap.account,
+                 auth_json={}, options_json={})
+    s.add(imp)
+    await s.flush()
+    await store_snapshot(s, imp, snap)
+    return imp
+
+
 @handler("import_auth")
 async def handle_auth(job: Job) -> None:
     import_id = int(job.payload_json["import_id"])
@@ -501,5 +511,5 @@ async def remove(s: AsyncSession, imp: Import) -> None:
     await s.delete(imp)
 
 
-__all__ = ["ACTIVE", "create", "download_all", "downloads_done", "get_import", "import_out", "item_out", "listened",
+__all__ = ["ACTIVE", "create", "create_from_snapshot", "download_all", "downloads_done", "get_import", "import_out", "item_out", "listened",
            "remove", "start"]

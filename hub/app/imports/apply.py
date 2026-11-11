@@ -102,7 +102,7 @@ async def _batch(s: AsyncSession, imp: Import) -> DownloadBatch:
 def track_query(raw: dict[str, Any]) -> TrackQuery:
     main = (raw.get("artists") or [raw.get("artist") or ""])[0]
     return TrackQuery(artist=main or raw.get("artist") or "", title=raw.get("title") or "", album=raw.get("album"),
-                      duration_s=raw.get("duration_s"))
+                      duration_s=raw.get("duration_s"), isrc=raw.get("isrc"))
 
 
 async def new_download(s: AsyncSession, imp: Import, query_json: dict[str, Any], priority: int) -> DownloadItem:

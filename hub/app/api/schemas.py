@@ -637,8 +637,8 @@ class AssistantTextIn(BaseModel):
 
 # --- imports from music services ----------------------------------------------------------
 
-ImportSource = Literal["yandex"]
-ImportMethod = Literal["device", "token", "profile"]
+ImportSource = Literal["yandex", "spotify"]
+ImportMethod = Literal["device", "token", "profile", "csv"]
 ImportMode = Literal["economy", "full"]
 
 

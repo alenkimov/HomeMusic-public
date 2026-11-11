@@ -364,6 +364,12 @@ export const api = {
   // imports from music services
   imports: (signal?: AbortSignal) => request<ImportOut[]>('GET', '/api/imports', { signal }),
   createImport: (body: ImportIn) => request<ImportOut>('POST', '/api/imports', { json: body }),
+  /** Spotify playlists exported to CSV by Exportify: one file is one playlist. */
+  createImportCsv: (files: File[]) => {
+    const form = new FormData();
+    for (const f of files) form.append('files', f);
+    return request<ImportOut>('POST', '/api/imports/csv', { form });
+  },
   importGet: (id: number, signal?: AbortSignal) => request<ImportOut>('GET', `/api/imports/${id}`, { signal }),
   importItems: (id: number, q: { collection_id?: number; status?: string; match?: string; offset?: number; limit?: number }, signal?: AbortSignal) =>
     request<ImportItemsOut>('GET', withQuery(`/api/imports/${id}/items`, q), { signal }),

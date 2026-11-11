@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { ImportCollectionOut, ImportItemOut, ImportMode, ImportOut } from '../api/types';
 import { Icon, type IconName } from '../components/Icon';
@@ -51,8 +51,10 @@ function statusLine(imp: ImportOut): string {
   }
 }
 
+const EXPORTIFY_URL = 'https://exportify.app/';
+
 function sourceTitle(imp: ImportOut): string {
-  return `Яндекс Музыка${imp.account ? ` · ${imp.account}` : ''}`;
+  return `${imp.source === 'spotify' ? 'Spotify' : 'Яндекс Музыка'}${imp.account ? ` · ${imp.account}` : ''}`;
 }
 
 // --- the list of imports + a new one ---------------------------------------------------------------
@@ -60,7 +62,8 @@ function sourceTitle(imp: ImportOut): string {
 export function ImportsPage() {
   const res = useAsync((s) => api.imports(s), []);
   useHubEvent('import', () => res.reload(true));
-  const [busy, setBusy] = useState<'device' | 'profile' | 'token' | null>(null);
+  const [busy, setBusy] = useState<'device' | 'profile' | 'token' | 'csv' | null>(null);
+  const csvRef = useRef<HTMLInputElement>(null);
   const [profile, setProfile] = useState('');
   const [token, setToken] = useState('');
 
@@ -69,6 +72,13 @@ export function ImportsPage() {
     const r = await attempt(() =>
       api.createImport(method === 'profile' ? { method, url: profile.trim() } : method === 'token' ? { method, token: token.trim() } : { method }),
     );
+    setBusy(null);
+    if (r) navigate(`/import/${r.id}`);
+  };
+
+  const startCsv = async (files: File[]) => {
+    setBusy('csv');
+    const r = await attempt(() => api.createImportCsv(files));
     setBusy(null);
     if (r) navigate(`/import/${r.id}`);
   };
@@ -125,7 +135,50 @@ export function ImportsPage() {
         </div>
       </details>
 
-      <p className="px-6 py-6 text-center text-xs text-dim">Spotify и YouTube Music появятся позже.</p>
+      <SectionTitle>Из Spotify</SectionTitle>
+      <div className="card mx-4 space-y-3 p-4">
+        <p className="text-sm text-muted">Плейлисты и «Любимые треки» из файлов CSV. Подписка Premium не нужна.</p>
+        <ol className="list-decimal space-y-1 pl-5 text-sm text-muted">
+          <li>
+            Откройте{' '}
+            <a href={EXPORTIFY_URL} target="_blank" rel="noopener noreferrer" className="font-semibold text-accent underline">
+              exportify.app
+            </a>{' '}
+            и войдите в Spotify.
+          </li>
+          <li>Нажмите Export у нужных плейлистов — скачаются файлы CSV.</li>
+          <li>Выберите эти файлы здесь. Один файл — один плейлист.</li>
+        </ol>
+        <input
+          ref={csvRef}
+          type="file"
+          multiple
+          accept=".csv,text/csv"
+          className="hidden"
+          onChange={(e) => {
+            const files = Array.from(e.target.files ?? []);
+            e.target.value = '';
+            if (files.length) void startCsv(files);
+          }}
+        />
+        <div className="flex flex-wrap gap-2">
+          <a
+            href={EXPORTIFY_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-full bg-fg/10 px-4 text-sm font-semibold"
+          >
+            <Icon name="external" size={18} />
+            Открыть Exportify
+          </a>
+          <Button variant="primary" icon="upload" busy={busy === 'csv'} disabled={!!busy} onClick={() => csvRef.current?.click()}>
+            Выбрать файлы CSV
+          </Button>
+        </div>
+        <p className="text-xs text-dim">Exportify — сторонний открытый сервис: вход идёт на сайте Spotify, Хаб получает только файл со списком треков.</p>
+      </div>
+
+      <p className="px-6 py-6 text-center text-xs text-dim">Вход через Spotify и YouTube Music появятся позже.</p>
     </div>
   );
 }
@@ -281,7 +334,7 @@ function Preview({ imp, onStarted }: { imp: ImportOut; onStarted: (r: ImportOut)
             Скачивать любимые альбомы целиком
           </label>
         )}
-        {imp.method !== 'profile' && (
+        {imp.method !== 'profile' && imp.method !== 'csv' && (
           <label className="flex items-center gap-1 text-sm">
             <Checkbox checked={keep} onChange={setKeep} label="Запомнить вход" />
             <span className="min-w-0">Запомнить вход, чтобы потом подтянуть новое</span>
@@ -332,7 +385,7 @@ function Progress({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) 
     if (r) onChange(r);
   };
   const remove = async () => {
-    if (!(await confirmDialog({ title: 'Удалить перенос?', body: 'Музыка, ♥ и плейлисты останутся. Удалятся только этот отчёт и вход в Яндекс.', okLabel: 'Удалить', danger: true }))) return;
+    if (!(await confirmDialog({ title: 'Удалить перенос?', body: 'Музыка, ♥ и плейлисты останутся. Удалятся только этот отчёт и сохранённый вход в сервис.', okLabel: 'Удалить', danger: true }))) return;
     if (await attempt(() => api.importDelete(imp.id))) navigate('/import', { replace: true });
   };
   const tracks = imp.collections.filter((c) => c.selected && (c.kind === 'likes' || c.kind === 'playlist'));

@@ -407,6 +407,13 @@ class DeezerClient:
 
         return await self._cached_model(f"dz:track:{id_}", self.cfg.ttl_album_s, CatalogTrack, produce)
 
+    async def get_track_by_isrc(self, isrc: str) -> CatalogTrack | None:
+        """The catalog track of a recording (None: Deezer has none). The caller keeps what it found."""
+        try:
+            return map_track(await self._get(f"track/isrc:{isrc}"))
+        except CatalogNotFound:
+            return None
+
     async def preview_url(self, id_: str | int) -> str | None:
         """Fresh 30 s MP3 preview link (not cached: the links are signed and expire within hours)."""
         return (await self._get(f"track/{id_}")).get("preview") or None

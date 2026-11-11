@@ -748,7 +748,7 @@ export interface ChatConfirmOut {
 
 // --- imports from music services ------------------------------------------------------------
 
-export type ImportMethod = 'device' | 'token' | 'profile';
+export type ImportMethod = 'device' | 'token' | 'profile' | 'csv';
 export type ImportMode = 'economy' | 'full';
 export type ImportStatus = 'auth' | 'fetching' | 'preview' | 'running' | 'done' | 'failed' | 'cancelled';
 export type ImportCollectionKind = 'likes' | 'playlist' | 'albums' | 'artists' | 'dislikes';
@@ -789,7 +789,7 @@ export interface ImportCollectionOut {
 
 export interface ImportOut {
   id: number;
-  source: 'yandex';
+  source: 'yandex' | 'spotify';
   method: ImportMethod;
   status: ImportStatus | string;
   mode: ImportMode;

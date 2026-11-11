@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +10,7 @@ from app.api.schemas import ImportIn, ImportItemsOut, ImportOut, ImportPickOut, 
 from app.auth import current_user
 from app.db import get_session
 from app.imports import apply, core
+from app.imports.sources import spotify_csv
 from app.imports.sources.base import SourceError
 from app.jobs.queue import PRIORITY_IMPORT, PermanentError, enqueue, notify
 from app.models import DownloadItem, Import, ImportCollection, ImportItem, Track, User
@@ -41,6 +42,28 @@ async def create(body: ImportIn, user: User = Depends(current_user),
     out = await core.import_out(s, imp)
     await s.commit()
     notify()
+    return out
+
+
+@router.post("/csv", response_model=ImportOut)
+async def create_from_csv(request: Request, user: User = Depends(current_user),
+                          s: AsyncSession = Depends(get_session, scope="function")):
+    """Spotify playlists exported to CSV by Exportify (`files`, one playlist each) → an import at its preview."""
+    form = await request.form()
+    uploads = [f for f in form.getlist("files") if hasattr(f, "read")]
+    if len(uploads) > spotify_csv.MAX_FILES:
+        raise HTTPException(400, f"За один раз не больше {spotify_csv.MAX_FILES} файлов")
+    files: list[tuple[str, bytes]] = []
+    for f in uploads:
+        data = await f.read(spotify_csv.MAX_FILE_BYTES + 1)
+        files.append((getattr(f, "filename", "") or "Spotify.csv", data))
+    try:
+        snap = spotify_csv.parse(files)
+    except SourceError as e:
+        raise HTTPException(400, str(e)) from e
+    imp = await core.create_from_snapshot(s, user.id, source="spotify", method="csv", snap=snap)
+    out = await core.import_out(s, imp)
+    await s.commit()
     return out
 
 
@@ -119,6 +142,8 @@ async def sync(import_id: int, user: User = Depends(current_user),
         raise HTTPException(409, "Импорт ещё идёт")
     if imp.started_at is None:
         raise HTTPException(409, "Импорт ещё не запущен")
+    if imp.method == "csv":
+        raise HTTPException(409, "Перенос из файла не обновляется — загрузите новую выгрузку")
     if imp.method != "profile" and not imp.token_enc:
         raise HTTPException(409, "Вход в сервис удалён — начните новый перенос")
     imp.status = "fetching"

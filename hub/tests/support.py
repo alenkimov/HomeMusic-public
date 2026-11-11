@@ -123,6 +123,12 @@ class FakeDeezer:
             raise CatalogNotFound(f"track/{id_}")
         return self.track
 
+    async def get_track_by_isrc(self, isrc):
+        if self.down:
+            raise RuntimeError("deezer is down")
+        self.by_isrc = getattr(self, "by_isrc", 0) + 1
+        return self.track if isrc == self.track.isrc else None
+
     async def get_album(self, id_):
         return self.album
 
