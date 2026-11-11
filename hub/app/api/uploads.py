@@ -7,6 +7,7 @@ import json
 import logging
 import shutil
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -18,15 +19,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import UploadCommitIn, UploadCommitOut, UploadOut
 from app.auth import current_user
 from app.config import get_settings
-from app.db import get_session
+from app.db import get_session, session_scope
 from app.events import bus
 from app.jobs.downloads import enqueue_scan
-from app.jobs.queue import notify
+from app.jobs.queue import RetryLater, enqueue, handler, notify
 from app.library import probe, tagger
 from app.library.importer import ImportSpec, import_file
-from app.models import Album, Upload, User
+from app.models import Album, Job, Track, Upload, User, utcnow
 
 log = logging.getLogger(__name__)
+PLAYLIST_ADD_RETRY_S = 15
+PLAYLIST_ADD_WAIT_S = 30 * 60  # a scan of a big library is slow; then the playlist takes what is ready
+
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 
 CHUNK = 1024 * 1024
@@ -155,6 +159,7 @@ async def commit(payload: str = Form(...), cover: UploadFile | None = File(None)
         cover_bytes = await asyncio.to_thread(tagger.read_cover, _abs(cu))
 
     imported = 0
+    track_ids: list[int] = []
     for i, tr in enumerate(body.tracks):
         u = await _own(s, user, tr.upload_id)
         if u.status != "uploaded":
@@ -192,11 +197,44 @@ async def commit(payload: str = Form(...), cover: UploadFile | None = File(None)
             continue
         u.status, u.track_id = "imported", track.id
         imported += 1
+        track_ids.append(track.id)
     await enqueue_scan(s)
+    if body.playlist_id and track_ids:
+        # Navidrome knows the new files only after its scan: the playlist gets them then
+        await enqueue(s, "upload_playlist_add", {
+            "user_id": user.id, "playlist_id": body.playlist_id, "track_ids": track_ids,
+            "until": (utcnow() + timedelta(seconds=PLAYLIST_ADD_WAIT_S)).isoformat()}, delay_s=PLAYLIST_ADD_RETRY_S)
     await s.commit()
     notify()
     bus.publish(user.id, "library", {"kind": "imported", "album_id": album.id})
     return UploadCommitOut(album_id=album.id, imported=imported)
+
+
+@handler("upload_playlist_add")
+async def handle_playlist_add(job: Job) -> None:
+    """«Добавить ещё и в плейлист» of an import: the imported tracks go into the playlist in their order once the
+    library scan has given them Navidrome song ids. After `until` the ones that have ids go, the rest are left out."""
+    from app.auth import user_navidrome
+
+    p = job.payload_json
+    async with session_scope() as s:
+        user = await s.get(User, int(p["user_id"]))
+        tracks = [await s.get(Track, int(i)) for i in p["track_ids"]]
+        songs = [t.nd_song_id for t in tracks if t is not None]  # a track deleted meanwhile is not waited for
+    if user is None or not songs:
+        return
+    if any(x is None for x in songs) and utcnow().isoformat() < p["until"]:
+        raise RetryLater(PLAYLIST_ADD_RETRY_S, "waiting for the library scan")
+    ready = [x for x in songs if x]
+    if not ready:
+        log.warning("upload: no song ids for playlist %s after the wait", p["playlist_id"])
+        return
+    nd = user_navidrome(user)
+    try:
+        await nd.update_playlist(p["playlist_id"], add=ready)
+    finally:
+        await nd.aclose()
+    bus.publish(user.id, "library", {"kind": "playlist", "playlist_id": p["playlist_id"]})
 
 
 def purge_stale_uploads(days: int = 7) -> int:
