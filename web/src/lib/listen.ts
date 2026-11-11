@@ -30,6 +30,8 @@ export interface ListenTrack {
   /** a recommendation of the smart shuffle (`lib/smartShuffle.ts`): ✨ in the player and the queue; `label` — «Рекомендация
    * на основе …», `session` — the Hub's session (its events carry the context `smart:<session>`) */
   rec?: { label: string; session: string } | null;
+  /** put into the queue by hand («Играть следующим», «В очередь»): the quick queue button marks it and takes it out */
+  queued?: boolean;
   title: string;
   artist: string;
   cover_url?: string | null;
@@ -719,7 +721,7 @@ export function cycleRepeat() {
 export function playNext(tracks: readonly ListenTrack[]) {
   if (!tracks.length) return;
   if (!state.track) return listen(tracks[0], tracks);
-  const added = tracks.map((t) => ({ ...t })); // own objects: the same track may be in the queue twice
+  const added = tracks.map((t) => ({ ...t, queued: true })); // own objects: the same track may be in the queue twice
   set({ queue: [...state.queue.slice(0, state.index + 1), ...added, ...state.queue.slice(state.index + 1)] });
   prefetchNext();
 }
@@ -729,7 +731,7 @@ export function addToQueue(tracks: readonly ListenTrack[]) {
   if (!tracks.length) return;
   if (!state.track) return listen(tracks[0], tracks);
   const ended = state.phase === 'ended';
-  set({ queue: [...state.queue, ...tracks.map((t) => ({ ...t }))] });
+  set({ queue: [...state.queue, ...tracks.map((t) => ({ ...t, queued: true }))] });
   if (ended) start(state.queue, state.index + 1, true);
   else prefetchNext();
 }

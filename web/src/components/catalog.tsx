@@ -7,6 +7,7 @@ import { STANDALONE } from '../lib/embedded';
 import { Link, enc } from '../lib/router';
 import { Icon } from './Icon';
 import { LikeButton } from './LikeButton';
+import { QueueButton } from './QueueButton';
 import { TrackMenuButton, type MenuExtra } from './TrackMenu';
 import { Cover, ExplicitBadge, IconButton, OwnedBadge, Spinner, cx } from './ui';
 
@@ -184,6 +185,7 @@ export function TrackRow({
         <div className={rowClass}>{body}</div>
       )}
       <div className="-ml-2 flex shrink-0 items-center">
+        <QueueButton track={listenTrack(track)} hover={rowPlays} className="w-10" />
         <LikeButton songId={track.owned ? track.nd_song_id : null} refId={track.ref} pending={track.star_pending} title={track.title} data={{ ...track }} className="w-10" />
         {track.owned ? (
           // a plain browser: the row itself plays it, a second ▷ would only take the title's room
