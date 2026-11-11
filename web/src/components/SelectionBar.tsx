@@ -34,7 +34,7 @@ export function SelectionBar() {
         <Button small variant="primary" icon="send" onClick={() => void sendToTelegram(take())}>
           В Telegram
         </Button>
-        <Button small icon="note" onClick={() => void sendToTelegram(take(), true)}>
+        <Button small icon="mic" onClick={() => void sendToTelegram(take(), true)}>
           В Telegram с текстом
         </Button>
         {!canPlayAll() && (

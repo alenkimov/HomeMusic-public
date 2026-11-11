@@ -91,7 +91,7 @@ export function PlayerPage() {
   const firstArtist = track.artists?.find((a) => a.ref);
 
   return (
-    <div className="pt-safe relative isolate mx-auto flex min-h-dvh max-w-2xl flex-col">
+    <div className={cx('pt-safe relative isolate mx-auto flex min-h-dvh max-w-2xl flex-col', lyrics && 'lg:max-w-6xl')}>
       {(track.cover_small_url || track.cover_url) && (
         // the cover, blurred, as the page's own light
         <div aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
@@ -102,19 +102,22 @@ export function PlayerPage() {
       <div className="flex min-h-14 items-center gap-1 px-2">
         <IconButton icon="down" label="Свернуть" onClick={() => goBack('/home')} />
         <div className="min-w-0 flex-1 text-center text-xs uppercase tracking-wide text-muted">{contextLabel(context)}</div>
-        <IconButton icon="note" label={lyrics ? 'Показать обложку' : 'Показать текст'} aria-pressed={lyrics} onClick={toggleLyrics} className={lyrics ? '!text-accent' : 'text-muted'} />
+        <IconButton icon="mic" label={lyrics ? 'Скрыть текст' : 'Показать текст'} aria-pressed={lyrics} onClick={toggleLyrics} className={lyrics ? '!text-accent' : 'text-muted'} />
         <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id }} inPlayer />
       </div>
 
-      {lyrics ? (
-        <div className="h-[58dvh] min-h-72 px-3 pt-2">
-          <Lyrics refId={track.ref} songId={info?.nd_song_id ?? track.nd_song_id} />
-        </div>
-      ) : (
-        <div className="px-6 pt-2">
-          <Cover src={track.cover_url || track.cover_small_url} alt={track.title} className="mx-auto aspect-square w-full max-w-[22rem] shadow-2xl" />
-        </div>
-      )}
+      {/* with the text on: a wide screen has it to the right of the cover; where both don't fit, the text takes the
+          cover's place */}
+      <div className={cx(lyrics && 'lg:grid lg:grid-cols-[minmax(0,24rem)_minmax(0,1fr)] lg:items-start lg:gap-x-8 lg:px-4')}>
+        {lyrics && (
+          <div className="h-[58dvh] min-h-72 px-3 pt-2 lg:sticky lg:top-2 lg:order-2 lg:h-[calc(100dvh-5.5rem)] lg:px-0">
+            <Lyrics refId={track.ref} songId={info?.nd_song_id ?? track.nd_song_id} />
+          </div>
+        )}
+        <div className="min-w-0">
+      <div className={cx('px-6 pt-2', lyrics && 'hidden lg:block')}>
+        <Cover src={track.cover_url || track.cover_small_url} alt={track.title} className="mx-auto aspect-square w-full max-w-[22rem] shadow-2xl" />
+      </div>
 
       <div className="flex items-center gap-2 px-6 pt-6">
         <div className="min-w-0 flex-1">
@@ -219,6 +222,8 @@ export function PlayerPage() {
           onClick={cycleRepeat}
           className={repeat !== 'off' ? '!text-accent' : 'text-muted'}
         />
+      </div>
+        </div>
       </div>
 
       <Queue queue={queue} index={index} onWave={onWave} />
