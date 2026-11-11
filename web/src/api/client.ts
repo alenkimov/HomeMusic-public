@@ -375,6 +375,8 @@ export const api = {
   // lyrics of a library track (lib/lyrics.ts)
   lyrics: (q: { nd_song_id?: string | null; ref?: string | null }, signal?: AbortSignal) =>
     request<LyricsOut>('GET', withQuery('/api/lyrics', { nd_song_id: q.nd_song_id ?? undefined, ref: q.ref ?? undefined }), { signal }),
+  lyricsSearch: (q: string) =>
+    request<{ track_id: number; nd_song_id?: string | null; ref?: string | null; line: string }[]>('GET', withQuery('/api/lyrics/search', { q })),
   lyricsCandidates: (track_id: number) => request<LyricsCandidate[]>('GET', withQuery('/api/lyrics/candidates', { track_id })),
   lyricsChoose: (track_id: number, source: string | null) => request<LyricsOut>('POST', '/api/lyrics/choose', { json: { track_id, source } }),
   lyricsOffset: (track_id: number, offset_ms: number) => request<LyricsOut>('POST', '/api/lyrics/offset', { json: { track_id, offset_ms } }),

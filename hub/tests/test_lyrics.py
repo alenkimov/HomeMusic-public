@@ -110,6 +110,13 @@ async def test_sources_in_order_then_the_database(env):
     assert (await c.get("/api/lyrics", params={"nd_song_id": "nd1"})).json()["kind"] == "synced"
     assert calls == []  # the second time it comes from the database
 
+    # the search inside the texts: any case, the line that has the words; `%` is a character, not a wildcard
+    hits = (await c.get("/api/lyrics/search", params={"q": "СТРОК"})).json()
+    assert hits == [{"track_id": track_id, "nd_song_id": "nd1", "ref": None, "line": "строка"}]
+    assert (await c.get("/api/lyrics/search", params={"q": "нет такого"})).json() == []
+    assert (await c.get("/api/lyrics/search", params={"q": "%"})).json() == []
+    assert (await c.get("/api/lyrics/search", params={"q": "с"})).json() == []  # one letter is not a search
+
     r = (await c.post("/api/lyrics/offset", json={"track_id": track_id, "offset_ms": -400})).json()
     assert r["offset_ms"] == -400
     assert (await c.post("/api/lyrics/offset", json={"track_id": track_id, "offset_ms": 99_999})).status_code == 422

@@ -112,6 +112,7 @@ def _store(row: Lyrics, found: Found | None) -> None:
     row.source = found.source if found else None
     row.lines_json = found.lines if found else None
     row.plain = (found.plain if found and not found.lines else None)
+    row.search_text = parse.plain_of(row.lines_json, row.plain).casefold() if found else None
     row.fetched_at = utcnow()
 
 
@@ -158,6 +159,24 @@ async def choose(s: AsyncSession, track: Track, source: str | None) -> Lyrics:
 
 def text_of(row: Lyrics | None) -> str:
     return parse.plain_of(row.lines_json, row.plain) if row is not None and row.kind != "none" else ""
+
+
+async def search(s: AsyncSession, q: str, limit: int = 300) -> list[dict[str, Any]]:
+    """Tracks whose lyrics have `q` in them, with the line it is in."""
+    needle = " ".join(q.casefold().split())
+    # one letter finds everything; one hieroglyph is a word
+    if len(needle) < 2 and not any(ord(ch) >= 0x2E80 for ch in needle):
+        return []
+    # instr, not LIKE: the words are looked for as they are, `%` and `_` included
+    rows = (await s.execute(
+        select(Lyrics, Track.nd_song_id, Track.deezer_track_id).join(Track, Track.id == Lyrics.track_id)
+        .where(func.instr(Lyrics.search_text, needle) > 0).limit(limit))).all()
+    out = []
+    for row, nd_song_id, dz in rows:
+        text = parse.plain_of(row.lines_json, row.plain)
+        line = next((ln.strip() for ln in text.splitlines() if needle in " ".join(ln.casefold().split())), "")
+        out.append({"track_id": row.track_id, "nd_song_id": nd_song_id, "ref": f"dz:{dz}" if dz else None, "line": line[:200]})
+    return out
 
 
 # --- background ---------------------------------------------------------------------------------------

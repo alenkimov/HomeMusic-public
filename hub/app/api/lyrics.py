@@ -36,6 +36,13 @@ class CandidateOut(BaseModel):
     preview: str
 
 
+class LyricsHitOut(BaseModel):
+    track_id: int
+    nd_song_id: str | None = None
+    ref: str | None = None
+    line: str = ""  # the line the words were found in
+
+
 class OffsetIn(BaseModel):
     track_id: int
     offset_ms: int = Field(ge=-15_000, le=15_000)
@@ -86,6 +93,12 @@ async def get(nd_song_id: str | None = None, ref: str | None = None, user: User 
     row = await service.ensure(s, track)
     await s.commit()
     return _out(row)
+
+
+@router.get("/search", response_model=list[LyricsHitOut])
+async def search(q: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    """The library's tracks whose lyrics have `q` in them (the search of a playlist looks inside the texts too)."""
+    return await service.search(s, q)
 
 
 @router.get("/candidates", response_model=list[CandidateOut])

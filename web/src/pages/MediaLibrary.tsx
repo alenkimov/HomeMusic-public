@@ -4,6 +4,7 @@ import type { NdAlbumOut, NdArtistOut, NdSongOut } from '../api/types';
 import { playAll, TrackRow, TrackTableHeader } from '../components/catalog';
 import { Icon, type IconName } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
+import { useListSearch, type Found } from '../components/ListSearch';
 import { Button, Cover, Empty, ErrorState, IconButton, PageHeader, SectionTitle, SkeletonRows, Spinner, cx } from '../components/ui';
 import { fmtLength, tracksWord } from '../lib/format';
 import { useDesktop } from '../lib/desktop';
@@ -119,13 +120,24 @@ export function ListActions({ tracks, context, children }: { tracks: readonly Nd
   );
 }
 
-function SongList({ tracks, extra }: { tracks: readonly NdSongOut[]; extra?: (t: NdSongOut, i: number) => Parameters<typeof TrackRow>[0]['menuExtra'] }) {
+/** `found`: the rows a search of the list left (`useListSearch`) — they keep their places in the whole list: the
+ * number shown, and what `extra` gets (a playlist removes a track by its place). */
+function SongList({ tracks, extra, found }: { tracks: readonly NdSongOut[]; extra?: (t: NdSongOut, i: number) => Parameters<typeof TrackRow>[0]['menuExtra']; found?: Found[] | null }) {
+  const rows = found ? found.map((f) => ({ t: tracks[f.index], i: f.index, line: f.line })) : tracks.map((t, i) => ({ t, i, line: undefined as string | undefined }));
+  const queue = found ? rows.map((r) => r.t) : tracks;
+  if (found && !rows.length) return <p className="px-4 py-10 text-center text-sm text-muted">Ничего не нашлось — ни в названиях, ни в текстах.</p>;
   return (
     <ul>
-      {tracks.length > 0 && <li><TrackTableHeader numbered album /></li>}
-      {tracks.map((t, i) => (
+      {rows.length > 0 && <li><TrackTableHeader numbered album /></li>}
+      {rows.map(({ t, i, line }) => (
         <li key={`${t.ref}:${i}`}>
-          <TrackRow track={t} queue={tracks} link={false} showAlbum menuExtra={extra?.(t, i)} index={i + 1} />
+          <TrackRow track={t} queue={queue} link={false} showAlbum menuExtra={extra?.(t, i)} index={i + 1} />
+          {line !== undefined && (
+            <div className="-mt-1 flex items-center gap-1.5 truncate pb-2 pl-16 pr-4 text-xs text-muted">
+              <Icon name="lyrics" size={13} className="shrink-0 text-accent" />
+              <span className="truncate">{line ? `«${line}»` : 'найдено в тексте'}</span>
+            </div>
+          )}
         </li>
       ))}
     </ul>
@@ -210,12 +222,9 @@ export function LikedPage() {
       window.removeEventListener('hm:hub-favorite', changed);
     };
   }, [res.reload]);
-  const [q, setQ] = useState('');
-  const songs = res.data?.songs ?? [];
-  const shown = useMemo(() => {
-    const needle = q.trim().toLocaleLowerCase('ru');
-    return needle ? songs.filter((t) => `${t.title} ${t.artist} ${t.album_title ?? ''}`.toLocaleLowerCase('ru').includes(needle)) : songs;
-  }, [songs, q]);
+  const songs = useMemo(() => res.data?.songs ?? [], [res.data]);
+  const search = useListSearch(songs);
+  const q = search.q;
 
   return (
     <div>
@@ -228,13 +237,9 @@ export function LikedPage() {
         <Empty icon="heart" title="Пока ничего" text="Ставьте ♥ трекам, альбомам и исполнителям — они соберутся здесь." />
       ) : (
         <>
-          <ListActions tracks={shown} context="liked" />
-          {songs.length > 8 && (
-            <div className="px-4 pb-2">
-              <input className="input" type="search" placeholder="Найти среди понравившихся" aria-label="Найти среди понравившихся" value={q} onChange={(e) => setQ(e.target.value)} />
-            </div>
-          )}
-          <SongList tracks={shown} />
+          <ListActions tracks={search.found ? search.found.map((f) => songs[f.index]) : songs} context="liked" />
+          <SongList tracks={songs} found={search.found} />
+          {songs.length > 0 && search.control}
           {!q && <AlbumRow title="Альбомы" albums={res.data?.albums ?? []} rowKey="liked:albums" />}
           {!q && (res.data?.artists.length ?? 0) > 0 && (
             <section aria-label="Исполнители">
@@ -264,6 +269,8 @@ export function PlaylistPage({ id }: { id: string }) {
   const res = useAsync((s) => api.playlist(id, s), [id]);
   const p = res.data;
   useSmartPage(`playlist:${id}`, p?.name ?? null);
+  const all = useMemo(() => p?.tracks ?? [], [p]);
+  const search = useListSearch(all);
 
   const remove = async (i: number, t: NdSongOut) => {
     if (await attempt(() => api.removeFromPlaylist(id, [i]), `«${t.title}» убран из плейлиста`))
@@ -289,7 +296,10 @@ export function PlaylistPage({ id }: { id: string }) {
         {desktop && <MoreMenu items={[{ icon: 'trash', label: 'Удалить плейлист', danger: true, onClick: () => void drop() }]} />}
       </ListActions>
       {p.tracks.length ? (
-        <SongList tracks={p.tracks} extra={(t, i) => [{ icon: 'x', label: 'Убрать из плейлиста', onClick: () => void remove(i, t) }]} />
+        <>
+          <SongList tracks={p.tracks} found={search.found} extra={(t, i) => [{ icon: 'x', label: 'Убрать из плейлиста', onClick: () => void remove(i, t) }]} />
+          {search.control}
+        </>
       ) : (
         <Empty icon="playlist" title="Плейлист пуст" text="Добавляйте треки через ⋯ → «Добавить в плейлист»." />
       )}

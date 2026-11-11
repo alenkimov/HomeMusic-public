@@ -645,6 +645,7 @@ class Lyrics(Base):
     # [{"t": ms, "text": str, "end"?: ms, "words"?: [{"t": ms, "text": str}]}] — a timed text
     lines_json: Mapped[list[Any] | None] = mapped_column(JSON)
     plain: Mapped[str | None] = mapped_column(Text)  # a text without timings
+    search_text: Mapped[str | None] = mapped_column(Text)  # the whole text, case-folded: the search inside lyrics
     offset_ms: Mapped[int] = mapped_column(Integer, default=0)  # the user's shift of the timings
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)  # chosen by hand: the search leaves it alone
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
