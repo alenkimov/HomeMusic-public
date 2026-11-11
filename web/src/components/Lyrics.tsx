@@ -77,7 +77,13 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
 
   useEffect(() => {
     if (at < 0 || performance.now() < held.current) return;
-    box.current?.querySelector<HTMLElement>(`[data-line="${at}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    // only the text's own box is scrolled: `scrollIntoView` would move the whole page too, once the last lines cannot
+    // be centred inside the box
+    const el = box.current?.querySelector<HTMLElement>(`[data-line="${at}"]`);
+    if (!box.current || !el) return;
+    const frame = box.current.getBoundingClientRect();
+    const line = el.getBoundingClientRect();
+    box.current.scrollTo({ top: box.current.scrollTop + line.top - frame.top - (frame.height - line.height) / 2, behavior: 'smooth' });
   }, [at]);
 
   const shift = (by: number) => {
