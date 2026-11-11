@@ -36,7 +36,8 @@ import { LibraryPage } from './pages/Library';
 import { LibraryAlbumPage } from './pages/LibraryAlbum';
 import { LoginPage } from './pages/Login';
 import { LyricsSettingsPage } from './pages/LyricsSettings';
-import { ArtistsPage, LikedPage, NdAlbumPage, NdAlbumsPage, NdArtistPage, PlaylistPage } from './pages/MediaLibrary';
+import { ArtistsPage, LikedPage, NdAlbumPage, NdAlbumsPage, NdArtistPage, PlaylistPage, SelectionPage } from './pages/MediaLibrary';
+import { TagsPage } from './pages/Tags';
 import { MixPage, TastePage } from './pages/Mix';
 import { MorePage } from './pages/More';
 import { PlayerPage } from './pages/Player';
@@ -55,6 +56,8 @@ const STANDALONE_ROUTES: RouteDef[] = [
   ['/liked', 'library', () => <LikedPage />],
   ['/artists', 'library', () => <ArtistsPage />],
   ['/playlist/:id', 'library', (p) => <PlaylistPage key={p.id} id={p.id} />],
+  ['/selection/:id', 'library', (p) => <SelectionPage key={p.id} id={p.id} />],
+  ['/tags', 'library', () => <TagsPage />],
   ['/lib/albums', 'library', () => <NdAlbumsPage />],
   ['/lib/album/:id', 'library', (p) => <NdAlbumPage key={p.id} id={p.id} />],
   ['/lib/artist/:id', 'library', (p) => <NdArtistPage key={p.id} id={p.id} />],

@@ -522,6 +522,8 @@ export interface UploadCommitIn {
   playlist_id?: string | null;
   /** the imported tracks go into «Любимое» too */
   star?: boolean;
+  /** ... and get these tags of one's own */
+  tag_ids?: number[];
 }
 
 export interface UploadCommitOut {

@@ -315,3 +315,37 @@ async def test_tags_languages_genres_and_ones_own(env):
     names = {t["id"]: t["name"] for g in r["groups"] for t in g["tags"]}
     assert [names[i] for i in r["map"]["nd2"] if names[i] != "chill"] == ["без слов"]
     assert "японский" not in [names[i] for i in r["map"]["nd1"]] and "английский" in [names[i] for i in r["map"]["nd1"]]
+
+
+async def test_own_tags_are_renamed_merged_deleted_and_selections_follow(env):
+    c = env["client"]
+    await add_track("nd1")
+    await add_track("nd2")
+    chill = (await c.post("/api/tags", json={"name": "chill"})).json()["id"]
+    calm = (await c.post("/api/tags", json={"name": "calm"})).json()["id"]
+    road = (await c.post("/api/tags", json={"name": "для дороги"})).json()["id"]
+    await c.post("/api/tags/assign", json={"nd_song_ids": ["nd1"], "add": [chill, road]})
+    await c.post("/api/tags/assign", json={"nd_song_ids": ["nd2"], "add": [calm]})
+
+    sel = (await c.post("/api/tags/selections", json={"name": " Тихое ", "scope": "liked", "filter": {str(calm): "yes", str(road): "no", "bogus": "yes"}})).json()
+    assert (sel["name"], sel["filter"]) == ("Тихое", {str(calm): "yes", str(road): "no"})
+    assert (await c.post("/api/tags/selections", json={"name": "x", "scope": "liked", "filter": {}})).status_code == 400
+    assert (await c.post("/api/tags/selections", json={"name": "x", "scope": "nowhere", "filter": {"1": "yes"}})).status_code == 422
+
+    assert (await c.put(f"/api/tags/{calm}", json={"name": "CHILL"})).status_code == 409  # that name is taken: merge them
+    r = (await c.put(f"/api/tags/{road}", json={"name": "в дорогу"})).json()
+    assert "в дорогу" in [t["name"] for g in r["groups"] for t in g["tags"]]
+
+    r = (await c.post(f"/api/tags/{calm}/merge", json={"into": chill})).json()
+    assert sorted(r["map"]["nd1"]) == sorted([chill, road]) and r["map"]["nd2"] == [chill]
+    assert calm not in [t["id"] for g in r["groups"] for t in g["tags"]]
+    assert (await c.get("/api/tags/selections/all")).json()[0]["filter"] == {str(chill): "yes", str(road): "no"}
+
+    r = (await c.delete(f"/api/tags/{road}")).json()
+    assert r["map"]["nd1"] == [chill] and (await c.get("/api/tags/selections/all")).json()[0]["filter"] == {str(chill): "yes"}
+    assert (await c.delete(f"/api/tags/{road}")).status_code == 404
+
+    r = (await c.put(f"/api/tags/selections/{sel['id']}", json={"name": "Спокойное", "scope": "library", "filter": {"untagged": "no"}})).json()
+    assert (r["name"], r["scope"], r["filter"]) == ("Спокойное", "library", {"untagged": "no"})
+    assert (await c.delete(f"/api/tags/selections/{sel['id']}")).json() == {"ok": True}
+    assert (await c.get("/api/tags/selections/all")).json() == []

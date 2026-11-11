@@ -5,6 +5,7 @@ import { useHubEvent } from '../lib/events';
 import { tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { useActiveDownloads } from '../lib/notify';
+import { SELECTIONS_EVENT } from '../lib/tags';
 import { attempt } from '../lib/ui';
 import { playAll } from './catalog';
 import { Link, enc, useRoute } from '../lib/router';
@@ -34,6 +35,13 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
     window.addEventListener('hm:playlists-changed', changed);
     return () => window.removeEventListener('hm:playlists-changed', changed);
   }, [lists.reload]);
+  // the saved filters by tags (lib/tags.ts)
+  const sels = useAsync((s) => api.tagSelections(s), []);
+  useEffect(() => {
+    const changed = () => sels.reload(true);
+    window.addEventListener(SELECTIONS_EVENT, changed);
+    return () => window.removeEventListener(SELECTIONS_EVENT, changed);
+  }, [sels.reload]);
   // «Любимое» is a playlist too: its number of tracks, kept fresh as ♥ are set
   const liked = useAsync((s) => api.ndLiked(s), []);
   useHubEvent('library', () => liked.reload(true));
@@ -106,6 +114,29 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
           );
         })}
         {lists.data && !lists.data.length && <p className="px-3 py-2 text-xs text-dim">Плейлистов пока нет</p>}
+        <div className="flex items-center gap-1 px-1 pb-1 pt-4 text-xs text-dim">
+          <Link to="/tags" className="flex-1 font-semibold uppercase tracking-wide hover:text-fg">Подборки по тегам</Link>
+          <Link to="/tags" title="Теги" aria-label="Теги" className="flex h-7 w-7 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg">
+            <Icon name="tag" size={16} />
+          </Link>
+        </div>
+        {(sels.data ?? []).map((x) => {
+          const to = `/selection/${x.id}`;
+          const on = at(to);
+          const from = x.scope === 'liked' ? 'Любимое' : x.scope === 'library' ? 'Вся библиотека' : (lists.data?.find((p) => `playlist:${p.id}` === x.scope)?.name ?? 'Плейлист');
+          return (
+            <Link key={x.id} to={to} aria-current={on ? 'page' : undefined} className={cx(item, 'py-1.5', on ? 'bg-fg/10' : 'hover:bg-fg/5')}>
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-raised text-accent">
+                <Icon name="filter" size={17} />
+              </span>
+              <span className="min-w-0">
+                <span className={cx('block truncate', on ? 'font-semibold text-accent' : 'text-fg')}>{x.name}</span>
+                <span className="block truncate text-xs text-dim">{from}</span>
+              </span>
+            </Link>
+          );
+        })}
+        {sels.data && !sels.data.length && <p className="px-3 py-1 text-xs text-dim">Сохранённые фильтры по тегам появятся здесь</p>}
       </div>
     </aside>
   );

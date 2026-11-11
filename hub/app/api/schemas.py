@@ -486,6 +486,7 @@ class UploadCommitIn(BaseModel):
     cover_from_upload_id: int | None = None  # use the embedded cover of this upload
     playlist_id: str | None = None
     star: bool = False  # the imported tracks go into «Любимое» too
+    tag_ids: list[int] = Field(default_factory=list, max_length=50)  # ... and get these tags
 
 
 class UploadCommitOut(BaseModel):

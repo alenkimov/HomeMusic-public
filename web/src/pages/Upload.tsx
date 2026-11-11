@@ -7,6 +7,7 @@ import { Button, Checkbox, Cover, ErrorState, Field, IconButton, Loading, Notice
 import { fmtDuration, fmtSize, plural, stripExt, toIntOrNull, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { navigate } from '../lib/router';
+import { setTagsData, useTags } from '../lib/tags';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 import { ReleaseTypeSelect } from './Library';
 
@@ -128,6 +129,7 @@ export function UploadPage() {
   const [coverTouched, setCoverTouched] = useState(false);
   const [playlist, setPlaylist] = useState<{ id: string; name: string } | null>(null);
   const [like, setLike] = useState(false);
+  const [tagIds, setTagIds] = useState<number[]>([]); // the imported tracks get these tags of one's own
   const [plPicker, setPlPicker] = useState(false);
   const [plBusy, setPlBusy] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -329,6 +331,7 @@ export function UploadPage() {
             cover_from_upload_id: lib ? null : (g.uploads.find((u) => u.tags.has_cover)?.id ?? null),
             playlist_id: playlist?.id ?? null,
             star: like,
+            tag_ids: tagIds,
           }, null),
         );
         if (!res) break;
@@ -350,6 +353,7 @@ export function UploadPage() {
             cover_from_upload_id: cover.kind === 'upload' ? cover.id : null,
             playlist_id: playlist?.id ?? null,
             star: like,
+            tag_ids: tagIds,
           },
           cover.kind === 'file' ? cover.file : null,
         ),
@@ -626,6 +630,7 @@ export function UploadPage() {
               </Button>
             )}
           </div>
+          <UploadTags picked={tagIds} onChange={setTagIds} />
         </>
       )}
 
@@ -714,5 +719,53 @@ function CoverOption({ selected, label, onClick, children }: { selected: boolean
       <span className={cx('flex aspect-square w-full items-center justify-center overflow-hidden rounded-lg bg-raised ring-2', selected ? 'ring-accent' : 'ring-transparent')}>{children}</span>
       <span className="line-clamp-2 text-xs leading-tight text-muted">{label}</span>
     </button>
+  );
+}
+
+/** The tags of one's own the imported tracks get at once (language and genre the Hub sets by itself, later). */
+function UploadTags({ picked, onChange }: { picked: number[]; onChange: (next: number[]) => void }) {
+  const tags = useTags();
+  const [name, setName] = useState('');
+  const own = tags.groups.find((g) => g.id === 'own')?.tags ?? [];
+  const create = async () => {
+    const title = name.trim();
+    if (!title) return;
+    const t = await attempt(() => api.tagCreate(title));
+    if (!t) return;
+    const data = await attempt(() => api.tags());
+    if (data) setTagsData(data);
+    onChange([...new Set([...picked, t.id])]);
+    setName('');
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 px-4 pt-3">
+      <span className="flex items-center gap-1.5 pr-1 text-sm text-muted">
+        <Icon name="tag" size={16} />
+        Теги:
+      </span>
+      {own.map((t) => {
+        const on = picked.includes(t.id);
+        return (
+          <button key={t.id} type="button" aria-pressed={on} onClick={() => onChange(on ? picked.filter((x) => x !== t.id) : [...picked, t.id])} className={on ? 'flex items-center gap-1 rounded-full bg-accent px-3 py-1 text-sm text-on-accent' : 'rounded-full bg-fg/10 px-3 py-1 text-sm text-muted hover:text-fg'}>
+            {on && <Icon name="check" size={13} stroke={3} />}
+            {t.name}
+          </button>
+        );
+      })}
+      <form
+        className="flex items-center gap-1"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void create();
+        }}
+      >
+        <input className="input !h-8 !w-36 !text-sm" value={name} onChange={(e) => setName(e.target.value)} placeholder="новый тег" aria-label="Новый тег" maxLength={64} />
+        {name.trim() && (
+          <Button small type="submit" icon="plus">
+            Создать
+          </Button>
+        )}
+      </form>
+    </div>
   );
 }

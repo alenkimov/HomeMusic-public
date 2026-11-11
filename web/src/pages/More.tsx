@@ -92,6 +92,7 @@ export function MorePage() {
         )}
         <Item icon="upload" to="/upload" title="Загрузить файлы" sub="Свои аудиофайлы с телефона" />
         <Item icon="playlist" to="/playlists" title="Плейлисты" sub="Ваши плейлисты в Navidrome" />
+        {STANDALONE && <Item icon="tag" to="/tags" title="Теги" sub="Язык, жанр и свои; подборки по тегам" />}
         <Item icon="transfer" to="/import" title="Перенести музыку" sub="Из Яндекс Музыки и Spotify: ♥, плейлисты, альбомы" />
         <Item icon="send" title="Telegram" sub="Свой бот: отправка треков себе, в группы и каналы" onClick={() => openTelegramSetup()} />
         {me.is_admin && <Item icon="lyrics" to="/lyrics-sources" title="Тексты песен" sub="Источники текстов и их порядок, поиск для библиотеки" />}

@@ -150,6 +150,25 @@ async def artist(artist_id: str, user: User = Depends(current_user)):
     return NdArtistPageOut(artist=artist_out(a), albums=[album_out(x) for x in albums_])
 
 
+ALL_SONGS_PAGE = 500
+ALL_SONGS_MAX = 50_000
+
+
+@router.get("/songs", response_model=list[NdSongOut])
+async def all_songs(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    """Every song of the library (a selection by tags looks through all of it)."""
+    async def load(nd):
+        out: list[dict] = []
+        while len(out) < ALL_SONGS_MAX:
+            page = (await nd.search3("", song_count=ALL_SONGS_PAGE, song_offset=len(out))).get("song") or []
+            out += page
+            if len(page) < ALL_SONGS_PAGE:
+                break
+        return out
+
+    return await songs_out(s, await nd_call(user, load))
+
+
 @router.get("/liked", response_model=NdLikedOut)
 async def liked(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     from app.favorites import parse_time, snapshot

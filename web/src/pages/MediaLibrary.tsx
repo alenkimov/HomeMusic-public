@@ -5,15 +5,15 @@ import { playAll, TrackRow, TrackTableHeader, type AddedSort } from '../componen
 import { Icon } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
 import { useListSearch, type Found } from '../components/ListSearch';
-import { TagFilterBar } from '../components/Tags';
+import { SaveSelection, TagFilterBar } from '../components/Tags';
 import { Button, Cover, Empty, ErrorState, Field, IconButton, PageHeader, SectionTitle, SkeletonRows, Sheet, Spinner, cx } from '../components/ui';
 import { fmtLength, tracksWord } from '../lib/format';
 import { useDesktop } from '../lib/desktop';
 import { useHubEvent } from '../lib/events';
 import { setShuffle, useListen } from '../lib/listen';
 import { useAsync, useRememberScrollX } from '../lib/hooks';
-import { Link, enc, navigate } from '../lib/router';
-import { filterActive, passes, useTags, type TagFilter } from '../lib/tags';
+import { Link, enc, navigate, useRoute } from '../lib/router';
+import { filterActive, filterOfQuery, filterWords, passes, selectionsChanged, useTags, type TagFilter } from '../lib/tags';
 import { attempt, confirmDialog } from '../lib/ui';
 import { useSmartForPage, useSmartPage } from '../lib/smartShuffle';
 import { canWave, seedKey, startWave, useWave } from '../lib/wave';
@@ -329,10 +329,12 @@ export function LikedPage() {
   const q = search.q;
   const [sort, setSort] = useState<AddedSort>(null);
   const [filter, setFilter] = useState<TagFilter>({});
+  const [saving, setSaving] = useState(false);
   const shown = useShown(songs, search.found, filter);
 
   return (
     <div>
+      {saving && <SaveSelection scope="liked" filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`)} />}
       <PageHeader title={desktop ? '' : 'Любимое'} back="/library" right={<IconButton icon="refresh" label="Обновить" onClick={() => res.reload(true)} />} />
       {res.data && (
         <Hero
@@ -355,7 +357,7 @@ export function LikedPage() {
       ) : (
         <>
           <ListActions tracks={inOrder(shown ? shown.map((f) => songs[f.index]) : songs, sort)} context="liked" />
-          <TagFilterBar songIds={songs.map((t) => t.nd_song_id)} filter={filter} onChange={setFilter} />
+          <TagFilterBar songIds={songs.map((t) => t.nd_song_id)} filter={filter} onChange={setFilter} onSave={() => setSaving(true)} />
           <SongList tracks={songs} found={shown} sort={sort} onSort={setSort} />
           {songs.length > 0 && search.control}
           {!q && <AlbumRow title="Альбомы" albums={res.data?.albums ?? []} rowKey="liked:albums" />}
@@ -367,6 +369,94 @@ export function LikedPage() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/** «Подборка по тегам» (`/selection/<id>`): a saved filter over «Любимое», a playlist or the whole library — its
+ * tracks are found anew each time. `/selection/library?yes=…&no=…` is the same over the whole library, not saved
+ * yet (the page of tags opens it). The filter can be changed here and saved again. */
+export function SelectionPage({ id }: { id: string }) {
+  const route = useRoute();
+  const desktop = useDesktop();
+  const tags = useTags();
+  const unsaved = id === 'library';
+  const sel = useAsync(async (s) => (unsaved ? null : ((await api.tagSelections(s)).find((x) => String(x.id) === id) ?? null)), [id]);
+  const scope = unsaved ? 'library' : sel.data?.scope;
+  const src = useAsync(
+    async (s) => {
+      if (!scope) return null;
+      if (scope === 'liked') return { title: 'Любимое', tracks: (await api.ndLiked(s)).songs };
+      if (scope.startsWith('playlist:')) {
+        const p = await api.playlist(scope.slice(9), s);
+        return { title: p.name, tracks: p.tracks };
+      }
+      return { title: 'Вся библиотека', tracks: await api.ndSongs(s) };
+    },
+    [scope],
+  );
+  const [filter, setFilter] = useState<TagFilter>({});
+  const [sort, setSort] = useState<AddedSort>(null);
+  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const saved = sel.data?.filter;
+  useEffect(() => {
+    setFilter(unsaved ? filterOfQuery(route.query) : (saved ?? {}));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, saved]);
+  const tracks = useMemo(() => src.data?.tracks ?? [], [src.data]);
+  const search = useListSearch(tracks);
+  const shown = useShown(tracks, search.found, filter);
+  const changed = !unsaved && !!saved && JSON.stringify(Object.entries(saved).sort()) !== JSON.stringify(Object.entries(filter).sort());
+  const name = unsaved ? 'Вся библиотека' : (sel.data?.name ?? 'Подборка');
+
+  const save = async () => {
+    if (!sel.data) return;
+    setBusy(true);
+    const r = await attempt(() => api.tagSelectionSave(sel.data!.id, { name: sel.data!.name, scope: sel.data!.scope, filter }), 'Подборка обновлена');
+    setBusy(false);
+    if (r) {
+      sel.setData(r);
+      selectionsChanged();
+    }
+  };
+  const drop = async () => {
+    if (!sel.data || !(await confirmDialog({ title: `Удалить подборку «${sel.data.name}»?`, body: 'Треки и их теги останутся.', okLabel: 'Удалить', danger: true }))) return;
+    if (await attempt(() => api.tagSelectionDelete(sel.data!.id), 'Подборка удалена')) {
+      selectionsChanged();
+      navigate('/tags', { replace: true });
+    }
+  };
+
+  if (sel.loading || src.loading) return (<><PageHeader title="Подборка" back="/tags" /><SkeletonRows /></>);
+  if (!unsaved && !sel.data) return (<><PageHeader title="Подборка" back="/tags" /><ErrorState text={sel.error ?? 'Подборка не найдена'} onRetry={() => sel.reload()} /></>);
+  if (!src.data) return (<><PageHeader title={name} back="/tags" /><ErrorState text={src.error ?? 'Не удалось получить треки'} onRetry={() => src.reload()} /></>);
+  const list = shown ? shown.map((f) => tracks[f.index]) : tracks;
+  return (
+    <div>
+      {saving && <SaveSelection scope="library" filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`, { replace: true })} />}
+      <PageHeader title={desktop ? '' : name} back="/tags" />
+      <Hero
+        kicker={unsaved ? 'Фильтр по тегам' : 'Подборка по тегам'}
+        title={name}
+        art={
+          <div className="flex h-full w-full items-center justify-center bg-accent/20 text-accent">
+            <Icon name="filter" size={84} />
+          </div>
+        }
+        sub={[unsaved ? null : src.data.title, filterActive(filter) ? filterWords(filter, tags.byId) : 'теги не выбраны', `${tracksWord(list.length)}${list.length ? ` · ${fmtLength(list.reduce((n, t) => n + (t.duration_s ?? 0), 0))}` : ''}`].filter(Boolean).join(' · ')}
+      />
+      <ListActions tracks={inOrder(list, sort)} context="selection">
+        {!unsaved && changed && filterActive(filter) && (
+          <Button small variant="primary" busy={busy} onClick={() => void save()}>
+            Сохранить изменения
+          </Button>
+        )}
+        {!unsaved && <IconButton icon="trash" size={24} label="Удалить подборку" onClick={() => void drop()} className="text-muted hover:text-danger" />}
+      </ListActions>
+      <TagFilterBar songIds={tracks.map((t) => t.nd_song_id)} filter={filter} onChange={setFilter} onSave={unsaved ? () => setSaving(true) : undefined} />
+      <SongList tracks={tracks} found={shown ?? (filterActive(filter) ? [] : null)} sort={sort} onSort={setSort} />
+      {search.control}
     </div>
   );
 }
@@ -392,6 +482,7 @@ export function PlaylistPage({ id }: { id: string }) {
   const [sort, setSort] = useState<AddedSort>(null);
   const [editing, setEditing] = useState(false);
   const [filter, setFilter] = useState<TagFilter>({});
+  const [saving, setSaving] = useState(false);
   const shown = useShown(all, search.found, filter);
 
   const remove = async (i: number, t: NdSongOut) => {
@@ -440,7 +531,8 @@ export function PlaylistPage({ id }: { id: string }) {
       )}
       {p.tracks.length ? (
         <>
-          <TagFilterBar songIds={p.tracks.map((t) => t.nd_song_id)} filter={filter} onChange={setFilter} />
+          {saving && <SaveSelection scope={`playlist:${id}`} filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`)} />}
+          <TagFilterBar songIds={p.tracks.map((t) => t.nd_song_id)} filter={filter} onChange={setFilter} onSave={() => setSaving(true)} />
           <SongList tracks={p.tracks} found={shown} sort={sort} onSort={setSort} extra={(t, i) => [{ icon: 'x', label: 'Убрать из плейлиста', onClick: () => void remove(i, t) }]} />
           {search.control}
         </>

@@ -764,6 +764,20 @@ class TagRemoved(Base):
     tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
 
 
+class TagSelection(Base):
+    """«Подборка по тегам»: a saved filter — where to look (`scope`: liked / playlist:<id> / library) and which tags
+    are wanted or left out. It holds no tracks: the list is made anew every time it is opened."""
+
+    __tablename__ = "tag_selections"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    scope: Mapped[str] = mapped_column(String(80))
+    filter_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # tag id / "untagged" -> yes / no
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AppSetting(Base):
     """A setting of the whole server that the admin changes in the app (the order of lyrics sources)."""
 

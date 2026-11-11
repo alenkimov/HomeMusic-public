@@ -16,7 +16,7 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.lyrics import translate
-from app.models import Lyrics, Tag, TagRemoved, Track, TrackTag
+from app.models import Lyrics, Tag, TagRemoved, TagSelection, Track, TrackTag
 
 GROUPS = {"lang": "Язык", "genre": "Жанр", "own": "Теги"}
 LANG_NAMES = {"ja": "японский", "en": "английский", "ru": "русский", "uk": "украинский", "ko": "корейский",
@@ -126,6 +126,13 @@ async def assign(s: AsyncSession, user_id: int, nd_song_ids: list[str], add: lis
     track_ids: list[int] = []
     for i in range(0, len(nd_song_ids), CHUNK):
         track_ids += list((await s.execute(select(Track.id).where(Track.nd_song_id.in_(nd_song_ids[i:i + CHUNK])))).scalars())
+    return await assign_tracks(s, user_id, track_ids, add, remove)
+
+
+async def assign_tracks(s: AsyncSession, user_id: int, track_ids: list[int], add: list[int],
+                        remove: list[int] | None = None) -> int:
+    """The same by the Hub's own track ids (files just imported have no Navidrome id yet)."""
+    remove = remove or []
     allowed = {t.id: t for t in (await s.execute(select(Tag).where(Tag.id.in_({*add, *remove}), visible(user_id)))).scalars()}
     for tid in dict.fromkeys(add):
         if tid not in allowed:
@@ -145,3 +152,56 @@ async def assign(s: AsyncSession, user_id: int, nd_song_ids: list[str], add: lis
                 await s.execute(insert(TagRemoved).values([{"track_id": t, "tag_id": tid} for t in part])
                                 .on_conflict_do_nothing())
     return len(track_ids)
+
+
+# --- one's own tags: renaming, merging, deleting ------------------------------------------------------------
+
+
+async def own_tag(s: AsyncSession, user_id: int, tag_id: int) -> Tag:
+    tag = await s.get(Tag, tag_id)
+    if tag is None or tag.group != "own" or tag.user_id != user_id:
+        raise LookupError("Такого своего тега нет")
+    return tag
+
+
+async def rename(s: AsyncSession, user_id: int, tag_id: int, name: str) -> Tag:
+    tag = await own_tag(s, user_id, tag_id)
+    name = " ".join(name.split())[:64]
+    other = (await s.execute(select(Tag).where(Tag.group == "own", Tag.user_id == user_id, Tag.id != tag.id,
+                                               func.lower(Tag.name) == name.lower()).limit(1))).scalar_one_or_none()
+    if other is not None:
+        raise ValueError("Тег с таким названием уже есть — их можно слить")
+    tag.name = name
+    return tag
+
+
+async def _refilter(s: AsyncSession, user_id: int, tag_id: int, into: int | None) -> None:
+    """A tag is gone (or became another): the saved selections that named it follow."""
+    for sel in (await s.execute(select(TagSelection).where(TagSelection.user_id == user_id))).scalars():
+        f = dict(sel.filter_json or {})
+        mode = f.pop(str(tag_id), None)
+        if mode is None:
+            continue
+        if into is not None:
+            f.setdefault(str(into), mode)
+        sel.filter_json = f
+
+
+async def merge(s: AsyncSession, user_id: int, tag_id: int, into_id: int) -> Tag:
+    """Every track of the tag gets `into`, and the tag is gone."""
+    tag, into = await own_tag(s, user_id, tag_id), await own_tag(s, user_id, into_id)
+    if tag.id == into.id:
+        raise ValueError("Нельзя слить тег с самим собой")
+    track_ids = list((await s.execute(select(TrackTag.track_id).where(TrackTag.tag_id == tag.id))).scalars())
+    await assign_tracks(s, user_id, track_ids, [into.id])
+    await _refilter(s, user_id, tag.id, into.id)
+    await s.execute(delete(TrackTag).where(TrackTag.tag_id == tag.id))
+    await s.delete(tag)
+    return into
+
+
+async def remove(s: AsyncSession, user_id: int, tag_id: int) -> None:
+    tag = await own_tag(s, user_id, tag_id)
+    await _refilter(s, user_id, tag.id, None)
+    await s.execute(delete(TrackTag).where(TrackTag.tag_id == tag.id))
+    await s.delete(tag)

@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { tracksWord } from '../lib/format';
-import { UNTAGGED, closeTagsSheet, setTagsData, useTags, useTagsSheet, type Tag, type TagFilter } from '../lib/tags';
+import { UNTAGGED, closeTagsSheet, filterWords, selectionsChanged, setTagsData, useTags, useTagsSheet, type Tag, type TagFilter, type TagSelection } from '../lib/tags';
 import { attempt, toast } from '../lib/ui';
 import { Icon } from './Icon';
-import { Button, Loading, Sheet, cx } from './ui';
+import { Button, Field, Loading, Sheet, cx } from './ui';
 
 type Mark = 'all' | 'some' | 'none';
 
@@ -138,7 +138,7 @@ function Body({ songIds, title }: { songIds: string[]; title: string }) {
 
 /** The tags a list is narrowed by, above it: only the tags its tracks have. A tap on a tag: wanted → left out →
  * off. Of every group with wanted tags a track needs one of them; a tag left out removes the track. */
-export function TagFilterBar({ songIds, filter, onChange }: { songIds: readonly (string | null | undefined)[]; filter: TagFilter; onChange: (next: TagFilter) => void }) {
+export function TagFilterBar({ songIds, filter, onChange, onSave, saveLabel = 'Сохранить как подборку' }: { songIds: readonly (string | null | undefined)[]; filter: TagFilter; onChange: (next: TagFilter) => void; onSave?: () => void; saveLabel?: string }) {
   const tags = useTags();
   const present = useMemo(() => {
     const out = new Map<number, number>();
@@ -189,10 +189,63 @@ export function TagFilterBar({ songIds, filter, onChange }: { songIds: readonly 
         </div>
       ))}
       {active && (
-        <button type="button" onClick={() => onChange({})} className="ml-14 text-xs text-muted underline hover:text-fg">
-          Сбросить фильтр
-        </button>
+        <div className="ml-14 flex items-center gap-4 text-xs">
+          {onSave && (
+            <button type="button" onClick={onSave} className="flex items-center gap-1 text-accent hover:underline">
+              <Icon name="filter" size={13} />
+              {saveLabel}
+            </button>
+          )}
+          <button type="button" onClick={() => onChange({})} className="text-muted underline hover:text-fg">
+            Сбросить фильтр
+          </button>
+        </div>
       )}
     </div>
+  );
+}
+
+/** «Сохранить как подборку»: a name for the filter that is on; it appears in the sidebar. */
+export function SaveSelection({ scope, filter, onClose, onSaved }: { scope: string; filter: TagFilter; onClose: () => void; onSaved: (s: TagSelection) => void }) {
+  const tags = useTags();
+  const [name, setName] = useState(() => filterWords(filter, tags.byId).slice(0, 60));
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!name.trim()) return;
+    setBusy(true);
+    const r = await attempt(() => api.tagSelectionCreate({ name: name.trim(), scope, filter }), 'Подборка сохранена');
+    setBusy(false);
+    if (!r) return;
+    selectionsChanged();
+    onSaved(r);
+  };
+  return (
+    <Sheet
+      open
+      onClose={onClose}
+      title="Подборка по тегам"
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose}>Отмена</Button>
+          <Button variant="primary" busy={busy} disabled={!name.trim()} onClick={() => void save()}>
+            Сохранить
+          </Button>
+        </div>
+      }
+    >
+      <form
+        className="space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <Field label="Название">
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={128} autoFocus />
+        </Field>
+        <p className="text-sm text-muted">{filterWords(filter, tags.byId)}</p>
+        <p className="text-xs text-dim">Подборка хранит не треки, а сам фильтр: список собирается заново при каждом открытии, так что только что размеченный трек уже в ней.</p>
+      </form>
+    </Sheet>
   );
 }

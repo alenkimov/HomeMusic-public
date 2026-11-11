@@ -199,6 +199,10 @@ async def commit(payload: str = Form(...), cover: UploadFile | None = File(None)
         imported += 1
         track_ids.append(track.id)
     await enqueue_scan(s)
+    if body.tag_ids and track_ids:
+        from app import tags
+
+        await tags.assign_tracks(s, user.id, track_ids, body.tag_ids)
     if (body.playlist_id or body.star) and track_ids:
         # Navidrome knows the new files only after its scan: the playlist and the ♥ get them then
         await enqueue(s, "upload_playlist_add", {

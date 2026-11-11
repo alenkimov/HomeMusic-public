@@ -115,3 +115,39 @@ const setSheet = (next: SheetState | null) => {
 /** «Теги» of one track or of several picked ones. */
 export const openTagsSheet = (songIds: string[], title: string) => songIds.length && setSheet({ songIds, title });
 export const closeTagsSheet = () => setSheet(null);
+
+// --- «Подборки по тегам»: saved filters -------------------------------------------------------------------
+
+/** A saved filter: where to look and which tags are wanted or left out. It holds no tracks — the list is made
+ * anew every time it is opened, so a track tagged a minute ago is already in it. */
+export interface TagSelection {
+  id: number;
+  name: string;
+  /** liked / library / playlist:<id> */
+  scope: string;
+  filter: TagFilter;
+}
+
+export const SELECTIONS_EVENT = 'hm:selections-changed';
+export const selectionsChanged = () => window.dispatchEvent(new Event(SELECTIONS_EVENT));
+
+/** A filter as the query of an address (`/selection/library?yes=3,untagged&no=7`), and back. */
+export function filterQuery(f: TagFilter): string {
+  const of = (mode: string) => Object.keys(f).filter((k) => f[k] === mode).join(',');
+  return [of('yes') && `yes=${of('yes')}`, of('no') && `no=${of('no')}`].filter(Boolean).join('&');
+}
+
+export function filterOfQuery(q: URLSearchParams): TagFilter {
+  const out: TagFilter = {};
+  for (const k of (q.get('yes') ?? '').split(',').filter(Boolean)) out[k] = 'yes';
+  for (const k of (q.get('no') ?? '').split(',').filter(Boolean)) out[k] = 'no';
+  return out;
+}
+
+/** In words: «японский, chill · без: Rock». */
+export function filterWords(f: TagFilter, byId: ReadonlyMap<number, Tag>): string {
+  const name = (k: string) => (k === UNTAGGED ? 'без своих тегов' : (byId.get(Number(k))?.name ?? '?'));
+  const yes = Object.keys(f).filter((k) => f[k] === 'yes').map(name);
+  const no = Object.keys(f).filter((k) => f[k] === 'no').map(name);
+  return [yes.join(', '), no.length ? `без: ${no.join(', ')}` : ''].filter(Boolean).join(' · ');
+}

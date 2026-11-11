@@ -1,5 +1,5 @@
 import type { LyricsCandidate, LyricsOut, LyricsSettings, LyricsTranslation, LyricsTranslators } from '../lib/lyrics';
-import type { Tag, TagsData } from '../lib/tags';
+import type { Tag, TagSelection, TagsData } from '../lib/tags';
 import type { TelegramChat, TelegramStatus } from '../lib/telegram';
 import type {
   AdminUserDetailOut,
@@ -51,6 +51,7 @@ import type {
   NdArtistPageOut,
   NdHomeOut,
   NdLikedOut,
+  NdSongOut,
   ProviderSearchOut,
   RegisterIn,
   AuthOptionsOut,
@@ -392,6 +393,14 @@ export const api = {
   tags: () => request<TagsData>('GET', '/api/tags'),
   tagCreate: (name: string) => request<Tag>('POST', '/api/tags', { json: { name } }),
   tagsAssign: (body: { nd_song_ids: string[]; add: number[]; remove: number[] }) => request<TagsData>('POST', '/api/tags/assign', { json: body }),
+  tagRename: (id: number, name: string) => request<TagsData>('PUT', `/api/tags/${id}`, { json: { name } }),
+  tagMerge: (id: number, into: number) => request<TagsData>('POST', `/api/tags/${id}/merge`, { json: { into } }),
+  tagDelete: (id: number) => request<TagsData>('DELETE', `/api/tags/${id}`),
+  tagSelections: (signal?: AbortSignal) => request<TagSelection[]>('GET', '/api/tags/selections/all', { signal }),
+  tagSelectionCreate: (body: Omit<TagSelection, 'id'>) => request<TagSelection>('POST', '/api/tags/selections', { json: body }),
+  tagSelectionSave: (id: number, body: Omit<TagSelection, 'id'>) => request<TagSelection>('PUT', `/api/tags/selections/${id}`, { json: body }),
+  tagSelectionDelete: (id: number) => request<OkOut>('DELETE', `/api/tags/selections/${id}`),
+  ndSongs: (signal?: AbortSignal) => request<NdSongOut[]>('GET', '/api/nd/songs', { signal }),
   // a track on music services («Поделиться ссылкой»)
   links: (q: { nd_song_id?: string | null; ref?: string | null }) =>
     request<{ links: { service: string; title: string; url: string }[]; universal?: string | null }>(
