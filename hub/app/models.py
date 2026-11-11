@@ -704,6 +704,21 @@ class PlaylistDate(Base):
     source: Mapped[str] = mapped_column(String(16))  # hub (added here) / import (the service's own date)
 
 
+class LyricsTranslation(Base):
+    """A track's lyrics in another language (app/lyrics/translations.py): made once, kept for everyone."""
+
+    __tablename__ = "lyrics_translations"
+
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
+    lang: Mapped[str] = mapped_column(String(8), primary_key=True)  # ru/en/...
+    provider: Mapped[str | None] = mapped_column(String(16))  # llm/google/mymemory
+    lines_json: Mapped[list[Any] | None] = mapped_column(JSON)  # line for line with the text it was made of
+    source_sig: Mapped[str | None] = mapped_column(String(40))  # of that text: another text makes it stale
+    edited_json: Mapped[list[Any] | None] = mapped_column(JSON)  # the lines a listener corrected by hand
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AppSetting(Base):
     """A setting of the whole server that the admin changes in the app (the order of lyrics sources)."""
 

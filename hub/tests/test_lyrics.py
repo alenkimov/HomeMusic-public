@@ -183,3 +183,76 @@ async def test_settings_order_and_the_background_scan(env):
     await run_job(job)
     assert "lrclib" not in calls and calls.count("ovh") == 2  # a source switched off is not asked
     assert (await c.get("/api/lyrics/settings")).json()["stats"] == {"total": 2, "word": 0, "synced": 0, "plain": 2, "none": 0, "unchecked": 0}
+
+
+def test_the_language_of_a_text_is_told_by_its_letters():
+    from app.lyrics.translate import detect
+
+    assert detect("あぁ 逃げ出した猫の後を追いかけて\n天気が良い") == "ja"
+    assert detect("天气很好 我们一起走") == "zh" and detect("사랑해요 그대를") == "ko"
+    assert detect("Тёплое место, но улицы ждут") == "ru" and detect("Ще не вмерла України і слава, і воля її") == "uk"
+    assert detect("And I could leave it on a shelf, or keep it to myself, you know") == "en"
+    assert detect("Je ne regrette rien, ni le bien qu'on m'a fait") is None  # Latin, not English: not told
+    assert detect("♪ 123") is None
+    # a Japanese song with an English hook is Japanese
+    assert detect("君はふてぶてしくつぶやいた\n" * 6 + "oh baby") == "ja"
+
+
+async def test_a_translation_is_made_once_kept_per_language_and_corrected_by_hand(env, monkeypatch):
+    from app.lyrics import translate
+    from app.lyrics.providers import Found
+
+    c, answers = env["client"], env["answers"]
+    track_id = await add_track()
+    asked: list[tuple[str, str, list[str]]] = []
+
+    async def fake_llm(lines, target, **kw):
+        asked.append(("llm", target, list(lines)))
+        if target == "de":
+            raise translate.TranslateError("ИИ не ответил вовремя")
+        return [f"{target}:{x}" for x in lines]
+
+    async def fake_google(lines, target):
+        asked.append(("google", target, list(lines)))
+        return [f"g-{target}:{x}" for x in lines]
+
+    monkeypatch.setattr(translate, "llm", fake_llm)
+    monkeypatch.setattr(translate, "google", fake_google)
+    answers["lrclib"] = Found("lrclib", lines=[{"t": 0, "text": "君はつぶやいた"}, {"t": 5, "text": ""},
+                                                 {"t": 9, "text": "猫の後を"}, {"t": 12, "text": "君はつぶやいた"}])
+    r = (await c.get("/api/lyrics/translation", params={"track_id": track_id, "lang": "ru"})).json()
+    assert (r["status"], r["detected"], r["provider"], r["provider_title"]) == ("ready", "ja", "llm", "ИИ Хаба")
+    assert r["lines"] == ["ru:君はつぶやいた", "", "ru:猫の後を", "ru:君はつぶやいた"]  # line for line; empty stays empty
+    assert asked == [("llm", "ru", ["君はつぶやいた", "猫の後を"])]  # a repeated line is sent once
+
+    asked.clear()
+    assert (await c.get("/api/lyrics/translation", params={"track_id": track_id, "lang": "ru"})).json()["lines"] == r["lines"]
+    assert asked == []  # the second time it comes from the database
+    # another language is another translation; a translator that fails gives way to the next
+    r = (await c.get("/api/lyrics/translation", params={"track_id": track_id, "lang": "de"})).json()
+    assert (r["provider"], r["lines"][0]) == ("google", "g-de:君はつぶやいた")
+    # the song's own language, and a language the listener reads, are left alone — unless asked
+    assert (await c.get("/api/lyrics/translation", params={"track_id": track_id, "lang": "ja"})).json()["status"] == "same"
+    q = {"track_id": track_id, "lang": "en", "skip": "ja,ru"}
+    assert (await c.get("/api/lyrics/translation", params=q)).json()["status"] == "skipped"
+    assert (await c.get("/api/lyrics/translation", params={**q, "force": True})).json()["status"] == "ready"
+    assert (await c.get("/api/lyrics/translation", params={"track_id": track_id, "lang": "xx"})).status_code == 400
+
+    # a line corrected by hand stays through a new translation
+    r = (await c.put("/api/lyrics/translation/line", json={"track_id": track_id, "lang": "ru", "index": 2, "text": " вслед за котом "})).json()
+    assert r["lines"][2] == "вслед за котом" and r["edited"] == [2]
+    r = (await c.post("/api/lyrics/translation/redo", json={"track_id": track_id, "lang": "ru", "provider": "google"})).json()
+    assert (r["provider"], r["lines"][0], r["lines"][2], r["edited"]) == ("google", "g-ru:君はつぶやいた", "вслед за котом", [2])
+    assert (await c.put("/api/lyrics/translation/line", json={"track_id": track_id, "lang": "ru", "index": 9, "text": "x"})).status_code == 404
+
+    # another text for the track: its translation is made again
+    answers["ovh"] = Found("ovh", plain="one\ntwo")
+    await c.post("/api/lyrics/choose", json={"track_id": track_id, "source": "ovh"})
+    r = (await c.get("/api/lyrics/translation", params={"track_id": track_id, "lang": "ru"})).json()
+    assert (r["lines"], r["edited"]) == (["ru:one", "ru:two"], [])
+
+    # the admin's order of translators
+    r = (await c.get("/api/lyrics/translators")).json()
+    assert [x["id"] for x in r["providers"]] == ["llm", "google", "mymemory"] and {"code": "en", "title": "English"} in r["langs"]
+    r = (await c.put("/api/lyrics/translators", json={"providers": [{"id": "google", "on": True}, {"id": "llm", "on": False}]})).json()
+    assert [(x["id"], x["on"]) for x in r["providers"]] == [("google", True), ("llm", False), ("mymemory", True)]

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api } from '../api/client';
+import { api, errorMessage } from '../api/client';
 import { seek, useListen } from '../lib/listen';
-import { KIND_LABEL, activeLine, type LyricsLine, type LyricsOut } from '../lib/lyrics';
+import { KIND_LABEL, activeLine, setTranslatePrefs, useTranslatePrefs, type LyricsLine, type LyricsOut, type LyricsTranslation, type LyricsTranslators, type TranslatePrefs } from '../lib/lyrics';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 import { Icon } from './Icon';
-import { Button, IconButton, Loading, Sheet, Spinner, cx } from './ui';
+import { Button, Checkbox, IconButton, Loading, Sheet, Spinner, cx } from './ui';
 
 const STEP_MS = 250;
 const HOLD_MS = 4000; // after the user scrolls the text themselves it stays where they left it this long
@@ -19,6 +19,14 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
   const [data, setData] = useState<LyricsOut | null>(null);
   const [loading, setLoading] = useState(true);
   const [picking, setPicking] = useState(false);
+  // the translation: asked for when it is on, for this text, in the listener's language (lib/lyrics.ts)
+  const prefs = useTranslatePrefs();
+  const [tr, setTr] = useState<LyricsTranslation | null>(null);
+  const [trSince, setTrSince] = useState<number | null>(null);
+  const [trError, setTrError] = useState<string | null>(null);
+  const [forced, setForced] = useState<number | null>(null); // «translate anyway» of this track
+  const [trOpen, setTrOpen] = useState(false);
+  const [, setTick] = useState(0);
   const position = useListen((s) => s.position);
   const playing = useListen((s) => s.phase === 'playing');
   const [ms, setMs] = useState(0);
@@ -92,6 +100,31 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
     }
   };
 
+  const trackId = data?.track_id ?? null;
+  const textKey = data ? `${data.kind}:${data.source ?? ''}:${data.lines?.length ?? data.plain?.length ?? 0}` : '';
+  const skipKey = prefs.skip.join(',');
+  useEffect(() => {
+    setTr(null);
+    setTrError(null);
+    if (!prefs.on || trackId === null || !textKey || textKey.startsWith('none')) return void setTrSince(null);
+    let alive = true;
+    setTrSince(performance.now());
+    api.lyricsTranslation(trackId, prefs.lang, skipKey ? skipKey.split(',') : [], forced === trackId)
+      .then((r) => alive && setTr(r))
+      .catch((e) => alive && setTrError(errorMessage(e)))
+      .finally(() => alive && setTrSince(null));
+    return () => {
+      alive = false;
+    };
+  }, [prefs.on, prefs.lang, skipKey, trackId, textKey, forced]);
+  useEffect(() => {
+    if (trSince === null) return;
+    const t = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [trSince]);
+  const tl = tr?.status === 'ready' ? tr.lines : null;
+  const replace = prefs.mode === 'replace';
+
   if (loading)
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-muted">
@@ -113,6 +146,17 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
           </button>
           <IconButton icon="plus" size={16} label="Текст позже на четверть секунды" onClick={() => shift(STEP_MS)} className="!h-8 !w-8 text-muted" />
         </span>
+      )}
+      {data.kind !== 'none' && (
+        <button
+          type="button"
+          onClick={() => setTrOpen(true)}
+          title={trError ?? 'Перевод текста'}
+          className={cx('flex items-center gap-1.5 rounded-full px-3 py-1.5 hover:bg-fg/10 hover:text-fg', prefs.on && !trError && 'text-accent', trError && 'text-warn')}
+        >
+          {trSince !== null && <Spinner size={12} />}
+          {trSince !== null ? `Перевожу… ${Math.round((performance.now() - trSince) / 1000)} с` : trError ? 'Перевод не удался' : prefs.on ? `Перевод: ${prefs.lang.toUpperCase()}` : 'Перевод'}
+        </button>
       )}
       <button type="button" onClick={() => setPicking(true)} className="rounded-full px-3 py-1.5 hover:bg-fg/10 hover:text-fg">
         Другой вариант
@@ -150,15 +194,43 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
                   i === at ? 'scale-100 text-fg' : 'scale-[0.97] text-fg/40 hover:text-fg/70',
                 )}
               >
-                {i === at && ln.words ? <Words line={ln} ms={ms - offset} /> : ln.text || '♪'}
+                {replace && tl?.[i] ? tl[i] : i === at && ln.words ? <Words line={ln} ms={ms - offset} /> : ln.text || '♪'}
+                {!replace && tl?.[i] && <span className="mt-0.5 block text-base font-semibold leading-snug text-fg/60">{tl[i]}</span>}
               </button>
             ))
           ) : (
-            <p className="whitespace-pre-line px-3 text-lg leading-relaxed text-fg/85">{data.plain}</p>
+            tl ? (
+              <div className="px-3 text-lg leading-relaxed text-fg/85">
+                {(data.plain ?? '').split('\n').map((line, i) => (
+                  <p key={i} className="min-h-[1.2em] pb-1">
+                    {replace && tl[i] ? tl[i] : line}
+                    {!replace && tl[i] && <span className="block text-base leading-snug text-muted">{tl[i]}</span>}
+                  </p>
+                ))}
+              </div>
+            ) : (
+              <p className="whitespace-pre-line px-3 text-lg leading-relaxed text-fg/85">{data.plain}</p>
+            )
           )}
         </div>
       )}
       {footer}
+      {trOpen && data.track_id !== null && (
+        <TranslateSheet
+          trackId={data.track_id}
+          prefs={prefs}
+          tr={tr}
+          busy={trSince !== null}
+          error={trError}
+          original={timed ? lines.map((x) => x.text) : (data.plain ?? '').split('\n')}
+          onForce={() => setForced(data.track_id)}
+          onChanged={(r) => {
+            setTrError(null);
+            setTr(r);
+          }}
+          onClose={() => setTrOpen(false)}
+        />
+      )}
       {picking && data.track_id !== null && (
         <Variants
           trackId={data.track_id}
@@ -193,6 +265,144 @@ function Words({ line, ms }: { line: LyricsLine; ms: number }) {
         </span>
       ))}
     </>
+  );
+}
+
+const LANG_FALLBACK = [{ code: 'ru', title: 'Русский' }, { code: 'en', title: 'English' }];
+
+/** «Перевод»: on or off, the language, under the line or in its place, the languages the listener reads (songs in
+ * them are left alone); for a translation that is made — who made it, «again» with another translator, and the
+ * lines to correct by hand. The translation itself is the Hub's: made once per language, kept for everyone. */
+function TranslateSheet({ trackId, prefs, tr, busy, error, original, onForce, onChanged, onClose }: {
+  trackId: number;
+  prefs: TranslatePrefs;
+  tr: LyricsTranslation | null;
+  busy: boolean;
+  error: string | null;
+  original: string[];
+  onForce: () => void;
+  onChanged: (r: LyricsTranslation) => void;
+  onClose: () => void;
+}) {
+  const [info, setInfo] = useState<LyricsTranslators | null>(null);
+  const [redoing, setRedoing] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    api.lyricsTranslators().then((r) => alive && setInfo(r)).catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const langs = info?.langs ?? LANG_FALLBACK;
+  const name = (code?: string | null) => langs.find((l) => l.code === code)?.title ?? code ?? '';
+  const redo = async (provider: string) => {
+    setRedoing(provider);
+    const r = await attempt(() => api.lyricsRetranslate(trackId, prefs.lang, provider));
+    setRedoing(null);
+    if (r) onChanged(r);
+  };
+  const saveLine = async (index: number, text: string) => {
+    if (!tr || text.trim() === (tr.lines[index] ?? '')) return;
+    const r = await attempt(() => api.lyricsTranslationLine(trackId, prefs.lang, index, text));
+    if (r) onChanged(r);
+  };
+  const row = 'flex items-center justify-between gap-3 py-2 text-sm';
+
+  return (
+    <Sheet open onClose={onClose} title="Перевод текста">
+      <div className="space-y-1">
+        <label className={cx(row, 'cursor-pointer')}>
+          <span>Показывать перевод</span>
+          <Checkbox checked={prefs.on} label="Показывать перевод" onChange={(on) => setTranslatePrefs({ on })} />
+        </label>
+        <label className={row}>
+          <span>Переводить на</span>
+          <select className="input !w-44" value={prefs.lang} onChange={(e) => setTranslatePrefs({ lang: e.target.value, skip: prefs.skip.filter((x) => x !== e.target.value) })} aria-label="Язык перевода">
+            {langs.map((l) => (
+              <option key={l.code} value={l.code}>{l.title}</option>
+            ))}
+          </select>
+        </label>
+        <div className={row}>
+          <span>Где показывать</span>
+          <span className="flex rounded-full bg-fg/10 p-0.5 text-xs">
+            {(['below', 'replace'] as const).map((m) => (
+              <button key={m} type="button" onClick={() => setTranslatePrefs({ mode: m })} aria-pressed={prefs.mode === m} className={cx('rounded-full px-3 py-1.5', prefs.mode === m ? 'bg-fg text-bg' : 'text-muted')}>
+                {m === 'below' ? 'Под строкой' : 'Вместо оригинала'}
+              </button>
+            ))}
+          </span>
+        </div>
+
+        {prefs.on && (
+          <div className="rounded-xl bg-fg/5 px-3 py-2 text-sm" aria-live="polite">
+            {busy ? (
+              <span className="flex items-center gap-2 text-muted"><Spinner size={14} /> Перевожу — локальной модели на песню нужно до пары минут…</span>
+            ) : error ? (
+              <span className="text-warn">{error}</span>
+            ) : tr?.status === 'ready' ? (
+              <span className="text-muted">
+                Перевёл: {tr.provider_title ?? tr.provider}
+                {tr.detected ? ` · с языка: ${name(tr.detected)}` : ''}
+                {tr.edited.length ? ` · исправлено строк: ${tr.edited.length}` : ''}
+              </span>
+            ) : tr?.status === 'same' || tr?.status === 'skipped' ? (
+              <span className="flex flex-wrap items-center justify-between gap-2 text-muted">
+                {tr.status === 'same' ? `Текст уже на этом языке (${name(tr.detected)}).` : `Язык песни — ${name(tr.detected)}: он в списке «не переводить».`}
+                <Button small onClick={onForce}>Перевести всё равно</Button>
+              </span>
+            ) : (
+              <span className="text-muted">У этого трека нет текста.</span>
+            )}
+          </div>
+        )}
+
+        <div className="pt-2">
+          <div className="pb-1.5 text-xs text-muted">Не переводить песни на языках, которые я читаю</div>
+          <div className="flex flex-wrap gap-1.5">
+            {langs.filter((l) => l.code !== prefs.lang).map((l) => {
+              const on = prefs.skip.includes(l.code);
+              return (
+                <button key={l.code} type="button" aria-pressed={on} onClick={() => setTranslatePrefs({ skip: on ? prefs.skip.filter((x) => x !== l.code) : [...prefs.skip, l.code] })} className={cx('rounded-full px-3 py-1 text-xs', on ? 'bg-accent text-on-accent' : 'bg-fg/10 text-muted hover:text-fg')}>
+                  {l.title}
+                </button>
+              );
+            })}
+          </div>
+          <p className="pt-1.5 text-[11px] text-dim">Язык песни Хаб определяет по буквам: японский, корейский, китайский, русский, украинский и английский.</p>
+        </div>
+
+        {prefs.on && tr?.status === 'ready' && (
+          <div className="space-y-2 border-t border-line/60 pt-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+              Перевести заново:
+              {(info?.providers ?? []).filter((x) => x.on && (x.id !== 'llm' || info?.llm)).map((x) => (
+                <Button key={x.id} small busy={redoing === x.id} disabled={!!redoing} onClick={() => void redo(x.id)}>
+                  {x.title}
+                </Button>
+              ))}
+              <Button small icon="edit" onClick={() => setEditing((v) => !v)}>
+                {editing ? 'Скрыть правку' : 'Править строки'}
+              </Button>
+            </div>
+            {editing && (
+              <ul className="max-h-[45dvh] space-y-2 overflow-y-auto pr-1">
+                {original.map((src, i) =>
+                  src.trim() ? (
+                    <li key={`${i}:${tr.lines[i] ?? ''}`}>
+                      <div className="truncate text-xs text-muted">{src}</div>
+                      <input className={cx('input mt-0.5', tr.edited.includes(i) && '!border-accent')} defaultValue={tr.lines[i] ?? ''} aria-label={`Перевод строки: ${src}`} onBlur={(e) => void saveLine(i, e.target.value)} />
+                    </li>
+                  ) : null,
+                )}
+              </ul>
+            )}
+            {editing && <p className="text-[11px] text-dim">Строка сохраняется, когда вы уходите из поля. Правки видят все и они переживают новый перевод.</p>}
+          </div>
+        )}
+      </div>
+    </Sheet>
   );
 }
 

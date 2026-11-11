@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { api } from '../api/client';
 import { Button, ErrorState, IconButton, Loading, PageHeader, cx } from '../components/ui';
 import { useAsync, useInterval } from '../lib/hooks';
-import type { LyricsSettings } from '../lib/lyrics';
+import type { LyricsSettings, LyricsTranslators } from '../lib/lyrics';
 import { attempt, toast } from '../lib/ui';
 
 /** The admin's «Тексты песен»: which sources the Hub asks for lyrics and in what order (the first that has a text
@@ -110,6 +110,8 @@ export function LyricsSettingsPage() {
             </div>
           </div>
 
+          <Translators />
+
           <div className="px-4 pt-4">
             <Button block icon="refresh" busy={scanning} disabled={!v.stats.unchecked && !scanning} onClick={scan}>
               {v.stats.unchecked ? `Найти тексты для непроверенных треков (${v.stats.unchecked})` : 'Все треки проверены'}
@@ -118,6 +120,59 @@ export function LyricsSettingsPage() {
         </>
       )}
     </div>
+  );
+}
+
+const TRANSLATOR_HINTS: Record<string, string> = {
+  llm: 'Модель из настроек ИИ Хаба (LLM_* в .env): переводит по смыслу, знает, что это песня. Локальная — медленно, зато текст никуда не уходит',
+  google: 'Быстро и дословно, без ключа. С некоторых сетей Google такие запросы не принимает',
+  mymemory: 'Бесплатно и без ключа, по строке за запрос: хватает на несколько песен в день',
+};
+
+/** The translators of lyrics, in the order they are tried: the first that manages makes the translation, which is
+ * then kept for everyone. Listeners choose the language themselves, in the player. */
+function Translators() {
+  const res = useAsync((s) => api.lyricsTranslators(s), []);
+  const [busy, setBusy] = useState(false);
+  const v = res.data;
+  if (!v) return null;
+  const save = async (providers: LyricsTranslators['providers']) => {
+    res.setData({ ...v, providers });
+    setBusy(true);
+    const r = await attempt(() => api.lyricsSaveTranslators(providers.map(({ id, on }) => ({ id, on }))));
+    setBusy(false);
+    if (r) res.setData(r);
+    else res.reload(true);
+  };
+  const move = (i: number, by: number) => {
+    const list = [...v.providers];
+    const j = i + by;
+    if (j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    void save(list);
+  };
+  return (
+    <>
+      <h3 className="px-4 pb-1 pt-6 text-base font-bold">Перевод текстов</h3>
+      <p className="px-4 pb-3 text-sm text-muted">Переводчики пробуются сверху вниз; готовый перевод хранится в базе Хаба отдельно для каждого языка. Язык слушатель выбирает сам — в плеере, кнопкой «Перевод» под текстом.</p>
+      <ul className="space-y-2 px-4" aria-label="Переводчики">
+        {v.providers.map((p, i) => (
+          <li key={p.id} className={cx('card flex items-center gap-3 p-3', !p.on && 'opacity-55')}>
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-raised text-xs text-muted">{i + 1}</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2 font-semibold">
+                {p.title}
+                {p.id === 'llm' && !v.llm && <span className="rounded-full bg-warn/15 px-2 py-0.5 text-[11px] font-normal text-warn">ИИ не настроен</span>}
+              </div>
+              <div className="text-xs text-muted">{TRANSLATOR_HINTS[p.id]}</div>
+            </div>
+            <IconButton icon="back" size={18} label={`Выше: ${p.title}`} disabled={busy || i === 0} onClick={() => move(i, -1)} className="!h-9 !w-9 rotate-90 text-muted" />
+            <IconButton icon="back" size={18} label={`Ниже: ${p.title}`} disabled={busy || i === v.providers.length - 1} onClick={() => move(i, 1)} className="!h-9 !w-9 -rotate-90 text-muted" />
+            <Toggle on={p.on} label={`Переводчик ${p.title}`} disabled={busy} onChange={(on) => void save(v.providers.map((x) => (x.id === p.id ? { ...x, on } : x)))} />
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 

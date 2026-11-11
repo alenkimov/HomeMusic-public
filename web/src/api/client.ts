@@ -1,4 +1,4 @@
-import type { LyricsCandidate, LyricsOut, LyricsSettings } from '../lib/lyrics';
+import type { LyricsCandidate, LyricsOut, LyricsSettings, LyricsTranslation, LyricsTranslators } from '../lib/lyrics';
 import type { TelegramChat, TelegramStatus } from '../lib/telegram';
 import type {
   AdminUserDetailOut,
@@ -384,6 +384,15 @@ export const api = {
   lyricsSearch: (q: string) =>
     request<{ track_id: number; nd_song_id?: string | null; ref?: string | null; line: string }[]>('GET', withQuery('/api/lyrics/search', { q })),
   lyricsCandidates: (track_id: number) => request<LyricsCandidate[]>('GET', withQuery('/api/lyrics/candidates', { track_id })),
+  // the lyrics in another language (lib/lyrics.ts): made on the first ask, then from the Hub's database
+  lyricsTranslation: (track_id: number, lang: string, skip: readonly string[] = [], force = false) =>
+    request<LyricsTranslation>('GET', withQuery('/api/lyrics/translation', { track_id, lang, skip: skip.join(',') || undefined, force: force || undefined })),
+  lyricsRetranslate: (track_id: number, lang: string, provider: string | null) =>
+    request<LyricsTranslation>('POST', '/api/lyrics/translation/redo', { json: { track_id, lang, provider } }),
+  lyricsTranslationLine: (track_id: number, lang: string, index: number, text: string) =>
+    request<LyricsTranslation>('PUT', '/api/lyrics/translation/line', { json: { track_id, lang, index, text } }),
+  lyricsTranslators: (signal?: AbortSignal) => request<LyricsTranslators>('GET', '/api/lyrics/translators', { signal }),
+  lyricsSaveTranslators: (providers: { id: string; on: boolean }[]) => request<LyricsTranslators>('PUT', '/api/lyrics/translators', { json: { providers } }),
   lyricsSources: () => request<{ id: string; title: string }[]>('GET', '/api/lyrics/sources'),
   lyricsProbe: (track_id: number, source: string, signal?: AbortSignal) =>
     request<{ source: string; source_title: string; status: 'found' | 'none' | 'timeout' | 'error'; seconds: number; kind?: LyricsOut['kind'] | null; preview?: string | null }>(

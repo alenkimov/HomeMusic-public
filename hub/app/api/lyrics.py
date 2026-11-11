@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import admin_user, current_user
 from app.db import get_session
 from app.jobs.queue import notify
-from app.lyrics import service
+from app.lyrics import service, translate, translations
 from app.lyrics.providers import TITLES
 from app.models import Lyrics, Track, User
 
@@ -192,6 +192,112 @@ async def offset(body: OffsetIn, user: User = Depends(current_user),
     row.offset_ms = body.offset_ms
     await s.commit()
     return _out(row)
+
+
+class TranslationOut(BaseModel):
+    status: str  # ready / same (the song is in that language) / skipped (a language the listener reads) / none
+    lang: str
+    detected: str | None = None  # the language of the lyrics, where the Hub can tell
+    provider: str | None = None
+    provider_title: str | None = None
+    lines: list[str] = []  # line for line with the lyrics (`lines`, or the lines of `plain`)
+    edited: list[int] = []  # the lines corrected by hand
+
+
+class RetranslateIn(BaseModel):
+    track_id: int
+    lang: str
+    provider: str | None = None  # None: the admin's order
+
+
+class TranslationLineIn(BaseModel):
+    track_id: int
+    lang: str
+    index: int = Field(ge=0)
+    text: str = Field(max_length=1000)
+
+
+class TranslatorsOut(BaseModel):
+    providers: list[dict[str, Any]]  # {id, title, on}, in the order they are tried
+    langs: list[dict[str, str]]  # {code, title}
+    llm: bool  # the Hub's LLM is set up
+
+
+class TranslatorsIn(BaseModel):
+    providers: list[SourceIn]
+
+
+def _translation_out(r: translations.Result) -> TranslationOut:
+    return TranslationOut(status=r.status, lang=r.lang, detected=r.detected, provider=r.provider,
+                          provider_title=translate.TITLES.get(r.provider or ""), lines=r.lines, edited=r.edited)
+
+
+def _lang(code: str) -> str:
+    if code not in translate.LANGS:
+        raise HTTPException(400, "Неизвестный язык перевода")
+    return code
+
+
+@router.get("/translation", response_model=TranslationOut)
+async def translation(track_id: int, lang: str, skip: str = "", force: bool = False,
+                      user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    """The track's lyrics in `lang`: from the database, or translated now (seconds with Google, up to minutes with a
+    local model) and kept. `skip`: the languages the listener reads, comma-separated — a song in one of them is
+    left alone unless `force`."""
+    track = await _own(s, track_id)
+    try:
+        r = await translations.get(s, track, _lang(lang), skip=frozenset(x for x in skip.split(",") if x), force=force)
+    except translate.TranslateError as e:
+        raise HTTPException(502, str(e)) from e
+    return _translation_out(r)
+
+
+@router.post("/translation/redo", response_model=TranslationOut)
+async def retranslate(body: RetranslateIn, user: User = Depends(current_user),
+                      s: AsyncSession = Depends(get_session, scope="function")):
+    """Translate again (with another translator): the lines corrected by hand stay."""
+    if body.provider is not None and body.provider not in translate.PROVIDERS:
+        raise HTTPException(400, "Неизвестный переводчик")
+    track = await _own(s, body.track_id)
+    order = [x["id"] for x in (await translations.get_settings(s))["providers"] if x["on"]]
+    try:
+        r = await translations.get(s, track, _lang(body.lang), force=True, provider=body.provider or (order[0] if order else "llm"))
+    except translate.TranslateError as e:
+        raise HTTPException(502, str(e)) from e
+    return _translation_out(r)
+
+
+@router.put("/translation/line", response_model=TranslationOut)
+async def edit_translation(body: TranslationLineIn, user: User = Depends(current_user),
+                           s: AsyncSession = Depends(get_session, scope="function")):
+    """A line of the translation corrected by hand (kept for everyone, and through a new translation)."""
+    try:
+        r = await translations.edit(s, body.track_id, _lang(body.lang), body.index, body.text)
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from e
+    return _translation_out(r)
+
+
+async def _translators_out(s: AsyncSession) -> TranslatorsOut:
+    from app.ai.llm import configured
+
+    v = await translations.get_settings(s)
+    return TranslatorsOut(providers=[{**x, "title": translate.TITLES[x["id"]]} for x in v["providers"]],
+                          langs=[{"code": code, "title": names[0]} for code, names in translate.LANGS.items()],
+                          llm=configured())
+
+
+@router.get("/translators", response_model=TranslatorsOut)
+async def translators(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    return await _translators_out(s)
+
+
+@router.put("/translators", response_model=TranslatorsOut)
+async def save_translators(body: TranslatorsIn, user: User = Depends(admin_user),
+                           s: AsyncSession = Depends(get_session, scope="function")):
+    await translations.save_settings(s, body.model_dump())
+    await s.commit()
+    return await _translators_out(s)
 
 
 async def _settings_out(s: AsyncSession) -> SettingsOut:
