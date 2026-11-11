@@ -324,7 +324,6 @@ export function LikedPage() {
   }, [res.reload]);
   const songs = useMemo(() => res.data?.songs ?? [], [res.data]);
   const length = useMemo(() => songs.reduce((sum, t) => sum + (t.duration_s ?? 0), 0), [songs]);
-  const desktop = useDesktop();
   const search = useListSearch(songs);
   const q = search.q;
   const [sort, setSort] = useState<AddedSort>(null);
@@ -335,7 +334,7 @@ export function LikedPage() {
   return (
     <div>
       {saving && <SaveSelection scope="liked" filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`)} />}
-      <PageHeader title={desktop ? '' : 'Любимое'} back="/library" right={<IconButton icon="refresh" label="Обновить" onClick={() => res.reload(true)} />} />
+      <PageHeader hero title="Любимое" back="/library" right={<IconButton icon="refresh" label="Обновить" onClick={() => res.reload(true)} />} />
       {res.data && (
         <Hero
           kicker="Плейлист"
@@ -352,15 +351,14 @@ export function LikedPage() {
         <SkeletonRows />
       ) : res.error ? (
         <ErrorState text={res.error} onRetry={() => res.reload()} />
-      ) : !songs.length && !res.data?.albums.length && !res.data?.artists.length ? (
-        <Empty icon="heart" title="Пока ничего" text="Ставьте ♥ трекам, альбомам и исполнителям — они соберутся здесь." />
+      ) : !songs.length && !res.data?.artists.length ? (
+        <Empty icon="heart" title="Пока ничего" text="Ставьте ♥ трекам — они соберутся здесь." />
       ) : (
         <>
           <ListActions tracks={inOrder(shown ? shown.map((f) => songs[f.index]) : songs, sort)} context="liked" />
           <TagFilterBar songIds={songs.map((t) => t.nd_song_id)} filter={filter} onChange={setFilter} onSave={() => setSaving(true)} />
           <SongList tracks={songs} found={shown} sort={sort} onSort={setSort} />
           {songs.length > 0 && search.control}
-          {!q && <AlbumRow title="Альбомы" albums={res.data?.albums ?? []} rowKey="liked:albums" />}
           {!q && (res.data?.artists.length ?? 0) > 0 && (
             <section aria-label="Исполнители">
               <SectionTitle>Исполнители</SectionTitle>
@@ -378,7 +376,6 @@ export function LikedPage() {
  * yet (the page of tags opens it). The filter can be changed here and saved again. */
 export function SelectionPage({ id }: { id: string }) {
   const route = useRoute();
-  const desktop = useDesktop();
   const tags = useTags();
   const unsaved = id === 'library';
   const sel = useAsync(async (s) => (unsaved ? null : ((await api.tagSelections(s)).find((x) => String(x.id) === id) ?? null)), [id]);
@@ -428,14 +425,14 @@ export function SelectionPage({ id }: { id: string }) {
     }
   };
 
-  if (sel.loading || src.loading) return (<><PageHeader title="Подборка" back="/tags" /><SkeletonRows /></>);
-  if (!unsaved && !sel.data) return (<><PageHeader title="Подборка" back="/tags" /><ErrorState text={sel.error ?? 'Подборка не найдена'} onRetry={() => sel.reload()} /></>);
-  if (!src.data) return (<><PageHeader title={name} back="/tags" /><ErrorState text={src.error ?? 'Не удалось получить треки'} onRetry={() => src.reload()} /></>);
+  if (sel.loading || src.loading) return (<><PageHeader hero title="Подборка" back="/tags" /><SkeletonRows /></>);
+  if (!unsaved && !sel.data) return (<><PageHeader hero title="Подборка" back="/tags" /><ErrorState text={sel.error ?? 'Подборка не найдена'} onRetry={() => sel.reload()} /></>);
+  if (!src.data) return (<><PageHeader hero title={name} back="/tags" /><ErrorState text={src.error ?? 'Не удалось получить треки'} onRetry={() => src.reload()} /></>);
   const list = shown ? shown.map((f) => tracks[f.index]) : tracks;
   return (
     <div>
       {saving && <SaveSelection scope="library" filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`, { replace: true })} />}
-      <PageHeader title={desktop ? '' : name} back="/tags" />
+      <PageHeader hero title={name} back="/tags" />
       <Hero
         kicker={unsaved ? 'Фильтр по тегам' : 'Подборка по тегам'}
         title={name}
@@ -494,11 +491,11 @@ export function PlaylistPage({ id }: { id: string }) {
     if (await attempt(() => api.deletePlaylist(id), 'Плейлист удалён')) navigate('/playlists', { replace: true });
   };
 
-  if (res.loading) return (<><PageHeader title="Плейлист" back="/playlists" /><SkeletonRows /></>);
-  if (!p) return (<><PageHeader title="Плейлист" back="/playlists" /><ErrorState text={res.error ?? 'Плейлист не найден'} onRetry={() => res.reload()} /></>);
+  if (res.loading) return (<><PageHeader hero title="Плейлист" back="/playlists" /><SkeletonRows /></>);
+  if (!p) return (<><PageHeader hero title="Плейлист" back="/playlists" /><ErrorState text={res.error ?? 'Плейлист не найден'} onRetry={() => res.reload()} /></>);
   return (
     <div>
-      <PageHeader title={desktop ? '' : p.name} back="/playlists" right={desktop ? undefined : (
+      <PageHeader hero title={p.name} back="/playlists" right={desktop ? undefined : (
           <>
             <IconButton icon="edit" label="Изменить плейлист" onClick={() => setEditing(true)} />
             <IconButton icon="trash" label="Удалить плейлист" onClick={drop} />
@@ -591,17 +588,19 @@ const albumsWord = (n: number) => {
 export function NdArtistPage({ id }: { id: string }) {
   const res = useAsync((s) => api.ndArtist(id, s), [id]);
   const { starting } = useWave();
-  if (res.loading) return (<><PageHeader title="Исполнитель" back="/artists" /><SkeletonRows /></>);
-  if (!res.data) return (<><PageHeader title="Исполнитель" back="/artists" /><ErrorState text={res.error ?? 'Исполнитель не найден'} onRetry={() => res.reload()} /></>);
+  if (res.loading) return (<><PageHeader hero title="Исполнитель" back="/artists" /><SkeletonRows /></>);
+  if (!res.data) return (<><PageHeader hero title="Исполнитель" back="/artists" /><ErrorState text={res.error ?? 'Исполнитель не найден'} onRetry={() => res.reload()} /></>);
   const { artist, albums } = res.data;
   return (
     <div>
       <PageHeader
+        hero
         title={artist.name}
         back="/artists"
         right={<LikeButton targetType="artist" ndId={artist.id} title={artist.name} data={{ name: artist.name }} />}
       />
       <Hero
+        kicker="Исполнитель"
         cover={artist.cover_url ?? albums[0]?.cover_url}
         round
         title={artist.name}
@@ -630,19 +629,21 @@ export function NdArtistPage({ id }: { id: string }) {
 
 export function NdAlbumPage({ id }: { id: string }) {
   const res = useAsync((s) => api.ndAlbum(id, s), [id]);
-  if (res.loading) return (<><PageHeader title="Альбом" back="/library" /><SkeletonRows /></>);
-  if (!res.data) return (<><PageHeader title="Альбом" back="/library" /><ErrorState text={res.error ?? 'Альбом не найден'} onRetry={() => res.reload()} /></>);
+  if (res.loading) return (<><PageHeader hero title="Альбом" back="/library" /><SkeletonRows /></>);
+  if (!res.data) return (<><PageHeader hero title="Альбом" back="/library" /><ErrorState text={res.error ?? 'Альбом не найден'} onRetry={() => res.reload()} /></>);
   const a = res.data;
   const tracks = a.tracks ?? [];
   return (
     <div>
       <PageHeader
+        hero
         title={a.title}
         sub={a.artist}
         back="/library"
         right={<LikeButton targetType="album" ndId={a.id} title={a.title} data={{ name: a.title, artist: a.artist }} />}
       />
       <Hero
+        kicker="Альбом"
         cover={a.cover_url?.replace(/size=\d+/, 'size=600')}
         title={a.title}
         sub={
@@ -663,7 +664,7 @@ export function NdAlbumPage({ id }: { id: string }) {
         {tracks.length > 0 && <li><TrackTableHeader numbered /></li>}
         {tracks.map((t, i) => (
           <li key={`${t.nd_song_id}:${i}`}>
-            <TrackRow track={t} number={t.track_no ?? i + 1} queue={tracks} link={false} />
+            <TrackRow track={t} index={t.track_no ?? i + 1} queue={tracks} link={false} />
           </li>
         ))}
       </ul>

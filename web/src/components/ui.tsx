@@ -1,3 +1,4 @@
+import { useDesktop } from '../lib/desktop';
 import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { goBack } from '../lib/router';
 import { downloadStatusLabel, percent } from '../lib/format';
@@ -132,7 +133,10 @@ export function SkeletonRows({ n = 6 }: { n?: number }) {
 
 // --- layout -----------------------------------------------------------------------------------
 
-export function PageHeader({ title, back, right, sub }: { title: ReactNode; back?: string; right?: ReactNode; sub?: ReactNode }) {
+/** `hero`: the page has its own big head below (a cover, the name in large letters): on a computer the bar keeps
+ * only «back» and its buttons — the name is not said twice, nor does a placeholder flash while the page loads. */
+export function PageHeader({ title, back, right, sub, hero }: { title: ReactNode; back?: string; right?: ReactNode; sub?: ReactNode; hero?: boolean }) {
+  const bare = useDesktop() && hero;
   return (
     <header className="pt-safe sticky top-0 z-20 bg-bg/90 backdrop-blur">
       <div className="flex min-h-14 items-center gap-1 px-2">
@@ -142,8 +146,8 @@ export function PageHeader({ title, back, right, sub }: { title: ReactNode; back
           <span className="w-2" />
         )}
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-lg font-bold">{title}</h1>
-          {sub && <div className="truncate text-xs text-muted">{sub}</div>}
+          {!bare && <h1 className="truncate text-lg font-bold">{title}</h1>}
+          {!bare && sub && <div className="truncate text-xs text-muted">{sub}</div>}
         </div>
         {right}
       </div>

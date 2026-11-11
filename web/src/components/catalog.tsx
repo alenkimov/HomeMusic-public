@@ -584,7 +584,7 @@ export function TrackTableHeader({ numbered = false, album = false, added = fals
         e.preventDefault();
         setOpen(true);
       }}
-      className="relative mx-2 mb-1 grid h-9 items-center gap-3 border-b border-line/60 px-2 text-xs text-dim"
+      className="group/head relative mx-2 mb-1 grid h-9 items-center gap-3 border-b border-line/60 px-2 text-xs text-dim"
       style={{ gridTemplateColumns: trackGrid(numbered, album && cols.album, cols.duration, added && cols.added, tags ? { lang: cols.tagLang, genre: cols.tagGenre, own: cols.tagOwn } : null) }}
     >
       {numbered && <span className="text-center">#</span>}
@@ -606,7 +606,7 @@ export function TrackTableHeader({ numbered = false, album = false, added = fals
       )}
       <span />
       {cols.duration && <span className="text-right">Время</span>}
-      <IconButton icon="more" size={18} label="Колонки таблицы" aria-expanded={open} onClick={() => setOpen((v) => !v)} className="!h-8 !w-8 text-dim hover:text-fg" />
+      <IconButton icon="more" size={18} label="Колонки таблицы" aria-expanded={open} onClick={() => setOpen((v) => !v)} className={cx('!h-8 !w-8 text-dim hover:text-fg focus-visible:opacity-100', !open && 'opacity-0 group-hover/head:opacity-100')} />
       {open && (
         <div role="menu" aria-label="Колонки" className="absolute right-0 top-9 z-20 w-56 rounded-xl border border-line bg-raised p-2 shadow-lg">
           <div className="px-2 pb-1 pt-1 text-xs font-semibold text-muted">Колонки</div>
