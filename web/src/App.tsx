@@ -47,6 +47,7 @@ import { PlayerPage } from './pages/Player';
 import { PlaylistsPage } from './pages/Playlists';
 import { SearchPage, searchTab } from './pages/Search';
 import { SharePage } from './pages/Share';
+import { DiscoveriesPage } from './pages/Discoveries';
 import { ReleasesPage } from './pages/Releases';
 import { StatsPage } from './pages/Stats';
 import { UploadPage } from './pages/Upload';
@@ -65,6 +66,7 @@ const STANDALONE_ROUTES: RouteDef[] = [
   ['/tags', 'library', () => <TagsPage />],
   ['/stats', 'more', () => <StatsPage />],
   ['/releases', 'more', () => <ReleasesPage />],
+  ['/discoveries', 'library', () => <DiscoveriesPage />],
   ['/auto/:kind', 'library', (p) => <AutoPlaylistPage key={p.kind} kind={p.kind} />],
   ['/lib/albums', 'library', () => <NdAlbumsPage />],
   ['/lib/album/:id', 'library', (p) => <NdAlbumPage key={p.id} id={p.id} />],

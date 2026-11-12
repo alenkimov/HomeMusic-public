@@ -22,6 +22,7 @@ import type {
   DislikeIn,
   DislikeOut,
   DownloadBatchOut,
+  DiscoveriesOut,
   DownloadIn,
   ReleasesOut,
   DownloadItemOut,
@@ -407,6 +408,9 @@ export const api = {
   tagSelectionSave: (id: number, body: Omit<TagSelection, 'id'>) => request<TagSelection>('PUT', `/api/tags/selections/${id}`, { json: body }),
   tagSelectionDelete: (id: number) => request<OkOut>('DELETE', `/api/tags/selections/${id}`),
   ndSongs: (signal?: AbortSignal) => request<NdSongOut[]>('GET', '/api/nd/songs', { signal }),
+  // «Открытия недели»
+  discoveries: (issue: number | null, signal?: AbortSignal) => request<DiscoveriesOut>('GET', withQuery('/api/discoveries', { issue: issue ?? undefined }), { signal }),
+  discoveriesBuild: () => request<OkOut>('POST', '/api/discoveries/build'),
   // «Релизы» (lib/releases.ts)
   releases: (signal?: AbortSignal) => request<ReleasesOut>('GET', '/api/releases', { signal }),
   releasesCount: () => request<{ unseen: number }>('GET', '/api/releases/count'),

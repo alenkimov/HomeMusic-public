@@ -890,6 +890,16 @@ export interface AssistantEvent {
   status: string;
 }
 
+/** «Открытия недели» (pages/Discoveries.tsx). */
+export interface DiscoveriesOut {
+  /** every issue, the newest first; `week` is its Monday, YYYY-MM-DD */
+  issues: { id: number; week: string; count: number }[];
+  /** the issue shown (none: there is no issue yet) */
+  issue: { id: number; week: string; tracks: TrackOut[] } | null;
+  /** this week's issue is being built */
+  building: boolean;
+}
+
 /** A release of a followed artist («Релизы», pages/Releases.tsx). */
 export interface ReleaseOut {
   album_ref: string;

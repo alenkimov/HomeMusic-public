@@ -803,6 +803,21 @@ class ListenHistory(Base):
     source: Mapped[str] = mapped_column(String(16), default="spotify")
 
 
+class DiscoveryIssue(Base):
+    """One week's «Открытия недели» (app/mixes/discover.py): catalog tracks of artists the user has not heard.
+    Issues are kept — an old week can be opened again; a track that was in one is not picked for another."""
+
+    __tablename__ = "discovery_issues"
+    __table_args__ = (UniqueConstraint("user_id", "week", name="uq_discovery_issues"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    week: Mapped[date] = mapped_column(Date)  # the Monday it is of, in the users' local time
+    tracks_json: Mapped[list[Any]] = mapped_column(JSON, default=list)  # CatalogTrack dumps, in order
+    stats_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class ArtistRelease(Base):
     """A release of an artist the user follows (♥ on the artist's page) — the «Релизы» feed, app/releases.py."""
 

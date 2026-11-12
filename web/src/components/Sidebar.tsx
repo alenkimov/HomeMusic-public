@@ -156,6 +156,15 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
         })}
         {sels.data && !sels.data.length && <p className="px-3 py-1 text-xs text-dim">Сохранённые фильтры по тегам появятся здесь</p>}
         <div className="px-1 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-dim">Автоплейлисты</div>
+        <Link to="/discoveries" aria-current={at('/discoveries') ? 'page' : undefined} className={cx(item, 'py-1.5', at('/discoveries') ? 'bg-fg/10' : 'hover:bg-fg/5')}>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/20 text-accent">
+            <Icon name="wave" size={17} />
+          </span>
+          <span className="min-w-0">
+            <span className={cx('block truncate', at('/discoveries') ? 'font-semibold text-accent' : 'text-fg')}>Открытия недели</span>
+            <span className="block truncate text-xs text-dim">Новые имена, по понедельникам</span>
+          </span>
+        </Link>
         {AUTO_PLAYLISTS.map((a) => {
           const to = `/auto/${a.kind}`;
           const on = at(to);

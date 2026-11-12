@@ -94,6 +94,7 @@ export function MorePage() {
         <Item icon="upload" to="/upload" title="Загрузить файлы" sub="Свои аудиофайлы с телефона" />
         <Item icon="playlist" to="/playlists" title="Плейлисты" sub="Ваши плейлисты в Navidrome" />
         {STANDALONE && <Item icon="tag" to="/tags" title="Теги" sub="Язык, жанр и свои; подборки по тегам" />}
+        {STANDALONE && <Item icon="wave" to="/discoveries" title="Открытия недели" sub="Каждый понедельник — 30 треков исполнителей, которых вы ещё не слышали" />}
         {STANDALONE && <Item icon="disc" to="/releases" title="Релизы" sub="Что вышло у исполнителей, за которыми вы следите" />}
         {STANDALONE && <Item icon="chart" to="/stats" title="Статистика" sub="Что вы слушали: треки, исполнители, жанры; история из Spotify" />}
         <Item icon="transfer" brand="yandex" to="/import?from=yandex" title="Перенести из Яндекс Музыки" sub="«Мне нравится», плейлисты, альбомы и исполнители" />

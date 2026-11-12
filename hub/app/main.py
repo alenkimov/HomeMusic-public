@@ -22,6 +22,7 @@ def _import_handlers() -> None:
     import app.imports.core
     import app.jobs.downloads
     import app.mixes.core
+    import app.mixes.discover
 
     try:
         import app.ai.pipeline  # noqa: F401
@@ -62,6 +63,9 @@ async def lifespan(app: FastAPI):
         from app.releases import loop as releases_loop
 
         tasks.append(asyncio.create_task(releases_loop(), name="releases"))
+        from app.mixes.discover import loop as discoveries_loop
+
+        tasks.append(asyncio.create_task(discoveries_loop(), name="discoveries"))
         tasks.append(asyncio.create_task(playlist_adds_loop(), name="playlist-adds"))
         await telegram_chats.start_all()
         tasks.append(asyncio.create_task(_sync_tags(), name="tags"))
@@ -107,6 +111,7 @@ def create_app() -> FastAPI:
         medialib,
         mixes,
         playlists,
+        discoveries,
         plays,
         releases,
         search,
@@ -123,7 +128,7 @@ def create_app() -> FastAPI:
                   openapi_url="/api/openapi.json", redoc_url=None)
     for r in (auth.router, search.router, catalog.router, downloads.router, listen.router, library.router, medialib.router,
               uploads.router, playlists.router, plays.router, mixes.router, wave.router, smart_shuffle.router, imports.router, events.router, system.router, admin.router,
-              insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router):
+              insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, discoveries.router):
         app.include_router(r)
     try:
         from app.api import assistant
