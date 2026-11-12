@@ -15,14 +15,15 @@ export interface TrackColumns {
 export const TRACK_COLUMN_LABELS: Record<keyof TrackColumns, string> = { album: 'Альбом', tagLang: 'Язык', tagGenre: 'Жанр', tagOwn: 'Теги', added: 'Дата добавления', plays: 'Прослушивания', duration: 'Длительность' };
 
 const KEY = 'hm-track-columns';
-const DEFAULTS: TrackColumns = { album: true, tagLang: true, tagGenre: true, tagOwn: true, added: true, plays: true, duration: true };
+/** Shown until the user says otherwise: the tags and the listens are for those who want them. */
+const DEFAULTS: TrackColumns = { album: true, tagLang: false, tagGenre: false, tagOwn: false, added: true, plays: false, duration: true };
 
 function load(): TrackColumns {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<TrackColumns>;
     return {
-      album: saved.album !== false, tagLang: saved.tagLang !== false, tagGenre: saved.tagGenre !== false, tagOwn: saved.tagOwn !== false,
-      added: saved.added !== false, plays: saved.plays !== false, duration: saved.duration !== false,
+      album: saved.album !== false, tagLang: saved.tagLang === true, tagGenre: saved.tagGenre === true, tagOwn: saved.tagOwn === true,
+      added: saved.added !== false, plays: saved.plays === true, duration: saved.duration !== false,
     };
   } catch {
     return DEFAULTS;
