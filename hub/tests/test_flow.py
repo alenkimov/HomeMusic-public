@@ -175,13 +175,14 @@ async def test_download_import_scan_playlist_dedupe(env):
         "new_playlist_name": "Тест",
     })
     assert r.status_code == 200, r.text
-    assert r.json()["playlist_id"] == "pl1"
+    playlist_id = r.json()["playlist_id"]  # the Hub's playlist; Navidrome gets a mirror of it (pl1)
+    assert playlist_id
     await drain_jobs()
 
     items = (await c.get("/api/downloads")).json()
     assert items[0]["status"] == "done", items
     assert items[0]["provider"] == "hitmoz"
-    assert items[0]["nd_song_id"] == "nd0" and items[0]["playlist_id"] == "pl1"
+    assert items[0]["nd_song_id"] == "nd0" and items[0]["playlist_id"] == playlist_id
     assert env["fake"].fetched == 1
 
     files = list((env["music"] / "library").rglob("*.mp3"))

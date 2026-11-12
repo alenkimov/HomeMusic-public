@@ -57,8 +57,8 @@ const kept = (t: SelTrack) => isLiked(likeTarget(t)) || inPlaylists(t.nd_song_id
 async function apply(kind: DragKind, tracks: SelTrack[]) {
   if (kind === 'share') return openShare(tracks);
   if (kind === 'tags') {
-    const owned = tracks.map((t) => t.nd_song_id).filter((x): x is string => !!x);
-    return owned.length ? openTagsSheet(owned, '') : toast('Этих треков ещё нет в библиотеке — сначала скачайте их', 'info');
+    const keys = tracks.map((t) => t.tag_key).filter((x): x is string => !!x);
+    return keys.length ? openTagsSheet(keys, '') : toast('Хаб ещё не знает эти треки — добавьте их в плейлист или «Любимое»', 'info');
   }
   if (kind === 'queue') {
     const have = queuedRefs();

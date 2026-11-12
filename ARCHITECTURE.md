@@ -34,7 +34,9 @@ apps. It owns nothing the Hub cares about. The Hub mirrors to it what such apps 
 **`tracks`** — the song. `id`, `ref` (what the catalog calls it, `dz:3135556`; one track per ref, none if the
 catalog does not know the song), `artist`, `title`, `album`, `album_artist`, `track_no`, `disc_no`, `year`,
 `genre`, `duration_s`, `isrc`, `explicit`, `fingerprint` (normalised «artist|title»), `album_id` (the library
-album its file is filed under, if any), `created_at`, `created_by`. Nothing about files.
+album its file is filed under, if any), `catalog` (what the catalog said of it when the track was made — its
+cover, its album and artists there: a track without a file is drawn from this), `created_at`, `created_by`.
+Nothing about files.
 
 **`track_files`** — a file of a track. `id`, `track_id`, `path` (unique, relative to `library/`), `uid` (written
 into the file as `HOMEMUSIC_TRACK_ID`), `nd_song_id` (the song Navidrome made of it; set after a scan), `codec`,
@@ -45,8 +47,9 @@ into the file as `HOMEMUSIC_TRACK_ID`), `nd_song_id` (the song Navidrome made of
 The catalog ref is not one of these: it is the track's own name (`tracks.ref`), the links are its names abroad.
 
 **`playlists`** — `id`, `user_id`, `kind` (`liked` — «Любимое», one per user; `user` — made by hand or by an
-import; `mix` — «Микс дня»), `name`, `cover`, `created_at`, `updated_at`, and what the mirror needs:
-`nd_playlist_id`, `mirrored` (the song ids Navidrome was last given).
+import; `mix` — «Микс дня», which the mix builder writes in Navidrome and the Hub's row only follows), `name`,
+`created_at`, `updated_at`, and what the mirror needs: `nd_playlist_id`, `mirrored` (the song ids Navidrome was
+last given), `nd_cover` (the picture Navidrome makes of the mirror's albums).
 
 **`playlist_items`** — `playlist_id`, `track_id`, `position`, `added_at`. The order and the dates are the Hub's.
 A track without a file stands in its own place like any other.
@@ -102,7 +105,8 @@ events, dislikes and the items of mixes.
 One release, built in passes that each leave the tests green:
 
 1. `track_files` split off `tracks`; a track named by its catalog ref. *(done)*
-2. Playlists and «Любимое» in the Hub; the mirror; the old favorites and pending lists removed.
+2. Playlists in the Hub, the mirror, tags on any track *(done)*; «Любимое» as a playlist and the old
+   favorites removed *(next)*.
 3. Events, dislikes, statistics, taste, mixes and the wave on `track_id`.
 4. Imports and downloads on top of it.
 5. The API and the web on `id`/`ref`.

@@ -14,7 +14,7 @@ import { useHubEvent } from '../lib/events';
 import { setShuffle, useListen } from '../lib/listen';
 import { useAsync, useRememberScrollX } from '../lib/hooks';
 import { Link, enc, navigate, useRoute } from '../lib/router';
-import { filterActive, filterOfQuery, filterWords, passes, selectionsChanged, useTags, type TagFilter } from '../lib/tags';
+import { filterActive, filterOfQuery, filterWords, passes, selectionsChanged, tagKey, useTags, type TagFilter } from '../lib/tags';
 import { attempt, confirmDialog } from '../lib/ui';
 import { useSmartForPage, useSmartPage } from '../lib/smartShuffle';
 import { canWave, seedKey, startWave, useWave } from '../lib/wave';
@@ -156,7 +156,7 @@ function useShown(tracks: readonly NdSongOut[], found: Found[] | null, filter: T
     if (!filterActive(filter)) return found;
     const base: Found[] = found ?? tracks.map((_, index) => ({ index }));
     return base.filter((f) => {
-      const id = tracks[f.index]?.nd_song_id;
+      const id = tracks[f.index] ? tagKey(tracks[f.index]) : null;
       return passes(id ? tags.map[id] : undefined, filter, tags.byId);
     });
   }, [tracks, found, filter, tags.map, tags.byId]);
@@ -358,7 +358,7 @@ export function LikedPage() {
       ) : (
         <>
           <ListActions tracks={inOrder(shown ? shown.map((f) => songs[f.index]) : songs, sort)} context="liked" />
-          <TagFilterBar songIds={songs.map((t) => t.nd_song_id)} filter={filter} onChange={setFilter} onSave={() => setSaving(true)} />
+          <TagFilterBar songIds={songs.map(tagKey)} filter={filter} onChange={setFilter} onSave={() => setSaving(true)} />
           <SongList tracks={songs} found={shown} sort={sort} onSort={setSort} />
           {songs.length > 0 && search.control}
         </>
@@ -510,7 +510,7 @@ export function SelectionPage({ id }: { id: string }) {
         )}
         {!unsaved && <IconButton icon="trash" size={24} label="Удалить подборку" onClick={() => void drop()} className="text-muted hover:text-danger" />}
       </ListActions>
-      <TagFilterBar songIds={tracks.map((t) => t.nd_song_id)} filter={filter} onChange={setFilter} onSave={unsaved ? () => setSaving(true) : undefined} />
+      <TagFilterBar songIds={tracks.map(tagKey)} filter={filter} onChange={setFilter} onSave={unsaved ? () => setSaving(true) : undefined} />
       <SongList tracks={tracks} found={shown ?? (filterActive(filter) ? [] : null)} sort={sort} onSort={setSort} />
       {search.control}
     </div>
@@ -533,9 +533,9 @@ export function PlaylistPage({ id }: { id: string }) {
   const res = useAsync((s) => api.playlist(id, s), [id]);
   const p = res.data;
   useSmartPage(`playlist:${id}`, p?.name ?? null);
-  // what Navidrome's playlist has, then the tracks of its import that wait for a listen (not in the library yet)
-  const all = useMemo(() => [...(p?.tracks ?? []), ...(p?.pending ?? [])], [p]);
-  const waits = p?.pending?.length ?? 0;
+  // the playlist is the Hub's: every track stands in its place, whether the library has its file yet or not
+  const all = useMemo(() => p?.tracks ?? [], [p]);
+  const waits = all.filter((t) => !t.owned).length;
   const search = useListSearch(all);
   const [sort, setSort] = useState<ListSort>(null);
   const [editing, setEditing] = useState(false);
@@ -545,7 +545,7 @@ export function PlaylistPage({ id }: { id: string }) {
 
   const remove = async (i: number, t: NdSongOut) => {
     if (await attempt(() => api.removeFromPlaylist(id, [i]), `«${t.title}» убран из плейлиста`))
-      res.setData((prev) => (prev ? { ...prev, song_count: prev.song_count - 1, duration_s: Math.max(0, prev.duration_s - (t.duration_s ?? 0)), tracks: prev.tracks.filter((_, j) => j !== i) } : prev));
+      res.setData((prev) => (prev ? { ...prev, song_count: prev.song_count - (t.owned ? 1 : 0), duration_s: Math.max(0, prev.duration_s - (t.duration_s ?? 0)), tracks: prev.tracks.filter((_, j) => j !== i) } : prev));
   };
   const drop = async () => {
     if (!p || !(await confirmDialog({ title: `Удалить плейлист «${p.name}»?`, body: 'Песни останутся в библиотеке.', okLabel: 'Удалить', danger: true }))) return;
@@ -567,7 +567,7 @@ export function PlaylistPage({ id }: { id: string }) {
         kicker="Плейлист"
         cover={p.cover_url ? `${p.cover_url}&size=600` : p.tracks[0]?.cover_url}
         title={p.name}
-        sub={[tracksWord(p.song_count + waits), p.duration_s ? fmtLength(p.duration_s) : null, waits ? `${waits} ещё не ${plural(waits, ['скачан', 'скачаны', 'скачаны'])} — скачаются, когда послушаете` : null].filter(Boolean).join(' · ')}
+        sub={[tracksWord(all.length), p.duration_s ? fmtLength(p.duration_s) : null, waits ? `${waits} ещё не ${plural(waits, ['скачан', 'скачаны', 'скачаны'])} — скачаются, когда послушаете` : null].filter(Boolean).join(' · ')}
       />
       <ListActions tracks={inOrder(shown ? shown.map((f) => all[f.index]) : all, sort)} context="playlist">
         {desktop && (
@@ -590,8 +590,8 @@ export function PlaylistPage({ id }: { id: string }) {
       {all.length ? (
         <>
           {saving && <SaveSelection scope={`playlist:${id}`} filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`)} />}
-          <TagFilterBar songIds={p.tracks.map((t) => t.nd_song_id)} filter={filter} onChange={setFilter} onSave={() => setSaving(true)} />
-          <SongList tracks={all} found={shown} sort={sort} onSort={setSort} extra={(t, i) => (i < p.tracks.length ? [{ icon: 'x', label: 'Убрать из плейлиста', onClick: () => void remove(i, t) }] : [])} />
+          <TagFilterBar songIds={p.tracks.map(tagKey)} filter={filter} onChange={setFilter} onSave={() => setSaving(true)} />
+          <SongList tracks={all} found={shown} sort={sort} onSort={setSort} extra={(t, i) => [{ icon: 'x', label: 'Убрать из плейлиста', onClick: () => void remove(i, t) }]} />
           {search.control}
         </>
       ) : (

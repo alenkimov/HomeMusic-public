@@ -160,16 +160,9 @@ ALL_SONGS_MAX = 50_000
 @router.get("/songs", response_model=list[NdSongOut])
 async def all_songs(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     """Every song of the library (a selection by tags looks through all of it)."""
-    async def load(nd):
-        out: list[dict] = []
-        while len(out) < ALL_SONGS_MAX:
-            page = (await nd.search3("", song_count=ALL_SONGS_PAGE, song_offset=len(out))).get("song") or []
-            out += page
-            if len(page) < ALL_SONGS_PAGE:
-                break
-        return out
+    from app.library import songs as library_songs
 
-    return await songs_out(s, await nd_call(user, load))
+    return await songs_out(s, await nd_call(user, library_songs.load))
 
 
 @router.get("/liked", response_model=NdLikedOut)

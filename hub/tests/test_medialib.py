@@ -224,39 +224,12 @@ async def test_artist_albums_newest_year_first_then_without_a_year(env):
     assert [a["id"] for a in page["albums"]] == ["a4", "a3", "a2", "a1", "a5"]
 
 
-async def test_playlist_page_remove_and_delete(env):
-    c = env["client"]
-    r = await c.get("/api/playlists/pl1")
-    assert r.status_code == 200, r.text
-    p = r.json()
-    assert (p["name"], p["song_count"]) == ("Дорога", 2) and [t["ref"] for t in p["tracks"]] == ["dz:100", "nd:ndZ"]
-
-    assert (await c.post("/api/playlists/pl1/remove", json={"indexes": [1, 1]})).json() == {"ok": True}
-    upd = [p for n, p in env["state"]["calls"] if n == "updatePlaylist"]
-    assert upd[-1]["playlistId"] == "pl1" and upd[-1]["songIndexToRemove"] == "1"
-    assert (await c.post("/api/playlists/pl1/remove", json={"indexes": []})).status_code == 422
-
-    assert (await c.delete("/api/playlists/pl1")).json() == {"ok": True}
-    assert ("deletePlaylist", "pl1") in [(n, p.get("id")) for n, p in env["state"]["calls"]]
-
-
-async def test_playlist_errors_map_navidromes_codes(env):
-    c, fail = env["client"], env["state"]["fail"]
-    fail["getPlaylist"] = 70
-    assert (await c.get("/api/playlists/gone")).status_code == 404
-    fail["updatePlaylist"] = 50  # not the owner
-    assert (await c.post("/api/playlists/pl1/remove", json={"indexes": [0]})).status_code == 403
-    fail["deletePlaylist"] = 0  # anything else Navidrome says
-    r = await c.delete("/api/playlists/pl1")
-    assert r.status_code == 502 and r.json()["detail"].startswith("Navidrome")
-
-
 async def test_navidrome_unreachable_is_502(env):
     env["state"]["down"] = True
     c = env["client"]
     assert (await c.get("/api/nd/home")).status_code == 502
     assert (await c.get("/api/nd/cover/al-alK")).status_code == 502
-    assert (await c.get("/api/playlists/pl1")).status_code == 502
+    assert (await c.get("/api/playlists")).status_code == 200  # the playlists are the Hub's own
 
 
 async def test_cover_is_proxied_as_the_user(env):

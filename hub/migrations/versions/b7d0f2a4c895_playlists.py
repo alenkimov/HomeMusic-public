@@ -19,6 +19,7 @@ def upgrade():
         sa.Column("name", sa.String(200), nullable=False),
         sa.Column("nd_playlist_id", sa.String(64)),
         sa.Column("mirrored", sa.JSON(), nullable=False, server_default="[]"),
+        sa.Column("nd_cover", sa.String(128)),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
     )
@@ -34,6 +35,12 @@ def upgrade():
     )
     op.create_index("ix_playlist_items_order", "playlist_items", ["playlist_id", "position"])
     op.create_index("ix_playlist_items_track_id", "playlist_items", ["track_id"])
+    with op.batch_alter_table("import_collections") as b:
+        b.add_column(sa.Column("playlist_id", sa.Integer(), nullable=True))
+        b.add_column(sa.Column("given", sa.JSON(), nullable=False, server_default="[]"))
+        b.create_foreign_key("fk_import_collections_playlist", "playlists", ["playlist_id"], ["id"], ondelete="SET NULL")
+    # the playlists of an import were its own to rewrite: it says nothing of them until it is run again
+    op.execute("DELETE FROM pending_playlist_adds")
 
 
 def downgrade():

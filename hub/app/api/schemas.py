@@ -507,9 +507,8 @@ class UploadCommitOut(BaseModel):
 class PlaylistOut(BaseModel):
     id: str
     name: str
-    song_count: int = 0
-    # tracks of the import the playlist came with that the library has not got yet: they are the playlist's too
-    pending_count: int = 0
+    song_count: int = 0  # the tracks the library has a file of
+    pending_count: int = 0  # the playlist's tracks it has no file of yet
     duration_s: int = 0
     cover_art: str | None = None
     # the playlist's picture: the user's own, else the one Navidrome makes of its albums (add `&size=`)
@@ -604,10 +603,7 @@ class NdHomeOut(BaseModel):
 
 
 class PlaylistPageOut(PlaylistOut):
-    tracks: list[NdSongOut] = []
-    # tracks of the import this playlist came with that the library has not got yet (an «Экономно» import downloads
-    # one when it is listened to): shown after `tracks`, played through the Hub, not in Navidrome's playlist
-    pending: list[NdSongOut] = []
+    tracks: list[NdSongOut] = []  # every track in its place; one without a file has `owned` false
 
 
 class PlaylistAddIn(BaseModel):

@@ -39,7 +39,7 @@ export function SelectionBar() {
   const likes = picked.map((t) => isLiked({ songId: t.nd_song_id, ref: t.ref }));
   // as a row's button, for them all: ♥ when every one is in «Любимое», ✓ when every one is kept somewhere, else «+»
   const kept = likes.every(Boolean) ? 'liked' : picked.every((t, i) => likes[i] || inPlaylists(t.nd_song_id)) ? 'listed' : 'none';
-  const owned = picked.map((t) => t.nd_song_id).filter((x): x is string => !!x);
+  const tagKeys = picked.map((t) => t.tag_key).filter((x): x is string => !!x);
   const btn = '!h-10 !w-10';
   return (
     <div className="pointer-events-none fixed bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+12px+env(safe-area-inset-bottom))] left-(--side-w) right-0 z-40 flex justify-center px-3" role="region" aria-label="Выбранные треки">
@@ -58,7 +58,7 @@ export function SelectionBar() {
           icon="tag"
           size={20}
           label="Теги: поставить или снять"
-          onClick={() => (owned.length ? openTagsSheet(owned, '') : toast('Этих треков ещё нет в библиотеке — сначала скачайте их', 'info'))}
+          onClick={() => (tagKeys.length ? openTagsSheet(tagKeys, '') : toast('Хаб ещё не знает эти треки — добавьте их в плейлист или «Любимое»', 'info'))}
           className={cx(btn, 'text-muted hover:text-fg')}
         />
         {!canPlayAll() && (

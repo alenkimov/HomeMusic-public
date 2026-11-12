@@ -15,7 +15,7 @@ import { Button, Cover, Loading, Sheet, cx } from './ui';
  *   ✓  in a green circle: it is in some playlist, but not in «Любимое».
  * A click on ♥ or ✓ opens the playlists with ticks (`TrackPlaylists`). A catalog track the library has not got is
  * downloaded when it is put anywhere. `pending`: a ♥ the Hub has promised to a download. */
-export function SaveButton({ songId, refId, pending, title, data, size = 20, className }: { songId?: string | null; refId?: string | null; pending?: boolean; title: string; data?: Record<string, unknown>; size?: number; className?: string }) {
+export function SaveButton({ songId, refId, listKey, pending, title, data, size = 20, className }: { songId?: string | null; refId?: string | null; /** what the track is called in the list of tracks kept in playlists (`lib/tags.ts` `tagKey`): a track with no file yet has no `songId` */ listKey?: string | null; pending?: boolean; title: string; data?: Record<string, unknown>; size?: number; className?: string }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -23,7 +23,7 @@ export function SaveButton({ songId, refId, pending, title, data, size = 20, cla
   }, [pending, refId, songId]);
   const target: LikeTarget = { targetType: 'track', songId, ref: refId, data };
   const liked = useLiked(target);
-  const listed = useInPlaylists(songId);
+  const listed = useInPlaylists(listKey ?? songId);
   if (!songId && !refId) return null;
   const kept = liked || listed;
   const label = liked ? `«${title}» в любимом — изменить` : listed ? `«${title}» в плейлистах — изменить` : `«${title}» — в любимое`;

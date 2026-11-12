@@ -47,25 +47,31 @@ async def find_existing(
     isrc: str | None = None,
     deezer_track_id: str | None = None,
 ) -> Track | None:
-    """The track of this song, if the Hub knows it: by its ISRC, its catalog id, then by its names and length."""
+    """The track of this song that the library has a file of: by its ISRC, its catalog id, then by its names and
+    length. A track the Hub knows but has no file of (it stands in a playlist, waiting) is not «in the library» —
+    `library.tracks` is where a track is found whether it has a file or not."""
     newest = Track.id.desc()
     if isrc:
         t = (await s.execute(
-            select(Track).where(Track.isrc == isrc.upper()).order_by(newest).limit(1))).scalar_one_or_none()
+            select(Track).where(Track.isrc == isrc.upper(), HAS_FILE).order_by(newest).limit(1))).scalar_one_or_none()
         if t:
             return t
     if deezer_track_id:
         t = (
             await s.execute(
-                select(Track).where(Track.ref == f"dz:{deezer_track_id}").limit(1))
+                select(Track).where(Track.ref == f"dz:{deezer_track_id}", HAS_FILE).limit(1))
         ).scalar_one_or_none()
         if t:
             return t
     fp = fingerprint(artist, title)
-    for t in (await s.execute(select(Track).where(Track.fingerprint == fp).order_by(newest))).scalars():
+    for t in (await s.execute(select(Track).where(Track.fingerprint == fp, HAS_FILE).order_by(newest))).scalars():
         if _duration_ok(t.duration_s, duration_s):
             return t
     return None
+
+
+# the track has a file (`Track.path` is the path of its newest one)
+HAS_FILE = Track.path.is_not(None)
 
 
 def _dz_id(ref: str | None) -> str | None:
@@ -96,7 +102,8 @@ async def annotate_tracks(
             ).order_by(Track.id.desc())
         )
     ).scalars().all()
-    # several tracks of one ISRC: the newest one wins, as in `find_existing`
+    # a track with a file before one without; of several with a file the newest wins, as in `find_existing`
+    rows = sorted(rows, key=lambda r: (r.path is None, -r.id))
     by_isrc = {r.isrc: r for r in reversed(rows) if r.isrc}
     by_ref = {r.ref: r for r in rows if r.ref}
     by_fp: dict[str, list[Track]] = {}
@@ -130,8 +137,9 @@ async def annotate_tracks(
             hit = next((r for r in by_fp.get(fp, []) if _duration_ok(r.duration_s, t.duration_s)), None)
         o = TrackOut(**t.model_dump())
         if hit is not None:
+            o.library_track_id = hit.id  # the Hub knows the song; whether it has a file is `owned`
+        if hit is not None and hit.path is not None:
             o.owned = True
-            o.library_track_id = hit.id
             o.nd_song_id = hit.nd_song_id
         else:
             o.downloading = t.ref in downloading_refs or fp in downloading_fps

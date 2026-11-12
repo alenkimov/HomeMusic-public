@@ -544,7 +544,7 @@ export interface PlaylistOut {
   name: string;
   /** the tracks the library has */
   song_count: number;
-  /** the playlist's tracks the library has not got yet (an import's): they play and are downloaded when listened to */
+  /** the playlist's tracks the library has no file of yet: they play, and are downloaded when listened to */
   pending_count?: number;
   duration_s: number;
   cover_art?: string | null;
@@ -563,9 +563,8 @@ export interface PlaylistOfSongsOut extends PlaylistOut {
 }
 
 export interface PlaylistPageOut extends PlaylistOut {
+  /** every track in its place; one the library has no file of yet has `owned: false` */
   tracks: NdSongOut[];
-  /** tracks of the import the playlist came with that the library has not got yet: shown after `tracks` */
-  pending?: NdSongOut[];
 }
 
 // --- the Navidrome library (the PWA in a browser: /api/nd) ------------------------------------

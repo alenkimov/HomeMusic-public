@@ -204,10 +204,18 @@ async def commit(payload: str = Form(...), cover: UploadFile | None = File(None)
 
         await tags.assign_tracks(s, user.id, track_ids, body.tag_ids)
     playlist_ids = list(dict.fromkeys([*([body.playlist_id] if body.playlist_id else []), *body.playlist_ids]))
-    if (playlist_ids or body.star) and track_ids:
-        # Navidrome knows the new files only after its scan: the playlist and the ♥ get them then
+    if playlist_ids and track_ids:  # the playlists are the Hub's: the tracks are in them at once
+        from app import playlists
+        from app.playlists_mirror import enqueue_mirror
+
+        for pid in playlist_ids:
+            p = await playlists.own(s, user.id, int(pid)) if str(pid).isdigit() else None
+            if p is not None and p.kind == playlists.USER and await playlists.add(s, p, track_ids):
+                await enqueue_mirror(s, p.id)
+    if body.star and track_ids:
+        # Navidrome knows the new files only after its scan: the ♥ gets them then
         await enqueue(s, "upload_playlist_add", {
-            "user_id": user.id, "playlist_ids": playlist_ids, "star": body.star, "track_ids": track_ids,
+            "user_id": user.id, "star": True, "track_ids": track_ids,
             "until": (utcnow() + timedelta(seconds=PLAYLIST_ADD_WAIT_S)).isoformat()}, delay_s=PLAYLIST_ADD_RETRY_S)
     await s.commit()
     notify()
@@ -217,15 +225,13 @@ async def commit(payload: str = Form(...), cover: UploadFile | None = File(None)
 
 @handler("upload_playlist_add")
 async def handle_playlist_add(job: Job) -> None:
-    """«Добавить ещё и в плейлист» / «в Любимое» of an import: the imported tracks go into the playlist and
-    get their ♥ in their order once the library scan has given them Navidrome song ids. After `until` the ones that
-    have ids go, the rest are left out."""
+    """«В Любимое» of uploaded files: they get their ♥ in their order once the library scan has given them Navidrome
+    song ids. After `until` the ones that have ids go, the rest are left out."""
     from app.api.schemas import FavoriteTarget
     from app.auth import user_navidrome
     from app.favorites import command
 
     p = job.payload_json
-    playlist_ids = p.get("playlist_ids") or ([p["playlist_id"]] if p.get("playlist_id") else [])
     async with session_scope() as s:
         user = await s.get(User, int(p["user_id"]))
         tracks = [await s.get(Track, int(i)) for i in p["track_ids"]]
@@ -237,12 +243,10 @@ async def handle_playlist_add(job: Job) -> None:
         raise RetryLater(PLAYLIST_ADD_RETRY_S, "waiting for the library scan")
     ready = [x for x in songs if x]
     if not ready:
-        log.warning("upload: no song ids for playlists %s after the wait", playlist_ids)
+        log.warning("upload: no song ids for the ♥ after the wait")
         return
     nd = user_navidrome(user)
     try:
-        for pid in playlist_ids:
-            await nd.update_playlist(pid, add=ready)
         if p.get("star"):
             # through the favorites journal, as a ♥ set by hand: mixes and «Любимое» see it the same way
             async with session_scope() as s:
@@ -250,7 +254,7 @@ async def handle_playlist_add(job: Job) -> None:
                               liked=True, client="hub", context="upload", nd=nd)
     finally:
         await nd.aclose()
-    bus.publish(user.id, "library", {"kind": "playlist", "playlist_id": playlist_ids[0] if playlist_ids else None, "star": bool(p.get("star"))})
+    bus.publish(user.id, "library", {"kind": "playlist", "playlist_id": None, "star": bool(p.get("star"))})
 
 
 def purge_stale_uploads(days: int = 7) -> int:

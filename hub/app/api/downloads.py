@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import listen
 from app.api.schemas import DownloadBatchOut, DownloadIdsIn, DownloadIn, DownloadItemOut, DownloadTrackIn, RetryIn
-from app.auth import current_user, user_navidrome
+from app.auth import current_user
 from app.catalog.models import split_ref
 from app.db import get_session
 from app.events import bus
@@ -25,17 +25,15 @@ from app.services import svc
 router = APIRouter(prefix="/api/downloads", tags=["downloads"])
 
 
-async def resolve_playlist(user: User, playlist_id: str | None, new_name: str | None) -> str | None:
+async def resolve_playlist(s: AsyncSession, user: User, playlist_id: str | None, new_name: str | None) -> str | None:
+    """The playlist a download's tracks go into: the one named, or a new one of this name."""
     if playlist_id:
         return playlist_id
-    if not new_name:
+    if not new_name or not new_name.strip():
         return None
-    nd = user_navidrome(user)
-    try:
-        pl = await nd.create_playlist(new_name.strip())
-    finally:
-        await nd.aclose()
-    return pl.get("id")
+    from app import playlists
+
+    return str((await playlists.create(s, user.id, new_name)).id)
 
 
 async def join_active(s: AsyncSession, user: User, refs: list[str], *, star: bool,
@@ -117,7 +115,7 @@ async def create_batch(
         origin, title = "favorite-app", body.favorite_event_id
     # ♥ downloads stay out of playlists: the song is in «Любимое» anyway, and the app keeps a batch's playlist
     # on the phone
-    playlist_id = None if body.star else await resolve_playlist(user, body.playlist_id, body.new_playlist_name)
+    playlist_id = None if body.star else await resolve_playlist(s, user, body.playlist_id, body.new_playlist_name)
     # every playlist asked for: the first is the batch's own, the rest only get the songs
     playlists = [] if body.star else list(dict.fromkeys(x for x in (playlist_id, *body.playlist_ids) if x))
     playlist_id = playlists[0] if playlists else None

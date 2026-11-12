@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.catalog.models import split_ref
+from app.catalog.models import CatalogTrack, split_ref
+from app.favorites import parse_time
 from app.imports.resolve import Resolution
 from app.jobs.queue import PRIORITY_IMPORT, enqueue
 from app.library.owned import ACTIVE_STATUSES, find_existing
@@ -32,6 +34,7 @@ from app.models import (
     ImportItem,
     Track,
     User,
+    utcnow,
 )
 from app.providers.base import TrackQuery
 
@@ -240,32 +243,60 @@ def like_order(items: list[ImportItem], songs: dict[int, str]) -> list[str]:
     return list(out)
 
 
+def catalog_of(it: ImportItem) -> CatalogTrack | None:
+    """An import's row of a track, as the catalog track it was matched with."""
+    raw = it.raw_json or {}
+    src, _, ident = (it.ref or "").partition(":")
+    if src not in ("dz", "hm", "mb") or not ident or not raw.get("title"):
+        return None
+    return CatalogTrack(ref=it.ref, source=src, id=ident, title=raw["title"], artist=raw.get("artist") or "",
+                        artists=raw.get("artists") or [], album_title=raw.get("album"),
+                        duration_s=raw.get("duration_s"), isrc=raw.get("isrc"), cover_url=raw.get("cover_url"),
+                        cover_small_url=raw.get("cover_url"))
+
+
 async def sync_playlists(s: AsyncSession, imp: Import) -> None:
-    user = await s.get(User, imp.user_id)
-    if user is None:
-        return
+    """The playlists of the service become playlists of the Hub: every track that was matched stands in its place,
+    in the service's order and with the date it was added there — whether the library has its file yet or not. A
+    track the catalog does not know is the only one left out."""
+    from app import playlists
+    from app.library import tracks as registry
+    from app.playlist_dates import naive
+    from app.playlists_mirror import enqueue_mirror
+
     colls = (await s.execute(select(ImportCollection).where(
         ImportCollection.import_id == imp.id, ImportCollection.kind == "playlist",
         ImportCollection.selected.is_(True)))).scalars().all()
-    if not colls:
-        return
-    nd = _nd(user)
-    try:
-        for c in colls:
-            items = list((await s.execute(select(ImportItem).where(ImportItem.collection_id == c.id))).scalars())
-            want = playlist_order(items, await _song_ids(s, items))
-            if c.nd_playlist_id is None:
-                pl = await nd.create_playlist(c.title, want[:300])
-                c.nd_playlist_id = pl.get("id")
-                if c.nd_playlist_id and len(want) > 300:
-                    await nd.set_playlist_songs(c.nd_playlist_id, want)
-            elif want != list(c.nd_song_ids or []):
-                await nd.set_playlist_songs(c.nd_playlist_id, want)
-            c.nd_song_ids = want
-    except Exception as e:
-        log.warning("import %s: playlists: %r", imp.id, e)
-    finally:
-        await nd.aclose()
+    for c in colls:
+        items = list((await s.execute(select(ImportItem).where(ImportItem.collection_id == c.id)
+                                      .order_by(ImportItem.position, ImportItem.id))).scalars())
+        want: list[int] = []
+        dates: dict[int, datetime] = {}
+        for it in items:
+            if it.status in ("skipped", "not_found", "pending"):
+                continue
+            if it.track_id is None and (cat := catalog_of(it)) is not None:
+                it.track_id = (await registry.of_catalog(s, cat, user_id=imp.user_id)).id
+            if it.track_id is None or it.track_id in dates:
+                continue
+            want.append(it.track_id)
+            dates[it.track_id] = naive(parse_time((it.raw_json or {}).get("liked_at"))) or utcnow()
+        p = await playlists.own(s, imp.user_id, c.playlist_id) if c.playlist_id else None
+        if p is None:
+            if not want:
+                continue
+            p = await playlists.create(s, imp.user_id, c.title)
+            c.playlist_id = p.id
+        elif want == list(c.given or []):
+            continue
+        for track_id in want:
+            await playlists.add(s, p, [track_id], at=dates[track_id])
+        # the service's order for its tracks; what the user put in by hand stays after them
+        rows = await playlists.items(s, p.id)
+        first = {t.id: i.id for i, t in reversed(rows)}
+        await playlists.reorder(s, p, [first[t] for t in want if t in first])
+        c.given = want
+        await enqueue_mirror(s, p.id)
     await s.flush()
 
 
@@ -355,17 +386,17 @@ async def apply_extras(s: AsyncSession, imp: Import) -> None:
             from app import tags
 
             await tags.assign_tracks(s, imp.user_id, track_ids, tag_ids)
-        if star or playlist_ids:
+        if playlist_ids:
+            from app import playlists
+            from app.playlists_mirror import enqueue_mirror
+
+            for pid in playlist_ids:
+                p = await playlists.own(s, imp.user_id, int(pid)) if str(pid).isdigit() else None
+                if p is not None and p.kind == playlists.USER and await playlists.add(s, p, track_ids):
+                    await enqueue_mirror(s, p.id)
+        if star:
             nd = _nd(user)
             try:
-                for pid in playlist_ids:
-                    have = {e.get("id") for e in (await nd.get_playlist(pid)).get("entry") or []}
-                    new = [x for x in song_ids if x not in have]
-                    for k in range(0, len(new), 300):
-                        await nd.update_playlist(pid, add=new[k:k + 300])
-                    from app import playlist_dates
-
-                    await playlist_dates.stamp(s, pid, track_ids)
                 if star:
                     from app.api.schemas import FavoriteTarget
                     from app.favorites import command
@@ -386,39 +417,6 @@ async def apply_extras(s: AsyncSession, imp: Import) -> None:
 
         bus.publish(imp.user_id, "library", {"kind": "playlist", "playlist_id": playlist_ids[0] if playlist_ids else None,
                                              "star": star})
-
-
-async def pending_counts(s: AsyncSession, user_id: int) -> dict[str, int]:
-    """playlist id -> how many of its tracks the library has not got yet (`pending_of_playlist`, counted)."""
-    rows = (await s.execute(
-        select(ImportCollection.nd_playlist_id, ImportItem.ref)
-        .join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
-        .join(Import, Import.id == ImportItem.import_id)
-        .where(Import.user_id == user_id, ImportCollection.kind == "playlist", ImportCollection.selected.is_(True),
-               ImportCollection.nd_playlist_id.is_not(None), ImportItem.ref.is_not(None),
-               ImportItem.status.in_(("waiting", "queued"))).distinct())).all()
-    out: dict[str, int] = {}
-    for playlist_id, _ref in rows:
-        out[playlist_id] = out.get(playlist_id, 0) + 1
-    return out
-
-
-async def pending_of_playlist(s: AsyncSession, user_id: int, playlist_id: str) -> list[ImportItem]:
-    """Tracks of the import a playlist came with that the library has not got yet, in the service's order."""
-    rows = (await s.execute(
-        select(ImportItem).join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
-        .join(Import, Import.id == ImportItem.import_id)
-        .where(Import.user_id == user_id, ImportCollection.kind == "playlist", ImportCollection.selected.is_(True),
-               ImportCollection.nd_playlist_id == playlist_id, ImportItem.ref.is_not(None),
-               ImportItem.status.in_(("waiting", "queued")))
-        .order_by(ImportItem.position, ImportItem.id))).scalars()
-    seen: set[str] = set()
-    out = []
-    for it in rows:
-        if it.ref not in seen:
-            seen.add(it.ref)
-            out.append(it)
-    return out
 
 
 async def album_owned(s: AsyncSession, ref: str | None) -> bool:

@@ -1,13 +1,20 @@
-"""«В плейлисты»: which of the user's playlists have a song, and putting it into some and out of others at once."""
+"""Playlists of the Hub's own (app/playlists.py, app/api/playlists.py): where a song is, tracks without a file in
+their places, and the mirror Navidrome gets (app/playlists_mirror.py)."""
 
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 
-from tests.support import app_client
+from app.catalog.models import CatalogTrack
+from app.library.navidrome import SubsonicError
+from tests.test_plays import add_track
+from tests.test_plays import env as env  # the fixture: «Кино — Группа крови» (ndK, dz:100) and «Кто-то — Своё» (ndX)
 
 
 class FakeNd:
+    """Navidrome's playlists, as much of them as the mirror touches."""
+
     def __init__(self, state: dict):
         self.state = state
 
@@ -15,119 +22,225 @@ class FakeNd:
         pass
 
     async def get_playlists(self):
-        self.state["calls"].append("list")
-        return [{"id": pid, "name": p["name"], "songCount": len(p["songs"]), "changed": p["changed"], "owner": p.get("owner")}
-                for pid, p in self.state["playlists"].items()]
+        return [{"id": pid, "name": p["name"], "owner": p.get("owner")} for pid, p in self.state["playlists"].items()]
 
     async def get_playlist(self, pid):
-        self.state["calls"].append(f"get:{pid}")
+        if pid not in self.state["playlists"]:
+            raise SubsonicError(70, "not found")
         p = self.state["playlists"][pid]
-        return {"id": pid, "name": p["name"], "entry": [{"id": x} for x in p["songs"]]}
+        return {"id": pid, "name": p["name"], "coverArt": f"pl-{pid}", "entry": [{"id": x} for x in p["songs"]]}
 
-    async def update_playlist(self, pid, *, add=None, remove_indexes=None, **kw):
-        p = self.state["playlists"][pid]
-        p["songs"] += add or []
-        for i in sorted(remove_indexes or [], reverse=True):
-            del p["songs"][i]
-        p["changed"] = "2026-11-11T12:00:00Z"
+    async def create_playlist(self, name, song_ids=None):
+        self.state["made"] = self.state.get("made", 0) + 1
+        pid = f"nd{self.state['made']}"
+        self.state["playlists"][pid] = {"name": name, "songs": list(song_ids or [])}
+        return {"id": pid, "name": name}
+
+    async def replace_playlist_songs(self, pid, song_ids):
+        self.state["playlists"][pid]["songs"] = list(song_ids)
+        self.state["writes"] += 1
+
+    async def update_playlist(self, pid, *, name=None, **kw):
+        if name:
+            self.state["playlists"][pid]["name"] = name
+
+    async def delete_playlist(self, pid):
+        self.state["playlists"].pop(pid, None)
 
 
 @pytest.fixture
-async def env(hub_env, monkeypatch):
-    import httpx
-    import respx
+def nd(monkeypatch):
+    from app import playlists_mirror
 
-    from app.api import medialib, playlists
-    from app.main import create_app
+    state = {"playlists": {}, "writes": 0}
+    monkeypatch.setattr(playlists_mirror, "user_navidrome", lambda user: FakeNd(state))
+    return state
 
-    state = {"calls": [], "playlists": {
-        "a": {"name": "Уважаемые", "songs": ["s1", "s2", "s1"], "changed": "2026-11-01T00:00:00Z"},
-        "b": {"name": "JAPAN", "songs": ["s3"], "changed": "2026-11-10T00:00:00Z"},
-        "c": {"name": "Чужой", "songs": ["s1"], "changed": "2026-11-11T00:00:00Z", "owner": "someone"},
-    }}
-    playlists._songs.clear()
-    monkeypatch.setattr(medialib, "user_navidrome", lambda user: FakeNd(state))
-    app = create_app()
-    async with app.router.lifespan_context(app):
-        with respx.mock(assert_all_called=False) as mock:
-            mock.route(host="navidrome.test").mock(return_value=httpx.Response(200, json={"subsonic-response": {
-                "status": "ok", "version": "1.16.1", "user": {"adminRole": True}}}))
-            async with app_client(app) as client:
-                yield client, state
+
+async def new_playlist(c, name: str) -> str:
+    r = await c.post("/api/playlists", json={"name": name})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+async def catalog_track(n: int, title: str) -> int:
+    """A track the Hub knows from the catalog and has no file of."""
+    from app.db import session_scope
+    from app.library import tracks
+
+    async with session_scope() as s:
+        return (await tracks.of_catalog(s, CatalogTrack(
+            ref=f"dz:{n}", source="dz", id=str(n), title=title, artist="Ноунейм", duration_s=180,
+            cover_url=f"https://cover/{n}.jpg", album_title="Альбом"))).id
 
 
 async def test_where_a_song_is_and_changing_it_at_once(env):
-    c, state = env
-    r = (await c.get("/api/playlists/of-song", params={"nd_song_id": "s1"})).json()
-    # the user's own playlists, the one changed last first
-    assert [(x["name"], x["has"], x["song_count"]) for x in r] == [("JAPAN", False, 1), ("Уважаемые", True, 3)]
-    state["calls"].clear()
-    await c.get("/api/playlists/of-song", params={"nd_song_id": "s2"})
-    assert state["calls"] == ["list"]  # an unchanged playlist is not read again
+    c = env["client"]
+    a, b = await new_playlist(c, "Уважаемые"), await new_playlist(c, "JAPAN")
+    assert (await c.post(f"/api/playlists/{a}/add", json={"song_ids": ["ndK", "ndX"]})).json() == {"ok": True, "added": 2}
+    r = (await c.get("/api/playlists/of-song", params={"nd_song_id": "ndK"})).json()
+    assert {x["name"]: (x["has"], x["song_count"]) for x in r} == {"Уважаемые": (True, 2), "JAPAN": (False, 0)}
+    assert r[0]["name"] == "Уважаемые"  # the one changed last first
 
-    r = (await c.post("/api/playlists/membership", json={"nd_song_id": "s1", "add": ["b", "b"], "remove": ["a"]})).json()
-    assert [(x["name"], x["has"]) for x in r] == [("Уважаемые", False), ("JAPAN", True)]
-    assert state["playlists"]["a"]["songs"] == ["s2"]  # both places of the song are gone
-    assert state["playlists"]["b"]["songs"] == ["s3", "s1"]
-    await c.post("/api/playlists/membership", json={"nd_song_id": "s1", "add": ["b"]})
-    assert state["playlists"]["b"]["songs"] == ["s3", "s1"]  # not added twice
+    r = (await c.post("/api/playlists/membership", json={"nd_song_id": "ndK", "add": [b, b], "remove": [a]})).json()
+    assert {x["name"]: x["has"] for x in r} == {"Уважаемые": False, "JAPAN": True}
+    await c.post("/api/playlists/membership", json={"nd_song_id": "ndK", "add": [b]})
+    assert [t["nd_song_id"] for t in (await c.get(f"/api/playlists/{b}")).json()["tracks"]] == ["ndK"]  # not added twice
+    assert (await c.post("/api/playlists/membership", json={"nd_song_id": "nope", "add": [b]})).status_code == 404
+    assert (await c.get("/api/playlists/members")).json() == {"song_ids": ["ndK", "ndX"]}
 
 
 async def test_several_songs_at_once(env):
-    c, state = env
-    r = (await c.post("/api/playlists/of-songs", json={"nd_song_ids": ["s1", "s2", "s3", "s9"]})).json()
-    assert [(x["name"], x["count"]) for x in r] == [("JAPAN", 1), ("Уважаемые", 2)]  # distinct songs, not places
-    r = (await c.post("/api/playlists/membership-many", json={"nd_song_ids": ["s1", "s3", "s9"], "add": ["b"], "remove": ["a"]})).json()
-    assert state["playlists"]["b"]["songs"] == ["s3", "s1", "s9"]  # only the missing ones, in the order picked
-    assert state["playlists"]["a"]["songs"] == ["s2"]  # every place of every picked song
-    assert {x["name"]: x["count"] for x in r} == {"JAPAN": 3, "Уважаемые": 0}
+    c = env["client"]
+    await add_track("Третий", "Трек", "ndZ")
+    a, b = await new_playlist(c, "Уважаемые"), await new_playlist(c, "JAPAN")
+    await c.post(f"/api/playlists/{a}/add", json={"song_ids": ["ndK", "ndX"]})
+    await c.post(f"/api/playlists/{b}/add", json={"song_ids": ["ndZ"]})
+    r = (await c.post("/api/playlists/of-songs", json={"nd_song_ids": ["ndK", "ndX", "ndZ", "nope"]})).json()
+    assert {x["name"]: x["count"] for x in r} == {"JAPAN": 1, "Уважаемые": 2}
+    r = (await c.post("/api/playlists/membership-many",
+                      json={"nd_song_ids": ["ndK", "ndZ"], "add": [b], "remove": [a]})).json()
+    assert {x["name"]: x["count"] for x in r} == {"JAPAN": 2, "Уважаемые": 0}
+    assert [t["nd_song_id"] for t in (await c.get(f"/api/playlists/{b}")).json()["tracks"]] == ["ndZ", "ndK"]
+    assert [t["nd_song_id"] for t in (await c.get(f"/api/playlists/{a}")).json()["tracks"]] == ["ndX"]
 
 
-async def test_a_playlist_is_renamed_and_given_a_picture_of_its_own(env):
+async def test_a_track_without_a_file_stands_in_its_place(env):
+    c = env["client"]
+    pid = await new_playlist(c, "Дорога")
+    waiting = await catalog_track(555, "Ещё не скачан")
+    await c.post(f"/api/playlists/{pid}/add", json={"song_ids": ["ndK"]})
+    await c.post(f"/api/playlists/{pid}/add", json={"library_track_ids": [waiting]})
+    await c.post(f"/api/playlists/{pid}/add", json={"song_ids": ["ndX"]})
+
+    p = (await c.get(f"/api/playlists/{pid}")).json()
+    assert (p["song_count"], p["pending_count"]) == (2, 1)
+    assert [(t["title"], t["owned"]) for t in p["tracks"]] == [("Группа крови", True), ("Ещё не скачан", False), ("Своё", True)]
+    mid = p["tracks"][1]
+    assert (mid["ref"], mid["library_track_id"], mid["cover_url"], mid["nd_song_id"]) == ("dz:555", waiting, "https://cover/555.jpg", None)
+    assert all(t["added_at"] for t in p["tracks"])
+    listed = next(x for x in (await c.get("/api/playlists")).json() if x["id"] == pid)
+    assert (listed["song_count"], listed["pending_count"]) == (2, 1)
+
+    # taken out by its place, like any other
+    assert (await c.post(f"/api/playlists/{pid}/remove", json={"indexes": [1, 1]})).json() == {"ok": True}
+    assert [t["title"] for t in (await c.get(f"/api/playlists/{pid}")).json()["tracks"]] == ["Группа крови", "Своё"]
+    assert (await c.post(f"/api/playlists/{pid}/remove", json={"indexes": []})).status_code == 422
+
+
+async def test_a_playlist_is_renamed_given_a_picture_and_deleted(env):
     import io
 
     from PIL import Image
 
-    c, state = env
-    state["playlists"]["a"]["coverArt"] = "pl-a"
-
-    async def get_playlist(self, pid):
-        p = state["playlists"][pid]
-        return {"id": pid, "name": p["name"], "owner": p.get("owner"), "songCount": len(p["songs"]),
-                "coverArt": p.get("coverArt"), "entry": [{"id": x} for x in p["songs"]]}
-
-    async def update_playlist(self, pid, *, name=None, add=None, remove_indexes=None, **kw):
-        if name:
-            state["playlists"][pid]["name"] = name
-
-    FakeNd.get_playlist, FakeNd.update_playlist = get_playlist, update_playlist
-    r = (await c.put("/api/playlists/a", json={"name": "  Любимые  "})).json()
-    assert r["name"] == "Любимые" and state["playlists"]["a"]["name"] == "Любимые"
-    assert r["cover_url"] == "/api/nd/cover/pl-a?v=3"  # Navidrome's own picture, until the user gives one
-    assert (await c.put("/api/playlists/c", json={"name": "x"})).status_code == 404  # someone else's
-    assert (await c.put("/api/playlists/a", json={"name": "   "})).status_code in (400, 422)
+    c = env["client"]
+    pid = await new_playlist(c, "Дорога")
+    r = (await c.put(f"/api/playlists/{pid}", json={"name": "  Любимые  дороги "})).json()
+    assert r["name"] == "Любимые дороги" and r["cover_url"] is None
+    assert (await c.put(f"/api/playlists/{pid}", json={"name": "   "})).status_code in (400, 422)
+    assert (await c.put("/api/playlists/99999", json={"name": "x"})).status_code == 404
+    assert (await c.get("/api/playlists/not-a-number")).status_code == 404
 
     png = io.BytesIO()
     Image.new("RGB", (900, 500), "red").save(png, "PNG")
-    r = (await c.put("/api/playlists/a/cover", files={"file": ("x.png", png.getvalue(), "image/png")})).json()
-    assert r["cover_url"].startswith("/api/playlists/a/cover?v=")
+    r = (await c.put(f"/api/playlists/{pid}/cover", files={"file": ("x.png", png.getvalue(), "image/png")})).json()
+    assert r["cover_url"].startswith(f"/api/playlists/{pid}/cover?v=")
     got = await c.get(r["cover_url"])
     assert got.headers["content-type"] == "image/jpeg" and Image.open(io.BytesIO(got.content)).size == (500, 500)
-    assert (await c.put("/api/playlists/a/cover", files={"file": ("x.txt", b"not a picture", "text/plain")})).status_code == 400
-    r = (await c.delete("/api/playlists/a/cover")).json()
-    assert r["cover_url"] == "/api/nd/cover/pl-a?v=3" and (await c.get("/api/playlists/a/cover")).status_code == 404
+    assert (await c.put(f"/api/playlists/{pid}/cover", files={"file": ("x.txt", b"not a picture", "text/plain")})).status_code == 400
+    assert (await c.delete(f"/api/playlists/{pid}/cover")).json()["cover_url"] is None
+    assert (await c.get(f"/api/playlists/{pid}/cover")).status_code == 404
+
+    assert (await c.delete(f"/api/playlists/{pid}")).json() == {"ok": True}
+    assert (await c.get(f"/api/playlists/{pid}")).status_code == 404
+    assert (await c.get("/api/playlists")).json() == []
 
 
-async def test_the_songs_that_are_in_some_playlist(env):
-    """What a row's «+ / ✓» goes by: the songs of the user's own playlists, «Микс дня» apart."""
-    from sqlalchemy import select
+async def test_the_mirror_gets_the_songs_and_what_other_apps_did_comes_back(env, nd):
+    from app import playlists
+    from app.db import session_scope
+    from app.playlists_mirror import mirror
 
-    from app import db
-    from app.models import MixSettings, User
+    c = env["client"]
+    await add_track("Третий", "Трек", "ndZ")
+    pid = int(await new_playlist(c, "Дорога"))
+    waiting = await catalog_track(555, "Ещё не скачан")
+    await c.post(f"/api/playlists/{pid}/add", json={"song_ids": ["ndK"]})
+    await c.post(f"/api/playlists/{pid}/add", json={"library_track_ids": [waiting]})
+    await c.post(f"/api/playlists/{pid}/add", json={"song_ids": ["ndX"]})
 
-    c, _state = env
-    assert (await c.get("/api/playlists/members")).json() == {"song_ids": ["s1", "s2", "s3"]}
-    async with db.session_scope() as s:
-        user = (await s.execute(select(User))).scalars().first()
-        s.add(MixSettings(user_id=user.id, nd_playlist_id="b"))
-    assert (await c.get("/api/playlists/members")).json() == {"song_ids": ["s1", "s2"]}
+    await mirror(pid)
+    assert nd["playlists"] == {"nd1": {"name": "Дорога", "songs": ["ndK", "ndX"]}}  # only what has a file
+    writes = nd["writes"]
+    await mirror(pid)
+    assert nd["writes"] == writes  # nothing changed: nothing is written
+
+    # another app adds a song and takes one out: both come back, the track without a file stays in its place
+    nd["playlists"]["nd1"]["songs"] = ["ndX", "ndZ"]
+    await mirror(pid)
+    async with session_scope() as s:
+        assert [t.title for _, t in await playlists.items(s, pid)] == ["Ещё не скачан", "Своё", "Трек"]
+    assert nd["playlists"]["nd1"]["songs"] == ["ndX", "ndZ"]
+
+    # a new name here goes there; a mirror deleted there is made again
+    await c.put(f"/api/playlists/{pid}", json={"name": "Путь"})
+    await mirror(pid)
+    assert nd["playlists"]["nd1"]["name"] == "Путь"
+    del nd["playlists"]["nd1"]
+    await mirror(pid)
+    assert nd["playlists"] == {"nd2": {"name": "Путь", "songs": ["ndX", "ndZ"]}}
+    p = (await c.get(f"/api/playlists/{pid}")).json()
+    assert p["cover_url"] == "/api/nd/cover/pl-nd2?v=2"  # the picture Navidrome makes of the mirror's albums
+
+
+async def test_playlists_a_library_had_before_are_taken_over_once(env, nd):
+    from app import playlists
+    from app.db import session_scope
+    from app.models import Import, ImportCollection, ImportItem, PlaylistCover
+    from app.playlists_mirror import adopt
+
+    nd["playlists"] = {"old1": {"name": "старики оценят", "songs": ["ndX", "ndK"]},
+                       "old2": {"name": "Чужой", "songs": ["ndK"], "owner": "someone"}}
+    async with session_scope() as s:
+        imp = Import(user_id=1, source="spotify", method="csv", status="done")
+        s.add(imp)
+        await s.flush()
+        coll = ImportCollection(import_id=imp.id, kind="playlist", external_id="x", title="старики оценят",
+                                nd_playlist_id="old1")
+        s.add(coll)
+        await s.flush()
+        s.add(ImportItem(import_id=imp.id, collection_id=coll.id, position=5, external_id="e1", ref="dz:777",
+                         status="waiting", raw_json={"title": "Ждёт", "artist": "Кто-то", "duration_s": 200,
+                                                     "liked_at": "2024-09-08T12:51:22Z"}))
+        s.add(PlaylistCover(nd_playlist_id="old1", image=b"jpeg", key="k1"))
+        coll_id = coll.id
+
+    assert await adopt(1) == 1 and await adopt(1) == 0  # once
+    async with session_scope() as s:
+        (p,) = await playlists.of_user(s, 1)
+        rows = await playlists.items(s, p.id)
+        assert (p.name, p.nd_playlist_id, p.mirrored) == ("старики оценят", "old1", ["ndX", "ndK"])
+        assert [(t.title, t.path is not None) for _, t in rows] == [("Своё", True), ("Группа крови", True), ("Ждёт", False)]
+        assert rows[2][0].added_at.year == 2024 and rows[2][1].ref == "dz:777"
+        assert (await s.get(ImportCollection, coll_id)).playlist_id == p.id
+        assert (await s.execute(select(PlaylistCover.nd_playlist_id))).scalars().all() == [str(p.id)]
+
+
+async def test_a_track_without_a_file_is_tagged_like_any_other(env):
+    """What the whole of 2.0 was started for: a tag on a playlist's track the library has no file of yet."""
+    c = env["client"]
+    waiting = await catalog_track(555, "Ещё не скачан")
+    tag = (await c.post("/api/tags", json={"name": "Пляжный"})).json()["id"]
+    r = await c.post("/api/tags/assign", json={"nd_song_ids": [f"t:{waiting}", "ndK"], "add": [tag], "remove": []})
+    assert r.status_code == 200, r.text
+    tags = r.json()["map"]
+    assert tag in tags[f"t:{waiting}"] and tag in tags["ndK"]  # one by the Hub's id, one by its Navidrome song
+
+    # the file arrives: the tag is on the same track, now named by its song
+    from app.db import session_scope
+    from app.models import TrackFile
+
+    async with session_scope() as s:
+        s.add(TrackFile(track_id=waiting, uid="u-555", path="a/555.mp3", nd_song_id="nd555"))
+    tags = (await c.get("/api/tags")).json()["map"]
+    assert tag in tags["nd555"] and f"t:{waiting}" not in tags

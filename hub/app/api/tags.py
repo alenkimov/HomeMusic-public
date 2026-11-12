@@ -27,7 +27,7 @@ class TagOut(BaseModel):
 
 class TagsOut(BaseModel):
     groups: list[dict[str, Any]]  # {id, title, tags: [TagOut]}
-    map: dict[str, list[int]]  # Navidrome song id -> its tags
+    map: dict[str, list[int]]  # track (`tags.key_of`: its Navidrome song, else "t:<track id>") -> its tags
 
 
 class TagCreateIn(BaseModel):
@@ -35,7 +35,7 @@ class TagCreateIn(BaseModel):
 
 
 class TagAssignIn(BaseModel):
-    nd_song_ids: list[str] = Field(min_length=1, max_length=5000)
+    nd_song_ids: list[str] = Field(min_length=1, max_length=5000)  # tracks, named as `tags.key_of` names them
     add: list[int] = Field(default_factory=list, max_length=100)
     remove: list[int] = Field(default_factory=list, max_length=100)
 

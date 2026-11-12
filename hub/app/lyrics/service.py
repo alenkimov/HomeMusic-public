@@ -76,7 +76,7 @@ def enabled(settings: dict[str, Any]) -> list[str]:
 def query_of(track: Track, album: str | None = None) -> Query:
     main = track.artist.split(",")[0].strip() or track.artist
     return Query(artist=main, title=track.title, album=album, duration_s=track.duration_s,
-                 path=get_settings().library_dir / track.path)
+                 path=get_settings().library_dir / track.path if track.path else None)
 
 
 async def track_of(s: AsyncSession, *, nd_song_id: str | None = None, ref: str | None = None) -> Track | None:

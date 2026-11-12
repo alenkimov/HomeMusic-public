@@ -101,16 +101,33 @@ async def env(hub_env, monkeypatch):
 
 
 async def add_library_track(raw: dict, nd_song_id: str) -> int:
+    from sqlalchemy import select
+
     from app.db import session_scope
     from app.matching.normalize import fingerprint
+    from app.models import Track, TrackFile
 
     async with session_scope() as s:
+        # as the importer does: a file of a song the Hub knows already (it waits in a playlist) joins that track
+        known = (await s.execute(select(Track).where(
+            Track.fingerprint == fingerprint(raw["artist"], raw["title"])).order_by(Track.id).limit(1))).scalar_one_or_none()
+        if known is not None:
+            s.add(TrackFile(track_id=known.id, uid=str(uuid.uuid4()), path=f"{raw['artist']}/{raw['title']}.mp3",
+                            nd_song_id=nd_song_id))
+            await s.flush()
+            return known.id
         t = filed_track(uid=str(uuid.uuid4()), path=f"{raw['artist']}/{raw['title']}.mp3", nd_song_id=nd_song_id,
                   artist=raw["artist"], title=raw["title"], duration_s=raw["duration_s"],
                   fingerprint=fingerprint(raw["artist"], raw["title"]))
         s.add(t)
         await s.flush()
         return t.id
+
+
+async def playlist_tracks(c, name: str) -> list[tuple[str, str | None]]:
+    """The Hub's playlist of this name: (title, the Navidrome song of its file or None) of its tracks, in order."""
+    pid = next(x["id"] for x in (await c.get("/api/playlists")).json() if x["name"] == name)
+    return [(x["title"], x["nd_song_id"]) for x in (await c.get(f"/api/playlists/{pid}")).json()["tracks"]]
 
 
 async def run_imports(max_jobs: int = 50) -> None:
@@ -227,8 +244,9 @@ async def test_economy_import_likes_and_playlists_in_order(env):
     assert rows[playlist, "Город золотой"]["nd_song_id"] == "ndA"
     assert rows[imp["collections"][4]["id"], "Что-то"]["status"] == "skipped"  # a dislike is only kept
 
-    # the playlist holds what the library has, in Yandex's order; ♥ — again one by one from the oldest like
-    assert state["playlists"] == {"pl1": {"name": "Дорога", "songs": ["ndA", "ndB"]}}
+    # the playlist is the Hub's: every matched track in Yandex's order, the one the library has no file of in its
+    # place; the track the catalog does not know is the only one left out. ♥ — one by one from the oldest like
+    assert await playlist_tracks(c, "Дорога") == [("Группа крови", None), ("Город золотой", "ndA"), ("Осень", "ndB")]
     assert state["star_log"][-2:] == [("star", ["ndA"]), ("star", ["ndB"])]
     assert state["stars"] == ["ndA", "ndB"]
     # the liked track the library lacks shows ♥ by its catalog ref
@@ -256,7 +274,7 @@ async def test_economy_import_likes_and_playlists_in_order(env):
         item.status, item.track_id = "done", track_id
         await imports_done(s, [item])
     await run_imports()
-    assert state["playlists"]["pl1"]["songs"] == ["ndC", "ndA", "ndB"]
+    assert await playlist_tracks(c, "Дорога") == [("Группа крови", "ndC"), ("Город золотой", "ndA"), ("Осень", "ndB")]
     assert {x["status"] for x in await items(c, imp) if x["title"] == "Группа крови" and x["kind"] == "track"} == {"done"}
     # ♥ in Yandex's order: Группа крови was liked after Город золотой and before Осень, so Осень is starred again after it
     assert state["star_log"][-3:] == [("unstar", ["ndC", "ndB"]), ("star", ["ndC"]), ("star", ["ndB"])]
@@ -279,28 +297,25 @@ async def test_what_waits_shows_in_its_playlist_and_extras_follow_the_tracks(env
 
     c, state = env["client"], env["state"]
     imp = await prepared(c)
-    state["playlists"]["mine"] = {"name": "Моё", "songs": ["ndB"]}  # a playlist of the user's own; Осень is in it
+    mine = (await c.post("/api/playlists", json={"name": "Моё"})).json()["id"]  # a playlist of the user's own
+    await c.post(f"/api/playlists/{mine}/add", json={"song_ids": ["ndB"]})  # Осень is in it
     tag = (await c.post("/api/tags", json={"name": "из Яндекса"})).json()["id"]
     r = await c.post(f"/api/imports/{imp['id']}/start", json={
         "collection_ids": [x["id"] for x in imp["collections"]], "mode": "economy",
-        "star": True, "playlist_ids": ["mine"], "tag_ids": [tag]})
+        "star": True, "playlist_ids": [mine], "tag_ids": [tag]})
     assert r.status_code == 200, r.text
     await run_imports()
 
-    # the playlist that came with the import: Navidrome has what the library has, the page shows the rest too
-    pl = next(k for k, v in state["playlists"].items() if v["name"] == "Дорога")
-    page = (await c.get(f"/api/playlists/{pl}")).json()
-    assert [x["nd_song_id"] for x in page["tracks"]] == ["ndA", "ndB"]
-    assert [(x["ref"], x["title"], x["owned"]) for x in page["pending"]] == [("dz:100", "Группа крови", False)]
-    assert (await c.get("/api/playlists/mine")).json()["pending"] == []  # not an import's playlist
+    # the playlist that came with the import: the track the library has no file of stands in its place
+    assert await playlist_tracks(c, "Дорога") == [("Группа крови", None), ("Город золотой", "ndA"), ("Осень", "ndB")]
 
     # «После переноса»: what the library has got its place in the other playlist (once), its tag and its ♥
-    assert state["playlists"]["mine"]["songs"] == ["ndB", "ndA"]
+    assert await playlist_tracks(c, "Моё") == [("Осень", "ndB"), ("Город золотой", "ndA")]
     tags = (await c.get("/api/tags")).json()["map"]
     assert tag in tags["ndA"] and tag in tags["ndB"]
     assert {"ndA", "ndB"} <= set(state["stars"])
 
-    # the track that waited arrives: it leaves `pending` and gets the same; nothing is done twice
+    # the track that waited gets its file: it gets the same; nothing is done twice
     await c.post("/api/plays/events", json={"events": [{
         "event_id": "s1", "ts": "2026-10-23T10:00:00Z", "kind": "start", "ref": "dz:100", "client": "app/1.6.0"}]})
     [dl] = (await c.get("/api/downloads")).json()
@@ -310,9 +325,8 @@ async def test_what_waits_shows_in_its_playlist_and_extras_follow_the_tracks(env
         item.status, item.track_id = "done", track_id
         await imports_done(s, [item])
     await run_imports()
-    page = (await c.get(f"/api/playlists/{pl}")).json()
-    assert [x["nd_song_id"] for x in page["tracks"]] == ["ndC", "ndA", "ndB"] and page["pending"] == []
-    assert state["playlists"]["mine"]["songs"] == ["ndB", "ndA", "ndC"]
+    assert await playlist_tracks(c, "Дорога") == [("Группа крови", "ndC"), ("Город золотой", "ndA"), ("Осень", "ndB")]
+    assert await playlist_tracks(c, "Моё") == [("Осень", "ndB"), ("Город золотой", "ndA"), ("Группа крови", "ndC")]
     assert tag in (await c.get("/api/tags")).json()["map"]["ndC"] and "ndC" in state["stars"]
 
 

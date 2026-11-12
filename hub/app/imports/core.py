@@ -138,7 +138,7 @@ async def import_out(s: AsyncSession, imp: Import) -> ImportOut:
         stats=await stats(s, imp, list(colls)),
         collections=[ImportCollectionOut(id=c.id, kind=c.kind, title=c.title, selected=c.selected,
                                          count=counts.get(c.id, (0, 0))[0], owned=counts.get(c.id, (0, 0))[1],
-                                         cover_url=c.cover_url, nd_playlist_id=c.nd_playlist_id) for c in colls],
+                                         cover_url=c.cover_url, nd_playlist_id=str(c.playlist_id) if c.playlist_id else None) for c in colls],
         created_at=imp.created_at, started_at=imp.started_at, finished_at=imp.finished_at,
     )
 

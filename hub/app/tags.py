@@ -107,10 +107,9 @@ async def sync(s: AsyncSession, track_ids: list[int] | None = None) -> None:
 
 
 async def catalog(s: AsyncSession, user_id: int) -> dict[str, Any]:
-    """The user's tags by group, with how many library tracks each has."""
+    """The user's tags by group, with how many tracks each has."""
     counts = dict((await s.execute(
-        select(TrackTag.tag_id, func.count(TrackTag.track_id)).join(Track, Track.id == TrackTag.track_id)
-        .where(Track.nd_song_id.is_not(None)).group_by(TrackTag.tag_id))).all())
+        select(TrackTag.tag_id, func.count(TrackTag.track_id)).group_by(TrackTag.tag_id))).all())
     tags = list((await s.execute(select(Tag).where(visible(user_id)))).scalars())
     groups = []
     for gid, title in GROUPS.items():
@@ -121,22 +120,33 @@ async def catalog(s: AsyncSession, user_id: int) -> dict[str, Any]:
     return {"groups": groups}
 
 
+TRACK_KEY = "t:"  # how a page names a track that has no Navidrome song: "t:<the Hub's track id>"
+
+
+def key_of(track_id: int, nd_song_id: str | None) -> str:
+    """What a page calls a track when it asks about its tags: the Navidrome song of its file, else the Hub's own
+    id of the track (a track with no file yet has tags like any other)."""
+    return nd_song_id or f"{TRACK_KEY}{track_id}"
+
+
 async def tag_map(s: AsyncSession, user_id: int) -> dict[str, list[int]]:
-    """Navidrome song id -> the ids of its tags (the ones this user sees)."""
+    """track (`key_of`) -> the ids of its tags (the ones this user sees)."""
     out: dict[str, list[int]] = {}
-    q = (select(Track.nd_song_id, TrackTag.tag_id).join(TrackTag, TrackTag.track_id == Track.id)
-         .join(Tag, Tag.id == TrackTag.tag_id).where(Track.nd_song_id.is_not(None), visible(user_id)))
-    for song, tid in (await s.execute(q)).all():
-        out.setdefault(song, []).append(tid)
+    q = (select(Track.id, Track.nd_song_id, TrackTag.tag_id).join(TrackTag, TrackTag.track_id == Track.id)
+         .join(Tag, Tag.id == TrackTag.tag_id).where(visible(user_id)))
+    for track_id, song, tid in (await s.execute(q)).all():
+        out.setdefault(key_of(track_id, song), []).append(tid)
     return out
 
 
-async def assign(s: AsyncSession, user_id: int, nd_song_ids: list[str], add: list[int], remove: list[int]) -> int:
-    """Put tags on tracks and take others off, by hand. Returns how many tracks it was."""
-    track_ids: list[int] = []
-    for i in range(0, len(nd_song_ids), CHUNK):
-        track_ids += list((await s.execute(select(Track.id).where(Track.nd_song_id.in_(nd_song_ids[i:i + CHUNK])))).scalars())
-    return await assign_tracks(s, user_id, track_ids, add, remove)
+async def assign(s: AsyncSession, user_id: int, keys: list[str], add: list[int], remove: list[int]) -> int:
+    """Put tags on tracks (named as `key_of` names them) and take others off, by hand. Returns how many tracks it
+    was."""
+    track_ids = [int(k[len(TRACK_KEY):]) for k in keys if k.startswith(TRACK_KEY) and k[len(TRACK_KEY):].isdigit()]
+    songs = [k for k in keys if not k.startswith(TRACK_KEY)]
+    for i in range(0, len(songs), CHUNK):
+        track_ids += list((await s.execute(select(Track.id).where(Track.nd_song_id.in_(songs[i:i + CHUNK])))).scalars())
+    return await assign_tracks(s, user_id, list(dict.fromkeys(track_ids)), add, remove)
 
 
 async def assign_tracks(s: AsyncSession, user_id: int, track_ids: list[int], add: list[int],

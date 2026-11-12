@@ -23,6 +23,7 @@ def _import_handlers() -> None:
     import app.jobs.downloads
     import app.mixes.core
     import app.mixes.discover
+    import app.playlists_mirror
 
     try:
         import app.ai.pipeline  # noqa: F401
@@ -63,6 +64,9 @@ async def lifespan(app: FastAPI):
         from app.releases import loop as releases_loop
 
         tasks.append(asyncio.create_task(releases_loop(), name="releases"))
+        from app.playlists_mirror import loop as playlists_loop
+
+        tasks.append(asyncio.create_task(playlists_loop(), name="playlists"))
         from app.mixes.discover import loop as discoveries_loop
 
         tasks.append(asyncio.create_task(discoveries_loop(), name="discoveries"))

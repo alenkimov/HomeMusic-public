@@ -1,5 +1,9 @@
+"""Playlists (app/playlists.py): the Hub's own. A playlist's `id` here is the Hub's; Navidrome has a mirror of it
+(app/playlists_mirror.py) and is not asked about anything on these pages except what its songs look like."""
+
 import asyncio
 import io
+import logging
 import uuid
 from urllib.parse import quote
 
@@ -7,8 +11,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import playlist_dates
-from app.api.medialib import nd_call, songs_out
+from app import playlists
+from app.api.medialib import songs_out
 from app.api.schemas import (
     NdSongOut,
     PlaylistAddIn,
@@ -23,97 +27,155 @@ from app.api.schemas import (
     PlaylistRenameIn,
     PlaylistSongsIn,
 )
-from app.auth import current_user, user_navidrome
-from app.db import get_session, session_scope
-from app.models import PlaylistCover, Track, User
+from app.auth import current_user
+from app.db import get_session
+from app.jobs.queue import notify
+from app.library import songs as library_songs
+from app.models import Playlist, PlaylistCover, Track, TrackFile, User
+from app.playlists_mirror import MIX, drop_mirror, enqueue_mirror
 
 router = APIRouter(prefix="/api/playlists", tags=["playlists"])
+log = logging.getLogger(__name__)
 
 
 COVER_PX = 600
 COVER_MAX_BYTES = 20 * 1024 * 1024
+LISTED = (playlists.USER, MIX)  # what the list of playlists shows («Любимое» has a page of its own)
 
 
-async def _custom() -> dict[str, str]:
-    """playlist id -> the key of the picture the user gave it."""
-    async with session_scope() as s:
-        return dict((await s.execute(select(PlaylistCover.nd_playlist_id, PlaylistCover.key))).all())
+def _id(playlist_id: str) -> int:
+    if not playlist_id.isdigit():
+        raise HTTPException(404, "Плейлист не найден")
+    return int(playlist_id)
 
 
-def pl_out(p: dict, custom: dict[str, str] | None = None) -> PlaylistOut:
-    key = (custom or {}).get(p["id"])
-    count = p.get("songCount", 0)
-    if key:
-        cover = f"/api/playlists/{quote(p['id'], safe='')}/cover?v={key}"
-    elif p.get("coverArt") and count:
-        cover = f"/api/nd/cover/{quote(p['coverArt'], safe='')}?v={count}"  # it changes with the songs
-    else:
-        cover = None
-    return PlaylistOut(id=p["id"], name=p.get("name", ""), song_count=count,
-                       duration_s=p.get("duration", 0), cover_art=p.get("coverArt"), cover_url=cover)
+async def _own(s: AsyncSession, user: User, playlist_id: str, *, change: bool = False) -> Playlist:
+    """The user's playlist; `change`: one that is theirs to change («Микс дня» is the Hub's)."""
+    p = await playlists.own(s, user.id, _id(playlist_id))
+    if p is None or p.kind not in LISTED or (change and p.kind != playlists.USER):
+        raise HTTPException(404, "Плейлист не найден")
+    return p
 
 
-@router.get("", response_model=list[PlaylistOut])
-async def list_playlists(user: User = Depends(current_user)):
-    from app.imports.apply import pending_counts
-
-    nd = user_navidrome(user)
-    try:
-        pls = await nd.get_playlists()
-    finally:
-        await nd.aclose()
-    custom = await _custom()
-    async with session_scope() as s:
-        waiting = await pending_counts(s, user.id)
-    # getPlaylists also returns other users' public playlists: show only own ones
-    out = [pl_out(p, custom) for p in pls if p.get("owner") in (None, user.nd_username)]
-    for p in out:
-        p.pending_count = waiting.get(p.id, 0)
+async def _outs(s: AsyncSession, rows: list[Playlist]) -> list[PlaylistOut]:
+    numbers = await playlists.counts(s, [p.id for p in rows])
+    keys = dict((await s.execute(select(PlaylistCover.nd_playlist_id, PlaylistCover.key).where(
+        PlaylistCover.nd_playlist_id.in_([str(p.id) for p in rows])))).all()) if rows else {}
+    out = []
+    for p in rows:
+        total, filed, seconds = numbers.get(p.id, (0, 0, 0))
+        if key := keys.get(str(p.id)):
+            cover = f"/api/playlists/{p.id}/cover?v={key}"
+        elif p.nd_cover and filed:
+            cover = f"/api/nd/cover/{quote(p.nd_cover, safe='')}?v={filed}"  # it changes with the songs
+        else:
+            cover = None
+        out.append(PlaylistOut(id=str(p.id), name=p.name, song_count=filed, pending_count=total - filed,
+                               duration_s=seconds, cover_art=p.nd_cover, cover_url=cover))
     return out
 
 
-# playlist id -> (what it looked like, its songs): asked of Navidrome again only when the playlist has changed
-_songs: dict[str, tuple[str, list[str]]] = {}
+async def _out(s: AsyncSession, p: Playlist) -> PlaylistOut:
+    return (await _outs(s, [p]))[0]
 
 
-async def _songs_of(nd, p: dict) -> list[str]:
-    stamp = f"{p.get('changed')}:{p.get('songCount')}"
-    hit = _songs.get(p["id"])
-    if hit is not None and hit[0] == stamp:
-        return hit[1]
-    ids = [e["id"] for e in (await nd.get_playlist(p["id"])).get("entry") or [] if e.get("id")]
-    _songs[p["id"]] = (stamp, ids)
-    return ids
+async def _changed(s: AsyncSession, *rows: Playlist) -> None:
+    """Commit, and have the mirrors of these playlists follow."""
+    for p in rows:
+        if p.kind == playlists.USER:
+            await enqueue_mirror(s, p.id)
+    await s.commit()
+    notify()
+
+
+def track_without_file(t: Track, *, downloading: bool = False) -> NdSongOut:
+    """A track the library has no file of, drawn from what the catalog said of it."""
+    c = t.catalog or {}
+    ref = t.ref or f"lib:{t.id}"
+    src, _, ident = ref.partition(":")
+    return NdSongOut(
+        ref=ref, source=src if src in ("dz", "hm", "mb") else "nd", id=ident, title=t.title, artist=t.artist,
+        artists=c.get("artists") or [t.artist], artist_refs=c.get("artist_refs") or [], artist_ref=c.get("artist_ref"),
+        album_ref=c.get("album_ref"), album_title=t.album, album_artist=t.album_artist, duration_s=t.duration_s,
+        track_no=t.track_no, disc_no=t.disc_no, isrc=t.isrc, explicit=t.explicit, cover_url=c.get("cover_url"),
+        cover_small_url=c.get("cover_small_url") or c.get("cover_url"), owned=False, library_track_id=t.id,
+        downloading=downloading)
+
+
+def track_with_file(t: Track) -> NdSongOut:
+    """A track of the library drawn from the Hub's own record: for when Navidrome has not been asked about its
+    song yet, or does not answer."""
+    out = track_without_file(t)
+    out.owned, out.nd_song_id = True, t.nd_song_id
+    if t.album_id:
+        out.cover_url = out.cover_small_url = f"/api/library/albums/{t.album_id}/cover"
+    return out
+
+
+async def tracks_out(s: AsyncSession, user: User, rows: list[Track]) -> list[NdSongOut]:
+    """Tracks as a list shows them: one with a file as Navidrome's song of it, one without as the catalog's."""
+    index: dict[str, dict] = {}
+    if any(t.nd_song_id for t in rows):
+        try:
+            index = await library_songs.index(user)
+        except Exception as e:  # Navidrome is away: the list is drawn from the Hub's own records
+            log.info("playlists: songs not read from Navidrome: %r", e)
+    known = [index[t.nd_song_id] for t in rows if t.nd_song_id in index]
+    drawn = {x.nd_song_id: x for x in await songs_out(s, known)}
+    return [drawn.get(t.nd_song_id) or (track_with_file(t) if t.path else track_without_file(t)) for t in rows]
+
+
+async def _tracks_of_songs(s: AsyncSession, songs: list[str]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for k in range(0, len(songs), 500):
+        out.update((song, tid) for song, tid in (await s.execute(
+            select(TrackFile.nd_song_id, TrackFile.track_id).where(TrackFile.nd_song_id.in_(songs[k:k + 500])))).all())
+    return out
+
+
+@router.get("", response_model=list[PlaylistOut])
+async def list_playlists(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    return await _outs(s, await playlists.of_user(s, user.id, kinds=LISTED))
 
 
 @router.get("/of-song", response_model=list[PlaylistOfSongOut])
-async def of_song(nd_song_id: str, user: User = Depends(current_user)):
+async def of_song(nd_song_id: str, user: User = Depends(current_user),
+                  s: AsyncSession = Depends(get_session, scope="function")):
     """The user's playlists for a song's «in playlists» menu: which of them have the song, the ones changed last
     first."""
-    async def load(nd):
-        pls = [p for p in await nd.get_playlists() if p.get("owner") in (None, user.nd_username)]
-        return pls, await asyncio.gather(*(_songs_of(nd, p) for p in pls))
-
-    pls, songs = await nd_call(user, load)
-    custom = await _custom()
-    out = [(str(p.get("changed") or ""), PlaylistOfSongOut(**pl_out(p, custom).model_dump(), has=nd_song_id in ids))
-           for p, ids in zip(pls, songs, strict=True)]
-    return [x for _, x in sorted(out, key=lambda pair: pair[0], reverse=True)]
+    track = (await _tracks_of_songs(s, [nd_song_id])).get(nd_song_id)
+    rows = await playlists.of_user(s, user.id)
+    has = await playlists.having(s, user.id, [track], kinds=(playlists.USER,)) if track is not None else {}
+    return [PlaylistOfSongOut(**o.model_dump(), has=p.id in has) for p, o in zip(rows, await _outs(s, rows), strict=True)]
 
 
 @router.get("/members")
 async def members(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    """The songs that are in some playlist of the user's — what the «+ / ✓» of a track row goes by. «Микс дня» is
-    not counted: the Hub fills it, the user did not put the songs there."""
-    from app.models import MixSettings
+    """The tracks that are in some playlist of the user's — what the «+ / ✓» of a track row goes by — named as
+    tags name a track (`tags.key_of`): by the Navidrome song of its file, else by the Hub's id. «Микс дня» is not
+    counted: the Hub fills it, the user did not put the tracks there."""
+    from app.tags import key_of
 
-    mix = (await s.execute(select(MixSettings.nd_playlist_id).where(MixSettings.user_id == user.id))).scalar_one_or_none()
+    _liked, listed = await playlists.kept(s, user.id)
+    ids = list(listed)
+    keys: set[str] = set()
+    for k in range(0, len(ids), 500):
+        keys.update(key_of(tid, song) for tid, song in (await s.execute(
+            select(Track.id, Track.nd_song_id).where(Track.id.in_(ids[k:k + 500])))).all())
+    return {"song_ids": sorted(keys)}
 
-    async def load(nd):
-        pls = [p for p in await nd.get_playlists() if p.get("owner") in (None, user.nd_username) and p["id"] != mix]
-        return await asyncio.gather(*(_songs_of(nd, p) for p in pls))
 
-    return {"song_ids": sorted({x for ids in await nd_call(user, load) for x in ids})}
+async def _set_membership(s: AsyncSession, user: User, track_ids: list[int], add: list[str], remove: list[str]) -> None:
+    changed = []
+    for pid in dict.fromkeys(add):
+        p = await _own(s, user, pid, change=True)
+        if await playlists.add(s, p, track_ids):
+            changed.append(p)
+    for pid in dict.fromkeys(remove):
+        p = await _own(s, user, pid, change=True)
+        if await playlists.remove_tracks(s, p, track_ids):
+            changed.append(p)
+    await _changed(s, *changed)
 
 
 @router.post("/membership", response_model=list[PlaylistOfSongOut])
@@ -121,198 +183,110 @@ async def membership(body: PlaylistMembershipIn, user: User = Depends(current_us
                      s: AsyncSession = Depends(get_session, scope="function")):
     """Put a song into some playlists and take it out of others, in one go (every place it has in a playlist it is
     taken out of)."""
-    async def change(nd):
-        for pid in dict.fromkeys(body.add):
-            if body.nd_song_id not in await _songs_of(nd, {"id": pid}):
-                await nd.update_playlist(pid, add=[body.nd_song_id])
-            _songs.pop(pid, None)
-        for pid in dict.fromkeys(body.remove):
-            _songs.pop(pid, None)
-            at = [i for i, sid in enumerate(await _songs_of(nd, {"id": pid})) if sid == body.nd_song_id]
-            if at:
-                await nd.update_playlist(pid, remove_indexes=at)
-            _songs.pop(pid, None)
-
-    await nd_call(user, change, not_found="Плейлист не найден")
-    track_ids = list((await s.execute(select(Track.id).where(Track.nd_song_id == body.nd_song_id))).scalars())
-    for pid in dict.fromkeys(body.add):
-        await playlist_dates.stamp(s, pid, track_ids)
-    await s.commit()
-    return await of_song(body.nd_song_id, user)
+    track = (await _tracks_of_songs(s, [body.nd_song_id])).get(body.nd_song_id)
+    if track is None:
+        raise HTTPException(404, "Этой песни нет в библиотеке")
+    await _set_membership(s, user, [track], body.add, body.remove)
+    return await of_song(body.nd_song_id, user, s)
 
 
-async def _of_songs(user: User, song_ids: list[str]) -> list[PlaylistOfSongsOut]:
-    async def load(nd):
-        pls = [p for p in await nd.get_playlists() if p.get("owner") in (None, user.nd_username)]
-        return pls, await asyncio.gather(*(_songs_of(nd, p) for p in pls))
-
-    want = set(song_ids)
-    pls, songs = await nd_call(user, load)
-    custom = await _custom()
-    out = [(str(p.get("changed") or ""), PlaylistOfSongsOut(**pl_out(p, custom).model_dump(), count=len(want.intersection(ids))))
-           for p, ids in zip(pls, songs, strict=True)]
-    return [x for _, x in sorted(out, key=lambda pair: pair[0], reverse=True)]
+async def _of_songs(s: AsyncSession, user: User, song_ids: list[str]) -> list[PlaylistOfSongsOut]:
+    ids = await _tracks_of_songs(s, song_ids)
+    rows = await playlists.of_user(s, user.id)
+    has = await playlists.having(s, user.id, list(ids.values()), kinds=(playlists.USER,))
+    return [PlaylistOfSongsOut(**o.model_dump(), count=len(has.get(p.id, ())))
+            for p, o in zip(rows, await _outs(s, rows), strict=True)]
 
 
 @router.post("/of-songs", response_model=list[PlaylistOfSongsOut])
-async def of_songs(body: PlaylistSongsIn, user: User = Depends(current_user)):
+async def of_songs(body: PlaylistSongsIn, user: User = Depends(current_user),
+                   s: AsyncSession = Depends(get_session, scope="function")):
     """The user's playlists for several picked songs: how many of them each has, the ones changed last first."""
-    return await _of_songs(user, list(dict.fromkeys(body.nd_song_ids)))
+    return await _of_songs(s, user, list(dict.fromkeys(body.nd_song_ids)))
 
 
 @router.post("/membership-many", response_model=list[PlaylistOfSongsOut])
 async def membership_many(body: PlaylistMembershipManyIn, user: User = Depends(current_user),
                           s: AsyncSession = Depends(get_session, scope="function")):
-    """Several songs at once: into some playlists (the ones a playlist lacks, in the order given) and out of
-    others (every place of every one of them)."""
-    song_ids = list(dict.fromkeys(body.nd_song_ids))
-    want = set(song_ids)
-    added: dict[str, list[str]] = {}
-
-    async def change(nd):
-        for pid in dict.fromkeys(body.add):
-            have = set(await _songs_of(nd, {"id": pid}))
-            _songs.pop(pid, None)
-            missing = [x for x in song_ids if x not in have]
-            if missing:
-                await nd.update_playlist(pid, add=missing)
-                added[pid] = missing
-        for pid in dict.fromkeys(body.remove):
-            _songs.pop(pid, None)
-            at = [i for i, sid in enumerate(await _songs_of(nd, {"id": pid})) if sid in want]
-            _songs.pop(pid, None)
-            if at:
-                await nd.update_playlist(pid, remove_indexes=at)
-
-    await nd_call(user, change, not_found="Плейлист не найден")
-    for pid, ids in added.items():
-        track_ids = list((await s.execute(select(Track.id).where(Track.nd_song_id.in_(ids)))).scalars())
-        await playlist_dates.stamp(s, pid, track_ids)
-    await s.commit()
-    return await _of_songs(user, song_ids)
+    """Put several songs into some playlists (the ones each lacks, in the order given) and take them all out of
+    others."""
+    songs = list(dict.fromkeys(body.nd_song_ids))
+    ids = await _tracks_of_songs(s, songs)
+    await _set_membership(s, user, [ids[x] for x in songs if x in ids], body.add, body.remove)
+    return await _of_songs(s, user, songs)
 
 
 @router.post("", response_model=PlaylistOut)
-async def create_playlist(body: PlaylistCreateIn, user: User = Depends(current_user)):
+async def create_playlist(body: PlaylistCreateIn, user: User = Depends(current_user),
+                          s: AsyncSession = Depends(get_session, scope="function")):
     if not body.name.strip():
         raise HTTPException(400, "Введите название")
-    nd = user_navidrome(user)
-    try:
-        p = await nd.create_playlist(body.name.strip())
-    finally:
-        await nd.aclose()
-    return pl_out(p)
+    p = await playlists.create(s, user.id, body.name)
+    await _changed(s, p)
+    return await _out(s, p)
 
 
 @router.post("/{playlist_id}/add")
 async def add(playlist_id: str, body: PlaylistAddIn, user: User = Depends(current_user),
               s: AsyncSession = Depends(get_session, scope="function")):
-    ids = list(body.song_ids)
-    if body.library_track_ids:
-        rows = (await s.execute(select(Track.id, Track.nd_song_id).where(Track.id.in_(body.library_track_ids)))).all()
-        by_id = dict(rows)
-        ids += [by_id[i] for i in body.library_track_ids if by_id.get(i)]
-    dated = list((await s.execute(select(Track.id).where(Track.nd_song_id.in_(ids)))).scalars()) if ids else []
+    p = await _own(s, user, playlist_id, change=True)
+    by_song = await _tracks_of_songs(s, list(body.song_ids))
+    known = set((await s.execute(select(Track.id).where(Track.id.in_(body.library_track_ids)))).scalars()) \
+        if body.library_track_ids else set()
+    ids = [by_song[x] for x in body.song_ids if x in by_song] + [i for i in body.library_track_ids if i in known]
     if not ids:
-        raise HTTPException(400, "Эти треки ещё не появились в Navidrome")
-    nd = user_navidrome(user)
-    try:
-        await nd.update_playlist(playlist_id, add=ids)
-    finally:
-        await nd.aclose()
-    await playlist_dates.stamp(s, playlist_id, dated)
-    await s.commit()
-    return {"ok": True, "added": len(ids)}
+        raise HTTPException(400, "Этих треков нет в библиотеке")
+    added = await playlists.add(s, p, ids)
+    await _changed(s, p)
+    return {"ok": True, "added": len(added)}
 
 
 @router.get("/{playlist_id}", response_model=PlaylistPageOut)
 async def get_playlist(playlist_id: str, user: User = Depends(current_user),
                        s: AsyncSession = Depends(get_session, scope="function")):
-    p = await nd_call(user, lambda nd: nd.get_playlist(playlist_id), not_found="Плейлист не найден")
-    if not p.get("id"):
-        raise HTTPException(404, "Плейлист не найден")
-    tracks = await songs_out(s, p.get("entry") or [])
-    await playlist_dates.collect(s, user.id, playlist_id, p.get("name") or "")
-    await s.commit()
-    dates = await playlist_dates.of(s, playlist_id)
-    for t in tracks:  # a track without a date of its own keeps the day it came into the library
-        if t.library_track_id in dates:
-            t.added_at = dates[t.library_track_id]
-    return PlaylistPageOut(**pl_out(p, await _custom()).model_dump(), tracks=tracks,
-                           pending=await _pending(s, user, playlist_id))
-
-
-async def _pending(s: AsyncSession, user: User, playlist_id: str) -> list[NdSongOut]:
-    """The playlist's tracks that wait for a listen or a download (`apply.pending_of_playlist`) as catalog tracks:
-    their names from the import's own row, the cover from what the Hub has cached of the catalog."""
-    from app.favorites import parse_time
-    from app.imports.apply import pending_of_playlist
-    from app.models import CatalogCache
-
-    items = await pending_of_playlist(s, user.id, playlist_id)
-    if not items:
-        return []
-    keys = sorted({k for it in items for k in (f"listen:{it.ref}", f"mix:track:{it.ref}",
-                                               f"dz:track:{it.ref[3:]}" if it.ref.startswith("dz:") else "") if k})
-    cached: dict[str, dict] = {}
-    for i in range(0, len(keys), 500):
-        for row in (await s.execute(select(CatalogCache).where(CatalogCache.key.in_(keys[i:i + 500])))).scalars():
-            cached[row.key] = (row.payload_json or {}).get("v") or {}
-    out = []
-    for it in items:
-        ref = it.ref
-        src, _, ident = ref.partition(":")
-        if src not in ("dz", "hm", "mb", "file") or not ident:
-            continue
-        raw = it.raw_json or {}
-        meta = {**cached.get(f"listen:{ref}", {}), **cached.get(f"mix:track:{ref}", {}), **cached.get(f"dz:track:{ref[3:]}", {})}
-        out.append(NdSongOut(
-            ref=ref, source=src, id=ident, title=raw.get("title") or meta.get("title") or ref,
-            artist=raw.get("artist") or meta.get("artist") or "", artists=raw.get("artists") or [],
-            duration_s=raw.get("duration_s") or meta.get("duration_s"), album_title=raw.get("album") or meta.get("album_title"),
-            artist_ref=meta.get("artist_ref"), album_ref=meta.get("album_ref"), cover_url=meta.get("cover_url") or raw.get("cover_url"),
-            cover_small_url=meta.get("cover_small_url") or raw.get("cover_url"), owned=False,
-            downloading=it.status == "queued",
-            added_at=playlist_dates.naive(parse_time(raw.get("liked_at")))))
-    return out
+    p = await _own(s, user, playlist_id)
+    rows = await playlists.items(s, p.id)
+    tracks = await tracks_out(s, user, [t for _, t in rows])
+    for (item, _), t in zip(rows, tracks, strict=True):
+        t.added_at = item.added_at
+    return PlaylistPageOut(**(await _out(s, p)).model_dump(), tracks=tracks)
 
 
 @router.post("/{playlist_id}/remove")
-async def remove(playlist_id: str, body: PlaylistRemoveIn, user: User = Depends(current_user)):
-    """Takes songs out by their positions (a song may be in a playlist twice)."""
-    await nd_call(user, lambda nd: nd.update_playlist(playlist_id, remove_indexes=sorted(set(body.indexes))),
-                  not_found="Плейлист не найден")
+async def remove(playlist_id: str, body: PlaylistRemoveIn, user: User = Depends(current_user),
+                 s: AsyncSession = Depends(get_session, scope="function")):
+    """Takes tracks out by their positions (a track may be in a playlist twice)."""
+    p = await _own(s, user, playlist_id, change=True)
+    rows = await playlists.items(s, p.id)
+    await playlists.remove_items(s, p, [rows[i][0].id for i in set(body.indexes) if 0 <= i < len(rows)])
+    await _changed(s, p)
     return {"ok": True}
 
 
 @router.delete("/{playlist_id}")
 async def delete(playlist_id: str, user: User = Depends(current_user),
                  s: AsyncSession = Depends(get_session, scope="function")):
-    await nd_call(user, lambda nd: nd.delete_playlist(playlist_id), not_found="Плейлист не найден")
-    row = await s.get(PlaylistCover, playlist_id)
+    p = await _own(s, user, playlist_id, change=True)
+    nd_id = p.nd_playlist_id
+    row = await s.get(PlaylistCover, str(p.id))
     if row is not None:
         await s.delete(row)
-        await s.commit()
+    await s.delete(p)
+    await s.commit()
+    await drop_mirror(user, nd_id)
     return {"ok": True}
 
 
-async def _own(user: User, playlist_id: str) -> dict:
-    """The playlist, if it is this user's to change."""
-    p = await nd_call(user, lambda nd: nd.get_playlist(playlist_id), not_found="Плейлист не найден")
-    if not p.get("id") or p.get("owner") not in (None, user.nd_username):
-        raise HTTPException(404, "Плейлист не найден")
-    return p
-
-
 @router.put("/{playlist_id}", response_model=PlaylistOut)
-async def rename(playlist_id: str, body: PlaylistRenameIn, user: User = Depends(current_user)):
-    name = body.name.strip()
+async def rename(playlist_id: str, body: PlaylistRenameIn, user: User = Depends(current_user),
+                 s: AsyncSession = Depends(get_session, scope="function")):
+    name = " ".join(body.name.split())
     if not name:
         raise HTTPException(400, "Введите название")
-    await _own(user, playlist_id)
-    await nd_call(user, lambda nd: nd.update_playlist(playlist_id, name=name), not_found="Плейлист не найден")
-    _songs.pop(playlist_id, None)
-    return pl_out({**await _own(user, playlist_id), "name": name}, await _custom())
+    p = await _own(s, user, playlist_id, change=True)
+    p.name = name[:200]
+    await _changed(s, p)
+    return await _out(s, p)
 
 
 def _square_jpeg(data: bytes) -> bytes:
@@ -333,7 +307,7 @@ def _square_jpeg(data: bytes) -> bytes:
 async def put_cover(playlist_id: str, file: UploadFile = File(...), user: User = Depends(current_user),
                     s: AsyncSession = Depends(get_session, scope="function")):
     """The user's own picture for the playlist: cut to a square, kept in the Hub."""
-    p = await _own(user, playlist_id)
+    p = await _own(s, user, playlist_id, change=True)
     data = await file.read()
     if len(data) > COVER_MAX_BYTES:
         raise HTTPException(413, "Картинка слишком большая")
@@ -341,31 +315,32 @@ async def put_cover(playlist_id: str, file: UploadFile = File(...), user: User =
         image = await asyncio.to_thread(_square_jpeg, data)
     except Exception as e:
         raise HTTPException(400, "Не удалось прочитать картинку — нужен JPEG, PNG или WebP") from e
-    row = await s.get(PlaylistCover, playlist_id)
+    row = await s.get(PlaylistCover, str(p.id))
     if row is None:
-        row = PlaylistCover(nd_playlist_id=playlist_id, image=image, key="")
+        row = PlaylistCover(nd_playlist_id=str(p.id), image=image, key="")
         s.add(row)
     row.image, row.key = image, uuid.uuid4().hex[:12]
     await s.commit()
-    return pl_out(p, {playlist_id: row.key})
+    return await _out(s, p)
 
 
 @router.delete("/{playlist_id}/cover", response_model=PlaylistOut)
 async def drop_cover(playlist_id: str, user: User = Depends(current_user),
                      s: AsyncSession = Depends(get_session, scope="function")):
     """Back to the picture Navidrome makes of the playlist's albums."""
-    p = await _own(user, playlist_id)
-    row = await s.get(PlaylistCover, playlist_id)
+    p = await _own(s, user, playlist_id, change=True)
+    row = await s.get(PlaylistCover, str(p.id))
     if row is not None:
         await s.delete(row)
         await s.commit()
-    return pl_out(p)
+    return await _out(s, p)
 
 
 @router.get("/{playlist_id}/cover")
 async def get_cover(playlist_id: str, user: User = Depends(current_user),
                     s: AsyncSession = Depends(get_session, scope="function")):
-    row = await s.get(PlaylistCover, playlist_id)
+    p = await _own(s, user, playlist_id)
+    row = await s.get(PlaylistCover, str(p.id))
     if row is None:
         raise HTTPException(404, "У плейлиста нет своей обложки")
     return Response(row.image, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"})

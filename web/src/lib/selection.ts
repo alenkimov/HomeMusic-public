@@ -9,6 +9,8 @@ export interface SelTrack {
   ref: string;
   title: string;
   nd_song_id?: string | null;
+  /** what the track is called for tags (`lib/tags.ts` `tagKey`) */
+  tag_key?: string | null;
   listen: ListenTrack;
 }
 

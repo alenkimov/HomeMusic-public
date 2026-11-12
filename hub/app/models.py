@@ -381,8 +381,11 @@ class ImportCollection(Base):
     position: Mapped[int] = mapped_column(Integer, default=0)
     selected: Mapped[bool] = mapped_column(Boolean, default=True)
     cover_url: Mapped[str | None] = mapped_column(String(1024))
-    nd_playlist_id: Mapped[str | None] = mapped_column(String(64))
-    nd_song_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)  # what the Navidrome playlist holds now
+    nd_playlist_id: Mapped[str | None] = mapped_column(String(64))  # 1.x: the Navidrome playlist it made
+    nd_song_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)  # 1.x
+    # a playlist of the service: the Hub's playlist made of it, and the tracks it was last given, in order
+    playlist_id: Mapped[int | None] = mapped_column(ForeignKey("playlists.id", ondelete="SET NULL"))
+    given: Mapped[list[Any]] = mapped_column(JSON, default=list)
 
 
 class ImportItem(Base):
@@ -854,6 +857,7 @@ class Playlist(Base):
     name: Mapped[str] = mapped_column(String(200))
     nd_playlist_id: Mapped[str | None] = mapped_column(String(64), index=True)
     mirrored: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    nd_cover: Mapped[str | None] = mapped_column(String(128))  # the picture Navidrome makes of the mirror's albums
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 

@@ -364,38 +364,6 @@ async def test_no_words_by_hand_by_a_source_and_what_it_does_to_the_search(env):
     assert (await state())[0]["nd2"] == ["английский"]
 
 
-async def test_an_upload_goes_into_several_playlists(env, monkeypatch):
-    from types import SimpleNamespace
-
-    from sqlalchemy import select
-
-    from app import auth
-    from app.api.uploads import handle_playlist_add
-    from app.db import session_scope
-    from app.models import User, utcnow
-
-    a = await add_track("nd1")
-    b = await add_track("nd2")
-    added: list[tuple[str, list[str]]] = []
-
-    class Nd:
-        async def update_playlist(self, pid, *, add=None, **kw):
-            added.append((pid, list(add or [])))
-
-        async def aclose(self):
-            pass
-
-    monkeypatch.setattr(auth, "user_navidrome", lambda user: Nd())
-    async with session_scope() as s:
-        user = (await s.execute(select(User))).scalars().first()
-    until = utcnow().isoformat()
-    await handle_playlist_add(SimpleNamespace(payload_json={"user_id": user.id, "playlist_ids": ["p1", "p2"], "star": False,
-                                                           "track_ids": [a, b], "until": until}))
-    await handle_playlist_add(SimpleNamespace(payload_json={"user_id": user.id, "playlist_id": "old", "star": False,
-                                                           "track_ids": [a], "until": until}))  # a job queued before
-    assert added == [("p1", ["nd1", "nd2"]), ("p2", ["nd1", "nd2"]), ("old", ["nd1"])]
-
-
 async def test_own_tags_are_renamed_merged_deleted_and_selections_follow(env):
     c = env["client"]
     await add_track("nd1")

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import DownloadItemOut
@@ -566,6 +566,12 @@ async def handle_scan(job: Job) -> None:
         finally:
             await nd.aclose()
     log.info("navidrome scan done, linked %s tracks", linked)
+    from app.library import songs as library_songs
+    from app.playlists_mirror import enqueue_stale
+
+    library_songs.forget()  # Navidrome has new songs: lists are drawn from a fresh look at it
+    async with session_scope() as s:
+        await enqueue_stale(s)  # playlists whose tracks have got a file: their mirrors follow
     async with session_scope() as s:
         # new music: its lyrics are looked for in the background, so the player has them at once
         from app.lyrics.service import enqueue_scan_once
@@ -741,21 +747,8 @@ async def star_liked(s: AsyncSession, items: list[DownloadItem]) -> None:
             await nd.aclose()
 
 
-def insert_playlist_songs(current: list[str], entries: list[tuple[str | None, str]]) -> list[str]:
-    """Insert newly ready songs before their next persisted anchor, preserving unrelated playlist entries."""
-    songs = list(current)
-    cursor = len(songs)
-    for applied, song in reversed(entries):
-        if applied:
-            # Search backwards: the playlist may already have contained another copy of this song.
-            cursor = next((i for i in range(cursor - 1, -1, -1) if songs[i] == applied), cursor)
-        else:
-            songs.insert(cursor, song)
-    return songs
-
-
 async def playlist_adds_loop() -> None:
-    """Recover pending additions on startup and retry Navidrome failures without another download or scan."""
+    """Additions left waiting when the Hub was stopped."""
     while True:
         try:
             async with session_scope() as s:
@@ -766,76 +759,57 @@ async def playlist_adds_loop() -> None:
 
 
 async def process_playlist_adds(s: AsyncSession) -> None:
-    """Wait for active downloads, pass manual review, and insert a reviewed song back into its requested place."""
-    from app.auth import user_navidrome
+    """Downloads asked for with a playlist: a track goes into it when its download is done, the tracks of one
+    request in the order they were asked for. A download still on its way holds the ones after it back. One that
+    waits for a file to be picked by hand does not: the others go in, and when its file is picked it takes its own
+    place among them (a row that went in stays here as the mark of that place — `applied_song_id` is its track —
+    until nothing before it is waiting). One that failed or was cancelled is left out."""
+    from app import playlists
+    from app.playlists_mirror import enqueue_mirror
 
     # Nothing waits: no need to take the database (this runs every half a minute and after every library scan).
     if (await s.execute(select(PendingPlaylistAdd.id).limit(1))).first() is None:
         return
-    # Serialize readers through the transaction commit, including concurrent scan/download completions.
-    # An asyncio lock released here would let the next caller see uncommitted additions and add them twice.
-    await s.execute(update(PendingPlaylistAdd).where(PendingPlaylistAdd.id == -1).values(position=0))
-    # only the columns that decide: whole download rows carry every candidate they were chosen from, and loading
-    # hundreds of them kept the database for seconds
-    rows = (
-        await s.execute(
-            select(PendingPlaylistAdd, DownloadItem.status, Track.nd_song_id)
-            .join(DownloadItem, DownloadItem.id == PendingPlaylistAdd.download_item_id)
-            .outerjoin(Track, Track.id == DownloadItem.track_id)
-            .order_by(PendingPlaylistAdd.playlist_id, DownloadItem.batch_id,
-                      PendingPlaylistAdd.position, PendingPlaylistAdd.id)
-        )
-    ).all()
-    groups: dict[tuple[int, str], list[tuple[PendingPlaylistAdd, str, str | None]]] = {}
-    for add, status, song in rows:
-        groups.setdefault((add.user_id, add.playlist_id), []).append((add, status, song))
+    rows = (await s.execute(
+        select(PendingPlaylistAdd, DownloadItem.status, DownloadItem.track_id)
+        .join(DownloadItem, DownloadItem.id == PendingPlaylistAdd.download_item_id)
+        .order_by(PendingPlaylistAdd.playlist_id, DownloadItem.batch_id, PendingPlaylistAdd.position,
+                  PendingPlaylistAdd.id))).all()
+    groups: dict[tuple[int, str], list[tuple[PendingPlaylistAdd, str, int | None]]] = {}
+    for add, status, track_id in rows:
+        groups.setdefault((add.user_id, add.playlist_id), []).append((add, status, track_id))
     for (user_id, playlist_id), entries in groups.items():
-        ready: list[tuple[PendingPlaylistAdd, str]] = []
-        for add, status, song in entries:
-            if add.applied_song_id:
-                ready.append((add, add.applied_song_id))
-                continue
-            if status in ("failed", "cancelled", "needs_review"):
-                continue
-            if song:
-                ready.append((add, song))
-                continue
-            break  # active downloads still finish in order
-        new = [(add, song) for add, song in ready if not add.applied_song_id]
-        if new:
-            user = await s.get(User, user_id)
-            if user is None:
-                continue
-            nd = user_navidrome(user)
-            try:
-                if any(add.applied_song_id for add, _ in ready):
-                    current = [e["id"] for e in (await nd.get_playlist(playlist_id)).get("entry", [])]
-                    songs = insert_playlist_songs(current, [(a.applied_song_id, song) for a, song in ready])
-                    await nd.replace_playlist_songs(playlist_id, songs)
-                else:
-                    for k in range(0, len(new), 300):
-                        await nd.update_playlist(playlist_id, add=[song for _, song in new[k:k + 300]])
-                        # Flush each successful chunk so a later chunk's failure cannot duplicate it on retry.
-                        for add, song in new[k:k + 300]:
-                            add.applied_song_id = song
-                        await s.flush()
-            except Exception as e:
-                log.warning("playlist %s add failed: %r", playlist_id, e)
-                continue
-            finally:
-                await nd.aclose()
-            for add, song in new:
-                add.applied_song_id = song
-        blocked = False
-        for add, status, _ in entries:
-            if status in ("failed", "cancelled") or (add.applied_song_id and not blocked):
+        p = await playlists.own(s, user_id, int(playlist_id)) if str(playlist_id).isdigit() else None
+        if p is None:  # the playlist is gone
+            for add, _, _ in entries:
                 await s.delete(add)
-            elif not add.applied_song_id:
-                blocked = True
+            continue
+        changed = False
+        for k, (add, status, track_id) in enumerate(entries):
+            if add.applied_song_id or status in ("failed", "cancelled", "needs_review"):
+                continue
+            if status != "done" or not track_id:
+                break  # still on its way: the ones after it wait for their turn
+            if await playlists.add(s, p, [track_id]):
+                after = next((int(x.applied_song_id) for x, _, _ in entries[k + 1:] if x.applied_song_id), None)
+                if after is not None:  # it was waiting for a file while later ones went in: its place is before them
+                    items = await playlists.items(s, p.id)
+                    mine = next(i.id for i, tr in reversed(items) if tr.id == track_id)
+                    order = [i.id for i, _ in items if i.id != mine]
+                    at = next((n for n, (_, tr) in enumerate(x for x in items if x[0].id != mine) if tr.id == after), len(order))
+                    await playlists.reorder(s, p, order[:at] + [mine] + order[at:])
+                changed = True
+            add.applied_song_id = str(track_id)
+        waiting = False
+        for add, status, _ in entries:
+            if status in ("failed", "cancelled") or (add.applied_song_id and not waiting):
+                await s.delete(add)
+            else:
+                waiting = True
+        if changed:
+            await enqueue_mirror(s, p.id)
+            bus.publish(user_id, "library", {"kind": "playlist", "playlist_id": str(p.id)})
     await s.flush()
-
-
-# --- batch expansion ------------------------------------------------------------------------------
 
 
 async def create_items(

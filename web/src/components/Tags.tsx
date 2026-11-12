@@ -231,7 +231,7 @@ function NewTag({ onMade }: { onMade: (id: number) => void }) {
     setBusy(true);
     const tag = await attempt(() => api.tagCreate(title));
     if (tag) {
-      const songs = selectedTracks().map((x) => x.nd_song_id).filter((x): x is string => !!x);
+      const songs = selectedTracks().map((x) => x.tag_key).filter((x): x is string => !!x);
       const data = await attempt(() => (songs.length ? api.tagsAssign({ nd_song_ids: songs, add: [tag.id], remove: [] }) : api.tags()));
       if (data) setTagsData(data);
       onMade(tag.id);

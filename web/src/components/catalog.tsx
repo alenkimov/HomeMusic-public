@@ -9,7 +9,7 @@ import { Link, enc, navigate } from '../lib/router';
 import { beginDragAction, dragActionOver, useDragMark } from '../lib/dragAction';
 import { beginDragSelect, dragSelectMoved, dragSelectOver, selectRange, toggleSelected, useSelected, useSelectionCount, type SelTrack } from '../lib/selection';
 import { useInPlaylists } from '../lib/inPlaylists';
-import { openTagsSheet } from '../lib/tags';
+import { openTagsSheet, tagKey } from '../lib/tags';
 import { useLiked } from '../lib/stars';
 import { usePlayCounts } from '../lib/stats';
 import { PlaysCell } from './PlaysCell';
@@ -201,7 +201,7 @@ export function TrackRow({
 
   const likeTarget = { targetType: 'track' as const, songId: track.owned ? track.nd_song_id : null, ref: track.ref, data: { ...track } };
   const liked = useLiked(likeTarget);
-  const kept = useInPlaylists(likeTarget.songId) || liked; // the row's button shows ♥ or ✓
+  const kept = useInPlaylists(tagKey(track)) || liked; // the row's button shows ♥ or ✓
   const artistLine = track.artists?.length ? track.artists.join(', ') : track.artist;
   const menuTrack: MenuTrack = {
     title: track.title,
@@ -220,7 +220,7 @@ export function TrackRow({
   const playCounts = usePlayCounts(showPlays || playsOf !== undefined);
   const dragMark = useDragMark(track.ref); // this row is among the rows a button is being dragged over
   const selecting = useSelectionCount() > 0;
-  const asSel = (t: TrackOut): SelTrack => ({ ref: t.ref, title: t.title, nd_song_id: t.owned ? t.nd_song_id : null, listen: listenTrack(t) });
+  const asSel = (t: TrackOut): SelTrack => ({ ref: t.ref, title: t.title, nd_song_id: t.owned ? t.nd_song_id : null, tag_key: tagKey(t), listen: listenTrack(t) });
   const onPick = (e: MouseEvent) => {
     // the row's menu is drawn outside the row (a portal), yet its clicks pass through here: they are not the row's
     if (!(e.currentTarget as HTMLElement).contains(e.target as Node)) return;
@@ -288,7 +288,7 @@ export function TrackRow({
       const added = showAdded && cols.added;
       const plays = playsOf !== undefined || (showPlays && cols.plays);
       const tagCols = showTags ? { lang: cols.tagLang, genre: cols.tagGenre, own: cols.tagOwn } : null;
-      const myTags = showTags && track.nd_song_id ? (tagState.map[track.nd_song_id] ?? []).map((id) => tagState.byId.get(id)).filter((t) => !!t) : [];
+      const myTags = showTags && tagKey(track) ? (tagState.map[tagKey(track) as string] ?? []).map((id) => tagState.byId.get(id)).filter((t) => !!t) : [];
       const tagCell = (group: 'lang' | 'genre' | 'own', max: number) => {
         const list = myTags.filter((t) => t.group === group);
         return (
@@ -407,13 +407,13 @@ export function TrackRow({
                 <QueueButton track={menuTrack.listen as ListenTrack} className={cx('!w-9', dragMark === 'queue' ? cx(marked, '!text-accent') : dragMark === 'unqueue' && cx(marked, '!text-muted'))} />
               </span>
             )}
-            {track.owned && track.nd_song_id && (
+            {tagKey(track) && (
               <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('tags', dragList(), asSel(track))}>
-                <IconButton icon="tag" size={19} label={`Теги: «${track.title}»`} onClick={() => openTagsSheet([track.nd_song_id as string], track.title)} className={cx('!w-9', dragMark === 'tags' ? cx(marked, '!text-accent') : cx('text-muted hover:text-fg', shown))} />
+                <IconButton icon="tag" size={19} label={`Теги: «${track.title}»`} onClick={() => openTagsSheet([tagKey(track) as string], track.title)} className={cx('!w-9', dragMark === 'tags' ? cx(marked, '!text-accent') : cx('text-muted hover:text-fg', shown))} />
               </span>
             )}
             <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('like', dragList(), asSel(track))}>
-              <SaveButton songId={likeTarget.songId} refId={track.ref} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('!w-9', dragMark === 'like' || dragMark === 'lists' ? cx(marked, '!text-accent') : !kept && shown)} />
+              <SaveButton songId={likeTarget.songId} refId={track.ref} listKey={tagKey(track)} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('!w-9', dragMark === 'like' || dragMark === 'lists' ? cx(marked, '!text-accent') : !kept && shown)} />
             </span>
           </div>
           {cols.duration && <span className="text-right text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>}
