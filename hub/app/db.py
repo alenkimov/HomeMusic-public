@@ -49,7 +49,7 @@ def init_engine(db_path: Path | None = None) -> AsyncEngine:
     path.parent.mkdir(parents=True, exist_ok=True)
     _engine = create_async_engine(f"sqlite+aiosqlite:///{path.as_posix()}", connect_args={"timeout": 30})
     event.listen(_engine.sync_engine, "connect", _set_pragmas)
-    event.listen(_engine.sync_engine, "before_cursor_execute", _write_began)
+    event.listen(_engine.sync_engine, "after_cursor_execute", _write_began)  # after: its own wait for the lock is not counted
     event.listen(_engine.sync_engine, "commit", _write_ended)
     event.listen(_engine.sync_engine, "rollback", _write_ended)
     _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
