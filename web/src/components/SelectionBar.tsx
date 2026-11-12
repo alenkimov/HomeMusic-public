@@ -5,7 +5,7 @@ import { canPlayAll } from '../lib/player';
 import { useRoute } from '../lib/router';
 import { clearSelection, selectedTracks, useSelectionCount } from '../lib/selection';
 import { openShare } from '../lib/shareTrack';
-import { isLiked, toggleLike, useLiked } from '../lib/stars';
+import { isLiked, setLikes, useLiked } from '../lib/stars';
 import { openTagsSheet } from '../lib/tags';
 import { toast } from '../lib/ui';
 import { BulkPlaylists } from './PlaylistsButton';
@@ -40,10 +40,9 @@ export function SelectionBar() {
   // ♥ of the whole selection: on for those that lack it; when every one has it — off for all
   const like = async () => {
     setLiking(true);
-    const todo = targets.filter((t) => allLiked || !isLiked(t));
-    await Promise.all(todo.map((t) => toggleLike(t, true)));
+    const n = await setLikes(targets, !allLiked); // one request for them all
     setLiking(false);
-    toast(allLiked ? `Убрано из любимого: ${tracksWord(todo.length)}` : `В любимом: ${tracksWord(todo.length)}`, 'success');
+    if (n) toast(allLiked ? `Убрано из любимого: ${tracksWord(n)}` : `В любимом: ${tracksWord(n)}`, 'success');
   };
   const btn = '!h-10 !w-10';
   return (

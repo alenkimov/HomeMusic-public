@@ -3,7 +3,7 @@ import { tracksWord } from './format';
 import { addToQueue, queuedRefs, unqueue } from './listen';
 import type { SelTrack } from './selection';
 import { openShare } from './shareTrack';
-import { isLiked, toggleLike } from './stars';
+import { isLiked, setLikes } from './stars';
 import { toast } from './ui';
 
 /** A row's ♥, «в очередь» or «поделиться» held and dragged over other rows of the list: the same button of every
@@ -59,9 +59,8 @@ async function apply(kind: DragKind, tracks: SelTrack[]) {
     const n = unqueue(tracks.map((t) => t.ref));
     return toast(n ? `Убрано из очереди: ${tracksWord(n)}` : 'Этих треков в очереди нет', n ? 'success' : 'info');
   }
-  const todo = tracks.map(likeTarget).filter((t) => isLiked(t) === (kind === 'unlike'));
-  await Promise.all(todo.map((t) => toggleLike(t, true))); // at once: the hearts fill together, not one by one
-  toast(todo.length ? `${kind === 'like' ? 'В любимом' : 'Убрано из любимого'}: ${tracksWord(todo.length)}` : kind === 'like' ? 'Все эти треки уже в любимом' : 'Ни у одного из этих треков нет ♥', todo.length ? 'success' : 'info');
+  const n = await setLikes(tracks.map(likeTarget), kind === 'like'); // one request: the hearts fill together
+  toast(n ? `${kind === 'like' ? 'В любимом' : 'Убрано из любимого'}: ${tracksWord(n)}` : kind === 'like' ? 'Все эти треки уже в любимом' : 'Ни у одного из этих треков нет ♥', n ? 'success' : 'info');
 }
 
 function stop() {

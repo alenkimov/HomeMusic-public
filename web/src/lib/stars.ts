@@ -116,6 +116,56 @@ function apiTarget(t: LikeTarget): FavoriteTarget {
   };
 }
 
+/** ♥ on or off for several tracks at once (the selection bar, a drag down the hearts): one request for them all.
+ * A request per track, all sent together, queued up at the Hub's single database writer and took every connection
+ * it has — the whole service stood still. The hearts still change together, at once. Returns how many changed. */
+export async function setLikes(list: readonly LikeTarget[], liked: boolean): Promise<number> {
+  const todo = list.filter((t) => typeOf(t) === 'track' && isLiked(t) !== liked && aliases(t)[0] && !aliases(t).some((a) => busy.has(a)));
+  if (!todo.length) return 0;
+  if (!(await typedFavoritesSupported())) {  // an old Hub: one by one, as before
+    for (const t of todo) await toggleLike(t, true);
+    return todo.length;
+  }
+  const generation = epoch;
+  const before = todo.map((t) => local.get(aliases(t)[0]));
+  for (const t of todo) for (const a of aliases(t)) busy.add(a);
+  const operation = newEventId();
+  const ts = new Date().toISOString();
+  for (const t of todo) local.set(aliases(t)[0], { liked, aliases: aliases(t), eventId: operation });
+  emit();
+  let done = 0;
+  try {
+    const context = routeContext();
+    for (let i = 0; i < todo.length; i += 200) {
+      const part = todo.slice(i, i + 200);
+      const result = await api.star({ targets: part.map(apiTarget), unstar: !liked, event_id: i ? `${operation}-${i}` : operation, ts, client: 'pwa', context }, AbortSignal.timeout(120_000));
+      if (generation !== epoch) return done;
+      part.forEach((t, k) => local.set(aliases(t)[0], { liked, aliases: aliases(t), eventId: result.event_ids?.[k] ?? operation, acknowledgedAt: ++acknowledged }));
+      if (!liked) for (const t of part) if (t.ref) pendingRefs.delete(t.ref);
+      done += part.length;
+    }
+    window.dispatchEvent(new CustomEvent('hm:hub-favorite', { detail: { star: liked } }));
+    // the liked ones the library has not got are downloaded, as with a single ♥ — in one batch
+    const refs = liked && STANDALONE ? todo.filter((t) => !!t.ref && !t.ref.startsWith('nd:') && !apiTarget(t).nd_song_id).map((t) => t.ref!) : [];
+    for (let i = 0; i < refs.length; i += 200) {
+      const part = refs.slice(i, i + 200);
+      if (await api.download({ track_refs: part }).then((r) => r.queued > 0 || r.expanding, () => false)) part.forEach(markQueued);
+    }
+  } catch (e) {
+    if (generation !== epoch) return done;
+    todo.slice(done).forEach((t, k) => {
+      const was = before[done + k];
+      if (was) local.set(aliases(t)[0], was);
+      else local.delete(aliases(t)[0]);
+    });
+    toastError(e);
+  } finally {
+    for (const t of todo) for (const a of aliases(t)) busy.delete(a);
+    if (generation === epoch) { emit(); void refreshStars(true); }
+  }
+  return done;
+}
+
 /** Track ♥ of a catalog track also downloads it (a browser); album/artist ♥ only records the typed favorite. */
 export async function toggleLike(t: LikeTarget, quiet = false): Promise<void> {
   const keys = aliases(t);
