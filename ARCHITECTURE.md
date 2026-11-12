@@ -120,5 +120,8 @@ One release, built in passes that each leave the tests green:
    on that id)*
 6. What is left of 1.x deleted; the migrations of 1.x replaced by one that makes the 2.0 schema. *(done:
    `migrations/versions` holds the one baseline, made of the models; a database of 1.x is refused with a plain
-   message. Still there from 1.x, because the journal of likes leans on it: `favorite_subjects` and the alias
-   index)*
+   message)
+
+After the passes: `favorite_subjects` keeps only albums and artists (a catalog ref and a Navidrome id seen to be
+one). What a track is called — its id, its ref, the song of each of its files — is read from the library
+(`favorites.subjects_of`); the journal of likes still decides, and «Любимое» is the list it comes to.

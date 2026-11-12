@@ -96,9 +96,9 @@ async def load_snapshot(session, user_id: int, *, now: datetime) -> TasteSnapsho
     """
     from sqlalchemy import or_, select
 
-    from app.favorites import AliasIndex, aliases
+    from app.favorites import AliasIndex, aliases, subjects_of
     from app.library.owned import quiet
-    from app.models import Album, Dislike, DownloadItem, FavoriteSubject, MixSettings, PlayEvent, Track
+    from app.models import Album, Dislike, DownloadItem, MixSettings, PlayEvent, Track
     from app.plays import Ids
 
     now = utc(now)
@@ -107,8 +107,6 @@ async def load_snapshot(session, user_id: int, *, now: datetime) -> TasteSnapsho
         PlayEvent.kind.not_in(("progress", "interrupted", "error")),
         or_(PlayEvent.ts >= calendar_cutoff(now),
             PlayEvent.kind.in_(("like", "unlike", "dislike", "undislike")))))).scalars())
-    subjects = [Subject(x.target_type, tuple(x.aliases or ()), x.ref, x.nd_id, x.data or {})
-                for x in (await session.execute(select(FavoriteSubject))).scalars()]
     downloads = []
     for item, nd in (await session.execute(select(DownloadItem, Track.nd_song_id).join(
             Track, Track.id == DownloadItem.track_id).where(DownloadItem.user_id == user_id,
@@ -123,11 +121,19 @@ async def load_snapshot(session, user_id: int, *, now: datetime) -> TasteSnapsho
     ids = Ids(session)
     pairs = {(x.ref, x.nd_song_id) for x in rows if x.target_type == "track"}
     pairs.update((x.ref, x.nd_song_id) for x in (*downloads, *dislikes) if not getattr(x, "artist_ref", None))
+    subjects = [Subject(x.target_type, tuple(x.aliases or ()), x.ref, x.nd_id, x.data or {})
+                for x in await subjects_of(session, rows, refs=[ref for ref, _ in pairs if ref],
+                                           songs=[nd for _, nd in pairs if nd])]
     await ids.prime(pairs)
     for ref, nd in pairs:
         ref, nd = await ids.complete(ref, nd)
         if ref and nd:
             subjects.append(Subject("track", (f"ref:{ref}", f"nd:{nd}"), ref, nd))
+    # an event that names its track ties whatever else it called it (a song the track had before, a provider's
+    # file) to that track: the profile's own events do not carry the track, so the tie goes in as a subject
+    ties = {(x.track_id, a) for x in rows if x.target_type == "track" and x.track_id
+            for a in aliases(x) if not a.startswith("t:")}
+    subjects.extend(Subject("track", (f"t:{track}", a), None, None) for track, a in sorted(ties))
     index = AliasIndex(rows, subjects)
     wanted = {index.key(e) for e in rows if aliases(e)}
     wanted.update(index.root(("track", alias)) for ref, nd in pairs for alias in

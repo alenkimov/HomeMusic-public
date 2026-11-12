@@ -124,7 +124,7 @@ async def test_online_v2_adapter_loads_batches_without_network_or_writes(db_file
 
     from app.db import dispose, init_engine, session_scope
     from app.mixes.taste import build_profile
-    from app.models import Album, FavoriteSubject, PlayEvent, User
+    from app.models import Album, PlayEvent, User
 
     engine = init_engine(db_file)
     try:
@@ -134,16 +134,17 @@ async def test_online_v2_adapter_loads_batches_without_network_or_writes(db_file
             album = Album(uid="hub-album-id", title="Album", album_artist="Artist", deezer_album_id="album")
             s.add(album)
             await s.flush()
-            s.add_all([filed_track(uid="one", path="one.mp3", nd_song_id="current", artist="Artist", title="One",
-                             ref="dz:1", fingerprint="artist|one", duration_s=200),
+            one = filed_track(uid="one", path="one.mp3", nd_song_id="current", artist="Artist", title="One",
+                              ref="dz:1", fingerprint="artist|one", duration_s=200)
+            s.add_all([one,
                        filed_track(uid="two", path="two.mp3", nd_song_id="album-song", artist="Artist", title="Two",
                              ref="dz:2", fingerprint="artist|two", duration_s=200, album_id=album.id),
                        filed_track(uid="other", path="other.mp3", nd_song_id="other-song", artist="Other", title="Other",
                              ref="dz:other", fingerprint="other|other", duration_s=200)])
-            s.add(FavoriteSubject(target_type="track", canonical_key="ref:dz:1", ref="dz:1", nd_id="current",
-                aliases=["ref:dz:1", "nd:old", "nd:current"], data={}))
+            await s.flush()
+            # listened to from a file the track had before ("old"): the events name the track, and that is enough
             s.add_all(PlayEvent(user_id=user.id, event_id=f"{i:03}", ts=NOW, kind="finish", ref=None,
-                                nd_song_id="old", client="pwa", received_at=NOW) for i in range(100))
+                                nd_song_id="old", track_id=one.id, client="pwa", received_at=NOW) for i in range(100))
             s.add(PlayEvent(user_id=user.id, event_id="album", ts=NOW, kind="like", target_type="album",
                            ref="dz:album", target_data={"artist": "Artist"}, client="pwa", received_at=NOW))
             await s.flush()

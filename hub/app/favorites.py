@@ -243,22 +243,70 @@ async def snapshot(s: AsyncSession, user_id: int, now: datetime | None = None):
     q = select(PlayEvent).where(PlayEvent.user_id == user_id, PlayEvent.kind.in_(("like", "unlike")))
     q = q.where(PlayEvent.ts <= now)
     events = list((await s.execute(q)).scalars())
-    subjects = list((await s.execute(select(FavoriteSubject))).scalars())
-    partial = [(e.ref, e.nd_song_id) for e in events if e.target_type == "track" and not (e.ref and e.nd_song_id)]
-    if partial:
-        from app.plays import Ids
-        fill = Ids(s)
-        await fill.prime(partial)
-        for ref, nd in set(partial):
-            ref, nd = await fill.complete(ref, nd)
-            if ref and nd:
-                subjects.append(FavoriteSubject(target_type="track", ref=ref, nd_id=nd,
-                    aliases=[f"ref:{ref}", f"nd:{nd}"], canonical_key=f"ref:{ref}", data={}))
-    return fold(events, subjects, now)
+    return fold(events, await subjects_of(s, events), now)
+
+
+async def subjects_of(s: AsyncSession, events: Iterable[Any] = (), *, refs: Iterable[str] = (),
+                      songs: Iterable[str] = ()) -> list[FavoriteSubject]:
+    """What ties the names of one thing together, for `AliasIndex`.
+
+    An album or an artist: the verified pairs kept in `favorite_subjects` (a catalog ref and a Navidrome id that
+    were seen to be one). A track needs no such table: it is the Hub's own track — its id, its catalog ref and
+    the Navidrome song of every file it has — so its names are read from the library, for the tracks these
+    events, `refs` and `songs` speak of. An event that knows its track (`PlayEvent.track_id`) ties whatever
+    else it called it (a provider's file, say) to that track by itself."""
+    from app.models import TrackFile
+
+    out = list((await s.execute(select(FavoriteSubject).where(FavoriteSubject.target_type != "track"))).scalars())
+    ids: set[int] = set()
+    refs, songs = {x for x in refs if x}, {x for x in songs if x}
+    for e in events:
+        if (e.target_type or "track") != "track":
+            continue
+        if getattr(e, "track_id", None):
+            ids.add(e.track_id)
+        if e.ref:
+            refs.add(e.ref)
+        if nd := getattr(e, "nd_song_id", None):
+            songs.add(nd)
+
+    def chunks(values: set) -> Iterable[list]:
+        values = sorted(values)
+        return (values[k:k + 500] for k in range(0, len(values), 500))
+
+    for part in chunks(refs):
+        ids.update((await s.execute(select(Track.id).where(Track.ref.in_(part)))).scalars())
+    for part in chunks(songs):
+        ids.update((await s.execute(select(TrackFile.track_id).where(TrackFile.nd_song_id.in_(part)))).scalars())
+    tracks: dict[int, tuple] = {}
+    files: dict[int, list[str]] = {}
+    for part in chunks(ids):
+        for row in (await s.execute(select(Track.id, Track.ref, Track.title, Track.artist, Track.duration_s)
+                                    .where(Track.id.in_(part)))).all():
+            tracks[row[0]] = row
+        for track_id, song in (await s.execute(select(TrackFile.track_id, TrackFile.nd_song_id).where(
+                TrackFile.track_id.in_(part), TrackFile.nd_song_id.is_not(None)).order_by(TrackFile.id))).all():
+            files.setdefault(track_id, []).append(song)
+    for track_id, ref, title, artist, duration in tracks.values():
+        own = files.get(track_id, [])
+        names = [f"t:{track_id}", *([f"ref:{ref}"] if ref else []), *(f"nd:{x}" for x in own)]
+        data = {k: v for k, v in (("title", title), ("artist", artist), ("duration_s", duration)) if v}
+        out.append(FavoriteSubject(target_type="track", canonical_key=f"t:{track_id}", ref=ref,
+                                   nd_id=own[-1] if own else None,  # the newest file's song is the one that plays
+                                   aliases=sorted(names), data=data))
+    return out
 
 
 async def remember(s: AsyncSession, target: FavoriteTarget, *, extra_aliases: Iterable[str] = ()) -> FavoriteSubject:
+    """Keep the verified names of an album or an artist together. A track is not kept here (`subjects_of`): what
+    is known of it is told, nothing is written."""
     typ = target.target_type
+    if typ == "track":
+        known = [x for x in await subjects_of(s, refs=[target.ref or ""], songs=[target.nd_song_id or ""])
+                 if x.target_type == "track"]
+        return known[0] if known else FavoriteSubject(
+            target_type=typ, canonical_key=min(aliases(target)), ref=target.ref, nd_id=target.nd_song_id,
+            aliases=sorted(aliases(target)), data=subject_data(target.target_data))
     keys = aliases(target) | set(extra_aliases)
     # Usually one indexed hit; JSON aliases also retain replaced ND song ids.
     subjects = list((await s.execute(select(FavoriteSubject).where(FavoriteSubject.target_type == typ))).scalars())
@@ -297,8 +345,12 @@ async def record(s: AsyncSession, user_id: int, target: FavoriteTarget, liked: b
     target = target.model_copy()
     if target.target_type == "track":
         target.ref, target.nd_song_id = await Ids(s).complete(target.ref, target.nd_song_id)
-    row = await remember(s, target)
-    eid = event_id or decision_id(operation or uuid.uuid4().hex, target.target_type, row.canonical_key)
+    if target.target_type == "track":
+        # the same name for a track before it has a file and after: its catalog ref, if it has one
+        name = f"ref:{target.ref}" if target.ref else f"nd:{target.nd_song_id}"
+    else:
+        name = (await remember(s, target)).canonical_key
+    eid = event_id or decision_id(operation or uuid.uuid4().hex, target.target_type, name)
     now = utcnow()
     await s.execute(insert(PlayEvent).values(
         **target.model_dump(), user_id=user_id, event_id=eid, ts=event_time(ts or now, now) if normalize else ts or now,
@@ -534,7 +586,12 @@ async def reconcile(s: AsyncSession, user: User, body: dict, *, now: datetime | 
     provenance = await imported_targets(s, user.id)
     # Old imports did not persist verified ND album/artist ids. Unknown objects of such
     # a type are quarantined until verified enrichment or a real own decision, never guessed.
-    subjects = list((await s.execute(select(FavoriteSubject))).scalars())
+    named = [a for x in before.values() if x.target_type == "track" for a in x.aliases]
+    subjects = await subjects_of(
+        s, [x.event for x in before.values()],
+        refs=[a[4:] for a in named if a.startswith("ref:")],
+        songs=[*(a[3:] for a in named if a.startswith("nd:")),
+               *(str(x["id"]) for x in body.get("song", []) if isinstance(x, dict) and x.get("id"))])
     index = AliasIndex([x.event for x in before.values()], subjects)
     verified_refs = {(x.target_type, f"ref:{x.ref}") for x in subjects if x.ref and x.nd_id}
     legacy_types = {typ for typ, key in provenance if typ != "track" and key.startswith("ref:") and
@@ -612,7 +669,6 @@ async def deliver_pending(s: AsyncSession) -> None:
         finally:
             await nd.aclose()
         for st in ready:
-            await remember(s, FavoriteTarget(ref=st.ref, nd_song_id=st.nd_id))
             st.event.mirror_pending = False
         bus.publish(user_id, "library", {"kind": "starred", "song_ids": [st.nd_id for st in ready]})
     await s.flush()

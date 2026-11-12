@@ -218,8 +218,7 @@ async def delete_track(track_id: int, user: User = Depends(current_user), s: Asy
 async def starred(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     from app.api.schemas import FavoriteTarget
     from app import playlists
-    from app.favorites import ND_FIELDS, AliasIndex, imported_targets, project_liked, snapshot
-    from app.models import FavoriteSubject
+    from app.favorites import ND_FIELDS, AliasIndex, imported_targets, project_liked, snapshot, subjects_of
 
     # what the buttons of tracks go by is the Hub's own list; Navidrome is asked only about albums and artists
     nd = user_navidrome(user)
@@ -238,8 +237,7 @@ async def starred(user: User = Depends(current_user), s: AsyncSession = Depends(
     subjects = [dict(target_type=x.target_type, key=x.key, ref=x.ref, nd_id=x.nd_id,
                      liked=x.liked, liked_since=x.since, target_data=x.data,
                      event_id=x.event.event_id, aliases=x.aliases, provenance="own") for x in states.values()]
-    index = AliasIndex([x.event for x in states.values()],
-                       list((await s.execute(select(FavoriteSubject))).scalars()))
+    index = AliasIndex([x.event for x in states.values()], await subjects_of(s))  # albums and artists
     for state in states.values():
         index.join(state.target_type, set(state.aliases))
     imported = {index.root(k) for k in await imported_targets(s, user.id)}

@@ -302,7 +302,7 @@ async def record_events(s: AsyncSession, user_id: int, raw: Iterable[Any], now: 
             out.duplicates += 1
             continue
         out.accepted += 1
-        if e.kind in ("like", "unlike"):
+        if e.kind in ("like", "unlike") and e.target_type != "track":
             from app.api.schemas import FavoriteTarget
             from app.favorites import remember
 

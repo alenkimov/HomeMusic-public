@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import DownloadItemOut
@@ -40,7 +40,7 @@ from app.matching.select import (
     trusted_original,
     uploaded_in_time,
 )
-from app.models import DownloadBatch, DownloadItem, Job, PlaylistItem, Track, TrackFile, User
+from app.models import DownloadBatch, DownloadItem, Job, PlayEvent, PlaylistItem, Track, TrackFile, User
 from app.net import make_client
 from app.providers.base import Candidate, ProviderError, TrackQuery, file_ref
 from app.services import svc
@@ -119,6 +119,12 @@ async def update_item(item_id: int, **fields: Any) -> DownloadItem | None:
             fields["query_json"] = {**fields["query_json"], **{k: cur[k] for k in USER_FLAGS if k in cur}}
         for k, v in fields.items():
             setattr(item, k, v)
+        if fields.get("track_id") and (ref := item_ref(item)):
+            # what was listened to or liked under the name the download was asked by — a catalog track the library
+            # had under another name, a provider's file — is this track's from now on
+            await s.execute(update(PlayEvent).where(
+                PlayEvent.track_id.is_(None), PlayEvent.target_type == "track", PlayEvent.ref == ref)
+                .values(track_id=item.track_id))
         if fields.get("track_id") and (item.query_json or {}).get("playlists"):
             # a provider's file asked for with playlists: it is a track now, and goes into them
             await into_playlists(s, item.user_id, item.query_json["playlists"], [item.track_id])
@@ -677,9 +683,7 @@ async def restar_replaced(s: AsyncSession, items: list[DownloadItem]) -> None:
     """A picked file imported as one more file of a track (`replaces_song`: the song of the file before it): a ♥
     the user has on the track moves, in Navidrome, from that song to the new file's."""
     from app import playlists
-    from app.api.schemas import FavoriteTarget
     from app.auth import user_navidrome
-    from app.favorites import remember
 
     for i in items:
         old = (i.query_json or {}).get("replaces_song")
@@ -688,13 +692,12 @@ async def restar_replaced(s: AsyncSession, items: list[DownloadItem]) -> None:
             row = (await s.execute(select(Track.nd_song_id, Track.ref).where(Track.id == i.track_id))).first()
         if row is None or not row[0] or row[0] == old:
             continue
-        new, ref = row
+        new = row[0]
         liked = await playlists.liked(s, i.user_id)
         user = await s.get(User, i.user_id)
         if user is None or (await s.execute(select(PlaylistItem.id).where(
                 PlaylistItem.playlist_id == liked.id, PlaylistItem.track_id == i.track_id).limit(1))).first() is None:
             continue
-        await remember(s, FavoriteTarget(ref=ref, nd_song_id=new), extra_aliases=[f"nd:{old}"])
         nd = user_navidrome(user)
         try:
             await nd.star(song_ids=[new])
