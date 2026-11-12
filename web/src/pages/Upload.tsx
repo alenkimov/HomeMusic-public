@@ -736,7 +736,7 @@ function CoverOption({ selected, label, onClick, children }: { selected: boolean
 
 /** «После загрузки»: where the imported tracks go besides the library — «Любимое», playlists, tags. The same icons
  * as the selection bar's and the same windows; what is chosen stands beside them and is taken off by its ✕. */
-function AfterImport({ count, like, onLike, playlists, onPlaylists, onPickPlaylists, tagIds, onTags }: { count: number; like: boolean; onLike: (v: boolean) => void; playlists: { id: string; name: string }[]; onPlaylists: (list: { id: string; name: string }[]) => void; onPickPlaylists: () => void; tagIds: number[]; onTags: (ids: number[]) => void }) {
+export function AfterImport({ count, like, onLike, playlists, onPlaylists, onPickPlaylists, tagIds, onTags, label = 'После загрузки', className = 'mx-4 mt-5' }: { label?: string; className?: string; count: number; like: boolean; onLike: (v: boolean) => void; playlists: { id: string; name: string }[]; onPlaylists: (list: { id: string; name: string }[]) => void; onPickPlaylists: () => void; tagIds: number[]; onTags: (ids: number[]) => void }) {
   const tags = useTags();
   const picked = tagIds.map((id) => tags.byId.get(id)).filter((t) => !!t);
   const chip = 'flex min-w-0 items-center gap-1.5 rounded-full bg-fg/10 py-1 pl-3 pr-1 text-sm';
@@ -747,8 +747,8 @@ function AfterImport({ count, like, onLike, playlists, onPlaylists, onPickPlayli
   );
   const nothing = !like && !playlists.length && !picked.length;
   return (
-    <div className="mx-4 mt-5 flex flex-wrap items-center gap-x-1 gap-y-2 rounded-xl bg-surface px-3 py-2">
-      <span className="pr-2 text-sm text-muted">После загрузки</span>
+    <div className={cx(className, 'flex flex-wrap items-center gap-x-1 gap-y-2 rounded-xl bg-surface px-3 py-2')}>
+      <span className="pr-2 text-sm text-muted">{label}</span>
       <IconButton icon="heart" filled={like} label={like ? 'Не добавлять в «Любимое»' : 'Добавить в «Любимое»'} aria-pressed={like} onClick={() => onLike(!like)} className={like ? 'text-accent' : 'text-muted hover:text-fg'} />
       <IconButton icon="playlist" label="В плейлисты" onClick={onPickPlaylists} className={playlists.length ? 'text-accent' : 'text-muted hover:text-fg'} />
       <IconButton icon="tag" label="Теги" onClick={() => openTagsPick(`${tracksWord(count)} — теги`, tagIds, onTags)} className={picked.length ? 'text-accent' : 'text-muted hover:text-fg'} />

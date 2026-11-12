@@ -7,7 +7,7 @@ import { LikeButton } from '../components/LikeButton';
 import { useListSearch, type Found } from '../components/ListSearch';
 import { SaveSelection, TagFilterBar } from '../components/Tags';
 import { Button, Cover, Empty, ErrorState, Field, IconButton, PageHeader, SectionTitle, SkeletonRows, Sheet, Spinner, cx } from '../components/ui';
-import { fmtLength, tracksWord } from '../lib/format';
+import { fmtLength, plural, tracksWord } from '../lib/format';
 import { AUTO_PLAYLISTS, playCount, usePlayCounts } from '../lib/stats';
 import { useDesktop } from '../lib/desktop';
 import { useHubEvent } from '../lib/events';
@@ -533,7 +533,9 @@ export function PlaylistPage({ id }: { id: string }) {
   const res = useAsync((s) => api.playlist(id, s), [id]);
   const p = res.data;
   useSmartPage(`playlist:${id}`, p?.name ?? null);
-  const all = useMemo(() => p?.tracks ?? [], [p]);
+  // what Navidrome's playlist has, then the tracks of its import that wait for a listen (not in the library yet)
+  const all = useMemo(() => [...(p?.tracks ?? []), ...(p?.pending ?? [])], [p]);
+  const waits = p?.pending?.length ?? 0;
   const search = useListSearch(all);
   const [sort, setSort] = useState<ListSort>(null);
   const [editing, setEditing] = useState(false);
@@ -565,9 +567,9 @@ export function PlaylistPage({ id }: { id: string }) {
         kicker="Плейлист"
         cover={p.cover_url ? `${p.cover_url}&size=600` : p.tracks[0]?.cover_url}
         title={p.name}
-        sub={[tracksWord(p.song_count), p.duration_s ? fmtLength(p.duration_s) : null].filter(Boolean).join(' · ')}
+        sub={[tracksWord(p.song_count + waits), p.duration_s ? fmtLength(p.duration_s) : null, waits ? `${waits} ещё не ${plural(waits, ['скачан', 'скачаны', 'скачаны'])} — скачаются, когда послушаете` : null].filter(Boolean).join(' · ')}
       />
-      <ListActions tracks={inOrder(shown ? shown.map((f) => p.tracks[f.index]) : p.tracks, sort)} context="playlist">
+      <ListActions tracks={inOrder(shown ? shown.map((f) => all[f.index]) : all, sort)} context="playlist">
         {desktop && (
           <>
             <IconButton icon="edit" size={24} label="Изменить название и обложку" onClick={() => setEditing(true)} className="text-muted hover:text-fg" />
@@ -585,11 +587,11 @@ export function PlaylistPage({ id }: { id: string }) {
           }}
         />
       )}
-      {p.tracks.length ? (
+      {all.length ? (
         <>
           {saving && <SaveSelection scope={`playlist:${id}`} filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`)} />}
           <TagFilterBar songIds={p.tracks.map((t) => t.nd_song_id)} filter={filter} onChange={setFilter} onSave={() => setSaving(true)} />
-          <SongList tracks={p.tracks} found={shown} sort={sort} onSort={setSort} extra={(t, i) => [{ icon: 'x', label: 'Убрать из плейлиста', onClick: () => void remove(i, t) }]} />
+          <SongList tracks={all} found={shown} sort={sort} onSort={setSort} extra={(t, i) => (i < p.tracks.length ? [{ icon: 'x', label: 'Убрать из плейлиста', onClick: () => void remove(i, t) }] : [])} />
           {search.control}
         </>
       ) : (

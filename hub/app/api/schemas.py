@@ -602,6 +602,9 @@ class NdHomeOut(BaseModel):
 
 class PlaylistPageOut(PlaylistOut):
     tracks: list[NdSongOut] = []
+    # tracks of the import this playlist came with that the library has not got yet (an «Экономно» import downloads
+    # one when it is listened to): shown after `tracks`, played through the Hub, not in Navidrome's playlist
+    pending: list[NdSongOut] = []
 
 
 class PlaylistAddIn(BaseModel):
@@ -749,6 +752,10 @@ class ImportStartIn(BaseModel):
     mode: ImportMode = "economy"
     download_albums: bool = False  # liked albums: download them whole (else only ★ the owned ones)
     keep_token: bool = False  # keep the sign-in for «Обновить»
+    # «После переноса»: every track of the chosen likes and playlists, once the library has it, also gets…
+    star: bool = False  # … a ♥
+    playlist_ids: list[str] = Field(default_factory=list, max_length=50)  # … a place in these playlists
+    tag_ids: list[int] = Field(default_factory=list, max_length=50)  # … these tags
 
 
 class ImportItemOut(BaseModel):

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { ImportCollectionOut, ImportItemOut, ImportMode, ImportOut } from '../api/types';
 import { BrandIcon } from '../components/BrandIcon';
+import { PlaylistsPick } from '../components/PlaylistsButton';
+import { AfterImport } from './Upload';
 import { Icon, type IconName } from '../components/Icon';
 import { ListenButton } from '../components/catalog';
 import { Button, Checkbox, Cover, Empty, ErrorState, IconButton, Loading, Notice, PageHeader, ProgressBar, Radio, SectionTitle, SkeletonRows, Spinner, cx } from '../components/ui';
@@ -309,10 +311,20 @@ function Preview({ imp, onStarted }: { imp: ImportOut; onStarted: (r: ImportOut)
   const lowSpace = st.free_bytes != null && est.bytes > st.free_bytes * 0.9;
   const albumsPicked = imp.collections.some((c) => c.kind === 'albums' && picked.has(c.id));
 
+  // «После переноса»: what every transferred track also gets once the library has it
+  const [like, setLike] = useState(false);
+  const [toPlaylists, setToPlaylists] = useState<{ id: string; name: string }[]>([]);
+  const [tagIds, setTagIds] = useState<number[]>([]);
+  const [plPicker, setPlPicker] = useState(false);
+  const moved = imp.collections.filter((c) => (c.kind === 'likes' || c.kind === 'playlist') && picked.has(c.id)).reduce((n, c) => n + c.count, 0);
+
   const go = async () => {
     setBusy(true);
     const r = await attempt(() =>
-      api.importStart(imp.id, { collection_ids: [...picked], mode, download_albums: mode === 'full' && albums, keep_token: keep }),
+      api.importStart(imp.id, {
+        collection_ids: [...picked], mode, download_albums: mode === 'full' && albums, keep_token: keep,
+        star: like, playlist_ids: toPlaylists.map((p) => p.id), tag_ids: tagIds,
+      }),
     );
     setBusy(false);
     if (r) {
@@ -342,7 +354,7 @@ function Preview({ imp, onStarted }: { imp: ImportOut; onStarted: (r: ImportOut)
       <SectionTitle>Как переносить</SectionTitle>
       <div className="mx-4 space-y-2">
         <ModeCard on={mode === 'economy'} onClick={() => setMode('economy')} title="Экономно" badge="рекомендуем">
-          Плейлисты и ♥ появятся сразу. Всё слушается сразу, а на диск трек скачивается, когда вы его послушали.
+          Плейлисты и ♥ появятся сразу, со всеми треками — их можно слушать. На диск трек скачивается, когда вы его послушали.
         </ModeCard>
         <ModeCard on={mode === 'full'} onClick={() => setMode('full')} title="Скачать всё">
           Около {tracksWord(est.tracks)}, ~{fmtSize(est.bytes)}
@@ -362,6 +374,25 @@ function Preview({ imp, onStarted }: { imp: ImportOut; onStarted: (r: ImportOut)
           </label>
         )}
       </div>
+      {moved > 0 && (
+        <>
+          <AfterImport label="После переноса" className="mx-4 mt-4" count={moved} like={like} onLike={setLike} playlists={toPlaylists} onPlaylists={setToPlaylists} onPickPlaylists={() => setPlPicker(true)} tagIds={tagIds} onTags={setTagIds} />
+          {(like || toPlaylists.length > 0 || tagIds.length > 0) && (
+            <p className="px-5 pt-1.5 text-xs text-dim">Трек получает это, когда попадает в библиотеку{mode === 'economy' ? ' — в режиме «Экономно» после того, как вы его послушали' : ''}.</p>
+          )}
+        </>
+      )}
+      {plPicker && (
+        <PlaylistsPick
+          title={`${tracksWord(moved)} — в плейлисты`}
+          picked={toPlaylists}
+          onClose={() => setPlPicker(false)}
+          onDone={(list) => {
+            setToPlaylists(list);
+            setPlPicker(false);
+          }}
+        />
+      )}
       <div className="px-4 pt-4">
         <Button variant="primary" block busy={busy} disabled={!picked.size || (mode === 'full' && lowSpace)} onClick={go}>
           Перенести

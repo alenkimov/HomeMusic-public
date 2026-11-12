@@ -342,14 +342,15 @@ async def _fetch_failed(job: Job, exc: Exception) -> None:
 
 
 async def start(s: AsyncSession, imp: Import, *, collection_ids: list[int], mode: str, download_albums: bool,
-                keep_token: bool) -> None:
+                keep_token: bool, extra: dict[str, Any] | None = None) -> None:
     if imp.status != "preview":
         raise PermanentError("Импорт уже запущен")
     for c in (await s.execute(select(ImportCollection).where(ImportCollection.import_id == imp.id))).scalars():
         c.selected = c.id in collection_ids
     imp.mode = mode
     imp.keep_token = keep_token
-    imp.options_json = {**(imp.options_json or {}), "download_albums": download_albums}
+    imp.options_json = {**(imp.options_json or {}), "download_albums": download_albums,
+                        "extra": extra or {}}  # «После переноса»: `apply.apply_extras`
     imp.status = "running"
     imp.started_at = utcnow()
     await enqueue(s, "import_resolve", {"import_id": imp.id}, priority=PRIORITY_IMPORT)
@@ -430,6 +431,7 @@ async def handle_playlists(job: Job) -> None:
         await apply.refresh_items(s, imp)
         await apply.sync_playlists(s, imp)
         await apply.sync_likes(s, imp)
+        await apply.apply_extras(s, imp)
     publish(imp)
 
 
@@ -450,6 +452,7 @@ async def handle_finish(job: Job) -> None:
             return
         await apply.sync_playlists(s, imp)
         await apply.sync_likes(s, imp)
+        await apply.apply_extras(s, imp)
         await apply.star_albums_artists(s, imp)
         imp.status = "done"
         imp.finished_at = utcnow()

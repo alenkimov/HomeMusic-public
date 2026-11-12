@@ -330,6 +330,82 @@ async def sync_likes(s: AsyncSession, imp: Import) -> None:
         bus.publish(imp.user_id, "library", {"kind": "starred", "song_ids": again})
 
 
+async def apply_extras(s: AsyncSession, imp: Import) -> None:
+    """«После переноса» (`options_json["extra"]`): the tracks of the chosen likes and playlists that the library has
+    now get what was asked for them all — a ♥, a place in other playlists, tags. Each track once (`raw_json["extra"]`),
+    as it arrives: an «Экономно» import brings a track when it is listened to."""
+    extra = (imp.options_json or {}).get("extra") or {}
+    star, playlist_ids, tag_ids = bool(extra.get("star")), list(extra.get("playlist_ids") or []), list(extra.get("tag_ids") or [])
+    if not (star or playlist_ids or tag_ids):
+        return
+    items = [i for i in (await s.execute(
+        select(ImportItem).join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
+        .where(ImportItem.import_id == imp.id, ImportItem.status == "done", ImportItem.track_id.is_not(None),
+               ImportCollection.kind.in_(("likes", "playlist")), ImportCollection.selected.is_(True))
+        .order_by(ImportCollection.id, ImportItem.position))).scalars() if not (i.raw_json or {}).get("extra")]
+    songs = await _song_ids(s, items)
+    ready = [i for i in items if i.id in songs]  # the rest wait for the library scan
+    user = await s.get(User, imp.user_id)
+    if not ready or user is None:
+        return
+    track_ids = list(dict.fromkeys(i.track_id for i in ready))
+    song_ids = list(dict.fromkeys(songs[i.id] for i in ready))
+    try:
+        if tag_ids:
+            from app import tags
+
+            await tags.assign_tracks(s, imp.user_id, track_ids, tag_ids)
+        if star or playlist_ids:
+            nd = _nd(user)
+            try:
+                for pid in playlist_ids:
+                    have = {e.get("id") for e in (await nd.get_playlist(pid)).get("entry") or []}
+                    new = [x for x in song_ids if x not in have]
+                    for k in range(0, len(new), 300):
+                        await nd.update_playlist(pid, add=new[k:k + 300])
+                    from app import playlist_dates
+
+                    await playlist_dates.stamp(s, pid, track_ids)
+                if star:
+                    from app.api.schemas import FavoriteTarget
+                    from app.favorites import command
+
+                    # through the favorites journal, as a ♥ set by hand: «Любимое» and mixes see it the same way
+                    await command(s, user, [FavoriteTarget(nd_song_id=x) for x in song_ids], liked=True, client="hub",
+                                  context="import", nd=nd)
+            finally:
+                await nd.aclose()
+    except Exception as e:  # the next settling of the import tries these tracks again
+        log.warning("import %s: extras: %r", imp.id, e)
+        return
+    for i in ready:
+        i.raw_json = {**(i.raw_json or {}), "extra": True}
+    await s.flush()
+    if star or playlist_ids:
+        from app.events import bus
+
+        bus.publish(imp.user_id, "library", {"kind": "playlist", "playlist_id": playlist_ids[0] if playlist_ids else None,
+                                             "star": star})
+
+
+async def pending_of_playlist(s: AsyncSession, user_id: int, playlist_id: str) -> list[ImportItem]:
+    """Tracks of the import a playlist came with that the library has not got yet, in the service's order."""
+    rows = (await s.execute(
+        select(ImportItem).join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
+        .join(Import, Import.id == ImportItem.import_id)
+        .where(Import.user_id == user_id, ImportCollection.kind == "playlist", ImportCollection.selected.is_(True),
+               ImportCollection.nd_playlist_id == playlist_id, ImportItem.ref.is_not(None),
+               ImportItem.status.in_(("waiting", "queued")))
+        .order_by(ImportItem.position, ImportItem.id))).scalars()
+    seen: set[str] = set()
+    out = []
+    for it in rows:
+        if it.ref not in seen:
+            seen.add(it.ref)
+            out.append(it)
+    return out
+
+
 async def album_owned(s: AsyncSession, ref: str | None) -> bool:
     if not ref:
         return False

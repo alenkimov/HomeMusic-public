@@ -65,6 +65,12 @@ async def env(hub_env, monkeypatch):
             name = p.get("name") or state["playlists"].get(pid, {}).get("name")
             state["playlists"][pid] = {"name": name, "songs": p.get_list("songId")}  # with an id: replaces
             return reply(playlist={"id": pid, "name": name})
+        if ep == "getPlaylist":
+            pl = state["playlists"].get(p["id"])
+            if pl is None:
+                return reply()
+            return reply(playlist={"id": p["id"], "name": pl["name"], "songCount": len(pl["songs"]),
+                                   "entry": [{"id": x, "title": x, "artist": "?"} for x in pl["songs"]]})
         if ep == "updatePlaylist":
             state["playlists"][p["playlistId"]]["songs"] += p.get_list("songIdToAdd")
             return reply()
@@ -265,6 +271,50 @@ async def test_economy_import_likes_and_playlists_in_order(env):
         await sync_likes(s, await s.get(Import, imp["id"]))
     assert state["stars"] == ["ndC", "ndB"]
     assert {x["status"] for x in await items(c, imp, collection_id=likes) if x["title"] == "Город золотой"} == {"skipped"}
+
+
+async def test_what_waits_shows_in_its_playlist_and_extras_follow_the_tracks(env):
+    from app.db import session_scope
+    from app.jobs.downloads import imports_done
+    from app.models import DownloadItem
+
+    c, state = env["client"], env["state"]
+    imp = await prepared(c)
+    state["playlists"]["mine"] = {"name": "Моё", "songs": ["ndB"]}  # a playlist of the user's own; Осень is in it
+    tag = (await c.post("/api/tags", json={"name": "из Яндекса"})).json()["id"]
+    r = await c.post(f"/api/imports/{imp['id']}/start", json={
+        "collection_ids": [x["id"] for x in imp["collections"]], "mode": "economy",
+        "star": True, "playlist_ids": ["mine"], "tag_ids": [tag]})
+    assert r.status_code == 200, r.text
+    await run_imports()
+
+    # the playlist that came with the import: Navidrome has what the library has, the page shows the rest too
+    pl = next(k for k, v in state["playlists"].items() if v["name"] == "Дорога")
+    page = (await c.get(f"/api/playlists/{pl}")).json()
+    assert [x["nd_song_id"] for x in page["tracks"]] == ["ndA", "ndB"]
+    assert [(x["ref"], x["title"], x["owned"]) for x in page["pending"]] == [("dz:100", "Группа крови", False)]
+    assert (await c.get("/api/playlists/mine")).json()["pending"] == []  # not an import's playlist
+
+    # «После переноса»: what the library has got its place in the other playlist (once), its tag and its ♥
+    assert state["playlists"]["mine"]["songs"] == ["ndB", "ndA"]
+    tags = (await c.get("/api/tags")).json()["map"]
+    assert tag in tags["ndA"] and tag in tags["ndB"]
+    assert {"ndA", "ndB"} <= set(state["stars"])
+
+    # the track that waited arrives: it leaves `pending` and gets the same; nothing is done twice
+    await c.post("/api/plays/events", json={"events": [{
+        "event_id": "s1", "ts": "2026-10-23T10:00:00Z", "kind": "start", "ref": "dz:100", "client": "app/1.6.0"}]})
+    [dl] = (await c.get("/api/downloads")).json()
+    track_id = await add_library_track(KROVI, "ndC")
+    async with session_scope() as s:
+        item = await s.get(DownloadItem, dl["id"])
+        item.status, item.track_id = "done", track_id
+        await imports_done(s, [item])
+    await run_imports()
+    page = (await c.get(f"/api/playlists/{pl}")).json()
+    assert [x["nd_song_id"] for x in page["tracks"]] == ["ndC", "ndA", "ndB"] and page["pending"] == []
+    assert state["playlists"]["mine"]["songs"] == ["ndB", "ndA", "ndC"]
+    assert tag in (await c.get("/api/tags")).json()["map"]["ndC"] and "ndC" in state["stars"]
 
 
 async def test_likes_are_downloaded_from_the_oldest(env):

@@ -559,6 +559,8 @@ export interface PlaylistOfSongsOut extends PlaylistOut {
 
 export interface PlaylistPageOut extends PlaylistOut {
   tracks: NdSongOut[];
+  /** tracks of the import the playlist came with that the library has not got yet: shown after `tracks` */
+  pending?: NdSongOut[];
 }
 
 // --- the Navidrome library (the PWA in a browser: /api/nd) ------------------------------------
@@ -838,6 +840,12 @@ export interface ImportStartIn {
   mode: ImportMode;
   download_albums?: boolean;
   keep_token?: boolean;
+  /** «После переноса»: every transferred track, once the library has it, also gets a ♥ … */
+  star?: boolean;
+  /** … a place in these playlists … */
+  playlist_ids?: string[];
+  /** … and these tags */
+  tag_ids?: number[];
 }
 
 export type ImportMatch = 'owned' | 'exact' | 'probable' | 'not_found';

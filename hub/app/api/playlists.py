@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import playlist_dates
 from app.api.medialib import nd_call, songs_out
 from app.api.schemas import (
+    NdSongOut,
     PlaylistAddIn,
     PlaylistCreateIn,
     PlaylistMembershipIn,
@@ -215,7 +216,43 @@ async def get_playlist(playlist_id: str, user: User = Depends(current_user),
     for t in tracks:  # a track without a date of its own keeps the day it came into the library
         if t.library_track_id in dates:
             t.added_at = dates[t.library_track_id]
-    return PlaylistPageOut(**pl_out(p, await _custom()).model_dump(), tracks=tracks)
+    return PlaylistPageOut(**pl_out(p, await _custom()).model_dump(), tracks=tracks,
+                           pending=await _pending(s, user, playlist_id))
+
+
+async def _pending(s: AsyncSession, user: User, playlist_id: str) -> list[NdSongOut]:
+    """The playlist's tracks that wait for a listen or a download (`apply.pending_of_playlist`) as catalog tracks:
+    their names from the import's own row, the cover from what the Hub has cached of the catalog."""
+    from app.favorites import parse_time
+    from app.imports.apply import pending_of_playlist
+    from app.models import CatalogCache
+
+    items = await pending_of_playlist(s, user.id, playlist_id)
+    if not items:
+        return []
+    keys = sorted({k for it in items for k in (f"listen:{it.ref}", f"mix:track:{it.ref}",
+                                               f"dz:track:{it.ref[3:]}" if it.ref.startswith("dz:") else "") if k})
+    cached: dict[str, dict] = {}
+    for i in range(0, len(keys), 500):
+        for row in (await s.execute(select(CatalogCache).where(CatalogCache.key.in_(keys[i:i + 500])))).scalars():
+            cached[row.key] = (row.payload_json or {}).get("v") or {}
+    out = []
+    for it in items:
+        ref = it.ref
+        src, _, ident = ref.partition(":")
+        if src not in ("dz", "hm", "mb", "file") or not ident:
+            continue
+        raw = it.raw_json or {}
+        meta = {**cached.get(f"listen:{ref}", {}), **cached.get(f"mix:track:{ref}", {}), **cached.get(f"dz:track:{ref[3:]}", {})}
+        out.append(NdSongOut(
+            ref=ref, source=src, id=ident, title=raw.get("title") or meta.get("title") or ref,
+            artist=raw.get("artist") or meta.get("artist") or "", artists=raw.get("artists") or [],
+            duration_s=raw.get("duration_s") or meta.get("duration_s"), album_title=raw.get("album") or meta.get("album_title"),
+            artist_ref=meta.get("artist_ref"), album_ref=meta.get("album_ref"), cover_url=meta.get("cover_url") or raw.get("cover_url"),
+            cover_small_url=meta.get("cover_small_url") or raw.get("cover_url"), owned=False,
+            downloading=it.status == "queued",
+            added_at=playlist_dates.naive(parse_time(raw.get("liked_at")))))
+    return out
 
 
 @router.post("/{playlist_id}/remove")

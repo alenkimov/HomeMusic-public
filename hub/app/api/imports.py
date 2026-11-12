@@ -107,7 +107,9 @@ async def start(import_id: int, body: ImportStartIn, user: User = Depends(curren
     imp = await _own(s, user, import_id)
     try:
         await core.start(s, imp, collection_ids=body.collection_ids, mode=body.mode,
-                         download_albums=body.download_albums, keep_token=body.keep_token)
+                         download_albums=body.download_albums, keep_token=body.keep_token,
+                         extra={"star": body.star, "playlist_ids": list(dict.fromkeys(body.playlist_ids)),
+                                "tag_ids": list(dict.fromkeys(body.tag_ids))})
     except PermanentError as e:
         raise HTTPException(409, str(e)) from e
     await s.flush()
