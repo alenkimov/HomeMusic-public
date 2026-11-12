@@ -760,31 +760,36 @@ async def process_playlist_adds(s: AsyncSession) -> None:
     """Wait for active downloads, pass manual review, and insert a reviewed song back into its requested place."""
     from app.auth import user_navidrome
 
+    # Nothing waits: no need to take the database (this runs every half a minute and after every library scan).
+    if (await s.execute(select(PendingPlaylistAdd.id).limit(1))).first() is None:
+        return
     # Serialize readers through the transaction commit, including concurrent scan/download completions.
     # An asyncio lock released here would let the next caller see uncommitted additions and add them twice.
     await s.execute(update(PendingPlaylistAdd).where(PendingPlaylistAdd.id == -1).values(position=0))
+    # only the columns that decide: whole download rows carry every candidate they were chosen from, and loading
+    # hundreds of them kept the database for seconds
     rows = (
         await s.execute(
-            select(PendingPlaylistAdd, DownloadItem, Track)
+            select(PendingPlaylistAdd, DownloadItem.status, Track.nd_song_id)
             .join(DownloadItem, DownloadItem.id == PendingPlaylistAdd.download_item_id)
             .outerjoin(Track, Track.id == DownloadItem.track_id)
             .order_by(PendingPlaylistAdd.playlist_id, DownloadItem.batch_id,
                       PendingPlaylistAdd.position, PendingPlaylistAdd.id)
         )
     ).all()
-    groups: dict[tuple[int, str], list[tuple[PendingPlaylistAdd, DownloadItem, Track | None]]] = {}
-    for add, item, track in rows:
-        groups.setdefault((add.user_id, add.playlist_id), []).append((add, item, track))
+    groups: dict[tuple[int, str], list[tuple[PendingPlaylistAdd, str, str | None]]] = {}
+    for add, status, song in rows:
+        groups.setdefault((add.user_id, add.playlist_id), []).append((add, status, song))
     for (user_id, playlist_id), entries in groups.items():
         ready: list[tuple[PendingPlaylistAdd, str]] = []
-        for add, item, track in entries:
+        for add, status, song in entries:
             if add.applied_song_id:
                 ready.append((add, add.applied_song_id))
                 continue
-            if item.status in ("failed", "cancelled", "needs_review"):
+            if status in ("failed", "cancelled", "needs_review"):
                 continue
-            if track is not None and track.nd_song_id:
-                ready.append((add, track.nd_song_id))
+            if song:
+                ready.append((add, song))
                 continue
             break  # active downloads still finish in order
         new = [(add, song) for add, song in ready if not add.applied_song_id]
@@ -813,8 +818,8 @@ async def process_playlist_adds(s: AsyncSession) -> None:
             for add, song in new:
                 add.applied_song_id = song
         blocked = False
-        for add, item, _ in entries:
-            if item.status in ("failed", "cancelled") or (add.applied_song_id and not blocked):
+        for add, status, _ in entries:
+            if status in ("failed", "cancelled") or (add.applied_song_id and not blocked):
                 await s.delete(add)
             elif not add.applied_song_id:
                 blocked = True

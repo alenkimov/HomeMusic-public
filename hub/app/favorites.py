@@ -331,6 +331,7 @@ async def command(s: AsyncSession, user: User, targets: list[FavoriteTarget], *,
                     from app.plays import Ids
                     t.ref, t.nd_song_id = await Ids(s).complete(t.ref, t.nd_song_id)
             active = []
+            states = None  # what is liked now: told once for the whole group, not anew for each of its targets
             for target in group:
                 subject = await remember(s, target)
                 if not getattr(target, ND_FIELDS[typ]) and subject.nd_id:
@@ -343,12 +344,14 @@ async def command(s: AsyncSession, user: User, targets: list[FavoriteTarget], *,
                     continue  # Retried old commands must not undo a newer decision in Navidrome.
                 from app.plays import event_time
                 at = event_time(ts or utcnow())
-                states = await snapshot(s, user.id)
+                if states is None:
+                    states = await snapshot(s, user.id)
                 current = next((x for x in states.values() if x.target_type == typ and
                     ((x.ref and x.ref == target.ref) or (x.nd_id and x.nd_id == getattr(target, ND_FIELDS[typ])))), None)
                 if current and current.event.ts > at:
                     events.append(await record(s, user.id, target, liked, ts=at, event_id=eid,
                                                client=client, context=context))
+                    states = None  # the journal changed
                     continue  # Delayed commands enter history without overwriting the live mirror.
                 active.append(target)
             group = active
