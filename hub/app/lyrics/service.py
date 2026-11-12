@@ -152,6 +152,12 @@ async def ensure(s: AsyncSession, track: Track, *, force: bool = False) -> Lyric
             return row
     found = await find(query_of(track), enabled(settings))
     if row is None:
+        # the search takes seconds: meanwhile the track may have got its row («без слов» set on an upload, the
+        # player asking for the same text)
+        row = (await s.execute(select(Lyrics).where(Lyrics.track_id == track.id))).scalar_one_or_none()
+        if row is not None and (row.pinned or row.kind != "none"):
+            return row
+    if row is None:
         row = Lyrics(track_id=track.id, offset_ms=0, pinned=False)
         s.add(row)
     _store(row, found)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,6 +12,10 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
+
+log = logging.getLogger(__name__)
+
+SLOW_WRITE_S = 2.0  # SQLite has one writer: a transaction that writes this long keeps every other write waiting
 
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
@@ -24,12 +30,28 @@ def _set_pragmas(dbapi_conn, _record) -> None:
     cur.close()
 
 
+def _write_began(conn, cursor, statement, parameters, context, executemany) -> None:
+    """The first statement of a transaction that changes data: from here on the database is this transaction's."""
+    if "write_at" not in conn.info and statement.lstrip()[:6].upper() in ("INSERT", "UPDATE", "DELETE"):
+        conn.info["write_at"] = (time.monotonic(), " ".join(statement.split())[:120])
+
+
+def _write_ended(conn) -> None:
+    began = conn.info.pop("write_at", None)
+    if began and time.monotonic() - began[0] >= SLOW_WRITE_S:
+        log.warning("slow write: the database was held for %.1f s by a transaction that began with: %s",
+                    time.monotonic() - began[0], began[1])
+
+
 def init_engine(db_path: Path | None = None) -> AsyncEngine:
     global _engine, _sessionmaker
     path = db_path or get_settings().db_path
     path.parent.mkdir(parents=True, exist_ok=True)
     _engine = create_async_engine(f"sqlite+aiosqlite:///{path.as_posix()}", connect_args={"timeout": 30})
     event.listen(_engine.sync_engine, "connect", _set_pragmas)
+    event.listen(_engine.sync_engine, "before_cursor_execute", _write_began)
+    event.listen(_engine.sync_engine, "commit", _write_ended)
+    event.listen(_engine.sync_engine, "rollback", _write_ended)
     _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
     return _engine
 

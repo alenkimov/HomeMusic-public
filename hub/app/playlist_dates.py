@@ -47,7 +47,9 @@ async def collect(s: AsyncSession, user_id: int, playlist_id: str, name: str) ->
                 or_(ImportCollection.nd_playlist_id == playlist_id,
                     func.lower(ImportCollection.title) == name.strip().lower())))
     rows = []
-    seen: set[int] = set()
+    # only what is not dated yet: opening a playlist then writes nothing, and does not wait for the database while
+    # an import or a scan is writing to it
+    seen: set[int] = set(await of(s, playlist_id))
     for track_id, raw in (await s.execute(q)).all():
         at = naive(parse_time((raw or {}).get("liked_at")))
         if at is not None and track_id not in seen:
