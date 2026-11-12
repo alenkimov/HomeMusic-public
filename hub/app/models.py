@@ -174,6 +174,9 @@ class Track(Base):
     ref: Mapped[str | None] = mapped_column(String(64), unique=True)
     explicit: Mapped[bool | None] = mapped_column(Boolean)
     fingerprint: Mapped[str] = mapped_column(String(1024))  # normalized "artist|title"
+    # what the catalog said of the song when the track was made (a `CatalogTrack`): its cover, its album and
+    # artists there. A track without a file is drawn from this; None — the catalog does not know the song
+    catalog: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     # its files: given with a new track they are saved with it. Never read through here (a query names them)
@@ -835,6 +838,37 @@ class ListenHistory(Base):
     artist: Mapped[str] = mapped_column(String(512))
     album: Mapped[str | None] = mapped_column(String(512))
     source: Mapped[str] = mapped_column(String(16), default="spotify")
+
+
+class Playlist(Base):
+    """A playlist (ARCHITECTURE.md): the Hub's own, with tracks that may have no file yet. `kind`: "liked" —
+    «Любимое», one per user; "user" — made by hand or by an import. What third-party apps see of it is a mirror in
+    Navidrome (`nd_playlist_id`); `mirrored` — the songs the mirror was last given."""
+
+    __tablename__ = "playlists"
+    __table_args__ = (Index("ix_playlists_user", "user_id", "kind"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(8), default="user")
+    name: Mapped[str] = mapped_column(String(200))
+    nd_playlist_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    mirrored: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class PlaylistItem(Base):
+    """A track's place in a playlist. A track may stand in a playlist more than once."""
+
+    __tablename__ = "playlist_items"
+    __table_args__ = (Index("ix_playlist_items_order", "playlist_id", "position"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    playlist_id: Mapped[int] = mapped_column(ForeignKey("playlists.id", ondelete="CASCADE"))
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), index=True)
+    position: Mapped[int] = mapped_column(Integer)
+    added_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class DiscoveryIssue(Base):

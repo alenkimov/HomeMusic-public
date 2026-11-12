@@ -1,4 +1,9 @@
-"""The registry of tracks (ARCHITECTURE.md): a track and the files that play it."""
+"""The registry of tracks (ARCHITECTURE.md): the songs the Hub knows and the files that play them.
+
+A catalog track becomes a track here the moment it matters to someone — it is put into a playlist, tagged,
+downloaded, listened to. `of_catalog` is that moment: it gives the track of a catalog track, making it if the Hub
+has not met the song yet. The track has no file then; a download adds one later (`library.importer`).
+"""
 
 from __future__ import annotations
 
@@ -7,7 +12,48 @@ from collections.abc import Iterable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.catalog.models import CatalogTrack
+from app.matching.normalize import fingerprint
 from app.models import Track, TrackFile
+
+
+def _same_length(a: int | None, b: int | None, tol: int = 3) -> bool:
+    return a is None or b is None or abs(a - b) <= tol
+
+
+async def of_catalog(s: AsyncSession, c: CatalogTrack, *, user_id: int | None = None) -> Track:
+    """The track of this catalog track; made if the Hub does not know the song. A track the Hub has under no
+    catalog name yet (an uploaded file, say) that is this very song — the same ISRC, or the same names and length —
+    takes the name instead of a second track being made."""
+    ref = c.ref if c.source != "nd" else None
+    track = await by_ref(s, ref)
+    if track is not None:
+        return track
+    unnamed = select(Track).where(Track.ref.is_(None)).order_by(Track.id.desc())
+    if c.isrc:
+        track = (await s.execute(unnamed.where(Track.isrc == c.isrc.upper()).limit(1))).scalar_one_or_none()
+    if track is None:
+        for t in (await s.execute(unnamed.where(Track.fingerprint == fingerprint(c.artist, c.title)))).scalars():
+            if _same_length(t.duration_s, c.duration_s):
+                track = t
+                break
+    if track is not None:
+        if ref:
+            track.ref = ref
+        track.catalog = track.catalog or c.model_dump(mode="json")
+        return track
+    track = Track(
+        ref=ref, artist=c.artist, title=c.title, album=c.album_title, album_artist=c.album_artist,
+        track_no=c.track_no, disc_no=c.disc_no, year=c.release_date.year if c.release_date else None,
+        duration_s=c.duration_s, isrc=c.isrc.upper() if c.isrc else None, explicit=c.explicit,
+        fingerprint=fingerprint(c.artist, c.title), catalog=c.model_dump(mode="json"), created_by=user_id)
+    s.add(track)
+    await s.flush()
+    return track
+
+
+async def has_file(s: AsyncSession, track_id: int) -> bool:
+    return (await s.execute(select(TrackFile.id).where(TrackFile.track_id == track_id).limit(1))).first() is not None
 
 
 def dz_ref(deezer_id: str | int | None) -> str | None:
