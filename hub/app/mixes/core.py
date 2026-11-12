@@ -257,7 +257,10 @@ async def sync(mix_id: int) -> None:
         if user is not None and songs != (mix.stats_json or {}).get("playlist_songs"):
             pid = await write_playlist(user, settings.nd_playlist_id, songs, mix)
             if pid:
+                from app.playlists_mirror import follow_mix
+
                 settings.nd_playlist_id = mix.nd_playlist_id = pid
+                await follow_mix(s, mix.user_id, pid, PLAYLIST_NAME)
                 mix.stats_json = {**(mix.stats_json or {}), "playlist_songs": songs}
     # the light copies for a metered network (app.light), made now so a tap finds them ready
     from app import listen

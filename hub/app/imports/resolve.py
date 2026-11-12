@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.catalog.models import make_ref, split_ref
 from app.config import get_settings
 from app.imports.sources.spotify_csv import clean_isrc
-from app.library.owned import find_existing
+from app.library.owned import find_owned
 from app.matching.normalize import has_cyrillic, normalize_artist, split_version
 from app.matching.score import score
 from app.matching.select import classify_scores, match_catalog, rank_candidates
@@ -71,7 +71,7 @@ async def _owned(s: AsyncSession, raw: dict[str, Any], ref: str | None = None) -
     if ref:
         src, id_ = split_ref(ref)
         dz_id = id_ if src == "dz" else None
-    return await find_existing(s, artist=raw.get("artist") or "", title=raw.get("title") or "",
+    return await find_owned(s, artist=raw.get("artist") or "", title=raw.get("title") or "",
                                duration_s=raw.get("duration_s"), deezer_track_id=dz_id)
 
 

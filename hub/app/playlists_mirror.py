@@ -7,9 +7,6 @@ Then the Hub's state is written — the Hub wins a conflict, an edit made elsewh
 
 «Микс дня» (`kind` "mix") goes the other way: the mix builder writes that playlist in Navidrome, and the Hub's
 row only follows it.
-
-`adopt` is for a library that had playlists before the Hub kept them: it reads the user's Navidrome playlists once
-and makes the Hub's of them.
 """
 
 from __future__ import annotations
@@ -27,20 +24,7 @@ from app.db import session_scope
 from app.events import bus
 from app.jobs.queue import enqueue, handler, notify
 from app.library.navidrome import SubsonicError
-from app.models import (
-    Import,
-    ImportCollection,
-    ImportItem,
-    Job,
-    MixSettings,
-    Playlist,
-    PlaylistCover,
-    PlaylistDate,
-    PlaylistItem,
-    Track,
-    TrackFile,
-    User,
-)
+from app.models import Job, Playlist, PlaylistItem, Track, TrackFile, User
 
 log = logging.getLogger(__name__)
 
@@ -173,113 +157,22 @@ async def drop_mirror(user: User, nd_playlist_id: str | None) -> None:
         await nd.aclose()
 
 
-# --- a library that had playlists before the Hub kept them --------------------------------------------------------
-
-
-def _catalog_of(item: ImportItem):
-    """An import's row of a track the library has not got, as a catalog track."""
-    from app.catalog.models import CatalogTrack
-
-    raw = item.raw_json or {}
-    src, _, ident = (item.ref or "").partition(":")
-    if src not in ("dz", "hm", "mb") or not ident or not raw.get("title"):
-        return None
-    return CatalogTrack(ref=item.ref, source=src, id=ident, title=raw["title"], artist=raw.get("artist") or "",
-                        artists=raw.get("artists") or [], album_title=raw.get("album"),
-                        duration_s=raw.get("duration_s"), isrc=raw.get("isrc"), cover_url=raw.get("cover_url"),
-                        cover_small_url=raw.get("cover_url"))
-
-
-async def adopt(user_id: int) -> int:
-    """Make the Hub's playlists of the user's Navidrome playlists, once: a user who has any of the Hub's is left
-    alone. The songs keep their order and the dates the Hub knew; the tracks of an import that were waiting for a
-    file come after them, as tracks without one. Returns how many playlists were made."""
-    from app.favorites import parse_time
-    from app.library import tracks as registry
-    from app.playlist_dates import naive
-
-    async with session_scope() as s:
-        user = await s.get(User, user_id)
-        if user is None or (await s.execute(select(Playlist.id).where(
-                Playlist.user_id == user_id, Playlist.kind.in_((playlists.USER, MIX))).limit(1))).first():
-            return 0
-        mix = (await s.execute(select(MixSettings.nd_playlist_id).where(MixSettings.user_id == user_id))).scalar_one_or_none()
-    nd = user_navidrome(user)
-    try:
-        own = [x for x in await nd.get_playlists() if x.get("owner") in (None, user.nd_username)]
-        bodies = [await nd.get_playlist(x["id"]) for x in own]
-    finally:
-        await nd.aclose()
-    made = 0
-    async with session_scope() as s:
-        for body in bodies:
-            nd_id = body.get("id")
-            if not nd_id:
-                continue
-            songs = [e["id"] for e in body.get("entry") or [] if e.get("id")]
-            p = Playlist(user_id=user_id, kind=MIX if nd_id == mix else playlists.USER, name=body.get("name") or "",
-                         nd_playlist_id=nd_id, mirrored=songs, nd_cover=body.get("coverArt"))
-            s.add(p)
-            await s.flush()
-            ids = await _tracks_of_songs(s, songs)
-            dates = dict((await s.execute(select(PlaylistDate.track_id, PlaylistDate.added_at)
-                                          .where(PlaylistDate.nd_playlist_id == nd_id))).all())
-            acquired = dict((await s.execute(select(TrackFile.track_id, func.min(TrackFile.acquired_at))
-                                             .where(TrackFile.track_id.in_(list(ids.values())))
-                                             .group_by(TrackFile.track_id))).all()) if ids else {}
-            position = 0
-            for song in songs:
-                if (tid := ids.get(song)) is not None:
-                    s.add(PlaylistItem(playlist_id=p.id, track_id=tid, position=position,
-                                       added_at=dates.get(tid) or acquired.get(tid) or p.created_at))
-                    position += 1
-            if p.kind == playlists.USER:
-                waiting = (await s.execute(
-                    select(ImportItem).join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
-                    .join(Import, Import.id == ImportItem.import_id)
-                    .where(Import.user_id == user_id, ImportCollection.kind == "playlist",
-                           ImportCollection.nd_playlist_id == nd_id, ImportItem.ref.is_not(None),
-                           ImportItem.status.in_(("waiting", "queued")))
-                    .order_by(ImportItem.position, ImportItem.id))).scalars().all()
-                seen: set[int] = set(ids.values())
-                for item in waiting:
-                    c = _catalog_of(item)
-                    if c is None:
-                        continue
-                    track = await registry.of_catalog(s, c, user_id=user_id)
-                    if track.id in seen:
-                        continue
-                    seen.add(track.id)
-                    at = naive(parse_time((item.raw_json or {}).get("liked_at")))
-                    s.add(PlaylistItem(playlist_id=p.id, track_id=track.id, position=position, added_at=at or p.created_at))
-                    position += 1
-            for c in (await s.execute(
-                    select(ImportCollection).join(Import, Import.id == ImportCollection.import_id)
-                    .where(Import.user_id == user_id, ImportCollection.nd_playlist_id == nd_id))).scalars():
-                c.playlist_id = p.id  # the import that made it goes on filling the Hub's playlist
-            cover = await s.get(PlaylistCover, nd_id)  # the picture the user gave it follows the playlist
-            if cover is not None:
-                s.add(PlaylistCover(nd_playlist_id=str(p.id), image=cover.image, key=cover.key))
-                await s.delete(cover)
-            made += 1
-    if made:
-        log.info("playlists: %s of user %s taken over from Navidrome", made, user_id)
-    return made
+async def follow_mix(s: AsyncSession, user_id: int, nd_playlist_id: str, name: str) -> None:
+    """«Микс дня» is written to Navidrome by its builder (app/mixes/core.py): the Hub's row of it — made here the
+    first time — is told where it is, and follows it."""
+    p = (await s.execute(select(Playlist).where(Playlist.user_id == user_id, Playlist.kind == MIX)
+                         .order_by(Playlist.id).limit(1))).scalar_one_or_none()
+    if p is None:
+        p = await playlists.create(s, user_id, name, kind=MIX)
+    p.nd_playlist_id = nd_playlist_id
+    await enqueue_mirror(s, p.id, delay_s=0)
 
 
 async def loop() -> None:
-    """At the start: playlists a library had before the Hub kept them. Then, now and then: what other apps did to
-    the mirrors."""
+    """Now and then: what other apps did to the mirrors."""
     await asyncio.sleep(45)
     while True:
         try:
-            async with session_scope() as s:
-                users = list((await s.execute(select(User.id).order_by(User.id))).scalars())
-            for user_id in users:
-                try:
-                    await adopt(user_id)
-                except Exception:
-                    log.exception("playlists of user %s not taken over", user_id)
             async with session_scope() as s:
                 ids = list((await s.execute(select(Playlist.id).where(Playlist.kind.in_((playlists.USER, MIX))))).scalars())
                 for pid in ids:

@@ -39,7 +39,7 @@ from app.imports.resolve import CatalogDown, resolve_album, resolve_artist, reso
 from app.imports.sources import yandex
 from app.imports.sources.base import ITEM_KIND, AuthPending, Snapshot, SourceError
 from app.jobs.queue import PRIORITY_IMPORT, PermanentError, RetryLater, enqueue, handler, notify, on_final_failure
-from app.library.owned import find_existing
+from app.library.owned import find_owned
 from app.models import DownloadItem, Import, ImportCollection, ImportItem, Job, utcnow
 from app.security import decrypt, encrypt
 
@@ -275,7 +275,7 @@ async def store_snapshot(s: AsyncSession, imp: Import, snap: Snapshot) -> int:
         coll = colls.get(sc.external_id)
         if coll is None:
             coll = ImportCollection(import_id=imp.id, kind=sc.kind, external_id=sc.external_id, title=sc.title,
-                                    selected=sc.selected, nd_song_ids=[])
+                                    selected=sc.selected)
             s.add(coll)
             await s.flush()
         coll.title, coll.position, coll.cover_url = sc.title, pos, sc.cover_url
@@ -291,7 +291,7 @@ async def store_snapshot(s: AsyncSession, imp: Import, snap: Snapshot) -> int:
                 s.add(it)
                 fresh += 1
                 if sc.kind in ("likes", "playlist", "dislikes"):
-                    lib = await find_existing(s, artist=si.raw.get("artist") or "", title=si.raw.get("title") or "",
+                    lib = await find_owned(s, artist=si.raw.get("artist") or "", title=si.raw.get("title") or "",
                                               duration_s=si.raw.get("duration_s"))
                     if lib is not None:
                         it.match, it.track_id, it.score = "owned", lib.id, 1.0

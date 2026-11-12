@@ -18,7 +18,7 @@ from app.catalog.models import CatalogTrack, split_ref
 from app.config import get_settings
 from app.db import session_scope
 from app.imports.resolve import Resolution, _remember, _remembered
-from app.library.owned import find_existing
+from app.library.owned import find_owned
 from app.matching.select import classify_scores, match_catalog
 from app.mixes.sources import Hit
 from app.services import svc
@@ -82,7 +82,7 @@ async def _search(hit: Hit) -> Resolution:
 
 async def resolve_hit(source: str, hit: Hit) -> CatalogTrack | None:
     async with session_scope() as s:
-        lib = await find_existing(s, artist=hit.artist, title=hit.title, duration_s=hit.duration_s)
+        lib = await find_owned(s, artist=hit.artist, title=hit.title, duration_s=hit.duration_s)
         if lib is not None and lib.nd_song_id:
             return library_track(lib)
         known = await _remembered(s, source, "track", external_id(hit))

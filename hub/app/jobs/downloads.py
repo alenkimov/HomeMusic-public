@@ -30,7 +30,7 @@ from app.jobs.queue import PermanentError, enqueue, handler, notify, on_final_fa
 from app.library import probe
 from app.library.importer import ImportSpec, cleanup_dir, import_file, staging_dir_for
 from app.library.navidrome import admin_client
-from app.library.owned import find_existing, quiet
+from app.library.owned import find_owned, quiet
 from app.library.tracks import current_file
 from app.matching.select import (
     classify,
@@ -283,7 +283,7 @@ async def handle_download_item(job: Job) -> None:
     # 2. already in the library?
     if not force:
         async with session_scope() as s:
-            existing = await find_existing(
+            existing = await find_owned(
                 s, artist=q.artist, title=q.title, duration_s=q.duration_s, isrc=q.isrc,
                 deezer_track_id=meta.get("deezer_track_id"),
             )
@@ -725,7 +725,7 @@ async def known_track(s: AsyncSession, q: TrackQuery, meta: dict[str, Any], user
     catalog name — it is a track once imported."""
     from app.library import tracks as registry
 
-    have = await find_existing(s, artist=q.artist, title=q.title, duration_s=q.duration_s, isrc=q.isrc,
+    have = await find_owned(s, artist=q.artist, title=q.title, duration_s=q.duration_s, isrc=q.isrc,
                                deezer_track_id=meta.get("deezer_track_id"))
     if have is not None:
         return have

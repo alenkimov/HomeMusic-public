@@ -59,12 +59,12 @@ async def _own(s: AsyncSession, user: User, playlist_id: str, *, change: bool = 
 
 async def _outs(s: AsyncSession, rows: list[Playlist]) -> list[PlaylistOut]:
     numbers = await playlists.counts(s, [p.id for p in rows])
-    keys = dict((await s.execute(select(PlaylistCover.nd_playlist_id, PlaylistCover.key).where(
-        PlaylistCover.nd_playlist_id.in_([str(p.id) for p in rows])))).all()) if rows else {}
+    keys = dict((await s.execute(select(PlaylistCover.playlist_id, PlaylistCover.key).where(
+        PlaylistCover.playlist_id.in_([p.id for p in rows])))).all()) if rows else {}
     out = []
     for p in rows:
         total, filed, seconds = numbers.get(p.id, (0, 0, 0))
-        if key := keys.get(str(p.id)):
+        if key := keys.get(p.id):
             cover = f"/api/playlists/{p.id}/cover?v={key}"
         elif p.nd_cover and filed:
             cover = f"/api/nd/cover/{quote(p.nd_cover, safe='')}?v={filed}"  # it changes with the songs
@@ -279,10 +279,7 @@ async def delete(playlist_id: str, user: User = Depends(current_user),
                  s: AsyncSession = Depends(get_session, scope="function")):
     p = await _own(s, user, playlist_id, change=True)
     nd_id = p.nd_playlist_id
-    row = await s.get(PlaylistCover, str(p.id))
-    if row is not None:
-        await s.delete(row)
-    await s.delete(p)
+    await s.delete(p)  # its places and its picture go with it
     await s.commit()
     await drop_mirror(user, nd_id)
     return {"ok": True}
@@ -326,9 +323,9 @@ async def put_cover(playlist_id: str, file: UploadFile = File(...), user: User =
         image = await asyncio.to_thread(_square_jpeg, data)
     except Exception as e:
         raise HTTPException(400, "Не удалось прочитать картинку — нужен JPEG, PNG или WebP") from e
-    row = await s.get(PlaylistCover, str(p.id))
+    row = await s.get(PlaylistCover, p.id)
     if row is None:
-        row = PlaylistCover(nd_playlist_id=str(p.id), image=image, key="")
+        row = PlaylistCover(playlist_id=p.id, image=image, key="")
         s.add(row)
     row.image, row.key = image, uuid.uuid4().hex[:12]
     await s.commit()
@@ -340,7 +337,7 @@ async def drop_cover(playlist_id: str, user: User = Depends(current_user),
                      s: AsyncSession = Depends(get_session, scope="function")):
     """Back to the picture Navidrome makes of the playlist's albums."""
     p = await _own(s, user, playlist_id, change=True)
-    row = await s.get(PlaylistCover, str(p.id))
+    row = await s.get(PlaylistCover, p.id)
     if row is not None:
         await s.delete(row)
         await s.commit()
@@ -351,7 +348,7 @@ async def drop_cover(playlist_id: str, user: User = Depends(current_user),
 async def get_cover(playlist_id: str, user: User = Depends(current_user),
                     s: AsyncSession = Depends(get_session, scope="function")):
     p = await _own(s, user, playlist_id)
-    row = await s.get(PlaylistCover, str(p.id))
+    row = await s.get(PlaylistCover, p.id)
     if row is None:
         raise HTTPException(404, "У плейлиста нет своей обложки")
     return Response(row.image, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"})

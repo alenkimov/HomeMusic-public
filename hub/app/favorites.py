@@ -452,7 +452,7 @@ async def project_liked(s: AsyncSession, user_id: int, starred: list[dict] | Non
     from app.imports.apply import catalog_of
     from app.library import tracks as registry
     from app.models import PlaylistItem
-    from app.playlist_dates import naive
+    from app.models import naive
 
     from app.models import TrackFile
 

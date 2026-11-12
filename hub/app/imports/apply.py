@@ -23,7 +23,7 @@ from app.catalog.models import CatalogTrack, split_ref
 from app.favorites import parse_time
 from app.imports.resolve import Resolution
 from app.jobs.queue import PRIORITY_IMPORT, enqueue
-from app.library.owned import ACTIVE_STATUSES, find_existing
+from app.library.owned import ACTIVE_STATUSES, find_owned
 from app.matching.normalize import normalize_artist
 from app.models import (
     Album,
@@ -157,7 +157,7 @@ async def queue_album(s: AsyncSession, imp: Import, it: ImportItem) -> int:
         return 0
     n = 0
     for t in album.tracks or []:
-        if await find_existing(s, artist=t.artist, title=t.title, duration_s=t.duration_s, isrc=t.isrc,
+        if await find_owned(s, artist=t.artist, title=t.title, duration_s=t.duration_s, isrc=t.isrc,
                                deezer_track_id=t.id if t.source == "dz" else None):
             continue
         qj = {"query": query_from_track(t).model_dump(), "meta": meta_from_catalog(t, album),
@@ -208,7 +208,7 @@ async def refresh_items(s: AsyncSession, imp: Import) -> None:
     for it in waiting:
         raw = it.raw_json or {}
         src, id_ = split_ref(it.ref) if it.ref else ("", "")
-        lib = await find_existing(s, artist=raw.get("artist") or "", title=raw.get("title") or "",
+        lib = await find_owned(s, artist=raw.get("artist") or "", title=raw.get("title") or "",
                                   duration_s=raw.get("duration_s"), deezer_track_id=id_ if src == "dz" else None)
         if lib is not None:
             it.status, it.track_id = "done", lib.id
@@ -261,7 +261,7 @@ async def sync_playlists(s: AsyncSession, imp: Import) -> None:
     track the catalog does not know is the only one left out."""
     from app import playlists
     from app.library import tracks as registry
-    from app.playlist_dates import naive
+    from app.models import naive
     from app.playlists_mirror import enqueue_mirror
 
     colls = (await s.execute(select(ImportCollection).where(
@@ -499,12 +499,6 @@ def _user_likes(user_id: int):
             .join(Import, Import.id == ImportItem.import_id)
             .where(Import.user_id == user_id, ImportCollection.kind == "likes", ImportCollection.selected.is_(True),
                    Import.status.in_(("running", "done")), ImportItem.ref.is_not(None)))
-
-
-async def pending_like_refs(s: AsyncSession, user_id: int) -> list[str]:
-    """Catalog refs the user liked in another service that wait for a listen or a download (shown with ♥)."""
-    rows = (await s.execute(_user_likes(user_id).where(ImportItem.status.in_(("waiting", "queued"))))).scalars()
-    return list(dict.fromkeys(i.ref for i in rows if i.ref))
 
 
 async def unlike_refs(s: AsyncSession, user_id: int, refs: list[str]) -> None:

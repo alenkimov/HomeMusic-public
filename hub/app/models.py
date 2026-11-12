@@ -27,6 +27,13 @@ def utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+def naive(value: datetime | None) -> datetime | None:
+    """UTC without a zone, the way the Hub keeps its times."""
+    if value is None or value.tzinfo is None:
+        return value
+    return value.astimezone(UTC).replace(tzinfo=None)
+
+
 class Base(DeclarativeBase):
     type_annotation_map = {dict[str, Any]: JSON, list[Any]: JSON}
 
@@ -369,8 +376,6 @@ class ImportCollection(Base):
     position: Mapped[int] = mapped_column(Integer, default=0)
     selected: Mapped[bool] = mapped_column(Boolean, default=True)
     cover_url: Mapped[str | None] = mapped_column(String(1024))
-    nd_playlist_id: Mapped[str | None] = mapped_column(String(64))  # 1.x: the Navidrome playlist it made
-    nd_song_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)  # 1.x
     # a playlist of the service: the Hub's playlist made of it, and the tracks it was last given, in order
     playlist_id: Mapped[int | None] = mapped_column(ForeignKey("playlists.id", ondelete="SET NULL"))
     given: Mapped[list[Any]] = mapped_column(JSON, default=list)
@@ -727,17 +732,6 @@ class TgChat(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
-class PlaylistDate(Base):
-    """When a track was added to a Navidrome playlist (app/playlist_dates.py): Navidrome keeps no such date."""
-
-    __tablename__ = "playlist_dates"
-
-    nd_playlist_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
-    added_at: Mapped[datetime] = mapped_column(DateTime)
-    source: Mapped[str] = mapped_column(String(16))  # hub (added here) / import (the service's own date)
-
-
 class LyricsTranslation(Base):
     """A track's lyrics in another language (app/lyrics/translations.py): made once, kept for everyone."""
 
@@ -758,7 +752,7 @@ class PlaylistCover(Base):
 
     __tablename__ = "playlist_covers"
 
-    nd_playlist_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    playlist_id: Mapped[int] = mapped_column(ForeignKey("playlists.id", ondelete="CASCADE"), primary_key=True)
     image: Mapped[bytes] = mapped_column(LargeBinary)  # a square JPEG
     key: Mapped[str] = mapped_column(String(16))  # changes with the picture: the page's cache follows it
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

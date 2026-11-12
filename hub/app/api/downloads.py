@@ -16,7 +16,7 @@ from app.db import get_session
 from app.events import bus
 from app.jobs.downloads import create_items, item_links, item_out, item_ref
 from app.jobs.queue import enqueue, notify
-from app.library.owned import ACTIVE_STATUSES, find_existing, quiet
+from app.library.owned import ACTIVE_STATUSES, find_owned, quiet
 from app.library.tracks import current_file
 from app.models import DownloadBatch, DownloadItem, Job, User
 from app.providers.base import Candidate, TrackQuery
@@ -115,7 +115,7 @@ async def create_batch(
             meta["track_ref"] = it.catalog_ref
             if src == "dz":
                 meta["deezer_track_id"] = id_
-        have = None if body.force else await find_existing(
+        have = None if body.force else await find_owned(
             s, artist=q.artist, title=q.title, duration_s=q.duration_s, isrc=q.isrc,
             deezer_track_id=meta.get("deezer_track_id"))
         # a picked file the library has not got is downloaded next to the song's older version (`jobs.downloads`)

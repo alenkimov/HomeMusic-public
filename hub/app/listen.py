@@ -60,7 +60,7 @@ from app.jobs.downloads import (
     query_from_track,
     search_provider,
 )
-from app.library.owned import find_existing
+from app.library.owned import find_owned
 from app.matching.select import rank_candidates
 from app.models import Track
 from app.net import Priority, in_background, make_client, priority_context
@@ -795,7 +795,7 @@ async def _resolve_hitmoz(ref: str, id_: str, probe: bool) -> Choice:
 async def _library_file(query: dict) -> tuple[Path | None, str | None]:
     """The owned file of this track and its Navidrome song id."""
     async with session_scope() as s:
-        t = await find_existing(s, artist=query["artist"], title=query["title"], duration_s=query.get("duration_s"),
+        t = await find_owned(s, artist=query["artist"], title=query["title"], duration_s=query.get("duration_s"),
                                 isrc=query.get("isrc"), deezer_track_id=query.get("deezer_track_id"))
         rel, nd_song_id = (t.path, t.nd_song_id) if t else (None, None)
     path = get_settings().library_dir / rel if rel else None

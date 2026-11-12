@@ -364,6 +364,15 @@ async def test_build_queues_quiet_downloads_and_writes_the_playlist(env, monkeyp
     pl = env["nd"].playlists[settings.nd_playlist_id]
     assert pl["name"] == "Микс дня" and pl["songs"] == [r.nd_song_id for r in active if r.nd_song_id]
     assert mix.title in pl["comment"] and mix.nd_playlist_id == settings.nd_playlist_id
+    # the Hub lists it among the user's playlists: its own row, made by the builder, follows Navidrome's
+    from sqlalchemy import select as _select
+
+    from app.db import session_scope as _scope
+    from app.models import Playlist
+
+    async with _scope() as s:
+        row = (await s.execute(_select(Playlist).where(Playlist.kind == "mix"))).scalar_one()
+        assert (row.name, row.nd_playlist_id) == ("Микс дня", settings.nd_playlist_id)
 
 
 async def test_a_song_that_did_not_download_gives_its_place_to_the_reserve(env, monkeypatch) -> None:

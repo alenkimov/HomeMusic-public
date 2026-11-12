@@ -193,39 +193,6 @@ async def test_the_mirror_gets_the_songs_and_what_other_apps_did_comes_back(env,
     assert p["cover_url"] == "/api/nd/cover/pl-nd2?v=2"  # the picture Navidrome makes of the mirror's albums
 
 
-async def test_playlists_a_library_had_before_are_taken_over_once(env, nd):
-    from app import playlists
-    from app.db import session_scope
-    from app.models import Import, ImportCollection, ImportItem, PlaylistCover
-    from app.playlists_mirror import adopt
-
-    nd["playlists"] = {"old1": {"name": "старики оценят", "songs": ["ndX", "ndK"]},
-                       "old2": {"name": "Чужой", "songs": ["ndK"], "owner": "someone"}}
-    async with session_scope() as s:
-        imp = Import(user_id=1, source="spotify", method="csv", status="done")
-        s.add(imp)
-        await s.flush()
-        coll = ImportCollection(import_id=imp.id, kind="playlist", external_id="x", title="старики оценят",
-                                nd_playlist_id="old1")
-        s.add(coll)
-        await s.flush()
-        s.add(ImportItem(import_id=imp.id, collection_id=coll.id, position=5, external_id="e1", ref="dz:777",
-                         status="waiting", raw_json={"title": "Ждёт", "artist": "Кто-то", "duration_s": 200,
-                                                     "liked_at": "2024-09-08T12:51:22Z"}))
-        s.add(PlaylistCover(nd_playlist_id="old1", image=b"jpeg", key="k1"))
-        coll_id = coll.id
-
-    assert await adopt(1) == 1 and await adopt(1) == 0  # once
-    async with session_scope() as s:
-        (p,) = await playlists.of_user(s, 1)
-        rows = await playlists.items(s, p.id)
-        assert (p.name, p.nd_playlist_id, p.mirrored) == ("старики оценят", "old1", ["ndX", "ndK"])
-        assert [(t.title, t.path is not None) for _, t in rows] == [("Своё", True), ("Группа крови", True), ("Ждёт", False)]
-        assert rows[2][0].added_at.year == 2024 and rows[2][1].ref == "dz:777"
-        assert (await s.get(ImportCollection, coll_id)).playlist_id == p.id
-        assert (await s.execute(select(PlaylistCover.nd_playlist_id))).scalars().all() == [str(p.id)]
-
-
 async def test_a_track_without_a_file_is_tagged_like_any_other(env):
     """What the whole of 2.0 was started for: a tag on a playlist's track the library has no file of yet."""
     c = env["client"]

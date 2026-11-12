@@ -94,6 +94,7 @@ def run_migrations(db_path: Path | None = None) -> None:
     """alembic upgrade head (sync, called once at startup before the event loop work starts)."""
     from alembic import command
     from alembic.config import Config
+    from alembic.util import CommandError
 
     path = db_path or get_settings().db_path
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -103,7 +104,13 @@ def run_migrations(db_path: Path | None = None) -> None:
     cfg.set_main_option("sqlalchemy.url", f"sqlite:///{path.as_posix()}")
     # keep the app's JSON logging (env.py would otherwise apply alembic.ini's logging config)
     cfg.attributes["configure_logger"] = False
-    command.upgrade(cfg, "head")
+    try:
+        command.upgrade(cfg, "head")
+    except CommandError as e:
+        if "Can't locate revision" not in str(e):
+            raise
+        raise RuntimeError(f"{path} is a database of HomeMusic 1.x, or of another build: 2.0 starts with an empty "
+                           "one — move the file away and import the library again") from e
 
 
 async def dispose() -> None:

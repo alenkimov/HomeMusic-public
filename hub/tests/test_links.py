@@ -86,33 +86,6 @@ async def test_ids_come_from_imports_and_the_source_map_and_stay(client):
     assert [x["service"] for x in r["links"]][:2] == ["spotify", "yandex"]
 
 
-async def test_a_playlist_keeps_the_dates_of_the_import_it_came_from(client):
-    from datetime import datetime
-
-    from sqlalchemy import select
-
-    from app import playlist_dates
-    from app.db import session_scope
-    from app.models import Import, ImportCollection, ImportItem, User
-
-    a, b = await add_track("a"), await add_track("b")
-    async with session_scope() as s:
-        user = (await s.execute(select(User))).scalars().first()
-        imp = Import(user_id=user.id, source="spotify", method="csv", status="preview")
-        s.add(imp)
-        await s.flush()
-        coll = ImportCollection(import_id=imp.id, kind="playlist", external_id="csv:japan", title="japan")
-        s.add(coll)
-        await s.flush()
-        s.add(ImportItem(import_id=imp.id, collection_id=coll.id, external_id="x", track_id=a,
-                         raw_json={"liked_at": "2024-09-08T12:51:22Z"}))
-        await playlist_dates.collect(s, user.id, "pl1", "JAPAN")  # the same name, any case
-        await playlist_dates.stamp(s, "pl1", [a, b])  # `a` keeps the service's date
-        got = await playlist_dates.of(s, "pl1")
-        assert got[a] == datetime(2024, 9, 8, 12, 51, 22) and got[b].year >= 2025
-        assert await playlist_dates.of(s, "other") == {}
-
-
 async def test_a_homemusic_link_names_the_track_and_is_found_in_another_library(client, monkeypatch):
     from urllib.parse import parse_qs, urlsplit
 

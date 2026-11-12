@@ -27,7 +27,7 @@ from app.config import get_settings
 from app.db import session_scope
 from app.events import bus
 from app.jobs.queue import PermanentError, handler, on_final_failure
-from app.library.owned import annotate_tracks, find_existing
+from app.library.owned import annotate_tracks, find_owned
 from app.matching.normalize import has_cyrillic, normalize_title
 from app.matching.select import classify_scores, match_catalog
 from app.models import AiUsage, AssistantTask, Job, Track, User
@@ -167,7 +167,7 @@ def _track_from_candidate(c: Candidate) -> TrackOut:
 async def _library_hit(s: AsyncSession, artist: str, title: str) -> Track | None:
     if not artist or not title:
         return None
-    return await find_existing(s, artist=artist, title=title)
+    return await find_owned(s, artist=artist, title=title)
 
 
 async def resolve_row(idx: int, item: dict[str, Any], album_tracks: list[CatalogTrack] | None,

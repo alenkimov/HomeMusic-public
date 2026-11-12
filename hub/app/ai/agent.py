@@ -668,7 +668,6 @@ async def confirm_chat(s: AsyncSession, user: User, task: AssistantTask, token: 
     from app import playlists as hub_playlists
     from app.jobs.downloads import enqueue_scan
     from app.library import editor
-    from app.models import PlaylistCover
     from app.playlists_mirror import drop_mirror
 
     if task.input_kind != "chat" or task.status != "awaiting_confirmation":
@@ -687,8 +686,6 @@ async def confirm_chat(s: AsyncSession, user: User, task: AssistantTask, token: 
             pid = str(a["playlist_id"])
             p = await hub_playlists.own(s, user.id, int(pid)) if pid.isdigit() else None
             if p is not None and p.kind == hub_playlists.USER:
-                if (cover := await s.get(PlaylistCover, pid)) is not None:
-                    await s.delete(cover)
                 mirrors.append(p.nd_playlist_id)
                 await s.delete(p)
                 playlists.append(pid)

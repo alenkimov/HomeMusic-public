@@ -30,7 +30,7 @@ def _duration_ok(a: int | None, b: int | None, tol: int = 3) -> bool:
     return a is None or b is None or abs(a - b) <= tol
 
 
-async def find_existing(
+async def find_owned(
     s: AsyncSession,
     *,
     artist: str,
@@ -94,7 +94,7 @@ async def annotate_tracks(
             ).order_by(Track.id.desc())
         )
     ).scalars().all()
-    # a track with a file before one without; of several with a file the newest wins, as in `find_existing`
+    # a track with a file before one without; of several with a file the newest wins, as in `find_owned`
     rows = sorted(rows, key=lambda r: (r.path is None, -r.id))
     by_isrc = {r.isrc: r for r in reversed(rows) if r.isrc}
     by_ref = {r.ref: r for r in rows if r.ref}
@@ -192,4 +192,4 @@ async def annotate_albums(
     return out
 
 
-__all__ = ["ACTIVE_STATUSES", "_dz_id", "annotate_albums", "annotate_tracks", "find_existing", "quiet"]
+__all__ = ["ACTIVE_STATUSES", "_dz_id", "annotate_albums", "annotate_tracks", "find_owned", "quiet"]

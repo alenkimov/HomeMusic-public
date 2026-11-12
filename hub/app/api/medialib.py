@@ -193,7 +193,7 @@ async def liked(user: User = Depends(current_user), s: AsyncSession = Depends(ge
                and not ((st := decisions.get(("track", f"nd:{x['id']}"))) and not st.liked)]
     if foreign:
         from app.favorites import parse_time
-        from app.playlist_dates import naive
+        from app.models import naive
 
         for raw, song in zip(foreign, await songs_out(s, foreign), strict=True):
             song.added_at = naive(parse_time(raw.get("starred"))) or song.added_at

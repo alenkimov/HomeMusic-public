@@ -752,9 +752,9 @@ async def _download(sid: str, rt: Runtime, x: Played) -> None:
             func.json_extract(DownloadItem.query_json, "$.meta.track_ref") == x.ref).limit(1))).scalar_one_or_none()
         if active is not None:
             return
-        from app.library.owned import find_existing
+        from app.library.owned import find_owned
 
-        if await find_existing(s, artist=t.artist, title=t.title, duration_s=t.duration_s, isrc=t.isrc,
+        if await find_owned(s, artist=t.artist, title=t.title, duration_s=t.duration_s, isrc=t.isrc,
                                deezer_track_id=t.id) is not None:
             return
         row = await s.get(WaveSession, sid)
