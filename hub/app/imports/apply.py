@@ -388,6 +388,21 @@ async def apply_extras(s: AsyncSession, imp: Import) -> None:
                                              "star": star})
 
 
+async def pending_counts(s: AsyncSession, user_id: int) -> dict[str, int]:
+    """playlist id -> how many of its tracks the library has not got yet (`pending_of_playlist`, counted)."""
+    rows = (await s.execute(
+        select(ImportCollection.nd_playlist_id, ImportItem.ref)
+        .join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
+        .join(Import, Import.id == ImportItem.import_id)
+        .where(Import.user_id == user_id, ImportCollection.kind == "playlist", ImportCollection.selected.is_(True),
+               ImportCollection.nd_playlist_id.is_not(None), ImportItem.ref.is_not(None),
+               ImportItem.status.in_(("waiting", "queued"))).distinct())).all()
+    out: dict[str, int] = {}
+    for playlist_id, _ref in rows:
+        out[playlist_id] = out.get(playlist_id, 0) + 1
+    return out
+
+
 async def pending_of_playlist(s: AsyncSession, user_id: int, playlist_id: str) -> list[ImportItem]:
     """Tracks of the import a playlist came with that the library has not got yet, in the service's order."""
     rows = (await s.execute(

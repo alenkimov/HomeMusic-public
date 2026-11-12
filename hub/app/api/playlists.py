@@ -55,14 +55,21 @@ def pl_out(p: dict, custom: dict[str, str] | None = None) -> PlaylistOut:
 
 @router.get("", response_model=list[PlaylistOut])
 async def list_playlists(user: User = Depends(current_user)):
+    from app.imports.apply import pending_counts
+
     nd = user_navidrome(user)
     try:
         pls = await nd.get_playlists()
     finally:
         await nd.aclose()
     custom = await _custom()
+    async with session_scope() as s:
+        waiting = await pending_counts(s, user.id)
     # getPlaylists also returns other users' public playlists: show only own ones
-    return [pl_out(p, custom) for p in pls if p.get("owner") in (None, user.nd_username)]
+    out = [pl_out(p, custom) for p in pls if p.get("owner") in (None, user.nd_username)]
+    for p in out:
+        p.pending_count = waiting.get(p.id, 0)
+    return out
 
 
 # playlist id -> (what it looked like, its songs): asked of Navidrome again only when the playlist has changed

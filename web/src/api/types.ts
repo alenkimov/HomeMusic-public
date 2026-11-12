@@ -542,7 +542,10 @@ export interface UploadCommitOut {
 export interface PlaylistOut {
   id: string;
   name: string;
+  /** the tracks the library has */
   song_count: number;
+  /** the playlist's tracks the library has not got yet (an import's): they play and are downloaded when listened to */
+  pending_count?: number;
   duration_s: number;
   cover_art?: string | null;
   /** the playlist's picture, the user's own or Navidrome's (add `&size=`) */

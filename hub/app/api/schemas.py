@@ -508,6 +508,8 @@ class PlaylistOut(BaseModel):
     id: str
     name: str
     song_count: int = 0
+    # tracks of the import the playlist came with that the library has not got yet: they are the playlist's too
+    pending_count: int = 0
     duration_s: int = 0
     cover_art: str | None = None
     # the playlist's picture: the user's own, else the one Navidrome makes of its albums (add `&size=`)

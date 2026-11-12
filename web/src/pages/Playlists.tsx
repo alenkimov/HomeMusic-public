@@ -55,7 +55,7 @@ export function PlaylistsPage() {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{p.name}</span>
-                <span className="block text-xs text-muted">{[tracksWord(p.song_count), p.duration_s ? fmtLength(p.duration_s) : null].filter(Boolean).join(' · ')}</span>
+                <span className="block text-xs text-muted">{[tracksWord(p.song_count + (p.pending_count ?? 0)), p.duration_s ? fmtLength(p.duration_s) : null].filter(Boolean).join(' · ')}</span>
               </span>
               {STANDALONE && <Icon name="chevron" size={18} className="text-dim" />}
               </PlaylistRow>

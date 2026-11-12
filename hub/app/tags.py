@@ -28,14 +28,23 @@ CHUNK = 400
 async def get_or_create(s: AsyncSession, group: str, name: str, *, code: str | None = None,
                         user_id: int | None = None) -> Tag:
     name = " ".join(name.split())[:64]
-    q = select(Tag).where(Tag.group == group, func.lower(Tag.name) == name.lower(),
-                          Tag.user_id.is_(None) if user_id is None else Tag.user_id == user_id)
-    tag = (await s.execute(q.limit(1))).scalar_one_or_none()
+    tag = await _named(s, group, name, user_id)
     if tag is None:
         tag = Tag(group=group, name=name, code=code, user_id=user_id)
         s.add(tag)
         await s.flush()
     return tag
+
+
+async def _named(s: AsyncSession, group: str, name: str, user_id: int | None, but: int | None = None) -> Tag | None:
+    """The tag of this name, whatever the case of its letters. Compared here, not in the database: SQLite's
+    `lower()` knows only Latin letters, so «Пляжный» was never found there and a second one was made."""
+    q = select(Tag).where(Tag.group == group, Tag.user_id.is_(None) if user_id is None else Tag.user_id == user_id)
+    want = name.casefold()
+    for tag in (await s.execute(q.order_by(Tag.id))).scalars():
+        if tag.id != but and tag.name.casefold() == want:
+            return tag
+    return None
 
 
 def visible(user_id: int):
@@ -190,9 +199,7 @@ async def own_tag(s: AsyncSession, user_id: int, tag_id: int) -> Tag:
 async def rename(s: AsyncSession, user_id: int, tag_id: int, name: str) -> Tag:
     tag = await own_tag(s, user_id, tag_id)
     name = " ".join(name.split())[:64]
-    other = (await s.execute(select(Tag).where(Tag.group == "own", Tag.user_id == user_id, Tag.id != tag.id,
-                                               func.lower(Tag.name) == name.lower()).limit(1))).scalar_one_or_none()
-    if other is not None:
+    if await _named(s, "own", name, user_id, but=tag.id) is not None:
         raise ValueError("Тег с таким названием уже есть — их можно слить")
     tag.name = name
     return tag

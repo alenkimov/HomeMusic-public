@@ -124,7 +124,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
                 <Cover src={p.cover_url ? `${p.cover_url}&size=96` : null} size={36} icon="playlist" />
                 <span className="min-w-0">
                   <span className={cx('block truncate', on ? 'font-semibold text-accent' : 'text-fg')}>{p.name}</span>
-                  <span className="block truncate text-xs text-dim">{tracksWord(p.song_count)}</span>
+                  <span className="block truncate text-xs text-dim">{tracksWord(p.song_count + (p.pending_count ?? 0))}</span>
                 </span>
               </Link>
               {p.song_count > 0 && <PlayOver name={p.name} context="playlist" page={to} load={async () => (await api.playlist(p.id)).tracks} />}
