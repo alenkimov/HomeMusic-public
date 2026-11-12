@@ -47,7 +47,7 @@ async def find_existing(
     isrc: str | None = None,
     deezer_track_id: str | None = None,
 ) -> Track | None:
-    """The library track of this song; of several versions (a file picked next to an older one) the newest."""
+    """The track of this song, if the Hub knows it: by its ISRC, its catalog id, then by its names and length."""
     newest = Track.id.desc()
     if isrc:
         t = (await s.execute(
@@ -57,7 +57,7 @@ async def find_existing(
     if deezer_track_id:
         t = (
             await s.execute(
-                select(Track).where(Track.deezer_track_id == str(deezer_track_id)).order_by(newest).limit(1))
+                select(Track).where(Track.ref == f"dz:{deezer_track_id}").limit(1))
         ).scalar_one_or_none()
         if t:
             return t
@@ -87,18 +87,18 @@ async def annotate_tracks(
     if not tracks:
         return []
     isrcs = {t.isrc.upper() for t in tracks if t.isrc}
-    dz_ids = {t.id for t in tracks if t.source == "dz"}
+    refs = {t.ref for t in tracks if t.source == "dz"}
     fps = {fingerprint(t.artist, t.title) for t in tracks}
     rows = (
         await s.execute(
             select(Track).where(
-                or_(Track.isrc.in_(isrcs), Track.deezer_track_id.in_(dz_ids), Track.fingerprint.in_(fps))
+                or_(Track.isrc.in_(isrcs), Track.ref.in_(refs), Track.fingerprint.in_(fps))
             ).order_by(Track.id.desc())
         )
     ).scalars().all()
-    # several versions of a song: the newest one wins, as in `find_existing`
+    # several tracks of one ISRC: the newest one wins, as in `find_existing`
     by_isrc = {r.isrc: r for r in reversed(rows) if r.isrc}
-    by_dz = {r.deezer_track_id: r for r in reversed(rows) if r.deezer_track_id}
+    by_ref = {r.ref: r for r in rows if r.ref}
     by_fp: dict[str, list[Track]] = {}
     for r in rows:
         by_fp.setdefault(r.fingerprint, []).append(r)
@@ -124,7 +124,7 @@ async def annotate_tracks(
 
     out: list[TrackOut] = []
     for t in tracks:
-        hit = (t.isrc and by_isrc.get(t.isrc.upper())) or (t.source == "dz" and by_dz.get(t.id)) or None
+        hit = (t.isrc and by_isrc.get(t.isrc.upper())) or (t.source == "dz" and by_ref.get(t.ref)) or None
         fp = fingerprint(t.artist, t.title)
         if hit is None:
             hit = next((r for r in by_fp.get(fp, []) if _duration_ok(r.duration_s, t.duration_s)), None)

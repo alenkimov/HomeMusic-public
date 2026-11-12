@@ -88,8 +88,9 @@ class Library:
 async def library(s: AsyncSession) -> Library:
     lib = Library({}, {}, {}, {}, {})
     rows = (await s.execute(select(Track.id, Track.nd_song_id, Track.title, Track.artist, Track.album, Track.album_artist,
-                                   Track.duration_s, Track.deezer_track_id, Track.fingerprint).order_by(Track.id))).all()
-    for tid, nd, title, artist, album, album_artist, duration, deezer, fp in rows:
+                                   Track.duration_s, Track.ref, Track.fingerprint).order_by(Track.id))).all()
+    for tid, nd, title, artist, album, album_artist, duration, ref, fp in rows:
+        deezer = ref[3:] if ref and ref.startswith("dz:") else None
         lib.tracks[tid] = LibTrack(tid, nd, title, artist, album, _main_artist(artist, album_artist), duration)
         if nd:
             lib.by_song[nd] = tid

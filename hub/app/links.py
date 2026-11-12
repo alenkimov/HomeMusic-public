@@ -16,7 +16,7 @@ from urllib.parse import urlencode
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.library.tracks import current_file
+from app.library.tracks import current_file, dz_id
 from app.models import Track, TrackLink, utcnow
 
 TITLES = {"spotify": "Spotify", "yandex": "Яндекс Музыка", "ytm": "YouTube Music", "deezer": "Deezer",
@@ -41,8 +41,8 @@ where it.track_id is not null and c.kind in ('likes', 'playlist', 'dislikes') an
 FROM_SOURCE_MAP = """
 insert or ignore into track_links (track_id, service, external_id, created_at)
 select t.id, m.source, m.external_id, :now
-from source_map m join tracks t on m.ref = 'dz:' || t.deezer_track_id
-where m.kind = 'track' and m.match = 'exact' and t.deezer_track_id is not null
+from source_map m join tracks t on m.ref = t.ref
+where m.kind = 'track' and m.match = 'exact' and t.ref is not null
 """
 
 
@@ -99,8 +99,8 @@ async def of_track(s: AsyncSession, track: Track) -> dict[str, Any]:
     ids = dict((await s.execute(select(TrackLink.service, TrackLink.external_id)
                                 .where(TrackLink.track_id == track.id))).all())
     ids = {k: v for k, v in ids.items() if k in TITLES}
-    if track.deezer_track_id:
-        ids["deezer"] = str(track.deezer_track_id)
+    if dz_id(track.ref):
+        ids["deezer"] = str(dz_id(track.ref))
     urls: dict[str, str] = {}
     file = await current_file(s, track.id)
     src = (file.source_url if file else None) or ""
@@ -120,7 +120,7 @@ async def find(s: AsyncSession, *, deezer: str | None = None, isrc: str | None =
     here = Track.nd_song_id.is_not(None)
     queries = []
     if deezer:
-        queries.append(select(Track).where(here, Track.deezer_track_id == deezer))
+        queries.append(select(Track).where(here, Track.ref == f"dz:{deezer}"))
     if spotify:
         queries.append(select(Track).join(TrackLink, TrackLink.track_id == Track.id)
                        .where(here, TrackLink.service == "spotify", TrackLink.external_id == spotify))

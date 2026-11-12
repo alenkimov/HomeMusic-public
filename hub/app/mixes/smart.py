@@ -31,7 +31,7 @@ from typing import Any
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from app.catalog.models import CatalogTrack, split_ref
+from app.catalog.models import CatalogTrack
 from app.config import get_settings
 from app.db import session_scope
 from app.matching.normalize import fingerprint
@@ -171,15 +171,15 @@ async def own_infos(ids: list[str]) -> dict[str, OwnInfo]:
     cache). A song it knows nothing of is still played: it has no artist and no title here."""
     out = {i: OwnInfo(i, nd_song_id=None if is_ref(i) else i, ref=i if is_ref(i) else None) for i in ids}
     nd_ids = [i for i in ids if not is_ref(i)]
-    dz = {split_ref(i)[1]: i for i in ids if is_ref(i) and i.startswith("dz:")}
+    refs = [i for i in ids if is_ref(i)]
     async with session_scope() as s:
         rows: list[Track] = []
         for k in range(0, len(nd_ids), 500):
             rows += (await s.execute(select(Track).where(Track.nd_song_id.in_(nd_ids[k:k + 500])))).scalars()
-        for k in range(0, len(dz), 500):
-            rows += (await s.execute(select(Track).where(Track.deezer_track_id.in_(list(dz)[k:k + 500])))).scalars()
+        for k in range(0, len(refs), 500):
+            rows += (await s.execute(select(Track).where(Track.ref.in_(refs[k:k + 500])))).scalars()
         for t in rows:
-            i = t.nd_song_id if t.nd_song_id in out else dz.get(str(t.deezer_track_id))
+            i = t.nd_song_id if t.nd_song_id in out else t.ref if t.ref in out else None
             if i is None or out[i].title:
                 continue
             ct = library_track(t)

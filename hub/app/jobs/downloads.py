@@ -295,12 +295,14 @@ async def handle_download_item(job: Job) -> None:
             existing_id = existing.id if existing else None
             linked = bool(existing and existing.nd_song_id)
             have = await current_file(s, existing.id) if existing else None
+            old_song = have.nd_song_id if have else None
             other_file = bool(have and chosen and have.source_url != chosen.get("page_url"))
         if other_file:
             # the user picked another file of a song the library has (an uncensored re-upload of a censored copy):
-            # it goes next to the old one as a new version (PLAN 8.6), and ♥ moves over to it
+            # it goes next to the old one as one more file of the same track (PLAN 8.6), and the ♥ in Navidrome
+            # moves from the old file's song over to the new one's
             force = True
-            qj["replaces"] = existing_id
+            qj["replaces_song"] = old_song
             await update_item(item_id, query_json=qj)
         elif existing_id:
             item = await update_item(item_id, status="done" if linked else "importing", progress=1,
@@ -497,6 +499,7 @@ async def import_downloaded(item_id: int, user_id: int, q: TrackQuery, meta: dic
         isrc=meta.get("isrc") or q.isrc,
         explicit=meta.get("explicit") if meta.get("explicit") is not None else cand.explicit,
         deezer_track_id=meta.get("deezer_track_id"),
+        ref=meta.get("track_ref") if not str(meta.get("track_ref") or "").startswith(("nd:", "file:")) else None,
         deezer_album_id=meta.get("deezer_album_id"),
         upc=meta.get("upc"),
         cover=cover,
@@ -672,21 +675,22 @@ async def mixes_done(s: AsyncSession, items: list[DownloadItem]) -> None:
 
 async def star_liked(s: AsyncSession, items: list[DownloadItem]) -> None:
     """Items queued with ♥ (`DownloadIn.star`) are done: star their songs in Navidrome for the user who asked. A
-    picked file imported next to an older version of the song (`replaces`) takes the ♥ off that version."""
+    picked file imported as one more file of a track (`replaces_song`: the song of the file before it) takes the
+    ♥ off that song."""
     from app.auth import user_navidrome
 
     liked = [i for i in items if i.track_id]
     if not liked:
         return
-    old = {i.id: i.query_json["replaces"] for i in liked if i.query_json.get("replaces")}
+    old = {i.id: i.query_json["replaces_song"] for i in liked if i.query_json.get("replaces_song")}
     songs = dict((await s.execute(select(Track.id, Track.nd_song_id).where(
-        Track.id.in_({i.track_id for i in liked} | set(old.values()))))).all())
+        Track.id.in_({i.track_id for i in liked})))).all())
     by_user: dict[int, list[str]] = {}
     off_by_user: dict[int, list[str]] = {}
     for i in liked:
         if nd_id := songs.get(i.track_id):
-            from app.favorites import record, remember, snapshot
             from app.api.schemas import FavoriteTarget
+            from app.favorites import record, remember, snapshot
             from app.models import PlayEvent
 
             i = await s.get(DownloadItem, i.id, populate_existing=True)
@@ -696,7 +700,7 @@ async def star_liked(s: AsyncSession, items: list[DownloadItem]) -> None:
                 continue
             ref = item_ref(i)
             target = FavoriteTarget(ref=ref, nd_song_id=nd_id, target_data=i.query_json.get("query"))
-            extra = [f"nd:{songs[old[i.id]]}"] if i.id in old and songs.get(old[i.id]) else []
+            extra = [f"nd:{old[i.id]}"] if i.id in old else []
             original = (await s.execute(select(PlayEvent).where(PlayEvent.user_id == i.user_id,
                 PlayEvent.event_id == i.query_json.get("star_event_id")))).scalar_one_or_none()
             if original and original.ref:
@@ -714,7 +718,7 @@ async def star_liked(s: AsyncSession, items: list[DownloadItem]) -> None:
                 i.query_json = {**i.query_json, "star_event_id": event.event_id}
             i.query_json = {**i.query_json, "star_failed": False}
             by_user.setdefault(i.user_id, []).append(nd_id)
-            if (off := songs.get(old.get(i.id))) and off != nd_id:
+            if (off := old.get(i.id)) and off != nd_id:
                 off_by_user.setdefault(i.user_id, []).append(off)
     for user_id, song_ids in by_user.items():
         user = await s.get(User, user_id)

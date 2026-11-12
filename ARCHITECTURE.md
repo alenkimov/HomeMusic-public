@@ -31,17 +31,18 @@ apps. It owns nothing the Hub cares about. The Hub mirrors to it what such apps 
 
 ## Tables
 
-**`tracks`** — the song. `id`, `artist`, `title`, `album`, `album_artist`, `track_no`, `disc_no`, `year`, `genre`,
-`duration_s`, `isrc`, `explicit`, `fingerprint` (normalised «artist|title»), `album_id` (the library album its
-file is filed under, if any), `created_at`, `created_by`. Nothing about files.
+**`tracks`** — the song. `id`, `ref` (what the catalog calls it, `dz:3135556`; one track per ref, none if the
+catalog does not know the song), `artist`, `title`, `album`, `album_artist`, `track_no`, `disc_no`, `year`,
+`genre`, `duration_s`, `isrc`, `explicit`, `fingerprint` (normalised «artist|title»), `album_id` (the library
+album its file is filed under, if any), `created_at`, `created_by`. Nothing about files.
 
 **`track_files`** — a file of a track. `id`, `track_id`, `path` (unique, relative to `library/`), `uid` (written
 into the file as `HOMEMUSIC_TRACK_ID`), `nd_song_id` (the song Navidrome made of it; set after a scan), `codec`,
 `bitrate_kbps`, `source`, `source_url`, `source_upload_date`, `locked`, `warnings`, `acquired_at`, `added_by`.
 
-**`track_links`** — what the track is called elsewhere. `track_id`, `service` (`deezer`, `spotify`, `youtube`,
-`yandex`, …), `external_id`; one row per (`service`, `external_id`). This is the only place an external id of a
-track is kept, and the only way a catalog ref (`dz:123`) finds its Track.
+**`track_links`** — what the track is called on music services (`spotify`, `yandex`, `ytm`): `track_id`,
+`service`, `external_id`. Share links are made of them, and an import knows by them a song it has seen.
+The catalog ref is not one of these: it is the track's own name (`tracks.ref`), the links are its names abroad.
 
 **`playlists`** — `id`, `user_id`, `kind` (`liked` — «Любимое», one per user; `user` — made by hand or by an
 import; `mix` — «Микс дня»), `name`, `cover`, `created_at`, `updated_at`, and what the mirror needs:
@@ -100,9 +101,9 @@ events, dislikes and the items of mixes.
 
 One release, built in passes that each leave the tests green:
 
-1. `track_files` split off `tracks`; external ids moved to `track_links`.
+1. `track_files` split off `tracks`; a track named by its catalog ref. *(done)*
 2. Playlists and «Любимое» in the Hub; the mirror; the old favorites and pending lists removed.
 3. Events, dislikes, statistics, taste, mixes and the wave on `track_id`.
 4. Imports and downloads on top of it.
 5. The API and the web on `id`/`ref`.
-6. What is left of 1.x deleted.
+6. What is left of 1.x deleted; the migrations of 1.x replaced by one that makes the 2.0 schema.

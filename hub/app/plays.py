@@ -26,9 +26,19 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import PlayEventIn
-from app.catalog.models import split_ref
 from app.db import session_scope
-from app.models import CatalogCache, DownloadItem, Dislike, Import, ImportItem, NavidromeSync, PlayEvent, Track, User, utcnow
+from app.models import (
+    CatalogCache,
+    Dislike,
+    DownloadItem,
+    Import,
+    ImportItem,
+    NavidromeSync,
+    PlayEvent,
+    Track,
+    User,
+    utcnow,
+)
 
 log = logging.getLogger(__name__)
 
@@ -44,15 +54,9 @@ FIRST_SYNC_DELAY_S = 120
 
 async def _song_of_ref(s: AsyncSession, ref: str) -> str | None:
     """The Navidrome song of a catalog track the library has."""
-    try:
-        src, id_ = split_ref(ref)
-    except ValueError:
-        src, id_ = "", ""
-    if src == "dz":
-        nd = (await s.execute(select(Track.nd_song_id).where(Track.deezer_track_id == id_, Track.nd_song_id.is_not(None))
-                              .order_by(Track.id.desc()).limit(1))).scalar_one_or_none()
-        if nd:
-            return nd
+    nd = (await s.execute(select(Track.nd_song_id).where(Track.ref == ref))).scalar_one_or_none()
+    if nd:
+        return nd
     # the download (any ref: hitmoz, a provider's file) or the import row that brought the file in
     by_download = (select(Track.nd_song_id).join(DownloadItem, DownloadItem.track_id == Track.id)
                    .where(func.json_extract(DownloadItem.query_json, "$.meta.track_ref") == ref,
@@ -71,8 +75,8 @@ async def _ref_of_song(s: AsyncSession, nd_song_id: str) -> str | None:
          ).scalar_one_or_none()
     if t is None:
         return None
-    if t.deezer_track_id:
-        return f"dz:{t.deezer_track_id}"
+    if t.ref:
+        return t.ref
     ref = (await s.execute(
         select(func.json_extract(DownloadItem.query_json, "$.meta.track_ref"))
         .where(DownloadItem.track_id == t.id,
@@ -100,10 +104,9 @@ class Ids:
         self._songs.update({r: None for r in refs})
         self._refs.update({nd: None for nd in songs})
         # Prefer the newest local row, just like the single-target path.
-        dz = {r[3:] for r in refs if r.startswith("dz:")}
         for tr in (await self.s.execute(select(Track).where(
-            or_(Track.nd_song_id.in_(songs), Track.deezer_track_id.in_(dz))).order_by(Track.id.desc()))).scalars():
-            ref = f"dz:{tr.deezer_track_id}" if tr.deezer_track_id else None
+            or_(Track.nd_song_id.in_(songs), Track.ref.in_(refs))).order_by(Track.id.desc()))).scalars():
+            ref = tr.ref
             if ref in refs and tr.nd_song_id and not self._songs[ref]:
                 self._songs[ref] = tr.nd_song_id
             if tr.nd_song_id in songs and ref and not self._refs[tr.nd_song_id]:
@@ -279,8 +282,8 @@ async def record_events(s: AsyncSession, user_id: int, raw: Iterable[Any], now: 
             continue
         out.accepted += 1
         if e.kind in ("like", "unlike"):
-            from app.favorites import remember
             from app.api.schemas import FavoriteTarget
+            from app.favorites import remember
 
             await remember(s, FavoriteTarget(target_type=e.target_type, ref=ref, nd_song_id=nd,
                                              nd_album_id=e.nd_album_id, nd_artist_id=e.nd_artist_id,

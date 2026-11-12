@@ -315,8 +315,8 @@ async def _names(s: AsyncSession, p: Profile, b: _Builder) -> None:
     for t in p.tracks.values():
         if t.nd_song_id and (tr := lib.get(t.nd_song_id)):
             t.artist, t.title, t.duration_s = tr.artist, tr.title, tr.duration_s
-            if not t.ref and tr.deezer_track_id:
-                t.ref = f"dz:{tr.deezer_track_id}"
+            if not t.ref and tr.ref and tr.ref.startswith("dz:"):
+                t.ref = tr.ref
     need = [t.ref for t in p.tracks.values() if t.ref and (not t.artist or t.score > 0)]
     info = await _catalog_info(list(dict.fromkeys(need)))
     for t in p.tracks.values():

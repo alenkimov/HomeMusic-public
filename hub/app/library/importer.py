@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.library import tagger
 from app.library.layout import album_dirname, next_version_path, sanitize_component, track_filename, unique_path
+from app.library.tracks import by_ref, dz_id, dz_ref
 from app.matching.normalize import fingerprint, normalize_artist, normalize_title
 from app.models import Album, Track, TrackFile, utcnow
 
@@ -46,6 +47,8 @@ class ImportSpec(BaseModel):
     isrc: str | None = None
     explicit: bool | None = None
     deezer_track_id: str | None = None
+    ref: str | None = None  # the catalog track the file is of (a Deezer id alone is "dz:<id>")
+    track_id: int | None = None  # the track the file is of, when the Hub knows it already
     deezer_album_id: str | None = None
     upc: str | None = None
     cover: bytes | None = None
@@ -138,7 +141,7 @@ def tagdata_for(track: Track, album: Album, file: TrackFile, *, cover: bytes | N
         source_url=file.source_url,
         source_date=file.source_upload_date,
         acquired=file.acquired_at,
-        deezer_track_id=track.deezer_track_id,
+        deezer_track_id=dz_id(track.ref),
         deezer_album_id=album.deezer_album_id,
         cover=cover,
     )
@@ -176,7 +179,10 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec) -> Track:
         if cover is None and (album_dir / "cover.jpg").is_file():
             cover = (album_dir / "cover.jpg").read_bytes()
 
-        track = Track(
+        ref = spec.ref or dz_ref(spec.deezer_track_id)
+        # a file of a song the Hub knows is one more file of that track: its tags, lyrics and places stay with it
+        known = await s.get(Track, spec.track_id) if spec.track_id else await by_ref(s, ref)
+        track = known or Track(
             album_id=album.id,
             artist=spec.artist,
             title=spec.title,
@@ -188,11 +194,17 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec) -> Track:
             genre=spec.genre or album.genre,
             duration_s=spec.duration_s,
             isrc=spec.isrc.upper() if spec.isrc else None,
-            deezer_track_id=str(spec.deezer_track_id) if spec.deezer_track_id else None,
+            ref=ref,
             explicit=spec.explicit,
             fingerprint=fingerprint(spec.artist, spec.title),
             created_by=spec.added_by,
         )
+        if known is not None:  # the file is filed under this album: the track follows its newest file
+            known.album_id, known.album, known.album_artist = album.id, album.title, album.album_artist
+            known.track_no, known.disc_no = spec.track_no or known.track_no, spec.disc_no or known.disc_no
+            known.year, known.genre = album.year or known.year, spec.genre or album.genre or known.genre
+            known.duration_s = spec.duration_s or known.duration_s
+            known.explicit = spec.explicit if spec.explicit is not None else known.explicit
         file = TrackFile(
             uid=str(uuid.uuid4()),
             path="",

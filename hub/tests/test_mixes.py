@@ -130,7 +130,7 @@ async def add_track(n: int, *, music: Path | None = None, deezer: bool = True) -
         f.write_bytes(b"mp3")
     async with session_scope() as s:
         t = filed_track(uid=str(uuid.uuid4()), path=path, nd_song_id=f"nd{n}", artist=f"Свой {n}", title=f"Песня {n}",
-                  duration_s=200, deezer_track_id=str(n) if deezer else None,
+                  duration_s=200, ref=f"dz:{n}" if deezer else None,
                   fingerprint=fingerprint(f"Свой {n}", f"Песня {n}"))
         s.add(t)
         await s.flush()

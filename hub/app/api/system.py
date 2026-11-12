@@ -188,7 +188,6 @@ async def apk_file():
 async def apk_artifact(name: str):
     from fastapi import HTTPException
     from fastapi.responses import FileResponse
-
     from starlette.concurrency import run_in_threadpool
 
     path = await run_in_threadpool(_artifact, name, verify=True)

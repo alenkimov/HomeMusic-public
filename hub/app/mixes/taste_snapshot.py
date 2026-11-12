@@ -151,10 +151,10 @@ async def load_snapshot(session, user_id: int, *, now: datetime) -> TasteSnapsho
             refs.update(x.data.get("track_refs") or ())
     metadata = []
     query = select(Track, Album).outerjoin(Album, Album.id == Track.album_id).where(or_(
-        Track.nd_song_id.in_(songs), Track.deezer_track_id.in_([r[3:] for r in refs if r.startswith("dz:")]),
+        Track.nd_song_id.in_(songs), Track.ref.in_([r for r in refs if r.startswith("dz:")]),
         Album.deezer_album_id.in_([r[3:] for r in album_refs if r.startswith("dz:")]))).order_by(Track.id.desc())
     for tr, album in (await session.execute(query)).all():
-        metadata.append(TrackMetadata(f"dz:{tr.deezer_track_id}" if tr.deezer_track_id else None,
+        metadata.append(TrackMetadata(tr.ref if tr.ref and tr.ref.startswith("dz:") else None,
             tr.nd_song_id, tr.artist, tr.title, tr.duration_s,
             f"dz:{album.deezer_album_id}" if album and album.deezer_album_id else None,
             None))  # Album.uid is a Hub id, not a verified Navidrome album id.

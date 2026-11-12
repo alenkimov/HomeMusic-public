@@ -111,7 +111,7 @@ async def hub(hub_env, db_file, tmp_path, monkeypatch):
         for artist, title, nd, dz, dur in (("Кино", "Группа крови", "ndK", "100", 245),
                                            ("Би-2", "Полковнику", "ndM", "200", 200)):
             s.add(filed_track(uid=str(uuid.uuid4()), path=f"{artist}/{title}.mp3", nd_song_id=nd, artist=artist, title=title,
-                        duration_s=dur, deezer_track_id=dz, fingerprint=fingerprint(artist, title)))
+                        duration_s=dur, ref=f"dz:{dz}" if dz else None, fingerprint=fingerprint(artist, title)))
     app = create_app()
     transport = httpx.ASGITransport(app=app)
     clients = {}

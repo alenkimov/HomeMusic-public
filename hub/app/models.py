@@ -170,7 +170,8 @@ class Track(Base):
     genre: Mapped[str | None] = mapped_column(String(128))
     duration_s: Mapped[int | None] = mapped_column(Integer)
     isrc: Mapped[str | None] = mapped_column(String(16), index=True)
-    deezer_track_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    # what the catalog calls the song ("dz:3135556"): one track per ref. None — the catalog does not know it
+    ref: Mapped[str | None] = mapped_column(String(64), unique=True)
     explicit: Mapped[bool | None] = mapped_column(Boolean)
     fingerprint: Mapped[str] = mapped_column(String(1024))  # normalized "artist|title"
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

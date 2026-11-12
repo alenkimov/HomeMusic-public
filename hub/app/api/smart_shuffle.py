@@ -5,7 +5,16 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import DownloadIn, PlayEventsOut, SmartAddOut, SmartNextIn, SmartOut, SmartRecOut, SmartStartIn, SmartTrackIn
+from app.api.schemas import (
+    DownloadIn,
+    PlayEventsOut,
+    SmartAddOut,
+    SmartNextIn,
+    SmartOut,
+    SmartRecOut,
+    SmartStartIn,
+    SmartTrackIn,
+)
 from app.api.wave import track_outs
 from app.auth import current_user, user_navidrome
 from app.db import get_session

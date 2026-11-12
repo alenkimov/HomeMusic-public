@@ -43,7 +43,7 @@ async def test_ids_come_from_imports_and_the_source_map_and_stay(client):
     from app.imports import core
     from app.models import Import, ImportCollection, ImportItem, SourceMap, TrackLink, User
 
-    a = await add_track("a", deezer_track_id="111", source_url="https://www.youtube.com/watch?v=D3gOdoFWCdY")
+    a = await add_track("a", ref="dz:111", source_url="https://www.youtube.com/watch?v=D3gOdoFWCdY")
     b = await add_track("b", source_url="https://soundcloud.com/x/y")
     await add_track("c", source_url="https://ru.hitmoz.org/song/1")
     async with session_scope() as s:
@@ -119,7 +119,7 @@ async def test_a_homemusic_link_names_the_track_and_is_found_in_another_library(
     from app.db import session_scope
     from app.models import TrackLink
 
-    tid = await add_track("Группа крови", deezer_track_id="100", isrc="RUA1D8700001", album="Группа крови")
+    tid = await add_track("Группа крови", ref="dz:100", isrc="RUA1D8700001", album="Группа крови")
     plain = await add_track("Своё")  # an uploaded file: nothing but its names
     async with session_scope() as s:
         s.add(TrackLink(track_id=tid, service="spotify", external_id="spK1234567"))

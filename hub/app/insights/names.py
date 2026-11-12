@@ -63,10 +63,9 @@ async def resolve(s: AsyncSession, pairs: Iterable[tuple[str | None, str | None]
     for chunk in _chunks(songs):
         for tr in (await s.execute(select(Track).where(Track.nd_song_id.in_(chunk)).order_by(Track.id))).scalars():
             by_song[tr.nd_song_id] = tr  # type: ignore[index]  # the newest row wins
-    dz = sorted({r[3:] for r in refs if r.startswith("dz:")})
-    for chunk in _chunks(dz):
-        for tr in (await s.execute(select(Track).where(Track.deezer_track_id.in_(chunk)).order_by(Track.id))).scalars():
-            by_dz[f"dz:{tr.deezer_track_id}"] = tr
+    for chunk in _chunks(refs):
+        for tr in (await s.execute(select(Track).where(Track.ref.in_(chunk)))).scalars():
+            by_dz[tr.ref] = tr  # type: ignore[index]
 
     out: dict[str, Name] = {}
     missing: list[tuple[str | None, str | None]] = []
@@ -75,7 +74,7 @@ async def resolve(s: AsyncSession, pairs: Iterable[tuple[str | None, str | None]
         tr = tr or (by_dz.get(ref) if ref else None)
         key = f"nd:{nd}" if nd else ref or ""
         if tr is not None:
-            out[key] = Name(ref or (f"dz:{tr.deezer_track_id}" if tr.deezer_track_id else None), nd or tr.nd_song_id,
+            out[key] = Name(ref or tr.ref, nd or tr.nd_song_id,
                             tr.artist, tr.title, bool(tr.nd_song_id), "library")
         elif known and (name := known.get((ref, nd))) and name[0] and name[1]:
             out[key] = Name(ref, nd, name[0], name[1], False, "profile")

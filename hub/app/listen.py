@@ -61,8 +61,8 @@ from app.jobs.downloads import (
     search_provider,
 )
 from app.library.owned import find_existing
-from app.models import Track
 from app.matching.select import rank_candidates
+from app.models import Track
 from app.net import Priority, in_background, make_client, priority_context
 from app.providers.base import FILE_REF, Candidate, StreamSource, TrackQuery, file_ref
 from app.services import svc

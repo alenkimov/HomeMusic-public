@@ -20,6 +20,7 @@ from app.catalog.models import split_ref
 from app.config import get_settings
 from app.db import session_scope
 from app.jobs.queue import enqueue, handler
+from app.library.tracks import dz_id
 from app.lyrics import parse
 from app.lyrics.providers import ORDER, TITLES, Found, Query, ask
 from app.models import AppSetting, Job, Lyrics, Track, utcnow
@@ -86,10 +87,9 @@ async def track_of(s: AsyncSession, *, nd_song_id: str | None = None, ref: str |
             return t
     if ref:
         src, id_ = split_ref(ref)
-        if src == "dz":
-            return (await s.execute(select(Track).where(Track.deezer_track_id == id_).limit(1))).scalar_one_or_none()
         if src == "lib" and id_.isdigit():
             return await s.get(Track, int(id_))
+        return (await s.execute(select(Track).where(Track.ref == ref))).scalar_one_or_none()
     return None
 
 
@@ -240,13 +240,13 @@ async def search(s: AsyncSession, q: str, limit: int = 300) -> list[dict[str, An
         return []
     # instr, not LIKE: the words are looked for as they are, `%` and `_` included
     rows = (await s.execute(
-        select(Lyrics, Track.nd_song_id, Track.deezer_track_id).join(Track, Track.id == Lyrics.track_id)
+        select(Lyrics, Track.nd_song_id, Track.ref).join(Track, Track.id == Lyrics.track_id)
         .where(func.instr(Lyrics.search_text, needle) > 0).limit(limit))).all()
     out = []
-    for row, nd_song_id, dz in rows:
+    for row, nd_song_id, ref in rows:
         text = parse.plain_of(row.lines_json, row.plain)
         line = next((ln.strip() for ln in text.splitlines() if needle in " ".join(ln.casefold().split())), "")
-        out.append({"track_id": row.track_id, "nd_song_id": nd_song_id, "ref": f"dz:{dz}" if dz else None, "line": line[:200]})
+        out.append({"track_id": row.track_id, "nd_song_id": nd_song_id, "ref": ref if dz_id(ref) else None, "line": line[:200]})
     return out
 
 

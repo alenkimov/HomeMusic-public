@@ -31,8 +31,8 @@ PARALLEL = 4
 
 def library_track(t) -> CatalogTrack:
     """A library song as a catalog-like track: its Deezer record when it has one, else `nd:<song>`."""
-    if t.deezer_track_id:
-        return CatalogTrack(ref=f"dz:{t.deezer_track_id}", source="dz", id=str(t.deezer_track_id), title=t.title,
+    if t.ref and t.ref.startswith("dz:"):
+        return CatalogTrack(ref=t.ref, source="dz", id=t.ref[3:], title=t.title,
                             artist=t.artist, artists=[t.artist], album_title=t.album, duration_s=t.duration_s,
                             isrc=t.isrc, explicit=t.explicit)
     return CatalogTrack(ref=f"nd:{t.nd_song_id}", source="nd", id=str(t.nd_song_id), title=t.title, artist=t.artist,

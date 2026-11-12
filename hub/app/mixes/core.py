@@ -350,7 +350,7 @@ async def kept_reasons(s: AsyncSession, it: MixItem, track: Track, starred: set[
     """Why a song downloaded for a mix stays in the library (6.3); empty — it goes."""
     why: list[str] = []
     song = track.nd_song_id
-    refs = [r for r in {it.ref, f"dz:{track.deezer_track_id}" if track.deezer_track_id else None} if r]
+    refs = [r for r in {it.ref, track.ref} if r]
     ids = or_(*([PlayEvent.nd_song_id == song] if song else []), *([PlayEvent.ref.in_(refs)] if refs else []))
     # by anyone: the app's and the PWA's events and Navidrome's scrobbles (imported as `finish`)
     listened = (await s.execute(select(PlayEvent.id).where(

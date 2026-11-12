@@ -17,7 +17,15 @@ def upgrade():
         sa.Column("created_at", sa.DateTime(), nullable=False),
     )
     op.create_index("ix_track_links_external", "track_links", ["service", "external_id"])
-    from app.links import FROM_IMPORTS, FROM_SOURCE_MAP, stamp
+    from app.links import FROM_IMPORTS, stamp
+
+    # as the schema was then (the app's own query names `tracks.ref` now)
+    FROM_SOURCE_MAP = """
+insert or ignore into track_links (track_id, service, external_id, created_at)
+select t.id, m.source, m.external_id, :now
+from source_map m join tracks t on m.ref = 'dz:' || t.deezer_track_id
+where m.kind = 'track' and m.match = 'exact' and t.deezer_track_id is not null
+"""
 
     conn = op.get_bind()
     now = stamp()

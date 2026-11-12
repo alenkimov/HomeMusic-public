@@ -123,8 +123,8 @@ async def get_mix(mix_id: int, user: User = Depends(current_user),
 
 async def library_artists(s: AsyncSession, limit: int = 20) -> list[CatalogArtist]:
     """The artists the library has most songs of (everyone's music), as catalog artists."""
-    rows = (await s.execute(select(Track.artist, func.max(Track.deezer_track_id)).where(
-        Track.deezer_track_id.is_not(None)).group_by(Track.artist).order_by(func.count(Track.id).desc())
+    rows = (await s.execute(select(Track.artist, func.max(func.substr(Track.ref, 4))).where(
+        Track.ref.like("dz:%")).group_by(Track.artist).order_by(func.count(Track.id).desc())
         .limit(limit))).all()
     assert svc.deezer is not None
 

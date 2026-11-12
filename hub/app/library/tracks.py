@@ -7,7 +7,23 @@ from collections.abc import Iterable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import TrackFile
+from app.models import Track, TrackFile
+
+
+def dz_ref(deezer_id: str | int | None) -> str | None:
+    return f"dz:{deezer_id}" if deezer_id else None
+
+
+def dz_id(ref: str | None) -> str | None:
+    """The Deezer id of a catalog ref, if it is Deezer's."""
+    return ref[3:] if ref and ref.startswith("dz:") else None
+
+
+async def by_ref(s: AsyncSession, ref: str | None) -> Track | None:
+    """The track the catalog calls `ref`."""
+    if not ref:
+        return None
+    return (await s.execute(select(Track).where(Track.ref == ref))).scalar_one_or_none()
 
 
 async def current_file(s: AsyncSession, track_id: int) -> TrackFile | None:

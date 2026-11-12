@@ -75,7 +75,7 @@ async def env(hub_env):
         with respx.mock(assert_all_called=False) as mock:
             mock.route(host="navidrome.test").mock(side_effect=nd)
             async with app_client(app) as client:
-                await add_track("Кино", "Группа крови", "ndK", deezer_track_id="100")
+                await add_track("Кино", "Группа крови", "ndK", ref="dz:100")
                 yield {"client": client, "state": state}
 
 
