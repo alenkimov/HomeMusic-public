@@ -3,7 +3,8 @@ import { api } from '../api/client';
 import type { FavoriteSubject, FavoriteTarget, FavoriteType } from '../api/types';
 import { typedFavoritesSupported } from './capabilities';
 import { hubEvents } from './events';
-import { HUB_DOWNLOAD_EVENT } from './listen';
+import { STANDALONE } from './embedded';
+import { HUB_DOWNLOAD_EVENT, markQueued } from './listen';
 import { newEventId, playEvent, routeContext } from './plays';
 import { toast, toastError } from './ui';
 
@@ -115,7 +116,7 @@ function apiTarget(t: LikeTarget): FavoriteTarget {
   };
 }
 
-/** Track ♥ may download one song; album/artist ♥ only records the typed favorite. */
+/** Track ♥ of a catalog track also downloads it (a browser); album/artist ♥ only records the typed favorite. */
 export async function toggleLike(t: LikeTarget, quiet = false): Promise<void> {
   const keys = aliases(t);
   const key = keys[0];
@@ -154,7 +155,13 @@ export async function toggleLike(t: LikeTarget, quiet = false): Promise<void> {
     retries.delete(key);
     if (!liked && t.ref) pendingRefs.delete(t.ref);
     window.dispatchEvent(new CustomEvent('hm:hub-favorite', { detail: { ref: t.ref, star: liked } }));
-    if (!quiet) toast(liked ? 'Добавлено в любимое' : 'Убрано из любимого', 'success');
+    // ♥ on a track the library has not got: it is downloaded too — what is in «Любимое» is one's own file, with its
+    // lyrics, tags and the rest. An ordinary download, not tied to the ♥: if no file is found the ♥ stays.
+    const fetching = STANDALONE && typed && liked && typeOf(t) === 'track' && !!t.ref && !t.ref.startsWith('nd:') && !apiTarget(t).nd_song_id
+      ? await api.download({ track_refs: [t.ref] }).then((r) => r.queued > 0 || r.expanding, () => false)
+      : false;
+    if (fetching && t.ref) markQueued(t.ref);
+    if (!quiet) toast(liked ? (fetching ? 'Добавлено в любимое — скачиваю в библиотеку' : 'Добавлено в любимое') : 'Убрано из любимого', 'success', fetching ? { label: 'Загрузки', to: '/downloads' } : undefined);
   } catch (e) {
     if (generation !== epoch) return;
     if (previous) local.set(key, previous);
