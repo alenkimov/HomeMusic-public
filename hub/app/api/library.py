@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import io
 import uuid
 
@@ -36,6 +37,7 @@ from app.matching.normalize import normalize_title
 from app.models import Album, Track, TrackFile, User
 
 router = APIRouter(tags=["library"])
+log = logging.getLogger(__name__)
 
 
 def track_out(t: Track, f: TrackFile | None) -> LibTrackOut:
@@ -215,15 +217,23 @@ async def delete_track(track_id: int, user: User = Depends(current_user), s: Asy
 @router.get("/api/starred", response_model=StarredOut)
 async def starred(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     from app.api.schemas import FavoriteTarget
-    from app.favorites import ND_FIELDS, AliasIndex, imported_targets, snapshot
-    from app.imports.apply import pending_like_refs
+    from app import playlists
+    from app.favorites import ND_FIELDS, AliasIndex, imported_targets, project_liked, snapshot
     from app.models import FavoriteSubject
 
+    # what the buttons of tracks go by is the Hub's own list; Navidrome is asked only about albums and artists
     nd = user_navidrome(user)
     try:
         body = await nd.get_starred2()
+    except Exception as e:
+        log.info("starred: Navidrome did not say what is starred: %r", e)
+        body = None
     finally:
         await nd.aclose()
+    await project_liked(s, user.id, body.get("song") or [] if body is not None else None)
+    await s.commit()
+    body = body or {}
+    liked = [t for _, t in await playlists.items(s, (await playlists.liked(s, user.id)).id)]
     states = await snapshot(s, user.id)
     subjects = [dict(target_type=x.target_type, key=x.key, ref=x.ref, nd_id=x.nd_id,
                      liked=x.liked, liked_since=x.since, target_data=x.data,
@@ -233,7 +243,7 @@ async def starred(user: User = Depends(current_user), s: AsyncSession = Depends(
     for state in states.values():
         index.join(state.target_type, set(state.aliases))
     imported = {index.root(k) for k in await imported_targets(s, user.id)}
-    for typ, field in (("track", "song"), ("album", "album"), ("artist", "artist")):
+    for typ, field in (("album", "album"), ("artist", "artist")):
         for obj in body.get(field, []):
             if not obj.get("id"):
                 continue
@@ -242,14 +252,10 @@ async def starred(user: User = Depends(current_user), s: AsyncSession = Depends(
             if key in imported and key not in states:
                 subjects.append(dict(target_type=typ, key=key[1], nd_id=obj["id"], liked=True,
                                      aliases=[f"nd:{obj['id']}"], provenance="import"))
-    refs = set(await pending_like_refs(s, user.id))
-    for ref in sorted(refs):
-        key = index.key(FavoriteTarget(ref=ref))
-        if key not in states:
-            subjects.append(dict(target_type="track", key=key[1], ref=ref, nd_id=None, liked=True,
-                                 aliases=[f"ref:{ref}"], provenance="import"))
-    refs.update(x.ref for x in states.values() if x.target_type == "track" and x.liked and x.ref and not x.nd_id)
-    return StarredOut(song_ids=[x["id"] for x in body.get("song", []) if x.get("id")],
+    refs = {t.ref for t in liked if t.ref and not t.nd_song_id}  # liked tracks the library has no song of yet
+    unliked = {a for x in states.values() if x.target_type == "track" and not x.liked for a in x.aliases}
+    foreign = [x["id"] for x in body.get("song", []) if x.get("id") and f"nd:{x['id']}" not in unliked]
+    return StarredOut(song_ids=list(dict.fromkeys([*(t.nd_song_id for t in liked if t.nd_song_id), *foreign])),
                       album_ids=[x["id"] for x in body.get("album", []) if x.get("id")],
                       artist_ids=[x["id"] for x in body.get("artist", []) if x.get("id")],
                       refs=sorted(refs), subjects=subjects)
@@ -307,6 +313,9 @@ async def star(body: StarIn, user: User = Depends(current_user), s: AsyncSession
         raise
     finally:
         await nd.aclose()
+    from app.favorites import project_liked
+
+    await project_liked(s, user.id)
     await s.commit()
     bus.publish(user.id, "library", {"kind": "unstarred" if body.unstar else "starred"})
     return {"ok": True, "event_ids": [e.event_id for e in events]}

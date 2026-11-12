@@ -20,7 +20,7 @@ from app.auth import current_user, user_navidrome
 from app.db import get_session
 from app.library.navidrome import NavidromeClient, SubsonicError
 from app.mixes.resolve import library_track
-from app.models import CatalogCache, ImportItem, Track, TrackFile, User
+from app.models import Track, TrackFile, User
 
 router = APIRouter(prefix="/api/nd", tags=["medialib"])
 
@@ -167,72 +167,44 @@ async def all_songs(user: User = Depends(current_user), s: AsyncSession = Depend
 
 @router.get("/liked", response_model=NdLikedOut)
 async def liked(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    from app.favorites import parse_time, snapshot
-    from app.imports.apply import _user_likes
+    """«Любимое»: the tracks are the Hub's playlist of them (`favorites.project_liked`) — the newest like on top,
+    one the library has no file of among the rest. The albums and artists are Navidrome's stars."""
+    from app import playlists
+    from app.api.playlists import tracks_out
+    from app.favorites import project_liked, snapshot
 
-    body = await nd_call(user, lambda nd: nd.get_starred2())
+    try:
+        body = await nd_call(user, lambda nd: nd.get_starred2())
+    except HTTPException:  # Navidrome is away: the tracks are the Hub's own, the rest waits
+        body = None
+    await project_liked(s, user.id, body.get("song") or [] if body is not None else None)
+    await s.commit()
+    body = body or {}
+    rows = await playlists.items(s, (await playlists.liked(s, user.id)).id)
+    songs = await tracks_out(s, user, [t for _, t in rows])
+    for (item, _), song in zip(rows, songs, strict=True):
+        song.added_at = item.added_at
     states = await snapshot(s, user.id)
     decisions = {(st.target_type, alias): st for st in states.values() for alias in st.aliases}
+    # a song starred in Navidrome that the Hub has no track of (a file put into the library by hand) is no part
+    # of the playlist: it is listed as Navidrome gives it
+    have = {x.nd_song_id for x in songs}
+    foreign = [x for x in body.get("song") or [] if x.get("id") and x["id"] not in have
+               and not ((st := decisions.get(("track", f"nd:{x['id']}"))) and not st.liked)]
+    if foreign:
+        from app.favorites import parse_time
+        from app.playlist_dates import naive
 
-    def state(typ, *, ref=None, nd_id=None):
-        return decisions.get((typ, f"ref:{ref}")) or decisions.get((typ, f"nd:{nd_id}"))
-
-    # The same own decisions as /api/starred override delayed ND/import snapshots.
-    ranked = []
-    seen = set()
-    songs = body.get("song") or []
-    for obj, song in zip([x for x in songs if x.get("id")], await songs_out(s, songs), strict=True):
-        st = state("track", ref=song.ref, nd_id=song.nd_song_id)
-        if st is not None and not st.liked:
-            continue
-        seen.update([f"ref:{song.ref}", f"nd:{song.nd_song_id}", *(st.aliases if st else [])])
-        ranked.append((st.since if st else parse_time(obj.get("starred")), song))
-
-    pending = {}
-    for item in (await s.execute(_user_likes(user.id).where(ImportItem.status.in_(("waiting", "queued"))))).scalars():
-        st = state("track", ref=item.ref)
-        if st is None:
-            pending.setdefault(item.ref, (item.raw_json or {}, None, None, []))
-    for st in states.values():
-        if st.target_type == "track" and st.liked:
-            ref = st.ref or (f"nd:{st.nd_id}" if st.nd_id else None)
-            if ref:
-                pending[ref] = (st.data or {}, st.since, st.nd_id, st.aliases)
-
-    # Read stored metadata in batches. Listing likes must never depend on a catalog
-    # request or start a download; old likes can recover names from playback caches.
-    cache_keys = {key for ref in pending for key in (f"listen:{ref}", f"mix:track:{ref}",
-                  f"dz:track:{ref[3:]}" if ref.startswith("dz:") else "") if key}
-    cached = {}
-    keys = sorted(cache_keys)
-    for start in range(0, len(keys), 500):
-        for row in (await s.execute(select(CatalogCache).where(CatalogCache.key.in_(keys[start:start + 500])))).scalars():
-            cached[row.key] = row.payload_json.get("v") or {}
-    for ref, (data, since, nd_id, links) in pending.items():
-        aliases = {f"ref:{ref}", *links, *([f"nd:{nd_id}"] if nd_id else [])}
-        if seen.intersection(aliases):
-            continue
-        meta = {**cached.get(f"listen:{ref}", {}), **cached.get(f"mix:track:{ref}", {}),
-                **cached.get(f"dz:track:{ref[3:]}", {}), **data}
-        src, _, ident = ref.partition(":")
-        if src not in ("dz", "hm", "mb", "nd", "file") or not ident:
-            continue
-        song = NdSongOut(ref=ref, source=src, id=ident, title=meta.get("title") or ref,
-                         artist=meta.get("artist") or "", duration_s=meta.get("duration_s") or meta.get("duration"),
-                         album_title=meta.get("album_title"), artist_ref=meta.get("artist_ref"),
-                         album_ref=meta.get("album_ref"), cover_url=meta.get("cover_url"),
-                         cover_small_url=meta.get("cover_small_url"), nd_song_id=nd_id, owned=bool(nd_id))
-        ranked.append((since or parse_time(meta.get("liked_at")), song))
-        seen.update(aliases)
+        for raw, song in zip(foreign, await songs_out(s, foreign), strict=True):
+            song.added_at = naive(parse_time(raw.get("starred"))) or song.added_at
+            songs.append(song)
+        songs.sort(key=lambda x: x.added_at or datetime.min, reverse=True)
 
     def visible(typ, obj):
-        st = state(typ, nd_id=obj.get("id"))
+        st = decisions.get((typ, f"nd:{obj.get('id')}"))
         return st is None or st.liked
 
-    ranked.sort(key=lambda pair: pair[0] or datetime.min, reverse=True)
-    from app.playlist_dates import naive
-
-    return NdLikedOut(songs=[song.model_copy(update={"added_at": naive(at) or song.added_at}) for at, song in ranked],
+    return NdLikedOut(songs=songs,
                       albums=[album_out(a) for a in sorted(body.get("album") or [], key=lambda x: x.get("starred") or "", reverse=True)
                               if visible("album", a)],
                       artists=[artist_out(a) for a in body.get("artist") or [] if visible("artist", a)])

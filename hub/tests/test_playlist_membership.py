@@ -244,3 +244,32 @@ async def test_a_track_without_a_file_is_tagged_like_any_other(env):
         s.add(TrackFile(track_id=waiting, uid="u-555", path="a/555.mp3", nd_song_id="nd555"))
     tags = (await c.get("/api/tags")).json()["map"]
     assert tag in tags["nd555"] and f"t:{waiting}" not in tags
+
+
+async def test_liked_is_a_playlist_and_a_liked_track_without_a_file_is_a_track(env):
+    from app import playlists
+    from app.db import session_scope
+
+    c = env["client"]
+    target = {"ref": "dz:999", "target_data": {"title": "WHAT TO DO?", "artist": "Jackboys", "duration_s": 250,
+                                               "cover_url": "https://cover/999.jpg"}}
+    assert (await c.post("/api/star", json={"targets": [target]})).status_code == 200
+    assert (await c.post("/api/star", json={"song_ids": ["ndK"]})).status_code == 200
+    songs = (await c.get("/api/nd/liked")).json()["songs"]
+    assert [(x["title"], x["owned"]) for x in songs] == [("Группа крови", True), ("WHAT TO DO?", False)]  # newest on top
+    waiting = songs[1]
+    assert waiting["library_track_id"] and waiting["cover_url"] == "https://cover/999.jpg" and waiting["added_at"]
+
+    async with session_scope() as s:  # it is the playlist of kind "liked", not something told anew from the journal
+        liked = await playlists.liked(s, 1)
+        assert [t.title for _, t in await playlists.items(s, liked.id)] == ["Группа крови", "WHAT TO DO?"]
+        assert (await playlists.kept(s, 1))[0] == {t.id for _, t in await playlists.items(s, liked.id)}
+
+    tag = (await c.post("/api/tags", json={"name": "На потом"})).json()["id"]
+    r = await c.post("/api/tags/assign", json={"nd_song_ids": [f"t:{waiting['library_track_id']}"], "add": [tag], "remove": []})
+    assert tag in r.json()["map"][f"t:{waiting['library_track_id']}"]
+
+    stars = (await c.get("/api/starred")).json()
+    assert (stars["song_ids"], stars["refs"]) == (["ndK"], ["dz:999"])
+    assert (await c.post("/api/star", json={"targets": [target], "unstar": True})).status_code == 200
+    assert [x["title"] for x in (await c.get("/api/nd/liked")).json()["songs"]] == ["Группа крови"]

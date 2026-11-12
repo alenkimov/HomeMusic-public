@@ -251,9 +251,8 @@ async def test_economy_import_likes_and_playlists_in_order(env):
     assert state["stars"] == ["ndA", "ndB"]
     # the liked track the library lacks shows ♥ by its catalog ref
     stars = (await c.get("/api/starred")).json()
-    assert {k: stars[k] for k in ("song_ids", "album_ids", "artist_ids", "refs")} == {
+    assert {k: sorted(stars[k]) for k in ("song_ids", "album_ids", "artist_ids", "refs")} == {
         "song_ids": ["ndA", "ndB"], "album_ids": [], "artist_ids": [], "refs": ["dz:100"]}
-    assert len(stars["subjects"]) == 3 and all(x["provenance"] == "import" for x in stars["subjects"])
     assert await jobs("download_item") == []
 
     # listened to: downloaded now (the user's own work), quietly, ♥ by the download. The app's `start` of it

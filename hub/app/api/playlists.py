@@ -107,6 +107,8 @@ def track_with_file(t: Track) -> NdSongOut:
     song yet, or does not answer."""
     out = track_without_file(t)
     out.owned, out.nd_song_id = True, t.nd_song_id
+    if not t.ref and t.nd_song_id:  # the catalog does not know it: it is named by its song, as everywhere
+        out.ref, out.source, out.id = f"nd:{t.nd_song_id}", "nd", t.nd_song_id
     if t.album_id:
         out.cover_url = out.cover_small_url = f"/api/library/albums/{t.album_id}/cover"
     return out

@@ -49,6 +49,7 @@ async def of_catalog(s: AsyncSession, c: CatalogTrack, *, user_id: int | None = 
         fingerprint=fingerprint(c.artist, c.title), catalog=c.model_dump(mode="json"), created_by=user_id)
     s.add(track)
     await s.flush()
+    await s.refresh(track)  # what is read with a track (its song, its path) is there to be read: none, for now
     return track
 
 

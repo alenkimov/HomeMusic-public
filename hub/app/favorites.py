@@ -433,6 +433,124 @@ async def imported_targets(s: AsyncSession, user_id: int) -> set[tuple[str, str]
     return keys
 
 
+# --- «Любимое» -------------------------------------------------------------------------------------------------
+
+
+async def _liked_track(s: AsyncSession, user_id: int, ref: str | None, nd_id: str | None,
+                       data: dict[str, Any] | None) -> int | None:
+    """The track a like names: by the Navidrome song of its file, else by its catalog ref — made of what the like
+    itself says of the song if the Hub has not met it (a like of a catalog track is a track with no file yet)."""
+    from app.catalog.models import CatalogTrack
+    from app.library import tracks as registry
+    from app.models import TrackFile
+
+    if nd_id:
+        track_id = (await s.execute(select(TrackFile.track_id).where(TrackFile.nd_song_id == nd_id).limit(1))
+                    ).scalar_one_or_none()
+        if track_id is not None:
+            return track_id
+    src, _, ident = (ref or "").partition(":")
+    if src not in ("dz", "hm", "mb") or not ident:
+        return None
+    track = await registry.by_ref(s, ref)
+    if track is not None:
+        return track.id
+    data = data or {}
+    if not data.get("title"):  # an old like kept only the ref: what the Hub has cached of the catalog names it
+        from app.models import CatalogCache
+
+        keys = [f"listen:{ref}", f"mix:track:{ref}", *([f"dz:track:{ident}"] if src == "dz" else [])]
+        for row in (await s.execute(select(CatalogCache).where(CatalogCache.key.in_(keys)))).scalars():
+            data = {**((row.payload_json or {}).get("v") or {}), **data}
+    duration = data.get("duration_s") or data.get("duration")
+    # a like that says nothing of the song (an old one) is still a like: the track is named by its ref until the
+    # catalog is asked
+    return (await registry.of_catalog(s, CatalogTrack(
+        ref=ref, source=src, id=ident, title=str(data.get("title") or ref), artist=str(data.get("artist") or ""),
+        album_title=data.get("album_title"), duration_s=int(duration) if isinstance(duration, (int, float)) else None,
+        artist_ref=data.get("artist_ref"), album_ref=data.get("album_ref"), cover_url=data.get("cover_url"),
+        cover_small_url=data.get("cover_small_url") or data.get("cover_url")), user_id=user_id)).id
+
+
+async def project_liked(s: AsyncSession, user_id: int, starred: list[dict] | None = None) -> bool:
+    """Make «Любимое» — the user's playlist of `kind` "liked" (app/playlists.py) — say what the journal says.
+
+    The journal of likes and unlikes stays what decides (the taste profile reads it, and it is what is reconciled
+    with Navidrome's stars); the playlist is the list it comes to: the tracks the user likes now, the newest like
+    on top, each with the day it was liked. A track an import brought as liked is in it too, and so is a song
+    starred in Navidrome (`starred`: its starred songs as it gives them, when it was asked) — unless the user has
+    since said otherwise. A liked track the library has no file of is a track like any other: it has its place,
+    its date and its tags. Navidrome not asked (`starred` None): what the playlist has and nobody unliked stays.
+    Returns whether the playlist changed."""
+    from app import playlists
+    from app.imports.apply import catalog_of
+    from app.library import tracks as registry
+    from app.models import PlaylistItem
+    from app.playlist_dates import naive
+
+    from app.models import TrackFile
+
+    want: dict[int, datetime] = {}
+    decided: set[str] = set()  # what the user has decided about themself: an import or a star does not overrule it
+    states = [st for st in (await snapshot(s, user_id)).values() if st.target_type == "track"]
+    for st in states:
+        decided.update(st.aliases)
+        if st.liked and (track_id := await _liked_track(s, user_id, st.ref, st.nd_id, st.data)) is not None:
+            want.setdefault(track_id, st.since or st.event.ts)
+    rows = (await s.execute(
+        select(ImportItem, Import.created_at).join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
+        .join(Import, Import.id == ImportItem.import_id)
+        .where(Import.user_id == user_id, ImportCollection.kind == "likes", ImportCollection.selected.is_(True),
+               ImportItem.status.in_(("done", "waiting", "queued")))
+        .order_by(ImportItem.import_id, ImportItem.position))).all()
+    for position, (it, imported_at) in enumerate(rows):
+        if it.ref and f"ref:{it.ref}" in decided:
+            continue
+        track = await s.get(Track, it.track_id) if it.track_id else None
+        if track is None and (cat := catalog_of(it)) is not None:
+            track = await registry.of_catalog(s, cat, user_id=user_id)
+        if track is None or track.id in want or (track.nd_song_id and f"nd:{track.nd_song_id}" in decided):
+            continue
+        # the service lists the newest like first: without its dates the order of the list still holds
+        at = naive(parse_time((it.raw_json or {}).get("liked_at"))) or imported_at - timedelta(seconds=position)
+        want[track.id] = at
+    p = await playlists.liked(s, user_id)
+    have = await playlists.items(s, p.id)
+    if starred is not None:
+        songs = {str(x["id"]): parse_time(x.get("starred")) for x in starred if x.get("id")}
+        ids = list(songs)
+        for k in range(0, len(ids), 500):
+            for song, track_id in (await s.execute(select(TrackFile.nd_song_id, TrackFile.track_id).where(
+                    TrackFile.nd_song_id.in_(ids[k:k + 500])))).all():
+                if f"nd:{song}" not in decided:
+                    want.setdefault(track_id, songs[song] or utcnow())
+    else:
+        unliked = {a for st in states if not st.liked for a in st.aliases}
+        for item, track in have:
+            names = {f"ref:{track.ref}" if track.ref else "", f"nd:{track.nd_song_id}" if track.nd_song_id else ""}
+            if not names & unliked:
+                want.setdefault(track.id, item.added_at)
+    order = sorted(want, key=lambda t: (want[t], t), reverse=True)
+
+    if [t.id for _, t in have] == order and all(i.added_at == want[t.id] for i, t in have):
+        return False
+    kept: dict[int, PlaylistItem] = {}
+    for item, track in have:
+        if track.id in want and track.id not in kept:
+            kept[track.id] = item
+        else:
+            await s.delete(item)
+    for position, track_id in enumerate(order):
+        item = kept.get(track_id)
+        if item is None:
+            s.add(PlaylistItem(playlist_id=p.id, track_id=track_id, position=position, added_at=want[track_id]))
+        else:
+            item.position, item.added_at = position, want[track_id]
+    p.updated_at = utcnow()
+    await s.flush()
+    return True
+
+
 def parse_time(value: Any) -> datetime | None:
     try:
         dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
