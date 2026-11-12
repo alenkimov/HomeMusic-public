@@ -43,7 +43,6 @@ from app.models import (
 log = logging.getLogger(__name__)
 
 MAX_STEPS = 12
-CHUNK = 200  # song ids per Navidrome call: a longer URL may be refused
 CONFIRM_TOOLS = {"delete_playlist", "delete_library_tracks"}
 SONGS_FROM = ("starred", "starred_from_imports", "playlist:<id>", "import_collection:<id>")
 
@@ -183,12 +182,29 @@ class ChatTools:
 
     # --- reading -----------------------------------------------------------------------------------------------
 
-    async def _own_playlists(self) -> list[dict]:
-        # getPlaylists also returns other users' public playlists
-        return [p for p in await self.nd().get_playlists() if p.get("owner") in (None, self.user.nd_username)]
+    async def _playlist(self, playlist_id: Any, *, change: bool = False):
+        """The user's playlist of this id (the Hub's own); `change`: one that can be changed («Микс дня» cannot)."""
+        from app import playlists
+        from app.playlists_mirror import MIX
 
-    async def _playlist_name(self, playlist_id: str) -> str:
-        return next((p.get("name") or "" for p in await self._own_playlists() if p["id"] == playlist_id), playlist_id)
+        p = await playlists.own(self.s, self.user.id, int(playlist_id)) if str(playlist_id).isdigit() else None
+        if p is None or p.kind not in ((playlists.USER,) if change else (playlists.USER, MIX)):
+            raise ValueError(f"no playlist {playlist_id}")
+        return p
+
+    async def _playlist_changed(self, p) -> None:
+        from app.playlists_mirror import enqueue_mirror
+
+        await enqueue_mirror(self.s, p.id)
+        bus.publish(self.user.id, "library", {"kind": "playlist", "playlist_id": str(p.id)})
+
+    async def _tracks(self, song_ids: list[str] | None, songs_from: str | None) -> list[int]:
+        """The tracks of the songs named (`_songs`), in order."""
+        from app.api.playlists import _tracks_of_songs
+
+        keys = await self._songs(song_ids, songs_from, tracks=True)
+        found = await _tracks_of_songs(self.s, keys)
+        return list(dict.fromkeys(found[k] for k in keys if k in found))
 
     async def _import_liked(self) -> dict[str, int]:
         """song id -> the import that starred it."""
@@ -199,7 +215,12 @@ class ChatTools:
         return out
 
     async def account_overview(self) -> Any:
+        from app import playlists
+        from app.playlists_mirror import MIX
+
         s, uid, nd = self.s, self.user.id, self.nd()
+        own = await playlists.of_user(s, uid, kinds=(playlists.USER, MIX))
+        totals = await playlists.counts(s, [p.id for p in own])
         starred = await nd.get_starred2()
         liked = await self._import_liked()
         songs = starred.get("song", [])
@@ -209,8 +230,8 @@ class ChatTools:
                         "albums": (await s.execute(select(func.count(Album.id)))).scalar_one()},
             "starred": {"songs": len(songs), "songs_from_imports": sum(1 for x in songs if x.get("id") in liked),
                         "albums": len(starred.get("album", [])), "artists": len(starred.get("artist", []))},
-            "playlists": table(["id", "name", "songs"], [[p["id"], p.get("name"), p.get("songCount", 0)]
-                                                         for p in await self._own_playlists()]),
+            "playlists": table(["id", "name", "songs"], [[str(p.id), p.name, totals.get(p.id, (0, 0, 0))[0]]
+                                                         for p in own]),
             "imports": [],
         }
         imports = (await s.execute(select(Import).where(Import.user_id == uid).order_by(Import.id.desc())
@@ -228,7 +249,7 @@ class ChatTools:
                 "id": imp.id, "source": imp.source, "account": imp.account, "status": imp.status,
                 "date": f"{imp.created_at:%Y-%m-%d}", "starred_songs": len((imp.options_json or {}).get("liked") or []),
                 "collections": table(["collection_id", "kind", "title", "selected", "items", "playlist_id"], [
-                    [c.id, c.kind, c.title, c.selected, _counts(by_coll.get(c.id, [])), c.nd_playlist_id]
+                    [c.id, c.kind, c.title, c.selected, _counts(by_coll.get(c.id, [])), c.playlist_id]
                     for c in colls]),
             })
         dl = (await s.execute(select(DownloadItem.status, func.count(DownloadItem.id))
@@ -306,9 +327,14 @@ class ChatTools:
         return {**page, **table(["song_id", "song", "album", "import_id"], rows)}
 
     async def get_playlist(self, playlist_id: str, offset: int = 0, limit: int = 100) -> Any:
-        pl = await self.nd().get_playlist(playlist_id)
-        rows, page = _page([[i, e.get("id"), label(e)] for i, e in enumerate(pl.get("entry", []))], offset, limit)
-        return {"name": pl.get("name"), **page, **table(["index", "song_id", "song"], rows)}
+        from app import playlists
+        from app.tags import key_of
+
+        p = await self._playlist(playlist_id)
+        # a track the library has no file of yet is in the playlist too: it is named "t:<id>" where a song id goes
+        rows, page = _page([[i, key_of(t.id, t.nd_song_id), label(t)]
+                            for i, (_, t) in enumerate(await playlists.items(self.s, p.id))], offset, limit)
+        return {"name": p.name, **page, **table(["index", "song_id", "song"], rows)}
 
     async def _collection_items(self, collection_id: int) -> list[ImportItem]:
         c = await self.s.get(ImportCollection, collection_id)
@@ -340,9 +366,13 @@ class ChatTools:
 
     # --- changes -----------------------------------------------------------------------------------------------
 
-    async def _songs(self, song_ids: list[str] | None = None, songs_from: str | None = None) -> list[str]:
-        """Song ids given by the model plus a set of songs it named (`SONGS_FROM`), in order, each once."""
+    async def _songs(self, song_ids: list[str] | None = None, songs_from: str | None = None, *,
+                     tracks: bool = False) -> list[str]:
+        """Song ids given by the model plus a set of songs it named (`SONGS_FROM`), in order, each once. `tracks`:
+        the tracks without a file ("t:<id>") count too — for a playlist, not for Navidrome."""
+        from app import playlists
         from app.imports.apply import _song_ids, playlist_order
+        from app.tags import TRACK_KEY, key_of
 
         ids = list(song_ids or [])
         if songs_from:
@@ -352,13 +382,14 @@ class ChatTools:
                 liked = await self._import_liked() if kind == "starred_from_imports" else None
                 ids += [x for x in starred if liked is None or x in liked]
             elif kind == "playlist" and arg:
-                ids += [e["id"] for e in (await self.nd().get_playlist(arg)).get("entry", []) if e.get("id")]
+                p = await self._playlist(arg)
+                ids += [key_of(t.id, t.nd_song_id) for _, t in await playlists.items(self.s, p.id)]
             elif kind == "import_collection" and arg.isdigit():
                 items = await self._collection_items(int(arg))
                 ids += playlist_order(items, await _song_ids(self.s, items))
             else:
                 raise ValueError(f"songs_from: one of {', '.join(SONGS_FROM)}")
-        return list(dict.fromkeys(x for x in ids if x))
+        return list(dict.fromkeys(x for x in ids if x and (tracks or not x.startswith(TRACK_KEY))))
 
     def _publish_stars(self, kind: str, song_ids: list[str]) -> None:
         if song_ids:
@@ -369,51 +400,54 @@ class ChatTools:
         name = name.strip()
         if not name:
             raise ValueError("empty name")
-        ids = await self._songs(song_ids, songs_from)
-        nd = self.nd()
-        pl = await nd.create_playlist(name, ids[:CHUNK])
-        if pl.get("id") and len(ids) > CHUNK:
-            await nd.set_playlist_songs(pl["id"], ids, chunk=CHUNK)
+        from app import playlists
+
+        ids = await self._tracks(song_ids, songs_from)
+        p = await playlists.create(self.s, self.user.id, name)
+        await playlists.add(self.s, p, ids)
+        await self._playlist_changed(p)
         self.done.append(f"Создан плейлист «{name}»" + (f": {tracks_word(len(ids))}" if ids else ""))
-        return {"playlist_id": pl.get("id"), "songs": len(ids)}
+        return {"playlist_id": str(p.id), "songs": len(ids)}
 
     async def add_to_playlist(self, playlist_id: str, song_ids: list[str] | None = None,
                               songs_from: str | None = None, track_refs: list[str] | None = None) -> Any:
-        nd = self.nd()
+        from app import playlists
+
+        p = await self._playlist(playlist_id, change=True)
         out: dict[str, Any] = {}
-        ids = await self._songs(song_ids, songs_from)
-        if ids:
-            have = {e.get("id") for e in (await nd.get_playlist(playlist_id)).get("entry", [])}
-            ids = [x for x in ids if x not in have]
-            for k in range(0, len(ids), CHUNK):
-                await nd.update_playlist(playlist_id, add=ids[k:k + CHUNK])
-            out["added"] = len(ids)
-            if ids:
-                self.done.append(f"В плейлист «{await self._playlist_name(playlist_id)}» добавлено "
-                                 f"{tracks_word(len(ids))}")
+        if song_ids or songs_from:
+            added = await playlists.add(self.s, p, await self._tracks(song_ids, songs_from))
+            out["added"] = len(added)
+            if added:
+                await self._playlist_changed(p)
+                self.done.append(f"В плейлист «{p.name}» добавлено {tracks_word(len(added))}")
         if track_refs:
-            out["batches"] = await self._download(track_refs=track_refs, playlist_id=playlist_id)
-            self.done.append(f"Поставлено в загрузку в плейлист «{await self._playlist_name(playlist_id)}»: "
-                             f"{tracks_word(len(track_refs))}")
+            out["batches"] = await self._download(track_refs=track_refs, playlist_id=str(p.id))
+            self.done.append(f"Поставлено в загрузку в плейлист «{p.name}»: {tracks_word(len(track_refs))}")
         return out
 
     async def remove_from_playlist(self, playlist_id: str, song_ids: list[str] | None = None,
                                    songs_from: str | None = None) -> Any:
-        nd = self.nd()
-        drop = set(await self._songs(song_ids, songs_from))
-        pl = await nd.get_playlist(playlist_id)
-        indexes = [i for i, e in enumerate(pl.get("entry", [])) if e.get("id") in drop][::-1]
-        for k in range(0, len(indexes), CHUNK):
-            # from the end: the indexes of the next chunk stay valid
-            await nd.update_playlist(playlist_id, remove_indexes=indexes[k:k + CHUNK])
-        if indexes:
-            self.done.append(f"Из плейлиста «{pl.get('name') or playlist_id}» убрано {tracks_word(len(indexes))}")
-        return {"removed": len(indexes)}
+        from app import playlists
+
+        p = await self._playlist(playlist_id, change=True)
+        drop = await self._tracks(song_ids, songs_from)
+        there = set(await playlists.track_ids(self.s, p.id))
+        removed = [t for t in drop if t in there]
+        if removed:
+            await playlists.remove_tracks(self.s, p, removed)
+            await self._playlist_changed(p)
+            self.done.append(f"Из плейлиста «{p.name}» убрано {tracks_word(len(removed))}")
+        return {"removed": len(removed)}
 
     async def rename_playlist(self, playlist_id: str, name: str) -> Any:
-        old = await self._playlist_name(playlist_id)
-        await self.nd().update_playlist(playlist_id, name=name.strip())
-        self.done.append(f"Плейлист «{old}» переименован в «{name.strip()}»")
+        p = await self._playlist(playlist_id, change=True)
+        name = " ".join(name.split())
+        if not name:
+            raise ValueError("empty name")
+        old, p.name = p.name, name[:200]
+        await self._playlist_changed(p)
+        self.done.append(f"Плейлист «{old}» переименован в «{p.name}»")
         return {"ok": True}
 
     async def star(self, song_ids: list[str] | None = None, songs_from: str | None = None,
@@ -507,10 +541,8 @@ class ChatTools:
     # --- need confirmation -------------------------------------------------------------------------------------
 
     async def delete_playlist(self, playlist_ids: list[str]) -> Any:
-        names = {p["id"]: p.get("name") or "" for p in await self._own_playlists()}
-        if missing := [p for p in playlist_ids if p not in names]:
-            raise ValueError(f"no playlists {missing}")
-        self.proposal += [{"type": "delete_playlist", "playlist_id": p, "name": names[p]} for p in playlist_ids]
+        rows = [await self._playlist(p, change=True) for p in dict.fromkeys(playlist_ids)]
+        self.proposal += [{"type": "delete_playlist", "playlist_id": str(p.id), "name": p.name} for p in rows]
         return {"status": "waiting_for_user_confirmation"}
 
     async def delete_library_tracks(self, track_ids: list[int]) -> Any:
@@ -633,9 +665,11 @@ async def run_chat(s: AsyncSession, user: User, messages: list[dict[str, str]],
 
 
 async def confirm_chat(s: AsyncSession, user: User, task: AssistantTask, token: str) -> dict[str, Any]:
-    from app.auth import user_navidrome
+    from app import playlists as hub_playlists
     from app.jobs.downloads import enqueue_scan
     from app.library import editor
+    from app.models import PlaylistCover
+    from app.playlists_mirror import drop_mirror
 
     if task.input_kind != "chat" or task.status != "awaiting_confirmation":
         raise HTTPException(409, "Нечего подтверждать")
@@ -645,16 +679,20 @@ async def confirm_chat(s: AsyncSession, user: User, task: AssistantTask, token: 
     if any(a.get("type") not in CONFIRM_TOOLS for a in actions):  # proposals of the old chat that asked for all
         raise HTTPException(409, "Это предложение устарело — спросите ассистента ещё раз")
     playlists: list[str] = []
+    mirrors: list[str | None] = []
     albums: set[int | None] = set()
     tracks = 0
     for a in actions:
         if a["type"] == "delete_playlist":
-            nd = user_navidrome(user)
-            try:
-                await nd.delete_playlist(a["playlist_id"])
-            finally:
-                await nd.aclose()
-            playlists.append(a["playlist_id"])
+            pid = str(a["playlist_id"])
+            p = await hub_playlists.own(s, user.id, int(pid)) if pid.isdigit() else None
+            if p is not None and p.kind == hub_playlists.USER:
+                if (cover := await s.get(PlaylistCover, pid)) is not None:
+                    await s.delete(cover)
+                mirrors.append(p.nd_playlist_id)
+                await s.delete(p)
+                playlists.append(pid)
+                bus.publish(user.id, "library", {"kind": "playlist", "playlist_id": pid})
             continue
         for t in (await s.execute(select(Track).where(Track.id.in_(a.get("track_ids") or [])))).scalars().all():
             albums.add(t.album_id)
@@ -667,4 +705,6 @@ async def confirm_chat(s: AsyncSession, user: User, task: AssistantTask, token: 
     task.status = "confirmed"
     task.confirm_token = None
     await s.flush()
+    for nd_id in mirrors:
+        await drop_mirror(user, nd_id)
     return {"ok": True, "playlists_deleted": playlists, "tracks_deleted": tracks}

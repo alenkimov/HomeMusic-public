@@ -11,6 +11,7 @@ import uuid
 import httpx
 import pytest
 import respx
+from sqlalchemy import select
 
 from tests.support import app_client, filed_track
 
@@ -127,7 +128,27 @@ async def yandex_import() -> dict:
             s.add(ImportItem(import_id=imp.id, collection_id=likes.id, position=pos, external_id=str(pos),
                              raw_json={"artist": artist, "title": title}, status="done", match="exact",
                              track_id=t.id))
+        # the user's playlist «Тест» (ndA, ndB), mirrored to Navidrome as pl1
+        from app import playlists
+        from app.models import TrackFile
+
+        by_song = dict((await s.execute(select(TrackFile.nd_song_id, TrackFile.track_id))).all())
+        p = await playlists.create(s, user.id, "Тест")
+        await playlists.add(s, p, [by_song["ndA"], by_song["ndB"]])
+        p.nd_playlist_id, p.mirrored = "pl1", ["ndA", "ndB"]
+        assert p.id == 1
         return {"import_id": imp.id, "likes_id": likes.id}
+
+
+async def playlist_songs(name: str) -> list[str | None]:
+    """The songs of the user's playlist of this name, as the Hub has it."""
+    from app import playlists
+    from app.db import session_scope
+    from app.models import Playlist
+
+    async with session_scope() as s:
+        p = (await s.execute(select(Playlist).where(Playlist.name == name))).scalar_one()
+        return [t.nd_song_id for _, t in await playlists.items(s, p.id)]
 
 
 async def chat(env, text: str, *script: dict) -> dict:
@@ -164,7 +185,7 @@ async def test_daily_limit_covers_all_chats_images_and_legacy_tasks(env):
     assert response.status_code == 200, response.text
     response = await c.post("/api/assistant/tasks", files={"images": ("screen.png", b"image", "image/png")})  # 4
     assert response.status_code == 200, response.text
-    last = await chat(env, "Удали плейлист", completion(calls=[tool_call("delete_playlist", playlist_ids=["pl1"])]),
+    last = await chat(env, "Удали плейлист", completion(calls=[tool_call("delete_playlist", playlist_ids=["1"])]),
                       completion("Подтвердите удаление"))  # 5: another chat, multiple model calls
     requests = len(env["state"]["llm_requests"])
     assert (await c.delete(f"/api/assistant/chats/{first['chat_id']}")).status_code == 200
@@ -323,8 +344,7 @@ async def test_moves_yandex_likes_into_a_playlist_without_asking(env):
         completion("Готово: 2 трека в плейлисте «Яндекс Музыка», ♥ снято."),
     )
     state = env["state"]
-    new = next(v for v in state["playlists"].values() if v["name"] == "Яндекс Музыка")
-    assert new["songs"] == ["ndB", "ndA"]  # Yandex's order: the newest like first
+    assert await playlist_songs("Яндекс Музыка") == ["ndB", "ndA"]  # Yandex's order: the newest like first
     assert state["stars"] == ["ndC"]  # the user's own ♥ stays
     assert out["done"] == ["Создан плейлист «Яндекс Музыка»: 2 трека", "♥ снято: 2 трека"]
     assert out["actions"] == [] and "task_id" not in out
@@ -346,25 +366,25 @@ async def test_starred_songs_name_the_import_that_starred_them(env):
 
 async def test_removes_songs_from_a_playlist_and_renames_it(env):
     out = await chat(env, "убери Осень из Тест и назови его Рок",
-                     completion(calls=[tool_call("remove_from_playlist", playlist_id="pl1", song_ids=["ndB"]),
-                                       tool_call("rename_playlist", playlist_id="pl1", name="Рок")]),
+                     completion(calls=[tool_call("remove_from_playlist", playlist_id="1", song_ids=["ndB"]),
+                                       tool_call("rename_playlist", playlist_id="1", name="Рок")]),
                      completion("Готово."))
-    assert env["state"]["playlists"]["pl1"] == {"name": "Рок", "songs": ["ndA"]}
+    assert await playlist_songs("Рок") == ["ndA"]
     assert out["done"] == ["Из плейлиста «Тест» убрано 1 трек", "Плейлист «Тест» переименован в «Рок»"]
 
 
 async def test_deleting_a_playlist_waits_for_confirmation(env):
-    out = await chat(env, "удали плейлист Тест", completion(calls=[tool_call("delete_playlist", playlist_ids=["pl1"])]),
+    out = await chat(env, "удали плейлист Тест", completion(calls=[tool_call("delete_playlist", playlist_ids=["1"])]),
                      completion("Удалю после подтверждения."))
     assert env["state"]["deleted"] == []
-    assert out["actions"] == [{"type": "delete_playlist", "playlist_id": "pl1", "name": "Тест"}]
+    assert out["actions"] == [{"type": "delete_playlist", "playlist_id": "1", "name": "Тест"}]
     assert out["summary"] == "Удалить плейлист «Тест»"
     c = env["client"]
     r = await c.post(f"/api/assistant/chat/{out['task_id']}/confirm", json={"confirm_token": "wrong"})
     assert r.status_code == 403, r.text
     r = await c.post(f"/api/assistant/chat/{out['task_id']}/confirm", json={"confirm_token": out["confirm_token"]})
     assert r.status_code == 200, r.text
-    assert r.json() == {"ok": True, "playlists_deleted": ["pl1"], "tracks_deleted": 0}
+    assert r.json() == {"ok": True, "playlists_deleted": ["1"], "tracks_deleted": 0}
     assert env["state"]["deleted"] == ["pl1"]
 
 
@@ -411,7 +431,7 @@ async def test_chat_turns_are_saved_and_continue_the_same_chat(env):
 
 async def test_saved_chat_remembers_screenshots_and_the_answer_to_a_proposal(env):
     c = env["client"]
-    env["state"]["script"] = [completion(calls=[tool_call("delete_playlist", playlist_ids=["pl1"])]),
+    env["state"]["script"] = [completion(calls=[tool_call("delete_playlist", playlist_ids=["1"])]),
                               completion("Удалю после подтверждения.")]
     r = await c.post("/api/assistant/chat", data={"messages": json.dumps([{"role": "user", "content": ""}])},
                      files={"images": ("screen.png", b"png", "image/png")})
@@ -423,7 +443,7 @@ async def test_saved_chat_remembers_screenshots_and_the_answer_to_a_proposal(env
     saved = (await c.get(f"/api/assistant/chats/{out['chat_id']}")).json()["messages"]
     assert saved[0] == {"role": "user", "content": "", "images": 1}
     assert saved[1]["proposal"]["state"] == "dismissed"
-    assert saved[1]["proposal"]["actions"] == [{"type": "delete_playlist", "playlist_id": "pl1", "name": "Тест"}]
+    assert saved[1]["proposal"]["actions"] == [{"type": "delete_playlist", "playlist_id": "1", "name": "Тест"}]
     r = await c.post(f"/api/assistant/chat/{out['task_id']}/confirm", json={"confirm_token": out["confirm_token"]})
     assert r.status_code == 409, r.text  # a dismissed proposal can no longer delete anything
     assert env["state"]["deleted"] == []
