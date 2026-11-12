@@ -329,6 +329,7 @@ export function TrackRow({
               <QueueButton
                 track={menuTrack.listen as ListenTrack}
                 instead={<span className={cx(current && 'text-accent')}>{current && !showCover ? playMark : rowNumber}</span>}
+                marked={dragMark === 'queue' || dragMark === 'unqueue'}
                 className={cx(dragMark === 'queue' ? cx(marked, '!text-accent') : dragMark === 'unqueue' && cx(marked, '!text-muted'))}
               />
             </span>

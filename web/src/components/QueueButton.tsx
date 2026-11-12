@@ -7,8 +7,9 @@ import { IconButton, cx } from './ui';
  * (`ListenTrack.queued`), not the rest of the list that plays. The row is a `group/track`: the button shows on
  * hovering it, and always — green — once the track is queued. The playing track has it too: it can be queued to play
  * once more.
- * `instead`: what stands in its place while it is not shown — the row's number. */
-export function QueueButton({ track, className, instead }: { track: ListenTrack; className?: string; instead?: ReactNode }) {
+ * `instead`: what stands in its place while it is not shown — the row's number. `marked`: the button is shown
+ * whatever the mouse is over (a drag down the rows passes this one), so the number gives way. */
+export function QueueButton({ track, className, instead, marked }: { track: ListenTrack; className?: string; instead?: ReactNode; marked?: boolean }) {
   const queuedAt = useListen((s) => {
     if (!s.track) return -1;
     for (let i = s.index + 1; i < s.queue.length; i++) if (s.queue[i].queued && s.queue[i].ref === track.ref) return i;
@@ -35,7 +36,7 @@ export function QueueButton({ track, className, instead }: { track: ListenTrack;
   if (instead === undefined) return button;
   return (
     <span className="relative flex h-10 w-8 items-center justify-center text-sm tabular-nums text-dim">
-      <span className={cx(queued ? 'opacity-0' : 'group-hover/track:opacity-0')}>{instead}</span>
+      <span className={cx(queued || marked ? 'opacity-0' : 'group-hover/track:opacity-0')}>{instead}</span>
       {button}
     </span>
   );
