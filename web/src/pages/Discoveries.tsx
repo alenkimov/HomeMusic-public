@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
-import { TrackRow, TrackTableHeader, listenTrack } from '../components/catalog';
+import { TrackRow, TrackTableHeader } from '../components/catalog';
+import { Icon } from '../components/Icon';
 import { Button, Empty, ErrorState, Loading, PageHeader } from '../components/ui';
 import { STANDALONE } from '../lib/embedded';
 import { useHubEvent } from '../lib/events';
-import { tracksWord } from '../lib/format';
+import { fmtLength, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
-import { listen } from '../lib/listen';
-import { canPlay, canPlayAll, playTracks } from '../lib/player';
 import { attempt } from '../lib/ui';
+import { Hero, ListActions } from './MediaLibrary';
 
 /** The week an issue is of: «9–15 ноября». */
 function weekTitle(iso: string): string {
@@ -21,7 +21,8 @@ function weekTitle(iso: string): string {
 
 /** «Открытия недели»: tracks of artists the user has never heard, little-known ones first — a new issue every Monday
  * (app/mixes/discover.py). The tracks are the catalog's: they play at once and reach the library only when kept
- * («+»). Earlier issues stay and are opened from the list of weeks. */
+ * («+»). Earlier issues stay and are opened from the list of weeks. The page is a list like any other: its picture
+ * (the covers of its first tracks), how many tracks and how long, ▶ and the shuffle. */
 export function DiscoveriesPage() {
   const [issueId, setIssueId] = useState<number | null>(null);
   const res = useAsync((s) => api.discoveries(issueId, s), [issueId]);
@@ -41,7 +42,8 @@ export function DiscoveriesPage() {
     return () => window.clearInterval(timer);
   }, [building, res.reload]);
   const tracks = d?.issue?.tracks ?? [];
-  const playAll = !tracks.length ? null : canPlayAll() ? () => playTracks(tracks) : !canPlay() ? () => listen(listenTrack(tracks[0]), tracks.map(listenTrack)) : null;
+  const length = tracks.reduce((sum, t) => sum + (t.duration_s ?? 0), 0);
+  const covers = [...new Set(tracks.map((t) => t.cover_url || t.cover_small_url).filter((c): c is string => !!c))].slice(0, 4);
   const build = async () => {
     const ok = await attempt(() => api.discoveriesBuild(), 'Собираю — это займёт пару минут');
     if (ok) setAsked(true);
@@ -51,10 +53,28 @@ export function DiscoveriesPage() {
 
   return (
     <div>
-      <PageHeader
+      <PageHeader hero title="Открытия недели" back={STANDALONE ? '/home' : '/more'} />
+      <Hero
+        kicker="Автоплейлист"
         title="Открытия недели"
-        back={STANDALONE ? '/home' : '/more'}
-        sub={d?.issue ? `${weekTitle(d.issue.week)} · ${tracksWord(tracks.length)}` : 'Исполнители, которых вы ещё не слышали'}
+        art={
+          covers.length >= 4 ? (
+            <div className="grid h-full w-full grid-cols-2 grid-rows-2">
+              {covers.map((c) => (
+                <img key={c} src={c} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="h-full w-full object-cover" />
+              ))}
+            </div>
+          ) : covers.length ? (
+            <img src={covers[0]} alt="" referrerPolicy="no-referrer" className="h-full w-full object-cover" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-accent/20 text-accent">
+              <Icon name="wave" size={84} />
+            </div>
+          )
+        }
+        sub={d?.issue
+          ? [tracksWord(tracks.length), length ? fmtLength(length) : null, weekTitle(d.issue.week)].filter(Boolean).join(' · ')
+          : 'Исполнители, которых вы ещё не слышали'}
       />
       {res.error ? (
         <ErrorState text={res.error} onRetry={() => res.reload()} />
@@ -75,12 +95,8 @@ export function DiscoveriesPage() {
         )
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
-            {playAll && (
-              <Button variant="primary" icon="play" onClick={playAll}>
-                Слушать
-              </Button>
-            )}
+          <ListActions tracks={tracks} />
+          <div className="flex flex-wrap items-center gap-2 px-4 pb-3 lg:px-6">
             {d.issues.length > 1 && (
               <select aria-label="Выпуск" className="input !w-auto" value={d.issue.id} onChange={(e) => setIssueId(Number(e.target.value))}>
                 {d.issues.map((x, i) => (

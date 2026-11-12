@@ -156,6 +156,16 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
         })}
         {sels.data && !sels.data.length && <p className="px-3 py-1 text-xs text-dim">Сохранённые фильтры по тегам появятся здесь</p>}
         <div className="px-1 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-dim">Автоплейлисты</div>
+        {/* «Микс дня» makes itself, like the rest of these: it is here, not among the playlists one keeps */}
+        <Link to="/mix" aria-current={route.path.startsWith('/mix') ? 'page' : undefined} className={cx(item, 'py-1.5', route.path.startsWith('/mix') ? 'bg-fg/10' : 'hover:bg-fg/5')}>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/20 text-accent">
+            <Icon name="sparkle" size={17} />
+          </span>
+          <span className="min-w-0">
+            <span className={cx('block truncate', route.path.startsWith('/mix') ? 'font-semibold text-accent' : 'text-fg')}>Микс дня</span>
+            <span className="block truncate text-xs text-dim">Знакомое и новое, каждый день</span>
+          </span>
+        </Link>
         <Link to="/discoveries" aria-current={at('/discoveries') ? 'page' : undefined} className={cx(item, 'py-1.5', at('/discoveries') ? 'bg-fg/10' : 'hover:bg-fg/5')}>
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/20 text-accent">
             <Icon name="wave" size={17} />

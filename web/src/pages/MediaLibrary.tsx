@@ -278,7 +278,7 @@ function PlaylistEdit({ playlist, onClose, onSaved }: { playlist: PlaylistOut; o
 }
 
 /** `art`: a picture of the page's own in place of the cover («Любимое»: the heart). */
-function Hero({ cover, round, title, sub, right, kicker, art }: { cover?: string | null; round?: boolean; title: string; sub?: ReactNode; right?: ReactNode; kicker?: string; art?: ReactNode }) {
+export function Hero({ cover, round, title, sub, right, kicker, art }: { cover?: string | null; round?: boolean; title: string; sub?: ReactNode; right?: ReactNode; kicker?: string; art?: ReactNode }) {
   const desktop = useDesktop();
   if (desktop)
     return (
@@ -371,7 +371,7 @@ export function LikedPage() {
  * tracks are found anew each time. `/selection/library?yes=…&no=…` is the same over the whole library, not saved
  * yet (the page of tags opens it). The filter can be changed here and saved again. */
 /** An «автоплейлист» («Топ месяца», «Давно не слушал»…): the Hub makes the list by its rule every time the page is
- * opened; nothing can be put into it or taken out. «Сохранить как плейлист» keeps it as it is now. */
+ * opened; nothing can be put into it or taken out. */
 export function AutoPlaylistPage({ kind }: { kind: string }) {
   const def = AUTO_PLAYLISTS.find((a) => a.kind === kind);
   const res = useAsync(
@@ -383,23 +383,9 @@ export function AutoPlaylistPage({ kind }: { kind: string }) {
     },
     [kind],
   );
-  const [busy, setBusy] = useState(false);
   const tracks = useMemo(() => res.data?.tracks ?? [], [res.data]);
   const length = useMemo(() => tracks.reduce((sum, t) => sum + (t.duration_s ?? 0), 0), [tracks]);
   const title = def?.title ?? 'Автоплейлист';
-  const keep = async () => {
-    setBusy(true);
-    const name = `${title} — ${new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}`;
-    const p = await attempt(async () => {
-      const made = await api.createPlaylist(name);
-      await api.playlistMembershipMany({ tracks: tracks.map(tagKey).filter((x): x is string => !!x), add: [made.id], remove: [] });
-      return made;
-    }, `Плейлист «${name}» создан`);
-    setBusy(false);
-    if (!p) return;
-    window.dispatchEvent(new Event('hm:playlists-changed'));
-    navigate(`/playlist/${enc(p.id)}`);
-  };
   return (
     <div>
       <PageHeader hero title={title} back="/library" />
@@ -421,11 +407,7 @@ export function AutoPlaylistPage({ kind }: { kind: string }) {
         <Empty icon="history" title="Пока пусто" text={kind === 'forgotten' ? 'Здесь появятся треки, которые вы слушали хотя бы три раза и не включали три месяца.' : 'Здесь появятся треки, которые вы слушали за этот период.'} />
       ) : (
         <>
-          <ListActions tracks={tracks} context="auto">
-            <Button icon="playlist" busy={busy} onClick={() => void keep()}>
-              Сохранить как плейлист
-            </Button>
-          </ListActions>
+          <ListActions tracks={tracks} context="auto" />
           <SongList tracks={tracks} sort={null} onSort={() => undefined} period={{ label: def?.column ?? 'Прослушивания', of: res.data!.plays }} />
         </>
       )}

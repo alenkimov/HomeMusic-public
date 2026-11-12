@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 
 COVER_PX = 600
 COVER_MAX_BYTES = 20 * 1024 * 1024
-LISTED = (playlists.USER, MIX)  # what the list of playlists shows («Любимое» has a page of its own)
+VIEWED = (playlists.USER, MIX)  # what can be opened as a playlist («Любимое» has a page of its own)
 
 
 def _id(playlist_id: str) -> int:
@@ -53,7 +53,7 @@ def _id(playlist_id: str) -> int:
 async def _own(s: AsyncSession, user: User, playlist_id: str, *, change: bool = False) -> Playlist:
     """The user's playlist; `change`: one that is theirs to change («Микс дня» is the Hub's)."""
     p = await playlists.own(s, user.id, _id(playlist_id))
-    if p is None or p.kind not in LISTED or (change and p.kind != playlists.USER):
+    if p is None or p.kind not in VIEWED or (change and p.kind != playlists.USER):
         raise HTTPException(404, "Плейлист не найден")
     return p
 
@@ -130,7 +130,8 @@ async def tracks_out(s: AsyncSession, user: User, rows: list[Track]) -> list[NdS
 
 @router.get("", response_model=list[PlaylistOut])
 async def list_playlists(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    return await _outs(s, await playlists.of_user(s, user.id, kinds=LISTED))
+    # the playlists one keeps: «Микс дня» makes itself and is listed with the other lists that do
+    return await _outs(s, await playlists.of_user(s, user.id))
 
 
 @router.get("/of-track", response_model=list[PlaylistOfSongOut])
