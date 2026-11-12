@@ -571,7 +571,9 @@ export function TrackTableHeader({ numbered = false, album = false, added = fals
     };
     document.addEventListener('pointerdown', close);
     document.addEventListener('keydown', close);
+    document.body.dataset.colsMenu = '1'; // the list's floating search button steps aside (ListSearch.tsx)
     return () => {
+      delete document.body.dataset.colsMenu;
       document.removeEventListener('pointerdown', close);
       document.removeEventListener('keydown', close);
     };

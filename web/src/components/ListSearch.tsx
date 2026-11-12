@@ -87,7 +87,7 @@ export function useListSearch(tracks: readonly NdSongOut[], placeholder = 'На�
     setQ('');
   };
   const control = (
-    <div className="pointer-events-none fixed bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+16px+env(safe-area-inset-bottom))] right-4 z-40 flex justify-end">
+    <div className="pointer-events-none fixed bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+16px+env(safe-area-inset-bottom))] right-4 z-40 flex justify-end [body[data-cols-menu]_&]:hidden">
       {open ? (
         <div className="anim-up pointer-events-auto flex h-14 w-[26rem] max-w-[calc(100vw-2rem)] items-center gap-1 rounded-full border border-line bg-raised pl-4 pr-1 shadow-2xl" role="search">
           <Icon name="search" size={20} className="shrink-0 text-muted" />
