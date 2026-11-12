@@ -128,7 +128,16 @@ async def tracks_out(s: AsyncSession, user: User, rows: list[Track]) -> list[NdS
 
 
 async def _tracks_of_songs(s: AsyncSession, songs: list[str]) -> dict[str, int]:
+    """What a page calls a track -> the track: the Navidrome song of its file, or — for a track with no file —
+    the Hub's own id, as "t:<id>" (`tags.key_of`)."""
+    from app.tags import TRACK_KEY
+
     out: dict[str, int] = {}
+    own = {k: int(k[len(TRACK_KEY):]) for k in songs if k.startswith(TRACK_KEY) and k[len(TRACK_KEY):].isdigit()}
+    if own:
+        known = set((await s.execute(select(Track.id).where(Track.id.in_(list(own.values()))))).scalars())
+        out.update((k, tid) for k, tid in own.items() if tid in known)
+    songs = [k for k in songs if not k.startswith(TRACK_KEY)]
     for k in range(0, len(songs), 500):
         out.update((song, tid) for song, tid in (await s.execute(
             select(TrackFile.nd_song_id, TrackFile.track_id).where(TrackFile.nd_song_id.in_(songs[k:k + 500])))).all())

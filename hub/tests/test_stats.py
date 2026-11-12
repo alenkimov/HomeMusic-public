@@ -141,3 +141,30 @@ async def test_a_navidrome_scrobble_is_a_listen(c):
     r = (await c.get("/api/stats", params={"period": "week"})).json()
     assert (r["summary"]["plays"], r["summary"]["ms"]) == (1, 245_000)
     assert await add_track("Новый", "Трек", "ndN") and (await c.get("/api/stats/counts")).json() == {"ndK": 1}
+
+
+async def test_a_catalog_track_listened_to_becomes_a_track_and_counts_as_one(c):
+    """30 seconds of a catalog track the Hub had not met: it is a track from then on — in the statistics, and one
+    to tag. A track only leafed through is not."""
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Track
+
+    at = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=1)
+    meta = {"title": "Новая песня", "artist_credit": "Ноунейм", "album": "Альбом", "duration_s": 200}
+    a = dict(ref="hm:777", playback_id="pa", device_id="d1", track_metadata=meta)
+    b = dict(ref="hm:888", playback_id="pb", device_id="d1", track_metadata={**meta, "title": "Пролистал"})
+    await post(c, ev("start", at=at, listened_ms=0, **a), ev("finish", at=at + timedelta(seconds=200), listened_ms=200000, **a),
+               ev("start", at=at + timedelta(minutes=5), listened_ms=0, **b),
+               ev("skip", at=at + timedelta(minutes=5, seconds=5), listened_ms=5000, **b))
+    async with session_scope() as s:
+        tracks = {t.ref: t for t in (await s.execute(select(Track).where(Track.ref.in_(["hm:777", "hm:888"])))).scalars()}
+    assert set(tracks) == {"hm:777"} and (tracks["hm:777"].title, tracks["hm:777"].artist) == ("Новая песня", "Ноунейм")
+    assert tracks["hm:777"].path is None  # known, with no file
+
+    top = (await c.get("/api/stats", params={"period": "week", "limit": 5})).json()["tracks"]["items"]
+    assert [(x["name"], x["plays"]) for x in top if x["name"] == "Новая песня"] == [("Новая песня", 1)]
+    tag = (await c.post("/api/tags", json={"name": "Услышал"})).json()["id"]
+    r = await c.post("/api/tags/assign", json={"nd_song_ids": [f"t:{tracks['hm:777'].id}"], "add": [tag], "remove": []})
+    assert tag in r.json()["map"][f"t:{tracks['hm:777'].id}"]

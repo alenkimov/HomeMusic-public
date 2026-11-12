@@ -273,3 +273,17 @@ async def test_liked_is_a_playlist_and_a_liked_track_without_a_file_is_a_track(e
     assert (stars["song_ids"], stars["refs"]) == (["ndK"], ["dz:999"])
     assert (await c.post("/api/star", json={"targets": [target], "unstar": True})).status_code == 200
     assert [x["title"] for x in (await c.get("/api/nd/liked")).json()["songs"]] == ["Группа крови"]
+
+
+async def test_a_track_without_a_file_is_put_into_playlists_like_any_other(env):
+    c = env["client"]
+    waiting = await catalog_track(555, "Ещё не скачан")
+    a, b = await new_playlist(c, "Дорога"), await new_playlist(c, "Вечер")
+    key = f"t:{waiting}"
+    r = (await c.post("/api/playlists/membership", json={"nd_song_id": key, "add": [a, b]})).json()
+    assert {x["name"]: x["has"] for x in r} == {"Дорога": True, "Вечер": True}
+    assert {x["name"]: x["has"] for x in (await c.get("/api/playlists/of-song", params={"nd_song_id": key})).json()} \
+        == {"Дорога": True, "Вечер": True}
+    r = (await c.post("/api/playlists/membership-many", json={"nd_song_ids": [key, "ndK"], "add": [], "remove": [b]})).json()
+    assert {x["name"]: x["count"] for x in r} == {"Дорога": 1, "Вечер": 0}
+    assert (await c.get("/api/playlists/members")).json() == {"song_ids": [key]}

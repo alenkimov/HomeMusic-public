@@ -80,7 +80,7 @@ def _main_artist(artist: str, album_artist: str | None) -> str:
 class Library:
     tracks: dict[int, LibTrack]
     by_song: dict[str, int]
-    by_deezer: dict[str, int]
+    by_ref: dict[str, int]  # catalog ref -> track
     by_spotify: dict[str, int]
     by_fingerprint: dict[str, int]
 
@@ -90,12 +90,11 @@ async def library(s: AsyncSession) -> Library:
     rows = (await s.execute(select(Track.id, Track.nd_song_id, Track.title, Track.artist, Track.album, Track.album_artist,
                                    Track.duration_s, Track.ref, Track.fingerprint).order_by(Track.id))).all()
     for tid, nd, title, artist, album, album_artist, duration, ref, fp in rows:
-        deezer = ref[3:] if ref and ref.startswith("dz:") else None
         lib.tracks[tid] = LibTrack(tid, nd, title, artist, album, _main_artist(artist, album_artist), duration)
         if nd:
             lib.by_song[nd] = tid
-        if deezer:
-            lib.by_deezer[deezer] = tid
+        if ref:
+            lib.by_ref[ref] = tid
         if fp and nd:
             lib.by_fingerprint.setdefault(fp, tid)
     for tid, external in (await s.execute(select(TrackLink.track_id, TrackLink.external_id)
@@ -118,8 +117,8 @@ async def plays(s: AsyncSession, user_id: int, lib: Library | None = None) -> li
 
     def play(ts: datetime, ms: int, counted: bool, nd: str | None, ref: str | None, meta: dict[str, Any]) -> None:
         tid = lib.by_song.get(nd) if nd else None
-        if tid is None and ref and ref.startswith("dz:"):
-            tid = lib.by_deezer.get(ref[3:])
+        if tid is None and ref:
+            tid = lib.by_ref.get(ref)
         title, artist = str(meta.get("title") or ""), str(meta.get("artist_credit") or "")
         if tid is None and not title:
             return  # nothing to show it by

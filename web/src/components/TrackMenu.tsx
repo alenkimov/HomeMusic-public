@@ -17,6 +17,8 @@ export interface MenuTrack {
   artist: string;
   ref?: string | null;
   nd_song_id?: string | null;
+  /** what the Hub calls the track (`lib/tags.ts` `tagKey`), if it knows it */
+  key?: string | null;
   artist_ref?: string | null;
   album_ref?: string | null;
   /** the song's Navidrome album and artist (the library pages of a browser) */

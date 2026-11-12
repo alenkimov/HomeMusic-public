@@ -70,7 +70,7 @@ async function apply(kind: DragKind, tracks: SelTrack[]) {
     const n = unqueue(tracks.map((t) => t.ref));
     return toast(n ? `Убрано из очереди: ${tracksWord(n)}` : 'Этих треков в очереди нет', n ? 'success' : 'info');
   }
-  if (kind === 'lists') return openPlaylistsSheet(tracks.map((t) => ({ ref: t.ref, nd_song_id: t.nd_song_id, data: { ...t.listen } })));
+  if (kind === 'lists') return openPlaylistsSheet(tracks.map((t) => ({ ref: t.ref, nd_song_id: t.nd_song_id, key: t.tag_key, data: { ...t.listen } })));
   const n = await setLikes(tracks.filter((t) => !kept(t)).map(likeTarget), true); // one request: the buttons fill together
   toast(n ? `Добавлено в «Любимое»: ${tracksWord(n)}` : 'Все эти треки уже где-то лежат', n ? 'success' : 'info');
 }

@@ -49,7 +49,7 @@ export function SelectionBar() {
           type="button"
           aria-label="В «Любимое» и плейлисты: добавить или убрать"
           title="В «Любимое» и плейлисты"
-          onClick={() => setLists(picked.map((t) => ({ ref: t.ref, nd_song_id: t.nd_song_id, data: { ...t.listen } })))}
+          onClick={() => setLists(picked.map((t) => ({ ref: t.ref, nd_song_id: t.nd_song_id, key: t.tag_key, data: { ...t.listen } })))}
           className={cx('flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition hover:scale-110', kept === 'none' ? 'text-muted hover:text-fg' : 'text-accent')}
         >
           <SaveMark state={kept} size={18} />

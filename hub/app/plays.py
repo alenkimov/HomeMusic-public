@@ -298,6 +298,7 @@ async def record_events(s: AsyncSession, user_id: int, raw: Iterable[Any], now: 
         elif e.kind == "undislike":
             await remove_dislikes(s, user_id, ref=ref if e.target_type == "track" else None, nd_song_id=nd,
                                   artist_ref=(ref or f"nd:{e.nd_artist_id}") if e.target_type == "artist" else None, complete=False)
+    await _meet_listened(s, user_id, events)
     if causal_batch and out.accepted:
         after_favorites = await snapshot(s, user_id, now)
         for key, state in after_favorites.items():
@@ -312,6 +313,43 @@ async def record_events(s: AsyncSession, user_id: int, raw: Iterable[Any], now: 
                 from app.favorites import clear_pending
                 await clear_pending(s, user_id, previous.ref)
     return out
+
+
+COUNTED_MS = 30_000  # a listen this long counts (app/stats.py): the Hub remembers what was listened to
+
+
+async def _meet_listened(s: AsyncSession, user_id: int, events: list[Any]) -> None:
+    """A catalog track listened to for a counted listen becomes a track of the Hub (ARCHITECTURE.md): from then on
+    it is in the statistics as a track, can be tagged, and its lyrics are kept — whether or not it is ever
+    downloaded. The names come from what the event itself says of the track."""
+    from app.catalog.models import CatalogTrack
+    from app.library import tracks as registry
+
+    met: set[str] = set()
+    for e in events:
+        ref = getattr(e, "ref", None)
+        src, _, ident = (ref or "").partition(":")
+        if (e.target_type != "track" or src not in ("dz", "hm", "mb") or not ident or ref in met
+                or e.kind not in ("finish", "skip", "progress", "interrupted") or (e.listened_ms or 0) < COUNTED_MS):
+            continue
+        met.add(ref)
+        if await registry.by_ref(s, ref) is not None:
+            continue
+        meta = e.track_metadata.model_dump(exclude_none=True) if e.track_metadata else {}
+        cached = await s.get(CatalogCache, f"dz:track:{ident}") if src == "dz" else None
+        cached = cached or await s.get(CatalogCache, f"mix:track:{ref}")
+        raw = (cached.payload_json or {}) if cached else {}
+        raw = raw.get("v") if isinstance(raw.get("v"), dict) else raw
+        title, artist = meta.get("title") or raw.get("title"), meta.get("artist_credit") or raw.get("artist")
+        if not title or not artist:
+            continue  # nothing to call it by: the next listen that says more makes it
+        duration = meta.get("duration_s") or raw.get("duration_s") or e.duration_s
+        await registry.of_catalog(s, CatalogTrack(
+            ref=ref, source=src, id=ident, title=str(title), artist=str(artist),
+            album_title=meta.get("album") or raw.get("album_title"), isrc=meta.get("isrc") or raw.get("isrc"),
+            duration_s=round(duration) if isinstance(duration, (int, float)) else None,
+            artist_ref=raw.get("artist_ref"), album_ref=raw.get("album_ref"), cover_url=raw.get("cover_url"),
+            cover_small_url=raw.get("cover_small_url")), user_id=user_id)
 
 
 async def user_events(s: AsyncSession, user_id: int, days: float = 30, *, kinds: Iterable[str] | None = None,

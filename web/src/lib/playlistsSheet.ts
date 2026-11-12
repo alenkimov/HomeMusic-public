@@ -6,6 +6,7 @@ import { useSyncExternalStore } from 'react';
 export interface SheetTrack {
   ref: string;
   nd_song_id?: string | null;
+  key?: string | null;
   data?: Record<string, unknown>;
 }
 

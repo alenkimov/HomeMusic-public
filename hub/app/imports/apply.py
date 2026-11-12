@@ -297,6 +297,10 @@ async def sync_playlists(s: AsyncSession, imp: Import) -> None:
         await playlists.reorder(s, p, [first[t] for t in want if t in first])
         c.given = want
         await enqueue_mirror(s, p.id)
+    if colls:
+        from app.lyrics.service import enqueue_scan_once
+
+        await enqueue_scan_once(s, delay_s=30)
     await s.flush()
 
 

@@ -41,7 +41,7 @@ export function SaveButton({ songId, refId, listKey, pending, title, data, size 
       <button type="button" disabled={busy} onClick={() => void click()} aria-label={label} title={liked ? 'В любимом — изменить' : listed ? 'В плейлистах — изменить' : 'В любимое'} className={cx('flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition hover:scale-110 disabled:opacity-60', kept ? 'text-accent' : 'text-muted hover:text-fg', className)}>
         <SaveMark state={liked ? 'liked' : listed ? 'listed' : 'none'} size={size} />
       </button>
-      {open && <TrackPlaylists track={{ title, nd_song_id: songId, ref: refId, data }} onClose={() => setOpen(false)} />}
+      {open && <TrackPlaylists track={{ title, nd_song_id: songId, ref: refId, data, key: listKey }} onClose={() => setOpen(false)} />}
     </>
   );
 }
@@ -117,9 +117,11 @@ const LIKED = { name: 'Любимое' };
  * rest, the ones changed last first. It is ticked into some and out of others; nothing changes until «Готово».
  * A library song changes places at once; a catalog track the library has not got is downloaded and goes into the
  * chosen playlists as it arrives. */
-export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_song_id?: string | null; ref?: string | null; data?: Record<string, unknown> }; onClose: () => void }) {
-  const songId = track.nd_song_id || null;
-  const target: LikeTarget = { targetType: 'track', songId, ref: track.ref, data: track.data };
+export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_song_id?: string | null; ref?: string | null; data?: Record<string, unknown>; /** what the Hub calls the track (`lib/tags.ts` `tagKey`), if it knows it */ key?: string | null }; onClose: () => void }) {
+  // what the Hub knows the track by: the Navidrome song of its file, else its own id of a track with no file yet.
+  // None: a catalog track the Hub has not met — putting it anywhere downloads it
+  const songId = track.nd_song_id || track.key || null;
+  const target: LikeTarget = { targetType: 'track', songId: track.nd_song_id, ref: track.ref, data: track.data };
   const [wasLiked] = useState(() => isLiked(target));
   const [liked, setLiked] = useState(wasLiked);
   // the order of the opening: a tick does not make a row jump
@@ -207,6 +209,7 @@ export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_
       ) : (
         <div className="-mx-4 -my-3">
           {!songId && <p className="px-4 pt-3 text-xs text-muted">Трека ещё нет в библиотеке: он скачается и появится там, куда вы его добавите.</p>}
+          {songId && !track.nd_song_id && <p className="px-4 pt-3 text-xs text-muted">Файла трека ещё нет: он скачается, когда вы его послушаете. В плейлистах он стоит уже сейчас.</p>}
           <div className="pt-1.5">
             <LikedRow mark={liked ? 'all' : 'none'} sub={liked !== wasLiked ? (liked ? 'добавить' : 'убрать') : liked ? 'трек здесь' : 'трека здесь нет'} changed={liked !== wasLiked} onClick={() => setLiked((v) => !v)} />
           </div>
@@ -233,6 +236,8 @@ type Mark = 'all' | 'some' | 'none';
 export interface PickedTrack {
   ref: string;
   nd_song_id?: string | null;
+  /** what the Hub calls the track (`lib/tags.ts` `tagKey`), if it knows it: a track with no file has no song */
+  key?: string | null;
   data?: Record<string, unknown>;
 }
 
@@ -243,7 +248,7 @@ export interface PickedTrack {
 export function BulkPlaylists({ tracks, onClose }: { tracks: PickedTrack[]; onClose: () => void }) {
   const n = tracks.length;
   const targets = useMemo<LikeTarget[]>(() => tracks.map((t) => ({ targetType: 'track' as const, songId: t.nd_song_id, ref: t.ref, data: t.data })), [tracks]);
-  const songIds = useMemo(() => tracks.map((t) => t.nd_song_id).filter((x): x is string => !!x), [tracks]);
+  const songIds = useMemo(() => tracks.map((t) => t.nd_song_id || t.key).filter((x): x is string => !!x), [tracks]);
   const [likedCount] = useState(() => targets.filter(isLiked).length);
   const [rows, setRows] = useState<PlaylistOfSongsOut[] | null>(null);
   const [want, setWant] = useState<Record<string, Mark>>({});
@@ -296,7 +301,7 @@ export function BulkPlaylists({ tracks, onClose }: { tracks: PickedTrack[]; onCl
         if (!r) return;
         noteInPlaylists(songIds, add.length > 0);
       }
-      const fresh = tracks.filter((t) => !t.nd_song_id && !t.ref.startsWith('nd:')).map((t) => t.ref);
+      const fresh = tracks.filter((t) => !t.nd_song_id && !t.key && !t.ref.startsWith('nd:')).map((t) => t.ref);
       if (fresh.length && add.length) {
         const r = await attempt(() => api.download({ track_refs: fresh, playlist_ids: add.map((p) => p.id) }));
         if (!r) return;
