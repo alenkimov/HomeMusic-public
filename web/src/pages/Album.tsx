@@ -2,7 +2,6 @@ import { useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { TrackOut } from '../api/types';
 import { TrackRow, TrackTableHeader, listenTrack } from '../components/catalog';
-import { LikeButton } from '../components/LikeButton';
 import { PlaylistPicker, type PlaylistPick } from '../components/pickers';
 import { Button, Cover, ErrorState, ExplicitBadge, IconButton, Loading, OwnedBadge } from '../components/ui';
 import { startDownload } from '../lib/actions';
@@ -139,8 +138,6 @@ export function AlbumPage({ refId }: { refId: string }) {
         <div className="relative flex flex-col items-center px-6 pb-4 text-center">
           <Cover src={album.cover_url} alt={album.title} className="aspect-square w-[min(64vw,260px)] shadow-2xl" icon="disc" />
           <h1 className="mt-4 text-2xl font-extrabold leading-tight">{album.title}</h1>
-          <LikeButton targetType="album" refId={album.ref} title={album.title} size={24}
-            data={{ name: album.title, artist: album.artist, artist_ref: album.artist_ref }} />
           {album.artist_ref ? (
             <Link to={`/artist/${enc(album.artist_ref)}`} className="mt-1 font-semibold hover:underline">
               {album.artist}

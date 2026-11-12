@@ -325,7 +325,6 @@ export function LikedPage() {
   const songs = useMemo(() => res.data?.songs ?? [], [res.data]);
   const length = useMemo(() => songs.reduce((sum, t) => sum + (t.duration_s ?? 0), 0), [songs]);
   const search = useListSearch(songs);
-  const q = search.q;
   const [sort, setSort] = useState<AddedSort>(null);
   const [filter, setFilter] = useState<TagFilter>({});
   const [saving, setSaving] = useState(false);
@@ -351,7 +350,7 @@ export function LikedPage() {
         <SkeletonRows />
       ) : res.error ? (
         <ErrorState text={res.error} onRetry={() => res.reload()} />
-      ) : !songs.length && !res.data?.artists.length ? (
+      ) : !songs.length ? (
         <Empty icon="heart" title="Пока ничего" text="Ставьте ♥ трекам — они соберутся здесь." />
       ) : (
         <>
@@ -359,12 +358,6 @@ export function LikedPage() {
           <TagFilterBar songIds={songs.map((t) => t.nd_song_id)} filter={filter} onChange={setFilter} onSave={() => setSaving(true)} />
           <SongList tracks={songs} found={shown} sort={sort} onSort={setSort} />
           {songs.length > 0 && search.control}
-          {!q && (res.data?.artists.length ?? 0) > 0 && (
-            <section aria-label="Исполнители">
-              <SectionTitle>Исполнители</SectionTitle>
-              <ArtistRow artists={res.data?.artists ?? []} rowKey="liked:artists" />
-            </section>
-          )}
         </>
       )}
     </div>
@@ -640,7 +633,6 @@ export function NdAlbumPage({ id }: { id: string }) {
         title={a.title}
         sub={a.artist}
         back="/library"
-        right={<LikeButton targetType="album" ndId={a.id} title={a.title} data={{ name: a.title, artist: a.artist }} />}
       />
       <Hero
         kicker="Альбом"

@@ -115,12 +115,7 @@ export function LibraryAlbumPage({ id }: { id: number }) {
         sub={album.album_artist}
         back="/library"
         right={
-          <>
-            <LikeButton targetType="album" ndId={album.nd_album_id}
-              refId={album.deezer_album_id ? `dz:${album.deezer_album_id}` : null}
-              title={album.title} data={{ name: album.title, artist: album.album_artist }} />
-            <IconButton icon="merge" label="Объединить с другим альбомом" onClick={() => setPicker('merge')} />
-          </>
+          <IconButton icon="merge" label="Объединить с другим альбомом" onClick={() => setPicker('merge')} />
         }
       />
 

@@ -60,7 +60,6 @@ export function HomePage() {
           )}
           <AlbumRow title="Недавно слушали" albums={d.recent} rowKey="home:recent" />
           <AlbumRow title="Часто слушаете" albums={d.frequent} rowKey="home:frequent" />
-          <AlbumRow title="Любимые альбомы" albums={d.starred} rowKey="home:starred" more="/liked" />
           <AlbumRow title="Новое в библиотеке" albums={d.newest} rowKey="home:newest" more="/lib/albums" />
         </>
       ) : null}
