@@ -14,6 +14,35 @@ export interface StatsItem {
   ms: number;
   /** a library song of it (the track itself; of an artist, an album, a genre — one of theirs); none: not in the library */
   nd_song_id?: string | null;
+  /** of a track: its listens in each of the last 8 weeks (the last one is this week) */
+  weeks?: number[];
+  /** of a track: its place in the period before this one (none: it was not there, or there is nothing to compare with) */
+  was?: number | null;
+  /** of a track: it was not listened to in the period before this one */
+  fresh?: boolean;
+}
+
+/** One song's listens (the window of the «Прослушивания» column). */
+export interface StatsTrackOut {
+  plays: number;
+  ms: number;
+  weeks: number[];
+  first_at?: string | null;
+  last_at?: string | null;
+}
+
+/** «Автоплейлисты»: lists the Hub makes by a rule every time they are opened. */
+export const AUTO_PLAYLISTS = [
+  { kind: 'top-month', title: 'Топ месяца', sub: 'За 30 дней', column: 'За месяц', icon: 'chart' },
+  { kind: 'top-year', title: 'Топ года', sub: 'За 365 дней', column: 'За год', icon: 'chart' },
+  { kind: 'top-all', title: 'Топ за всё время', sub: 'Самые слушаемые', column: 'Прослушивания', icon: 'chart' },
+  { kind: 'forgotten', title: 'Давно не слушал', sub: 'Любимое, забытое на 3 месяца', column: 'Прослушивания', icon: 'history' },
+] as const;
+
+export interface StatsAutoOut {
+  kind: string;
+  title: string;
+  items: { nd_song_id: string; plays: number }[];
 }
 
 export interface StatsTop {

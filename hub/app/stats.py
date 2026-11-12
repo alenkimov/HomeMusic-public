@@ -37,6 +37,12 @@ SAME_LISTEN_S = 90  # the same track again within this of itself is one listen t
 COUNTED_MS = 30_000
 TOUCHED_MS = 2_000  # less than this is leafing through the queue: neither a listen nor a skip
 MAX_MEMBER_BYTES = 200 * 1024 * 1024
+TREND_WEEKS = 8
+AUTO = {"top-month": ("Топ месяца", 30), "top-year": ("Топ года", 365), "top-all": ("Топ за всё время", None),
+        "forgotten": ("Давно не слушал", None)}
+AUTO_SIZE = 50
+FORGOTTEN_DAYS = 90  # «Давно не слушал»: not once in this long…
+FORGOTTEN_PLAYS = 3  # …though listened to at least this many times before
 VARIOUS = {"various artists", "various", "va", "разные исполнители", "сборник"}
 
 
@@ -168,6 +174,12 @@ async def _genres(s: AsyncSession) -> dict[int, list[str]]:
     return out
 
 
+def _week(now: datetime, ts: datetime) -> int | None:
+    """Which of the last 8 weeks (seven days each, the last one ends now) a listen is in: 0 the oldest … 7 this one."""
+    i = TREND_WEEKS - 1 - (now - ts).days // 7
+    return i if 0 <= i < TREND_WEEKS else None
+
+
 def _streak(days: set, today) -> int:
     """Days in a row with a listen, up to today (or yesterday: today is not over yet)."""
     day = today if today in days else today - timedelta(days=1)
@@ -212,8 +224,17 @@ async def overview(s: AsyncSession, user_id: int, *, period: str = "month", by: 
     heat_from = today - timedelta(days=today.weekday() + 7 * (HEATMAP_WEEKS - 1))
     heat: dict[str, int] = defaultdict(int)
     listened_days = set()
+    weeks: dict[Any, list[int]] = {}  # of every track: its listens in each of the last 8 weeks
+    before: dict[Any, int] = defaultdict(int)  # of every track: the same sum in the period before this one
     for p in everything:
         at = local(p.ts)
+        t = lib.tracks.get(p.track_id) if p.track_id is not None else None
+        track_key = ("lib", t.id) if t else ("out", p.key)
+        week = _week(now, p.ts) if p.counted else None
+        if week is not None:
+            weeks.setdefault(track_key, [0] * TREND_WEEKS)[week] += 1
+        if since and days and since - timedelta(days=days) <= p.ts < since:
+            before[track_key] += value(p)
         if p.counted:
             listened_days.add(at.date())
         if at.date() >= heat_from and value(p):
@@ -225,10 +246,8 @@ async def overview(s: AsyncSession, user_id: int, *, period: str = "month", by: 
         counted += int(p.counted)
         hours[at.hour] += value(p)
         weekdays[at.weekday()] += value(p)
-        t = lib.tracks.get(p.track_id) if p.track_id is not None else None
         title, artist, album = (t.title, t.artist, t.album) if t else (p.title, p.artist, p.album)
         main = t.main_artist if t else p.artist
-        track_key = ("lib", t.id) if t else ("out", p.key)
         if p.counted:
             heard.add(track_key)
         add("tracks", track_key, p, name=title, sub=artist)
@@ -242,8 +261,16 @@ async def overview(s: AsyncSession, user_id: int, *, period: str = "month", by: 
     metric = "ms" if by == "time" else "plays"
 
     def top(kind: str) -> dict[str, Any]:
-        rows = sorted((r for r in tops[kind].values() if r[metric] > 0), key=lambda r: (-r[metric], -r["ms"], r["name"].lower()))
-        return {"total": len(rows), "items": rows[:limit]}
+        rows = sorted(((k, r) for k, r in tops[kind].items() if r[metric] > 0),
+                      key=lambda kr: (-kr[1][metric], -kr[1]["ms"], kr[1]["name"].lower()))
+        items = [r for _, r in rows[:limit]]
+        if kind == "tracks":
+            # the place a track had in the period before this one — where there was one to compare with
+            compared = bool(since and first and first < since)
+            was = {k: i + 1 for i, (k, _) in enumerate(sorted(((k, v) for k, v in before.items() if v > 0), key=lambda kv: -kv[1]))}
+            items = [{**r, "weeks": weeks.get(k, [0] * TREND_WEEKS), "was": was.get(k) if compared else None,
+                      "fresh": compared and k not in was} for k, r in rows[:limit]]
+        return {"total": len(rows), "items": items}
 
     first = everything[0].ts if everything else None
     return {
@@ -268,6 +295,45 @@ async def counts(s: AsyncSession, user_id: int) -> dict[str, int]:
             if nd:
                 out[nd] += 1
     return dict(out)
+
+
+async def auto(s: AsyncSession, user_id: int, kind: str, now: datetime | None = None) -> list[dict[str, Any]]:
+    """An «автоплейлист»: the library songs of a rule, made anew every time — the most listened to of a period, or
+    («Давно не слушал») those listened to much and not once lately. `plays`: the listens the rule counted."""
+    now = now or utcnow()
+    lib = await library(s)
+    days = AUTO[kind][1]
+    since = now - timedelta(days=days) if days else None
+    count: dict[str, int] = defaultdict(int)
+    last: dict[str, datetime] = {}
+    for p in await plays(s, user_id, lib):
+        nd = lib.tracks[p.track_id].nd_song_id if p.track_id is not None else None
+        if not nd or not p.counted or (since and p.ts < since):
+            continue
+        count[nd] += 1
+        last[nd] = p.ts
+    if kind == "forgotten":
+        edge = now - timedelta(days=FORGOTTEN_DAYS)
+        count = {nd: n for nd, n in count.items() if n >= FORGOTTEN_PLAYS and last[nd] < edge}
+    order = sorted(count, key=lambda nd: (-count[nd], -last[nd].timestamp(), nd))[:AUTO_SIZE]
+    return [{"nd_song_id": nd, "plays": count[nd]} for nd in order]
+
+
+async def track(s: AsyncSession, user_id: int, nd_song_id: str, now: datetime | None = None) -> dict[str, Any]:
+    """One library song: its listens in all the time, the first and the last of them, the last 8 weeks."""
+    now = now or utcnow()
+    lib = await library(s)
+    tid = lib.by_song.get(nd_song_id)
+    mine = [p for p in await plays(s, user_id, lib) if tid is not None and p.track_id == tid]
+    counted = [p for p in mine if p.counted]
+    weeks = [0] * TREND_WEEKS
+    for p in counted:
+        week = _week(now, p.ts)
+        if week is not None:
+            weeks[week] += 1
+    iso = lambda ts: ts.replace(tzinfo=UTC).isoformat()  # noqa: E731
+    return {"plays": len(counted), "ms": sum(p.ms for p in mine), "weeks": weeks,
+            "first_at": iso(counted[0].ts) if counted else None, "last_at": iso(counted[-1].ts) if counted else None}
 
 
 # --- the history of Spotify ----------------------------------------------------------------------------------

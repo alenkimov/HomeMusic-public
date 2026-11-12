@@ -2,6 +2,7 @@ import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { NdSongOut } from '../api/types';
 import { playAll } from '../components/catalog';
+import { Trend } from '../components/PlaysCell';
 import { Icon, type IconName } from '../components/Icon';
 import { Button, Cover, Empty, ErrorState, Loading, Notice, PageHeader, ProgressBar, Segmented, Sheet, cx } from '../components/ui';
 import { WEEKDAYS_SHORT, fmtListened, fmtNum, fmtPct, plural } from '../lib/format';
@@ -196,6 +197,8 @@ function Rows({ kind, items, by, bySong, icon, round }: { kind: StatsKind; items
                 <span className={cx('block h-full rounded-full', outside ? 'bg-fg/30' : 'bg-accent')} style={{ width: `${Math.max(2, (amount(x, by) / max) * 100)}%` }} />
               </span>
             </span>
+            {kind === 'tracks' && x.weeks && <Trend weeks={x.weeks} className="shrink-0" />}
+            {kind === 'tracks' && x.weeks && <Change x={x} place={i + 1} />}
             <span className="w-16 shrink-0 text-right text-sm tabular-nums text-muted">{shown(amount(x, by), by)}</span>
           </>
         );
@@ -216,6 +219,19 @@ function Rows({ kind, items, by, bySong, icon, round }: { kind: StatsKind; items
         );
       })}
     </ol>
+  );
+}
+
+/** How a track's place changed against the period before this one: ▲ up, ▼ down, «новый» — it was not there. */
+function Change({ x, place }: { x: StatsItem; place: number }) {
+  const moved = x.was ? x.was - place : 0;
+  return (
+    <span
+      className={cx('w-11 shrink-0 text-xs tabular-nums', x.fresh ? 'text-info' : moved > 0 ? 'text-accent' : moved < 0 ? 'text-danger' : 'text-dim')}
+      title={x.fresh ? 'В прошлом таком же периоде вы его не слушали' : x.was ? `В прошлом таком же периоде — ${x.was}-е место` : 'Сравнить не с чем'}
+    >
+      {x.fresh ? 'новый' : moved > 0 ? `▲ ${moved}` : moved < 0 ? `▼ ${-moved}` : x.was ? '=' : ''}
+    </span>
   );
 }
 

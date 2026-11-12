@@ -1,5 +1,5 @@
 import type { LyricsCandidate, LyricsOut, LyricsSettings, LyricsTranslation, LyricsTranslators } from '../lib/lyrics';
-import type { StatsBy, StatsImportOut, StatsOut, StatsPeriod } from '../lib/stats';
+import type { StatsAutoOut, StatsBy, StatsImportOut, StatsOut, StatsPeriod, StatsTrackOut } from '../lib/stats';
 import { timeZone } from '../lib/stats';
 import type { Tag, TagSelection, TagsData } from '../lib/tags';
 import type { TelegramChat, TelegramStatus } from '../lib/telegram';
@@ -405,6 +405,8 @@ export const api = {
   ndSongs: (signal?: AbortSignal) => request<NdSongOut[]>('GET', '/api/nd/songs', { signal }),
   // «Статистика» (lib/stats.ts)
   stats: (q: { period: StatsPeriod; by: StatsBy; limit: number }, signal?: AbortSignal) => request<StatsOut>('GET', withQuery('/api/stats', { ...q, tz: timeZone() }), { signal }),
+  statsAuto: (kind: string, signal?: AbortSignal) => request<StatsAutoOut>('GET', `/api/stats/auto/${encodeURIComponent(kind)}`, { signal }),
+  statsTrack: (ndSongId: string) => request<StatsTrackOut>('GET', withQuery('/api/stats/track', { nd_song_id: ndSongId })),
   statsCounts: () => request<Record<string, number>>('GET', '/api/stats/counts'),
   statsImport: (files: File[], onProgress?: (f: number) => void) => {
     const form = new FormData();

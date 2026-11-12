@@ -44,6 +44,22 @@ async def counts(user: User = Depends(current_user),
     return await stats.counts(s, user.id)
 
 
+@router.get("/auto/{kind}")
+async def auto(kind: str, user: User = Depends(current_user),
+               s: AsyncSession = Depends(get_session, scope="function")) -> dict[str, Any]:
+    """An «автоплейлист» (top-month / top-year / top-all / forgotten): the songs of its rule, as they are now."""
+    if kind not in stats.AUTO:
+        raise HTTPException(404, "Такого автоплейлиста нет")
+    return {"kind": kind, "title": stats.AUTO[kind][0], "items": await stats.auto(s, user.id, kind)}
+
+
+@router.get("/track")
+async def track(nd_song_id: str = Query(min_length=1, max_length=64), user: User = Depends(current_user),
+                s: AsyncSession = Depends(get_session, scope="function")) -> dict[str, Any]:
+    """One song's listens: all the time, the first and the last, the last 8 weeks."""
+    return await stats.track(s, user.id, nd_song_id)
+
+
 @router.post("/import", response_model=ImportOut)
 async def import_history(files: list[UploadFile] = File(...), user: User = Depends(current_user),
                          s: AsyncSession = Depends(get_session, scope="function")):

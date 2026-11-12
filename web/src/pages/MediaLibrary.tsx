@@ -8,7 +8,7 @@ import { useListSearch, type Found } from '../components/ListSearch';
 import { SaveSelection, TagFilterBar } from '../components/Tags';
 import { Button, Cover, Empty, ErrorState, Field, IconButton, PageHeader, SectionTitle, SkeletonRows, Sheet, Spinner, cx } from '../components/ui';
 import { fmtLength, tracksWord } from '../lib/format';
-import { playCount, usePlayCounts } from '../lib/stats';
+import { AUTO_PLAYLISTS, playCount, usePlayCounts } from '../lib/stats';
 import { useDesktop } from '../lib/desktop';
 import { useHubEvent } from '../lib/events';
 import { setShuffle, useListen } from '../lib/listen';
@@ -165,7 +165,7 @@ function useShown(tracks: readonly NdSongOut[], found: Found[] | null, filter: T
 /** The tracks as the page shows them: what ▶ of the page plays. */
 const inOrder = (tracks: readonly NdSongOut[], sort: ListSort): readonly NdSongOut[] => (sort ? byAdded(tracks.map((t, i) => ({ t, i })), sort).map((r) => r.t) : tracks);
 
-function SongList({ tracks, extra, found, sort, onSort }: { tracks: readonly NdSongOut[]; extra?: (t: NdSongOut, i: number) => Parameters<typeof TrackRow>[0]['menuExtra']; found?: Found[] | null; sort: ListSort; onSort: (next: ListSort) => void }) {
+function SongList({ tracks, extra, found, sort, onSort, period }: { period?: { label: string; of: Record<string, number> }; tracks: readonly NdSongOut[]; extra?: (t: NdSongOut, i: number) => Parameters<typeof TrackRow>[0]['menuExtra']; found?: Found[] | null; sort: ListSort; onSort: (next: ListSort) => void }) {
   const setSort = onSort;
   const dated = useMemo(() => tracks.some((t) => t.added_at), [tracks]);
   const counts = usePlayCounts();
@@ -177,10 +177,10 @@ function SongList({ tracks, extra, found, sort, onSort }: { tracks: readonly NdS
   if (found && !rows.length) return <p className="px-4 py-10 text-center text-sm text-muted">Ничего не подходит — ни под поиск, ни под выбранные теги.</p>;
   return (
     <ul>
-      {rows.length > 0 && <li><TrackTableHeader numbered album tags plays added={dated} sort={sort} onSort={setSort} /></li>}
+      {rows.length > 0 && <li><TrackTableHeader numbered album tags plays playsLabel={period?.label} added={dated} sort={sort} onSort={setSort} /></li>}
       {rows.map(({ t, i, line }, at) => (
         <li key={`${t.ref}:${i}`}>
-          <TrackRow track={t} queue={queue} link={false} showAlbum showTags showPlays showAdded={dated} menuExtra={extra?.(t, i)} index={sort ? at + 1 : i + 1} />
+          <TrackRow track={t} queue={queue} link={false} showAlbum showTags showPlays playsOf={period ? (period.of[t.nd_song_id ?? ''] ?? 0) : undefined} showAdded={dated} menuExtra={extra?.(t, i)} index={sort ? at + 1 : i + 1} />
           {line !== undefined && (
             <div className="-mt-1 flex items-center gap-1.5 truncate pb-2 pl-16 pr-4 text-xs text-muted">
               <Icon name="lyrics" size={13} className="shrink-0 text-accent" />
@@ -370,6 +370,69 @@ export function LikedPage() {
 /** «Подборка по тегам» (`/selection/<id>`): a saved filter over «Любимое», a playlist or the whole library — its
  * tracks are found anew each time. `/selection/library?yes=…&no=…` is the same over the whole library, not saved
  * yet (the page of tags opens it). The filter can be changed here and saved again. */
+/** An «автоплейлист» («Топ месяца», «Давно не слушал»…): the Hub makes the list by its rule every time the page is
+ * opened; nothing can be put into it or taken out. «Сохранить как плейлист» keeps it as it is now. */
+export function AutoPlaylistPage({ kind }: { kind: string }) {
+  const def = AUTO_PLAYLISTS.find((a) => a.kind === kind);
+  const res = useAsync(
+    async (s) => {
+      const [auto, songs] = await Promise.all([api.statsAuto(kind, s), api.ndSongs(s)]);
+      const byId = new Map(songs.map((t) => [t.nd_song_id, t] as const));
+      const tracks = auto.items.map((x) => byId.get(x.nd_song_id)).filter((t): t is NdSongOut => !!t).map((t) => ({ ...t, added_at: null }));
+      return { tracks, plays: Object.fromEntries(auto.items.map((x) => [x.nd_song_id, x.plays])) };
+    },
+    [kind],
+  );
+  const [busy, setBusy] = useState(false);
+  const tracks = useMemo(() => res.data?.tracks ?? [], [res.data]);
+  const length = useMemo(() => tracks.reduce((sum, t) => sum + (t.duration_s ?? 0), 0), [tracks]);
+  const title = def?.title ?? 'Автоплейлист';
+  const keep = async () => {
+    setBusy(true);
+    const name = `${title} — ${new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}`;
+    const p = await attempt(async () => {
+      const made = await api.createPlaylist(name);
+      await api.playlistMembershipMany({ nd_song_ids: tracks.map((t) => t.nd_song_id!), add: [made.id], remove: [] });
+      return made;
+    }, `Плейлист «${name}» создан`);
+    setBusy(false);
+    if (!p) return;
+    window.dispatchEvent(new Event('hm:playlists-changed'));
+    navigate(`/playlist/${enc(p.id)}`);
+  };
+  return (
+    <div>
+      <PageHeader hero title={title} back="/library" />
+      <Hero
+        kicker="Автоплейлист"
+        title={title}
+        art={
+          <div className="flex h-full w-full items-center justify-center bg-accent/20 text-accent">
+            <Icon name={def?.icon ?? 'chart'} size={84} />
+          </div>
+        }
+        sub={res.data ? [tracksWord(tracks.length), length ? fmtLength(length) : null, 'обновляется сам'].filter(Boolean).join(' · ') : (def?.sub ?? '')}
+      />
+      {res.loading ? (
+        <SkeletonRows />
+      ) : res.error ? (
+        <ErrorState text={res.error} onRetry={() => res.reload()} />
+      ) : !tracks.length ? (
+        <Empty icon="history" title="Пока пусто" text={kind === 'forgotten' ? 'Здесь появятся треки, которые вы слушали хотя бы три раза и не включали три месяца.' : 'Здесь появятся треки, которые вы слушали за этот период.'} />
+      ) : (
+        <>
+          <ListActions tracks={tracks} context="auto">
+            <Button icon="playlist" busy={busy} onClick={() => void keep()}>
+              Сохранить как плейлист
+            </Button>
+          </ListActions>
+          <SongList tracks={tracks} sort={null} onSort={() => undefined} period={{ label: def?.column ?? 'Прослушивания', of: res.data!.plays }} />
+        </>
+      )}
+    </div>
+  );
+}
+
 export function SelectionPage({ id }: { id: string }) {
   const route = useRoute();
   const tags = useTags();

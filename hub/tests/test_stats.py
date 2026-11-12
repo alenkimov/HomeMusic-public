@@ -59,7 +59,31 @@ async def test_tops_of_a_period_and_the_column(c):
     assert sum(r["hours"]) == 505_000
 
     assert (await c.get("/api/stats", params={"period": "all"})).json()["summary"]["plays"] == 4
+    # the last 8 weeks of a track, and its place in the period before (the listen of 40 days ago is week 2 of 0…7)
+    top = r["tracks"]["items"][0]
+    assert (top["weeks"], top["was"], top["fresh"]) == ([0, 0, 1, 0, 0, 0, 0, 2], None, True)
+    month = (await c.get("/api/stats", params={"period": "month"})).json()["tracks"]["items"]
+    assert [(x["name"], x["was"], x["fresh"]) for x in month] == [("Группа крови", 1, False), ("Своё", None, True)]
+    one = (await c.get("/api/stats/track", params={"nd_song_id": "ndK"})).json()
+    assert (one["plays"], one["ms"], one["weeks"]) == (3, 360_000, [0, 0, 1, 0, 0, 0, 0, 2]) and one["first_at"] < one["last_at"]
+    assert (await c.get("/api/stats/track", params={"nd_song_id": "nope"})).json()["plays"] == 0
     assert (await c.get("/api/stats/counts")).json() == {"ndK": 3, "ndX": 1}
+
+
+async def test_auto_playlists(c):
+    now = datetime.now(UTC)
+    old = [x for i in range(3) for x in listen("ndX", 100_000, now - timedelta(days=200 + i), f"o{i}")]
+    await post(c, *old, *listen("ndK", 100_000, now - timedelta(days=100), "a"),
+               *listen("ndK", 100_000, now - timedelta(days=2), "b"), *listen("ndK", 100_000, now - timedelta(days=1), "c"))
+
+    async def auto(kind: str) -> list:
+        return [(x["nd_song_id"], x["plays"]) for x in (await c.get(f"/api/stats/auto/{kind}")).json()["items"]]
+
+    assert await auto("top-month") == [("ndK", 2)]
+    assert await auto("top-year") == [("ndK", 3), ("ndX", 3)]  # as many: the one listened to later is first
+    assert await auto("top-all") == [("ndK", 3), ("ndX", 3)]
+    assert await auto("forgotten") == [("ndX", 3)]  # much, and not once in three months
+    assert (await c.get("/api/stats/auto/nope")).status_code == 404
 
 
 def entry(ts: str, ms: int, title: str, artist: str, uri: str | None, album: str = "A") -> dict:
