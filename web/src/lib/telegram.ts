@@ -61,6 +61,25 @@ let sending = false;
 
 /** Sends the files (the bot is ready): one by one, so a big selection neither times out nor trips Telegram's limits.
  * `chat`: one of the bot's chats; none — the private chat with the user. */
+const LINK_KEY = 'hm-share-link';
+
+/** «С кнопкой „Открыть в HomeMusic“»: the track's link under the audio the bot sends (on until switched off). */
+export function shareWithLink(): boolean {
+  try {
+    return localStorage.getItem(LINK_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+export function setShareWithLink(on: boolean) {
+  try {
+    localStorage.setItem(LINK_KEY, on ? '1' : '0');
+  } catch {
+    /* storage unavailable: the choice lives until the page is closed */
+  }
+}
+
 export async function deliverToTelegram(tracks: readonly ShareTrack[], withLyrics: boolean | null = null, chat: TelegramChat | null = null): Promise<void> {
   if (!tracks.length) return;
   const to = chat && chat.kind !== 'private' ? `в «${chat.title}»` : 'в Telegram';
@@ -70,7 +89,7 @@ export async function deliverToTelegram(tracks: readonly ShareTrack[], withLyric
   try {
     if (tracks.length === 1) {
       toast(`Отправляю ${to}: «${tracks[0].title}»…`);
-      const r = await attempt(() => api.telegramSend({ nd_song_id: tracks[0].nd_song_id ?? null, ref: tracks[0].ref ?? null, with_lyrics: withLyrics, chat: chatId }));
+      const r = await attempt(() => api.telegramSend({ nd_song_id: tracks[0].nd_song_id ?? null, ref: tracks[0].ref ?? null, with_lyrics: withLyrics, chat: chatId, with_link: shareWithLink() }));
       if (r) toast(`Отправлено ${to}: «${r.title}»${r.lyrics ? ' с текстом' : withLyrics ? ' (текста у трека нет)' : ''}${r.light ? ' — сжатая копия: файл больше 50 МБ' : ''}`, 'success');
       return;
     }
@@ -79,7 +98,7 @@ export async function deliverToTelegram(tracks: readonly ShareTrack[], withLyric
     let firstError = '';
     for (const t of tracks) {
       try {
-        await api.telegramSend({ nd_song_id: t.nd_song_id ?? null, ref: t.ref ?? null, with_lyrics: withLyrics, chat: chatId });
+        await api.telegramSend({ nd_song_id: t.nd_song_id ?? null, ref: t.ref ?? null, with_lyrics: withLyrics, chat: chatId, with_link: shareWithLink() });
         ok++;
       } catch (e) {
         firstError ||= `«${t.title}»: ${errorMessage(e)}`;

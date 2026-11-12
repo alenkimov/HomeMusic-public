@@ -391,7 +391,7 @@ export const api = {
   telegramPrefs: (with_lyrics: boolean) => request<TelegramStatus>('PUT', '/api/telegram/prefs', { json: { with_lyrics } }),
   telegramChats: () => request<TelegramChat[]>('GET', '/api/telegram/chats'),
   telegramChatsRefresh: () => request<TelegramChat[]>('POST', '/api/telegram/chats/refresh'),
-  telegramSend: (body: { nd_song_id?: string | null; ref?: string | null; with_lyrics?: boolean | null; chat?: number | null }) =>
+  telegramSend: (body: { nd_song_id?: string | null; ref?: string | null; with_lyrics?: boolean | null; chat?: number | null; with_link?: boolean }) =>
     request<{ ok: boolean; title: string; light: boolean; lyrics: boolean }>('POST', '/api/telegram/send', { json: body }),
   // tags of tracks (lib/tags.ts)
   tags: () => request<TagsData>('GET', '/api/tags'),
@@ -418,8 +418,12 @@ export const api = {
   statsForget: () => request<OkOut>('DELETE', '/api/stats/import'),
   // a track on music services («Поделиться ссылкой»)
   links: (q: { nd_song_id?: string | null; ref?: string | null }) =>
-    request<{ links: { service: string; title: string; url: string }[]; universal?: string | null }>(
+    request<{ links: { service: string; title: string; url: string }[]; universal?: string | null; homemusic?: string | null }>(
       'GET', withQuery('/api/links', { nd_song_id: q.nd_song_id ?? undefined, ref: q.ref ?? undefined })),
+  /** a «HomeMusic» link opened here: the library's track, the catalog's, or the words to search by */
+  openLink: (q: { dz?: string | null; isrc?: string | null; sp?: string | null; a?: string | null; t?: string | null }, signal?: AbortSignal) =>
+    request<{ nd_song_id?: string | null; ref?: string | null; album_ref?: string | null; title?: string | null; artist?: string | null; query?: string | null }>(
+      'GET', withQuery('/api/links/open', { dz: q.dz ?? undefined, isrc: q.isrc ?? undefined, sp: q.sp ?? undefined, a: q.a ?? undefined, t: q.t ?? undefined }), { signal }),
   // lyrics of a library track (lib/lyrics.ts)
   lyrics: (q: { nd_song_id?: string | null; ref?: string | null }, signal?: AbortSignal) =>
     request<LyricsOut>('GET', withQuery('/api/lyrics', { nd_song_id: q.nd_song_id ?? undefined, ref: q.ref ?? undefined }), { signal }),

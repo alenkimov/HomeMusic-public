@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urlencode
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,11 +69,28 @@ def _universal(ids: dict[str, str]) -> str | None:
     return None
 
 
-def of_ids(ids: dict[str, str], urls: dict[str, str] | None = None) -> dict[str, Any]:
+def open_url(*, deezer: str | None = None, isrc: str | None = None, spotify: str | None = None,
+             artist: str | None = None, title: str | None = None, album: str | None = None) -> str | None:
+    """The «HomeMusic» link of a track: the page that belongs to no server (`share_page_url`) with the track named
+    after the `#` — its catalog id, ISRC, Spotify id, and the names to search by where the ids are unknown. Whoever
+    opens it gets the track in their own HomeMusic (`find`)."""
+    from app.config import get_settings
+
+    base = (get_settings().share_page_url or "").strip()
+    fields = {"dz": deezer, "isrc": isrc, "sp": spotify, "a": artist, "t": title, "al": album}
+    fields = {k: str(v).strip()[:200] for k, v in fields.items() if v and str(v).strip()}
+    if not base or not (fields.keys() & {"dz", "isrc", "sp", "t"}):
+        return None
+    return f"{base.rstrip('/')}/#{urlencode(fields)}"
+
+
+def of_ids(ids: dict[str, str], urls: dict[str, str] | None = None, homemusic: str | None = None) -> dict[str, Any]:
     """`ids`: service -> the track's id there; `urls`: service -> a ready link."""
     urls = {**{k: URLS[k].format(v) for k, v in ids.items() if k in URLS}, **(urls or {})}
     return {"links": [{"service": k, "title": TITLES[k], "url": urls[k]} for k in ORDER if k in urls],
-            "universal": _universal(ids)}
+            "universal": _universal(ids),
+            "homemusic": (homemusic if homemusic is not None
+                          else open_url(deezer=ids.get("deezer"), spotify=ids.get("spotify"))) or None}
 
 
 async def of_track(s: AsyncSession, track: Track) -> dict[str, Any]:
@@ -88,4 +106,28 @@ async def of_track(s: AsyncSession, track: Track) -> dict[str, Any]:
         ids["youtube"], urls["youtube"] = m.group(1), f"https://www.youtube.com/watch?v={m.group(1)}"
     elif "soundcloud.com/" in src:
         urls["soundcloud"] = src
-    return of_ids(ids, urls)
+    return of_ids(ids, urls, open_url(deezer=ids.get("deezer"), isrc=track.isrc, spotify=ids.get("spotify"),
+                                      artist=track.artist, title=track.title, album=track.album) or "")
+
+
+async def find(s: AsyncSession, *, deezer: str | None = None, isrc: str | None = None, spotify: str | None = None,
+               artist: str | None = None, title: str | None = None) -> Track | None:
+    """The library track a «HomeMusic» link names: by its catalog id, its Spotify id, its ISRC, then by the names."""
+    from app.matching.normalize import fingerprint
+
+    here = Track.nd_song_id.is_not(None)
+    queries = []
+    if deezer:
+        queries.append(select(Track).where(here, Track.deezer_track_id == deezer))
+    if spotify:
+        queries.append(select(Track).join(TrackLink, TrackLink.track_id == Track.id)
+                       .where(here, TrackLink.service == "spotify", TrackLink.external_id == spotify))
+    if isrc:
+        queries.append(select(Track).where(here, Track.isrc == isrc.upper().replace("-", "")))
+    if artist and title:
+        queries.append(select(Track).where(here, Track.fingerprint == fingerprint(artist, title)))
+    for q in queries:
+        track = (await s.execute(q.order_by(Track.id.desc()).limit(1))).scalar_one_or_none()
+        if track is not None:
+            return track
+    return None

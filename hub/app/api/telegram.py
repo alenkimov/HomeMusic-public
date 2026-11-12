@@ -53,6 +53,7 @@ class TelegramSendIn(BaseModel):
     ref: str | None = None
     chat: int | None = None  # one of the bot's chats (`/chats`); None: the private chat with the user
     with_lyrics: bool | None = None  # None: as the user's setting says
+    with_link: bool = False  # a button under the audio: the track's «HomeMusic» link (app/links.py)
 
 
 class TelegramSentOut(BaseModel):
@@ -216,10 +217,19 @@ async def send(body: TelegramSendIn, user: User = Depends(current_user),
         except Exception as e:  # the track goes without its text rather than not at all
             log.info("telegram: no lyrics of %s: %r", track.path, e)
     name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', " ", f"{track.artist} - {track.title}").strip()[:120] or "track"
+    link = None
+    if body.with_link:
+        from app import links
+
+        try:
+            link = (await links.of_track(s, track)).get("homemusic") or None
+            await s.commit()
+        except Exception as e:  # the track goes without its button rather than not at all
+            log.info("telegram: no link of %s: %r", track.path, e)
     try:
         await telegram.send_audio(decrypt(u.tg_bot_token_enc), target, path, filename=f"{name}{path.suffix}",
                                   title=track.title, performer=track.artist, duration_s=track.duration_s, cover=cover,
-                                  lyrics=text)
+                                  lyrics=text, link=link)
     except telegram.TelegramError as e:
         raise HTTPException(502, str(e)) from e
     return TelegramSentOut(title=track.title, light=is_light, lyrics=bool(text))

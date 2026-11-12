@@ -137,6 +137,11 @@ async def test_connect_bind_send_and_disconnect(env):
     assert r.json()["lyrics"] is True
     assert state["sent"][-1]["caption"] == "<blockquote expandable>Тёплое место\n&lt;но&gt;</blockquote>"
     assert state["sent"][-1]["parse_mode"] == "HTML"
+    assert state["sent"][-1]["reply_markup"] is None
+    # the track's «HomeMusic» link as a button under the audio, when asked for
+    assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "with_link": True})).status_code == 200
+    [[button]] = state["sent"][-1]["reply_markup"].inline_keyboard
+    assert button.text == "Открыть в HomeMusic" and button.url.startswith("https://alenkimov.github.io/HomeMusic-public/#")
     assert (await c.put("/api/telegram/prefs", json={"with_lyrics": True})).json()["with_lyrics"] is True
     assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1"})).json()["lyrics"] is True
     assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "with_lyrics": False})).json()["lyrics"] is False

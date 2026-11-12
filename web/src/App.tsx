@@ -40,6 +40,7 @@ import { ArtistsPage, AutoPlaylistPage, LikedPage, NdAlbumPage, NdAlbumsPage, Nd
 import { TagsPage } from './pages/Tags';
 import { MixPage, TastePage } from './pages/Mix';
 import { MorePage } from './pages/More';
+import { OpenPage } from './pages/Open';
 import { PlayerPage } from './pages/Player';
 import { PlaylistsPage } from './pages/Playlists';
 import { SearchPage, searchTab } from './pages/Search';
@@ -110,6 +111,7 @@ const ROUTES: RouteDef[] = [
   ['/admin/mix/:id', 'more', (p) => <MixDetailPage key={p.id} id={Number(p.id)} />],
   ['/admin/wave/:sid', 'more', (p) => <WaveDetailPage key={p.sid} sid={p.sid} />],
   ['/share', null, () => <SharePage />],
+  ['/open', null, (_, r) => <OpenPage key={r.full} query={r.query} />],
 ];
 
 const lastByTab: Partial<Record<Tab, string>> = {};

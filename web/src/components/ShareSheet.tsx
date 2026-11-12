@@ -3,7 +3,7 @@ import { api } from '../api/client';
 import { tracksWord } from '../lib/format';
 import { copyText } from '../lib/share';
 import { closeShare, useShare } from '../lib/shareTrack';
-import { deliverToTelegram, openTelegramSetup, type ShareTrack, type TelegramChat, type TelegramStatus } from '../lib/telegram';
+import { deliverToTelegram, openTelegramSetup, setShareWithLink, shareWithLink, type ShareTrack, type TelegramChat, type TelegramStatus } from '../lib/telegram';
 import { attempt, toast } from '../lib/ui';
 import { BrandIcon, hasBrand } from './BrandIcon';
 import { Icon } from './Icon';
@@ -28,6 +28,7 @@ function Body({ tracks }: { tracks: readonly ShareTrack[] }) {
   const [chats, setChats] = useState<TelegramChat[] | null>(null);
   const [links, setLinks] = useState<Links | null>(null);
   const [withLyrics, setWithLyrics] = useState(false);
+  const [withLink, setWithLink] = useState(shareWithLink);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
@@ -62,7 +63,7 @@ function Body({ tracks }: { tracks: readonly ShareTrack[] }) {
     toast(ok ? `Ссылка скопирована: ${title}` : 'Не получилось скопировать ссылку', ok ? 'success' : 'error');
     if (ok) closeShare();
   };
-  const rows = links ? [...(links.universal ? [{ service: 'universal', title: 'Все площадки сразу', url: links.universal }] : []), ...links.links] : [];
+  const rows = links ? [...(links.homemusic ? [{ service: 'homemusic', title: 'HomeMusic', url: links.homemusic }] : []), ...(links.universal ? [{ service: 'universal', title: 'Все площадки сразу', url: links.universal }] : []), ...links.links] : [];
   const label = 'px-4 pb-1 pt-3 text-xs text-muted';
 
   return (
@@ -118,6 +119,20 @@ function Body({ tracks }: { tracks: readonly ShareTrack[] }) {
                 }}
               />
             </label>
+            <label className="flex cursor-pointer items-center justify-between gap-3 px-4 py-2 text-sm">
+              <span>
+                С кнопкой «Открыть в HomeMusic»
+                <span className="block text-xs text-muted">Получатель найдёт трек на своём сервере</span>
+              </span>
+              <Checkbox
+                checked={withLink}
+                label="С кнопкой «Открыть в HomeMusic»"
+                onChange={(v) => {
+                  setWithLink(v);
+                  setShareWithLink(v);
+                }}
+              />
+            </label>
           </>
         )}
 
@@ -130,11 +145,12 @@ function Body({ tracks }: { tracks: readonly ShareTrack[] }) {
               <div key={x.service} className="flex min-h-14 items-center transition hover:bg-fg/5">
                 <button type="button" onClick={() => void copy(x.title, x.url)} className="flex min-w-0 flex-1 items-center gap-4 px-4 py-2 text-left">
                   <span className="flex w-6 shrink-0 justify-center">
-                    {hasBrand(x.service) ? <BrandIcon service={x.service} /> : <Icon name="link" size={22} className={x.service === 'universal' ? 'text-accent' : 'text-muted'} />}
+                    {hasBrand(x.service) ? <BrandIcon service={x.service} /> : <Icon name={x.service === 'homemusic' ? 'disc' : 'link'} size={22} className={x.service === 'universal' || x.service === 'homemusic' ? 'text-accent' : 'text-muted'} />}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-[15px]">{x.title}</span>
                     {x.service === 'universal' && <span className="block truncate text-[13px] text-muted">song.link — откроется там, где слушает получатель</span>}
+                    {x.service === 'homemusic' && <span className="block truncate text-[13px] text-muted">Откроется на сервере получателя</span>}
                   </span>
                 </button>
                 <a href={x.url} target="_blank" rel="noreferrer" aria-label={`Открыть: ${x.title}`} title="Открыть" className="mr-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted transition hover:text-fg">

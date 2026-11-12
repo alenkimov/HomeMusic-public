@@ -32,7 +32,7 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
     TelegramUnauthorizedError,
 )
-from aiogram.types import BufferedInputFile, FSInputFile
+from aiogram.types import BufferedInputFile, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.token import TokenValidationError, validate_token
 
 from app.config import get_settings
@@ -172,8 +172,11 @@ def lyrics_messages(text: str) -> tuple[str | None, list[str]]:
 
 
 async def send_audio(token: str, chat_id: str, path: Path, *, filename: str, title: str, performer: str,
-                     duration_s: int | None = None, cover: bytes | None = None, lyrics: str | None = None) -> None:
+                     duration_s: int | None = None, cover: bytes | None = None, lyrics: str | None = None,
+                     link: str | None = None) -> None:
+    """`link`: the track's «HomeMusic» link — a button under the audio, for whoever wants it in their own library."""
     thumb = thumbnail(cover)
+    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Открыть в HomeMusic", url=link)]]) if link else None
     caption, after = lyrics_messages(lyrics or "")
     chat = int(chat_id) if chat_id.lstrip("-").isdigit() else chat_id
     async with bot_of(token, SEND_WAIT_S) as bot:
@@ -186,6 +189,7 @@ async def send_audio(token: str, chat_id: str, path: Path, *, filename: str, tit
             thumbnail=BufferedInputFile(thumb, filename="cover.jpg") if thumb else None,
             caption=caption,
             parse_mode="HTML" if caption else None,
+            reply_markup=markup,
             request_timeout=SEND_WAIT_S,
         )
         for text in after:

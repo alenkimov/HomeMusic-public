@@ -71,8 +71,9 @@ async def test_ids_come_from_imports_and_the_source_map_and_stay(client):
 
     # a CSV line without a Spotify link gives no id; the page a file is from is a link only where it is a service
     r = (await client.get("/api/links", params={"nd_song_id": "b"})).json()
-    assert r == {"links": [{"service": "soundcloud", "title": "SoundCloud", "url": "https://soundcloud.com/x/y"}], "universal": None}
-    assert (await client.get("/api/links", params={"nd_song_id": "c"})).json() == {"links": [], "universal": None}
+    assert (r["links"], r["universal"]) == ([{"service": "soundcloud", "title": "SoundCloud", "url": "https://soundcloud.com/x/y"}], None)
+    r = (await client.get("/api/links", params={"nd_song_id": "c"})).json()
+    assert (r["links"], r["universal"]) == ([], None)
 
     # a catalog track that is not in the library
     r = (await client.get("/api/links", params={"ref": "dz:999"})).json()
@@ -111,3 +112,58 @@ async def test_a_playlist_keeps_the_dates_of_the_import_it_came_from(client):
         got = await playlist_dates.of(s, "pl1")
         assert got[a] == datetime(2024, 9, 8, 12, 51, 22) and got[b].year >= 2025
         assert await playlist_dates.of(s, "other") == {}
+
+
+async def test_a_homemusic_link_names_the_track_and_is_found_in_another_library(client, monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+
+    from app.db import session_scope
+    from app.models import TrackLink
+
+    tid = await add_track("Группа крови", deezer_track_id="100", isrc="RUA1D8700001", album="Группа крови")
+    plain = await add_track("Своё")  # an uploaded file: nothing but its names
+    async with session_scope() as s:
+        s.add(TrackLink(track_id=tid, service="spotify", external_id="spK1234567"))
+
+    r = (await client.get("/api/links", params={"nd_song_id": "Группа крови"})).json()
+    url = urlsplit(r["homemusic"])
+    assert f"{url.scheme}://{url.netloc}{url.path}" == "https://alenkimov.github.io/HomeMusic-public/"
+    assert url.query == ""  # all of it is after the `#`: no server ever sees which track
+    assert {k: v[0] for k, v in parse_qs(url.fragment).items()} == {
+        "dz": "100", "isrc": "RUA1D8700001", "sp": "spK1234567", "a": "Кино", "t": "Группа крови", "al": "Группа крови"}
+    r = (await client.get("/api/links", params={"nd_song_id": "Своё"})).json()
+    assert parse_qs(urlsplit(r["homemusic"]).fragment) == {"a": ["Кино"], "t": ["Своё"]} and r["links"] == []
+    # a catalog track the library has not got: its catalog id is enough
+    assert (await client.get("/api/links", params={"ref": "dz:777"})).json()["homemusic"].endswith("/#dz=777")
+
+    # opened here: by the catalog id, the Spotify id, the ISRC, then by the names
+    async def found(**q) -> str | None:
+        return (await client.get("/api/links/open", params=q)).json()["nd_song_id"]
+
+    assert await found(dz="100") == await found(sp="spK1234567") == await found(isrc="rua1d8700001") == "Группа крови"
+    assert await found(a="КИНО", t="своё") == "Своё" and plain
+    assert await found(dz="100", a="Кино", t="Своё") == "Группа крови"  # an id outweighs the names
+
+    # not here: the catalog knows it — its album page; or nothing does — the words to search by
+    from app.catalog.models import CatalogTrack
+    from app.services import svc
+
+    async def get_track(id_):
+        if str(id_) != "555":
+            raise LookupError("no such track")
+        return CatalogTrack(ref="dz:555", source="dz", id="555", title="Пачка сигарет", artist="Кино", album_ref="dz:9")
+
+    monkeypatch.setattr(svc.deezer, "get_track", get_track)
+    r = (await client.get("/api/links/open", params={"dz": "555"})).json()
+    assert (r["nd_song_id"], r["ref"], r["album_ref"], r["query"]) == (None, "dz:555", "dz:9", "Кино Пачка сигарет")
+    r = (await client.get("/api/links/open", params={"dz": "556", "a": "Кто-то", "t": "Что-то"})).json()
+    assert (r["nd_song_id"], r["ref"], r["query"]) == (None, None, "Кто-то Что-то")
+    assert (await client.get("/api/links/open", params={"dz": "abc"})).status_code == 422
+
+    # a fork without the page: no such links
+    monkeypatch.setenv("SHARE_PAGE_URL", "")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    assert (await client.get("/api/links", params={"nd_song_id": "Своё"})).json()["homemusic"] is None
+    get_settings.cache_clear()

@@ -152,6 +152,10 @@ class Settings(BaseSettings):
 
     public_music_url: str = ""
     public_hub_url: str = ""
+    # The page a «HomeMusic» link of a track opens (app/links.py, docs/index.html): it belongs to no server and
+    # hands the track over to the visitor's own HomeMusic. One page for everyone, so a link made on any server opens
+    # for anyone; a fork may publish the page itself and name its address here. Empty: no such links.
+    share_page_url: str = "https://alenkimov.github.io/HomeMusic-public/"
 
     hub_secret_key: str = ""
     session_days: int = 60

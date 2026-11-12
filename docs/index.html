@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>HomeMusic</title>
+<!--
+  A link to a track that belongs to no HomeMusic server («Поделиться» → «HomeMusic», the button under a track the
+  bot sends to Telegram). The track is named after the `#`: dz (Deezer id), isrc, sp (Spotify id), a (artist),
+  t (title), al (album). Nothing of it reaches any server: a browser never sends what stands after `#`.
+
+  The page asks once for the address of the visitor's own HomeMusic, keeps it in this browser, and hands the track
+  over to it: <server>/#/open?<the same fields>. No server address is in the link itself.
+-->
+<style>
+  :root { color-scheme: dark; --bg: #0a0a0a; --card: #171717; --line: #2a2a2a; --fg: #f5f5f5; --muted: #a3a3a3; --dim: #737373; --accent: #1ed760; --on: #04130a; --danger: #f87171; }
+  @media (prefers-color-scheme: light) { :root { color-scheme: light; --bg: #f5f5f4; --card: #fff; --line: #e5e5e5; --fg: #171717; --muted: #525252; --dim: #8a8a8a; --accent: #15a34a; --on: #fff; --danger: #dc2626; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { width: 100%; max-width: 380px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 24px 20px 18px; text-align: center; }
+  .cover { width: 148px; height: 148px; margin: 0 auto 16px; border-radius: 12px; background: var(--line) center/cover; display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 44px; }
+  h1 { margin: 0; font-size: 19px; font-weight: 600; overflow-wrap: anywhere; }
+  .sub { margin: 4px 0 18px; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+  button, .btn { font: inherit; cursor: pointer; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--fg); padding: 10px 16px; text-decoration: none; display: inline-block; }
+  .primary { width: 100%; background: var(--accent); border-color: var(--accent); color: var(--on); font-weight: 600; padding: 12px 16px; }
+  .server { margin: 8px 0 0; font-size: 12px; color: var(--dim); overflow-wrap: anywhere; }
+  .server button { border: 0; padding: 0; color: var(--muted); text-decoration: underline; font-size: 12px; }
+  form { margin: 0; text-align: left; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input { width: 100%; font: inherit; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); margin-bottom: 10px; }
+  .hint { font-size: 12px; color: var(--dim); margin: 0 0 12px; }
+  .err { font-size: 13px; color: var(--danger); margin: 0 0 10px; }
+  .other { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .other p { margin: 0 0 10px; font-size: 12px; color: var(--dim); }
+  .links { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .links a { font-size: 13px; padding: 7px 13px; }
+  footer { margin-top: 16px; font-size: 12px; color: var(--dim); }
+  footer a { color: var(--muted); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div class="cover" id="cover" aria-hidden="true">♪</div>
+  <h1 id="title">Трек</h1>
+  <p class="sub" id="sub"></p>
+
+  <div id="go" hidden>
+    <a class="btn primary" id="open" href="#">Открыть в моём HomeMusic</a>
+    <p class="server"><span id="server"></span> · <button type="button" id="change">изменить</button></p>
+  </div>
+
+  <form id="ask" hidden>
+    <label for="addr">Адрес вашего HomeMusic</label>
+    <input id="addr" inputmode="url" autocomplete="url" placeholder="192.168.1.5:8080 или music.example.com" required>
+    <p class="err" id="err" hidden></p>
+    <p class="hint">Тот адрес, по которому вы открываете свой сервер в браузере. Он запомнится только в этом браузере — в следующий раз трек откроется сразу.</p>
+    <button class="primary" type="submit">Запомнить и открыть</button>
+  </form>
+
+  <div id="empty" hidden><p class="sub">В ссылке нет трека. Откройте её целиком — такой, какой вам её прислали.</p></div>
+
+  <div class="other" id="other" hidden>
+    <p>Нет своего сервера — послушать можно здесь:</p>
+    <div class="links" id="links"></div>
+  </div>
+  <footer><a href="https://github.com/alenkimov/HomeMusic-public" rel="noopener">HomeMusic</a> — своя музыкальная библиотека на своём сервере</footer>
+</main>
+<script>
+(function () {
+  'use strict';
+  var KEY = 'hm-server';
+  var FIELDS = ['dz', 'isrc', 'sp', 'a', 't', 'al'];
+  var $ = function (id) { return document.getElementById(id); };
+
+  // what stands after `#` (or `?`, for a link someone rewrote)
+  var raw = new URLSearchParams((location.hash || '').replace(/^#\/?\??/, '') || location.search.slice(1));
+  var track = {};
+  FIELDS.forEach(function (k) { var v = (raw.get(k) || '').trim().slice(0, 300); if (v) track[k] = v; });
+  if (track.dz && !/^\d{1,20}$/.test(track.dz)) delete track.dz;
+  if (track.sp && !/^[A-Za-z0-9]{10,40}$/.test(track.sp)) delete track.sp;
+  if (track.isrc && !/^[A-Za-z0-9-]{8,20}$/.test(track.isrc)) delete track.isrc;
+  var named = !!(track.dz || track.isrc || track.sp || track.t);
+
+  function show() {
+    $('title').textContent = track.t || 'Трек';
+    $('sub').textContent = [track.a, track.al].filter(Boolean).join(' · ');
+    if (track.t) document.title = (track.a ? track.a + ' — ' : '') + track.t + ' · HomeMusic';
+  }
+
+  function saved() {
+    try { return localStorage.getItem(KEY) || ''; } catch (e) { return ''; }
+  }
+
+  /** An address as a person types it → an origin with a path, or '' if it is not one. Only http and https. */
+  function normalize(text) {
+    var v = (text || '').trim();
+    if (!v) return '';
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) v = (/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[)/i.test(v) || /:\d+($|\/)/.test(v) && !/\.[a-z]{2,}(:|\/|$)/i.test(v) ? 'http://' : 'https://') + v;
+    try {
+      var u = new URL(v);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+      if (!u.hostname || u.username || u.password) return '';
+      return u.origin + u.pathname.replace(/\/+$/, '');
+    } catch (e) { return ''; }
+  }
+
+  function target(server) {
+    var q = new URLSearchParams();
+    FIELDS.forEach(function (k) { if (track[k]) q.set(k, track[k]); });
+    return server + '/#/open?' + q.toString();
+  }
+
+  function render() {
+    var server = normalize(saved());
+    $('empty').hidden = named;
+    $('go').hidden = !named || !server;
+    $('ask').hidden = !named || !!server;
+    if (server && named) {
+      $('open').href = target(server);
+      $('server').textContent = server.replace(/^https?:\/\//, '');
+    }
+  }
+
+  $('ask').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var server = normalize($('addr').value);
+    if (!server) {
+      $('err').textContent = 'Это не похоже на адрес. Пример: 192.168.1.5:8080';
+      $('err').hidden = false;
+      return;
+    }
+    try { localStorage.setItem(KEY, server); } catch (err) { /* private window: asked again next time */ }
+    location.href = target(server);
+  });
+  $('addr').addEventListener('input', function () { $('err').hidden = true; });
+  $('change').addEventListener('click', function () {
+    $('addr').value = saved().replace(/^https?:\/\//, '');
+    try { localStorage.removeItem(KEY); } catch (e) { /* nothing to forget */ }
+    render();
+    $('addr').focus();
+  });
+
+  function otherLinks() {
+    var out = [];
+    var q = encodeURIComponent([track.a, track.t].filter(Boolean).join(' '));
+    if (track.sp) out.push(['Spotify', 'https://open.spotify.com/track/' + track.sp]);
+    if (track.dz) out.push(['Deezer', 'https://www.deezer.com/track/' + track.dz]);
+    if (q) out.push(['YouTube Music', 'https://music.youtube.com/search?q=' + q]);
+    if (track.sp) out.push(['Все площадки', 'https://song.link/s/' + track.sp]);
+    else if (track.dz) out.push(['Все площадки', 'https://song.link/d/' + track.dz]);
+    var box = $('links');
+    out.forEach(function (x) {
+      var a = document.createElement('a');
+      a.className = 'btn';
+      a.textContent = x[0];
+      a.href = x[1];
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      box.appendChild(a);
+    });
+    $('other').hidden = !out.length;
+  }
+
+  /** The catalog's picture and names of the track (Deezer, by its id): what the link itself may lack. */
+  function fromCatalog() {
+    if (!track.dz) return;
+    var cb = 'hmDz' + Date.now();
+    var s = document.createElement('script');
+    window[cb] = function (d) {
+      delete window[cb];
+      s.remove();
+      if (!d || d.error) return;
+      var cover = d.album && (d.album.cover_big || d.album.cover_medium);
+      if (typeof cover === 'string' && /^https:\/\/[a-z0-9.-]+\.dzcdn\.net\//i.test(cover)) {
+        $('cover').style.backgroundImage = 'url("' + cover.replace(/["\\\s]/g, '') + '")';
+        $('cover').textContent = '';
+      }
+      if (!track.t && typeof d.title === 'string') track.t = d.title.slice(0, 300);
+      if (!track.a && d.artist && typeof d.artist.name === 'string') track.a = d.artist.name.slice(0, 300);
+      if (!track.al && d.album && typeof d.album.title === 'string') track.al = d.album.title.slice(0, 300);
+      show();
+      render();
+      $('links').textContent = '';
+      otherLinks();
+    };
+    s.src = 'https://api.deezer.com/track/' + track.dz + '?output=jsonp&callback=' + cb;
+    s.onerror = function () { delete window[cb]; };
+    document.head.appendChild(s);
+  }
+
+  show();
+  render();
+  otherLinks();
+  fromCatalog();
+})();
+</script>
+</body>
+</html>
