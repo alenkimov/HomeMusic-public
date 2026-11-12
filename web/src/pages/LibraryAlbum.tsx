@@ -183,12 +183,12 @@ export function LibraryAlbumPage({ id }: { id: number }) {
                 </span>
                 <span className="shrink-0 text-xs tabular-nums text-dim">{fmtDuration(t.duration_s)}</span>
               </button>
-              <SaveButton songId={t.nd_song_id} title={t.title} className="!w-10" />
+              <SaveButton songId={t.nd_song_id} listKey={String(t.id)} title={t.title} className="!w-10" />
               {playable.includes(t) && (
                 <IconButton icon="play" label={`Слушать «${t.title}»`} className="!text-accent" size={20} onClick={() => playFrom(t)} />
               )}
               <IconButton icon="trash" label={`Удалить «${t.title}»`} className="text-dim hover:text-danger" size={20} onClick={() => deleteTrack(t)} />
-              {t.nd_song_id && <TrackMenuButton track={{ title: t.title, artist: t.artist, nd_song_id: t.nd_song_id }} className="-ml-2 w-8" />}
+              {t.nd_song_id && <TrackMenuButton track={{ title: t.title, artist: t.artist, nd_song_id: t.nd_song_id, library_track_id: t.id }} className="-ml-2 w-8" />}
             </li>
           ))}
         </ul>

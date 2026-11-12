@@ -27,6 +27,8 @@ export interface ListenTrack {
   ref: string;
   /** the library song, when the track is one: the Hub knows a playlist's song by this id (`idOf`) */
   nd_song_id?: string | null;
+  /** the Hub's track, if the Hub knows the song: what tags and playlists go by (`lib/tags.ts` `tagKey`) */
+  library_track_id?: number | null;
   /** a recommendation of the smart shuffle (`lib/smartShuffle.ts`): ✨ in the player and the queue; `label` — «Рекомендация
    * на основе …», `session` — the Hub's session (its events carry the context `smart:<session>`) */
   rec?: { label: string; session: string } | null;

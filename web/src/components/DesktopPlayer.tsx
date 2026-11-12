@@ -1,3 +1,4 @@
+import { tagKey } from '../lib/tags';
 import { useState, type CSSProperties } from 'react';
 import { fmtDuration, providerLabel } from '../lib/format';
 import { cycleRepeat, cycleShuffle, hasNext, hasPrev, next, prev, seek, setVolume, toggle, useListen } from '../lib/listen';
@@ -56,7 +57,7 @@ export function DesktopPlayer() {
                   </span>
                 </span>
               </Link>
-              <SaveButton songId={info?.nd_song_id} refId={track.ref} title={track.title} data={{ ...track }} className="ml-1 !w-9" />
+              <SaveButton songId={info?.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} className="ml-1 !w-9" />
             </>
           ) : (
             <span className="flex items-center gap-3 text-sm text-dim">
@@ -121,7 +122,7 @@ export function DesktopPlayer() {
         </div>
 
         <div className="flex min-w-0 items-center justify-end gap-1">
-          {track && <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id }} className="!h-9 !w-9" inPlayer lean />}
+          {track && <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id, library_track_id: info?.track_id ?? track.library_track_id }} className="!h-9 !w-9" inPlayer lean />}
           {track && <IconButton icon="share" size={18} label="Поделиться" onClick={() => openShare({ title: track.title, artist: track.artist, ref: track.ref, nd_song_id: info?.nd_song_id })} className="!h-9 !w-9 text-muted hover:text-fg" />}
           <Link to="/player" title="Очередь" aria-label="Очередь" className={cx('flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg', !track && 'pointer-events-none opacity-40')}>
             <Icon name="queue" size={20} />

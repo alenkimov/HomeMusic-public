@@ -360,11 +360,12 @@ export const api = {
   createPlaylist: (name: string) => request<PlaylistOut>('POST', '/api/playlists', { json: { name } }),
   addToPlaylist: (id: string, body: PlaylistAddIn) =>
     request<OkOut>('POST', `/api/playlists/${enc(id)}/add`, { json: body }),
-  playlistMembers: (signal?: AbortSignal) => request<{ song_ids: string[] }>('GET', '/api/playlists/members', { signal }),
-  playlistsOfSong: (nd_song_id: string, signal?: AbortSignal) => request<PlaylistOfSongOut[]>('GET', withQuery('/api/playlists/of-song', { nd_song_id }), { signal }),
-  playlistMembership: (body: { nd_song_id: string; add: string[]; remove: string[] }) => request<PlaylistOfSongOut[]>('POST', '/api/playlists/membership', { json: body }),
-  playlistsOfSongs: (nd_song_ids: string[]) => request<PlaylistOfSongsOut[]>('POST', '/api/playlists/of-songs', { json: { nd_song_ids } }),
-  playlistMembershipMany: (body: { nd_song_ids: string[]; add: string[]; remove: string[] }) => request<PlaylistOfSongsOut[]>('POST', '/api/playlists/membership-many', { json: body }),
+  playlistMembers: (signal?: AbortSignal) => request<{ track_ids: number[] }>('GET', '/api/playlists/members', { signal }),
+  /** `track`, `tracks` here and below: the Hub's ids of tracks, as the pages keep them (`lib/tags.ts` `tagKey`) */
+  playlistsOfTrack: (track: string, signal?: AbortSignal) => request<PlaylistOfSongOut[]>('GET', withQuery('/api/playlists/of-track', { track_id: track }), { signal }),
+  playlistMembership: (body: { track: string; add: string[]; remove: string[] }) => request<PlaylistOfSongOut[]>('POST', '/api/playlists/membership', { json: { track_id: Number(body.track), add: body.add, remove: body.remove } }),
+  playlistsOfTracks: (tracks: string[]) => request<PlaylistOfSongsOut[]>('POST', '/api/playlists/of-tracks', { json: { track_ids: tracks.map(Number) } }),
+  playlistMembershipMany: (body: { tracks: string[]; add: string[]; remove: string[] }) => request<PlaylistOfSongsOut[]>('POST', '/api/playlists/membership-many', { json: { track_ids: body.tracks.map(Number), add: body.add, remove: body.remove } }),
   playlist: (id: string, signal?: AbortSignal) => request<PlaylistPageOut>('GET', `/api/playlists/${enc(id)}`, { signal }),
   removeFromPlaylist: (id: string, indexes: number[]) =>
     request<OkOut>('POST', `/api/playlists/${enc(id)}/remove`, { json: { indexes } }),
@@ -400,7 +401,7 @@ export const api = {
   // tags of tracks (lib/tags.ts)
   tags: () => request<TagsData>('GET', '/api/tags'),
   tagCreate: (name: string) => request<Tag>('POST', '/api/tags', { json: { name } }),
-  tagsAssign: (body: { nd_song_ids: string[]; add: number[]; remove: number[] }) => request<TagsData>('POST', '/api/tags/assign', { json: body }),
+  tagsAssign: (body: { tracks: string[]; add: number[]; remove: number[] }) => request<TagsData>('POST', '/api/tags/assign', { json: { track_ids: body.tracks.map(Number), add: body.add, remove: body.remove } }),
   tagRename: (id: number, name: string) => request<TagsData>('PUT', `/api/tags/${id}`, { json: { name } }),
   tagMerge: (id: number, into: number) => request<TagsData>('POST', `/api/tags/${id}/merge`, { json: { into } }),
   tagDelete: (id: number) => request<TagsData>('DELETE', `/api/tags/${id}`),

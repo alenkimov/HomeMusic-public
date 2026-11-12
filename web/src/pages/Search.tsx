@@ -386,8 +386,8 @@ function LibraryTrackRow({ t, onPlay }: { t: LibTrackOut; onPlay?: () => void })
   return (
     <div className="flex items-center pr-1">
       {row}
-      {t.nd_song_id && <TrackMenuButton track={{ title: t.title, artist: t.artist, nd_song_id: t.nd_song_id }} />}
-      <SaveButton songId={t.nd_song_id} title={t.title} className={cx('!w-10', !onPlay && 'mr-1')} />
+      {t.nd_song_id && <TrackMenuButton track={{ title: t.title, artist: t.artist, nd_song_id: t.nd_song_id, library_track_id: t.id }} />}
+      <SaveButton songId={t.nd_song_id} listKey={String(t.id)} title={t.title} className={cx('!w-10', !onPlay && 'mr-1')} />
       {onPlay && <IconButton icon="play" label={`Слушать «${t.title}»`} onClick={onPlay} className="!text-accent" />}
     </div>
   );

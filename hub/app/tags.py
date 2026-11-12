@@ -120,38 +120,27 @@ async def catalog(s: AsyncSession, user_id: int) -> dict[str, Any]:
     return {"groups": groups}
 
 
-TRACK_KEY = "t:"  # how a page names a track that has no Navidrome song: "t:<the Hub's track id>"
-
-
-def key_of(track_id: int, nd_song_id: str | None) -> str:
-    """What a page calls a track when it asks about its tags: the Navidrome song of its file, else the Hub's own
-    id of the track (a track with no file yet has tags like any other)."""
-    return nd_song_id or f"{TRACK_KEY}{track_id}"
-
-
-async def tag_map(s: AsyncSession, user_id: int) -> dict[str, list[int]]:
-    """track (`key_of`) -> the ids of its tags (the ones this user sees)."""
-    out: dict[str, list[int]] = {}
-    q = (select(Track.id, Track.nd_song_id, TrackTag.tag_id).join(TrackTag, TrackTag.track_id == Track.id)
-         .join(Tag, Tag.id == TrackTag.tag_id).where(visible(user_id)))
-    for track_id, song, tid in (await s.execute(q)).all():
-        out.setdefault(key_of(track_id, song), []).append(tid)
+async def tag_map(s: AsyncSession, user_id: int) -> dict[int, list[int]]:
+    """track -> the ids of its tags (the ones this user sees)."""
+    out: dict[int, list[int]] = {}
+    q = (select(TrackTag.track_id, TrackTag.tag_id).join(Tag, Tag.id == TrackTag.tag_id).where(visible(user_id)))
+    for track_id, tid in (await s.execute(q)).all():
+        out.setdefault(track_id, []).append(tid)
     return out
 
 
-async def assign(s: AsyncSession, user_id: int, keys: list[str], add: list[int], remove: list[int]) -> int:
-    """Put tags on tracks (named as `key_of` names them) and take others off, by hand. Returns how many tracks it
-    was."""
-    track_ids = [int(k[len(TRACK_KEY):]) for k in keys if k.startswith(TRACK_KEY) and k[len(TRACK_KEY):].isdigit()]
-    songs = [k for k in keys if not k.startswith(TRACK_KEY)]
-    for i in range(0, len(songs), CHUNK):
-        track_ids += list((await s.execute(select(Track.id).where(Track.nd_song_id.in_(songs[i:i + CHUNK])))).scalars())
-    return await assign_tracks(s, user_id, list(dict.fromkeys(track_ids)), add, remove)
+async def known_tracks(s: AsyncSession, track_ids: list[int]) -> list[int]:
+    """The ones of these that are tracks of the Hub, in the order given, each once."""
+    ids = list(dict.fromkeys(track_ids))
+    known: set[int] = set()
+    for i in range(0, len(ids), CHUNK):
+        known.update((await s.execute(select(Track.id).where(Track.id.in_(ids[i:i + CHUNK])))).scalars())
+    return [t for t in ids if t in known]
 
 
 async def assign_tracks(s: AsyncSession, user_id: int, track_ids: list[int], add: list[int],
                         remove: list[int] | None = None) -> int:
-    """The same by the Hub's own track ids (files just imported have no Navidrome id yet)."""
+    """Put tags on tracks and take others off, by hand. Returns how many tracks it was."""
     remove = remove or []
     allowed = {t.id: t for t in (await s.execute(select(Tag).where(Tag.id.in_({*add, *remove}), visible(user_id)))).scalars()}
     # «без слов» is not a mere mark: with it a track has no text and none is looked for (app/lyrics)

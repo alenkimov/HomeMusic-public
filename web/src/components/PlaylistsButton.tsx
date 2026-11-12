@@ -1,3 +1,4 @@
+import { tagKey } from '../lib/tags';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { PlaylistOfSongOut, PlaylistOfSongsOut } from '../api/types';
@@ -20,7 +21,7 @@ export function SaveButton({ songId, refId, listKey, title, data, size = 20, cla
   const [busy, setBusy] = useState(false);
   const target: LikeTarget = { targetType: 'track', songId, ref: refId, data };
   const liked = useLiked(target);
-  const listed = useInPlaylists(listKey ?? songId);
+  const listed = useInPlaylists(listKey);
   if (!songId && !refId) return null;
   const kept = liked || listed;
   const label = liked ? `«${title}» в любимом — изменить` : listed ? `«${title}» в плейлистах — изменить` : `«${title}» — в любимое`;
@@ -114,10 +115,10 @@ const LIKED = { name: 'Любимое' };
  * rest, the ones changed last first. It is ticked into some and out of others; nothing changes until «Готово».
  * A library song changes places at once; a catalog track the library has not got is downloaded and goes into the
  * chosen playlists as it arrives. */
-export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_song_id?: string | null; ref?: string | null; data?: Record<string, unknown>; /** what the Hub calls the track (`lib/tags.ts` `tagKey`), if it knows it */ key?: string | null }; onClose: () => void }) {
-  // what the Hub knows the track by: the Navidrome song of its file, else its own id of a track with no file yet.
-  // None: a catalog track the Hub has not met — putting it anywhere downloads it
-  const songId = track.nd_song_id || track.key || null;
+export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_song_id?: string | null; ref?: string | null; data?: Record<string, unknown>; /** what the Hub calls the track (`lib/tags.ts` `tagKey`), if it knows it */ key?: string | null; library_track_id?: number | null }; onClose: () => void }) {
+  // what the Hub knows the track by: its own id of it, file or no file. None: a catalog track the Hub has not met
+  // — putting it anywhere downloads it
+  const songId = tagKey(track);
   const target: LikeTarget = { targetType: 'track', songId: track.nd_song_id, ref: track.ref, data: track.data };
   const [wasLiked] = useState(() => isLiked(target));
   const [liked, setLiked] = useState(wasLiked);
@@ -128,7 +129,7 @@ export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     let alive = true;
-    (songId ? api.playlistsOfSong(songId) : api.playlists().then((r) => r.map((p) => ({ ...p, has: false }))))
+    (songId ? api.playlistsOfTrack(songId) : api.playlists().then((r) => r.map((p) => ({ ...p, has: false }))))
       .then((r) => alive && setRows(r))
       .catch(() => {
         if (alive) {
@@ -168,7 +169,7 @@ export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_
     try {
       if (liked !== wasLiked && isLiked(target) !== liked) await toggleLike(target, true);
       if (songId && (add.length || remove.length)) {
-        const r = await attempt(() => api.playlistMembership({ nd_song_id: songId, add: add.map((p) => p.id), remove: remove.map((p) => p.id) }));
+        const r = await attempt(() => api.playlistMembership({ track: songId, add: add.map((p) => p.id), remove: remove.map((p) => p.id) }));
         if (!r) return;
         noteInPlaylists([songId], r.some((p) => p.has));
       } else if (!songId && add.length && track.ref) {
@@ -233,7 +234,7 @@ type Mark = 'all' | 'some' | 'none';
 export interface PickedTrack {
   ref: string;
   nd_song_id?: string | null;
-  /** what the Hub calls the track (`lib/tags.ts` `tagKey`), if it knows it: a track with no file has no song */
+  /** what the Hub calls the track (`lib/tags.ts` `tagKey`), if it knows it */
   key?: string | null;
   data?: Record<string, unknown>;
 }
@@ -245,7 +246,7 @@ export interface PickedTrack {
 export function BulkPlaylists({ tracks, onClose }: { tracks: PickedTrack[]; onClose: () => void }) {
   const n = tracks.length;
   const targets = useMemo<LikeTarget[]>(() => tracks.map((t) => ({ targetType: 'track' as const, songId: t.nd_song_id, ref: t.ref, data: t.data })), [tracks]);
-  const songIds = useMemo(() => tracks.map((t) => t.nd_song_id || t.key).filter((x): x is string => !!x), [tracks]);
+  const songIds = useMemo(() => tracks.map((t) => t.key).filter((x): x is string => !!x), [tracks]);
   const [likedCount] = useState(() => targets.filter(isLiked).length);
   const [rows, setRows] = useState<PlaylistOfSongsOut[] | null>(null);
   const [want, setWant] = useState<Record<string, Mark>>({});
@@ -253,7 +254,7 @@ export function BulkPlaylists({ tracks, onClose }: { tracks: PickedTrack[]; onCl
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     let alive = true;
-    (songIds.length ? api.playlistsOfSongs(songIds) : api.playlists().then((r) => r.map((p) => ({ ...p, count: 0 }))))
+    (songIds.length ? api.playlistsOfTracks(songIds) : api.playlists().then((r) => r.map((p) => ({ ...p, count: 0 }))))
       .then((r) => alive && setRows(r))
       .catch(() => {
         if (alive) {
@@ -294,11 +295,11 @@ export function BulkPlaylists({ tracks, onClose }: { tracks: PickedTrack[]; onCl
     try {
       if (like !== null) await setLikes(targets, like);
       if (songIds.length && (add.length || remove.length)) {
-        const r = await attempt(() => api.playlistMembershipMany({ nd_song_ids: songIds, add: add.map((p) => p.id), remove: remove.map((p) => p.id) }));
+        const r = await attempt(() => api.playlistMembershipMany({ tracks: songIds, add: add.map((p) => p.id), remove: remove.map((p) => p.id) }));
         if (!r) return;
         noteInPlaylists(songIds, add.length > 0);
       }
-      const fresh = tracks.filter((t) => !t.nd_song_id && !t.key && !t.ref.startsWith('nd:')).map((t) => t.ref);
+      const fresh = tracks.filter((t) => !t.key && !t.ref.startsWith('nd:')).map((t) => t.ref);
       if (fresh.length && add.length) {
         const r = await attempt(() => api.download({ track_refs: fresh, playlist_ids: add.map((p) => p.id) }));
         if (!r) return;

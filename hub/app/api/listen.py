@@ -6,12 +6,15 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from sqlalchemy import select
 from starlette.background import BackgroundTask
 
 from app import listen
 from app.api.schemas import ListenOut, ListenPrefetchIn, ListenPrefetchOut
 from app.auth import current_user
-from app.models import User
+from app.db import session_scope
+from app.library.tracks import by_ref
+from app.models import TrackFile, User
 
 router = APIRouter(prefix="/api/listen", tags=["listen"])
 
@@ -28,6 +31,13 @@ async def resolve(ref: str, user: User = Depends(current_user)):
     """Picks the file (may take a while: providers are searched), then the client plays `stream_url`."""
     c = await _choose(ref)
     cand = c.candidate
+    async with session_scope() as s:
+        track_id = None
+        if c.nd_song_id:
+            track_id = (await s.execute(select(TrackFile.track_id).where(TrackFile.nd_song_id == c.nd_song_id)
+                                        .limit(1))).scalar_one_or_none()
+        if track_id is None and (track := await by_ref(s, c.ref)) is not None:
+            track_id = track.id
     return ListenOut(
         ref=c.ref,
         kind=c.kind,
@@ -38,6 +48,7 @@ async def resolve(ref: str, user: User = Depends(current_user)):
         bitrate_kbps=cand.bitrate_kbps if cand else None,
         page_url=cand.page_url if cand else None,
         nd_song_id=c.nd_song_id,
+        track_id=track_id,
         stream_url=f"/api/listen/stream?ref={quote(c.ref, safe='')}",
     )
 

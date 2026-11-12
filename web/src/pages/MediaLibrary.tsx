@@ -392,7 +392,7 @@ export function AutoPlaylistPage({ kind }: { kind: string }) {
     const name = `${title} — ${new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}`;
     const p = await attempt(async () => {
       const made = await api.createPlaylist(name);
-      await api.playlistMembershipMany({ nd_song_ids: tracks.map((t) => t.nd_song_id!), add: [made.id], remove: [] });
+      await api.playlistMembershipMany({ tracks: tracks.map(tagKey).filter((x): x is string => !!x), add: [made.id], remove: [] });
       return made;
     }, `Плейлист «${name}» создан`);
     setBusy(false);

@@ -136,6 +136,13 @@ def table(cols: list[str], rows: list[list[Any]]) -> dict:
     return {"cols": cols, "rows": rows}
 
 
+TRACK_KEY = "t:"  # how the assistant is told of a track with no file, where a song id goes: "t:<the Hub's track id>"
+
+
+def key_of(track_id: int, nd_song_id: str | None) -> str:
+    return nd_song_id or f"{TRACK_KEY}{track_id}"
+
+
 def label(x: Any) -> str:
     """«Artist — Title» of a Navidrome song/album (dict), a library track, a catalog track or album."""
     def get(k: str) -> Any:
@@ -200,10 +207,18 @@ class ChatTools:
 
     async def _tracks(self, song_ids: list[str] | None, songs_from: str | None) -> list[int]:
         """The tracks of the songs named (`_songs`), in order."""
-        from app.api.playlists import _tracks_of_songs
+        from app.models import TrackFile
+        from app.tags import known_tracks
 
         keys = await self._songs(song_ids, songs_from, tracks=True)
-        found = await _tracks_of_songs(self.s, keys)
+        found: dict[str, int] = {}
+        own = {k: int(k[len(TRACK_KEY):]) for k in keys if k.startswith(TRACK_KEY) and k[len(TRACK_KEY):].isdigit()}
+        known = set(await known_tracks(self.s, list(own.values())))
+        found.update((k, t) for k, t in own.items() if t in known)
+        songs = [k for k in keys if not k.startswith(TRACK_KEY)]
+        for k in range(0, len(songs), 500):
+            found.update((song, t) for song, t in (await self.s.execute(
+                select(TrackFile.nd_song_id, TrackFile.track_id).where(TrackFile.nd_song_id.in_(songs[k:k + 500])))).all())
         return list(dict.fromkeys(found[k] for k in keys if k in found))
 
     async def _import_liked(self) -> dict[str, int]:
@@ -328,7 +343,6 @@ class ChatTools:
 
     async def get_playlist(self, playlist_id: str, offset: int = 0, limit: int = 100) -> Any:
         from app import playlists
-        from app.tags import key_of
 
         p = await self._playlist(playlist_id)
         # a track the library has no file of yet is in the playlist too: it is named "t:<id>" where a song id goes
@@ -372,7 +386,6 @@ class ChatTools:
         the tracks without a file ("t:<id>") count too — for a playlist, not for Navidrome."""
         from app import playlists
         from app.imports.apply import _song_ids, playlist_order
-        from app.tags import TRACK_KEY, key_of
 
         ids = list(song_ids or [])
         if songs_from:

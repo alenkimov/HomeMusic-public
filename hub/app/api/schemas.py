@@ -382,6 +382,7 @@ class ListenOut(BaseModel):
     bitrate_kbps: int | None = None
     page_url: str | None = None
     nd_song_id: str | None = None  # "library": the Navidrome song (♥, the app's player)
+    track_id: int | None = None  # the Hub's track, if the Hub knows the song (tags, playlists)
     stream_url: str  # audio with Range support, same session cookie
 
 
@@ -509,7 +510,7 @@ class PlaylistOfSongOut(PlaylistOut):
 
 
 class PlaylistMembershipIn(BaseModel):
-    nd_song_id: str
+    track_id: int
     add: list[str] = Field(default_factory=list, max_length=100)  # playlists to put the song into
     remove: list[str] = Field(default_factory=list, max_length=100)  # ... and to take it out of
 
@@ -519,7 +520,7 @@ class PlaylistOfSongsOut(PlaylistOut):
 
 
 class PlaylistSongsIn(BaseModel):
-    nd_song_ids: list[str] = Field(min_length=1, max_length=1000)
+    track_ids: list[int] = Field(min_length=1, max_length=1000)
 
 
 class PlaylistMembershipManyIn(PlaylistSongsIn):
@@ -592,8 +593,7 @@ class PlaylistPageOut(PlaylistOut):
 
 
 class PlaylistAddIn(BaseModel):
-    song_ids: list[str] = []
-    library_track_ids: list[int] = []
+    track_ids: list[int] = Field(min_length=1, max_length=5000)
 
 
 # --- assistant -----------------------------------------------------------------------------
@@ -758,6 +758,7 @@ class ImportItemOut(BaseModel):
     # pending/waiting/queued/done/failed/not_found/skipped
     status: str
     nd_song_id: str | None = None  # in the library: plays from Navidrome
+    track_id: int | None = None  # the Hub's track the item turned out to be
     download_item_id: int | None = None
     download_status: str | None = None
     error: str | None = None

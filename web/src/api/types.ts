@@ -415,6 +415,8 @@ export interface ListenOut {
   page_url?: string | null;
   /** library: the Navidrome song (♥), once Navidrome has scanned the file */
   nd_song_id?: string | null;
+  /** the Hub's track, if the Hub knows the song (tags, playlists) */
+  track_id?: number | null;
   /** audio with Range support (same session cookie) */
   stream_url: string;
 }
@@ -619,8 +621,8 @@ export interface PlaylistCreateIn {
 }
 
 export interface PlaylistAddIn {
-  song_ids?: string[];
-  library_track_ids?: number[];
+  /** the Hub's ids of the tracks */
+  track_ids: number[];
 }
 
 // --- assistant --------------------------------------------------------------------------------
@@ -864,6 +866,8 @@ export interface ImportItemOut {
   score?: number | null;
   status: ImportItemStatus | string;
   nd_song_id?: string | null;
+  /** the Hub's track the item turned out to be */
+  track_id?: number | null;
   download_item_id?: number | null;
   download_status?: string | null;
   error?: string | null;

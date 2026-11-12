@@ -4,6 +4,8 @@ their places, and the mirror Navidrome gets (app/playlists_mirror.py)."""
 from __future__ import annotations
 
 import pytest
+
+from tests.support import tids
 from sqlalchemy import select
 
 from app.catalog.models import CatalogTrack
@@ -77,29 +79,30 @@ async def catalog_track(n: int, title: str) -> int:
 async def test_where_a_song_is_and_changing_it_at_once(env):
     c = env["client"]
     a, b = await new_playlist(c, "Уважаемые"), await new_playlist(c, "JAPAN")
-    assert (await c.post(f"/api/playlists/{a}/add", json={"song_ids": ["ndK", "ndX"]})).json() == {"ok": True, "added": 2}
-    r = (await c.get("/api/playlists/of-song", params={"nd_song_id": "ndK"})).json()
+    assert (await c.post(f"/api/playlists/{a}/add", json={"track_ids": await tids("ndK", "ndX")})).json() == {"ok": True, "added": 2}
+    (k,) = await tids("ndK")
+    r = (await c.get("/api/playlists/of-track", params={"track_id": k})).json()
     assert {x["name"]: (x["has"], x["song_count"]) for x in r} == {"Уважаемые": (True, 2), "JAPAN": (False, 0)}
     assert r[0]["name"] == "Уважаемые"  # the one changed last first
 
-    r = (await c.post("/api/playlists/membership", json={"nd_song_id": "ndK", "add": [b, b], "remove": [a]})).json()
+    r = (await c.post("/api/playlists/membership", json={"track_id": k, "add": [b, b], "remove": [a]})).json()
     assert {x["name"]: x["has"] for x in r} == {"Уважаемые": False, "JAPAN": True}
-    await c.post("/api/playlists/membership", json={"nd_song_id": "ndK", "add": [b]})
+    await c.post("/api/playlists/membership", json={"track_id": k, "add": [b]})
     assert [t["nd_song_id"] for t in (await c.get(f"/api/playlists/{b}")).json()["tracks"]] == ["ndK"]  # not added twice
-    assert (await c.post("/api/playlists/membership", json={"nd_song_id": "nope", "add": [b]})).status_code == 404
-    assert (await c.get("/api/playlists/members")).json() == {"song_ids": ["ndK", "ndX"]}
+    assert (await c.post("/api/playlists/membership", json={"track_id": 999999, "add": [b]})).status_code == 404
+    assert (await c.get("/api/playlists/members")).json() == {"track_ids": sorted(await tids("ndK", "ndX"))}
 
 
 async def test_several_songs_at_once(env):
     c = env["client"]
     await add_track("Третий", "Трек", "ndZ")
     a, b = await new_playlist(c, "Уважаемые"), await new_playlist(c, "JAPAN")
-    await c.post(f"/api/playlists/{a}/add", json={"song_ids": ["ndK", "ndX"]})
-    await c.post(f"/api/playlists/{b}/add", json={"song_ids": ["ndZ"]})
-    r = (await c.post("/api/playlists/of-songs", json={"nd_song_ids": ["ndK", "ndX", "ndZ", "nope"]})).json()
+    await c.post(f"/api/playlists/{a}/add", json={"track_ids": await tids("ndK", "ndX")})
+    await c.post(f"/api/playlists/{b}/add", json={"track_ids": await tids("ndZ")})
+    r = (await c.post("/api/playlists/of-tracks", json={"track_ids": await tids("ndK", "ndX", "ndZ", "nope")})).json()
     assert {x["name"]: x["count"] for x in r} == {"JAPAN": 1, "Уважаемые": 2}
     r = (await c.post("/api/playlists/membership-many",
-                      json={"nd_song_ids": ["ndK", "ndZ"], "add": [b], "remove": [a]})).json()
+                      json={"track_ids": await tids("ndK", "ndZ"), "add": [b], "remove": [a]})).json()
     assert {x["name"]: x["count"] for x in r} == {"JAPAN": 2, "Уважаемые": 0}
     assert [t["nd_song_id"] for t in (await c.get(f"/api/playlists/{b}")).json()["tracks"]] == ["ndZ", "ndK"]
     assert [t["nd_song_id"] for t in (await c.get(f"/api/playlists/{a}")).json()["tracks"]] == ["ndX"]
@@ -109,9 +112,9 @@ async def test_a_track_without_a_file_stands_in_its_place(env):
     c = env["client"]
     pid = await new_playlist(c, "Дорога")
     waiting = await catalog_track(555, "Ещё не скачан")
-    await c.post(f"/api/playlists/{pid}/add", json={"song_ids": ["ndK"]})
-    await c.post(f"/api/playlists/{pid}/add", json={"library_track_ids": [waiting]})
-    await c.post(f"/api/playlists/{pid}/add", json={"song_ids": ["ndX"]})
+    await c.post(f"/api/playlists/{pid}/add", json={"track_ids": await tids("ndK")})
+    await c.post(f"/api/playlists/{pid}/add", json={"track_ids": [waiting]})
+    await c.post(f"/api/playlists/{pid}/add", json={"track_ids": await tids("ndX")})
 
     p = (await c.get(f"/api/playlists/{pid}")).json()
     assert (p["song_count"], p["pending_count"]) == (2, 1)
@@ -165,9 +168,9 @@ async def test_the_mirror_gets_the_songs_and_what_other_apps_did_comes_back(env,
     await add_track("Третий", "Трек", "ndZ")
     pid = int(await new_playlist(c, "Дорога"))
     waiting = await catalog_track(555, "Ещё не скачан")
-    await c.post(f"/api/playlists/{pid}/add", json={"song_ids": ["ndK"]})
-    await c.post(f"/api/playlists/{pid}/add", json={"library_track_ids": [waiting]})
-    await c.post(f"/api/playlists/{pid}/add", json={"song_ids": ["ndX"]})
+    await c.post(f"/api/playlists/{pid}/add", json={"track_ids": await tids("ndK")})
+    await c.post(f"/api/playlists/{pid}/add", json={"track_ids": [waiting]})
+    await c.post(f"/api/playlists/{pid}/add", json={"track_ids": await tids("ndX")})
 
     await mirror(pid)
     assert nd["playlists"] == {"nd1": {"name": "Дорога", "songs": ["ndK", "ndX"]}}  # only what has a file
@@ -198,19 +201,20 @@ async def test_a_track_without_a_file_is_tagged_like_any_other(env):
     c = env["client"]
     waiting = await catalog_track(555, "Ещё не скачан")
     tag = (await c.post("/api/tags", json={"name": "Пляжный"})).json()["id"]
-    r = await c.post("/api/tags/assign", json={"nd_song_ids": [f"t:{waiting}", "ndK"], "add": [tag], "remove": []})
+    r = await c.post("/api/tags/assign", json={"track_ids": [waiting, *await tids("ndK")], "add": [tag], "remove": []})
     assert r.status_code == 200, r.text
     tags = r.json()["map"]
-    assert tag in tags[f"t:{waiting}"] and tag in tags["ndK"]  # one by the Hub's id, one by its Navidrome song
+    (k,) = await tids("ndK")
+    assert tag in tags[str(waiting)] and tag in tags[str(k)]  # with a file or without: the Hub's id of the track
 
-    # the file arrives: the tag is on the same track, now named by its song
+    # the file arrives: the tag is on the same track, named as before
     from app.db import session_scope
     from app.models import TrackFile
 
     async with session_scope() as s:
         s.add(TrackFile(track_id=waiting, uid="u-555", path="a/555.mp3", nd_song_id="nd555"))
     tags = (await c.get("/api/tags")).json()["map"]
-    assert tag in tags["nd555"] and f"t:{waiting}" not in tags
+    assert tag in tags[str(waiting)]
 
 
 async def test_liked_is_a_playlist_and_a_liked_track_without_a_file_is_a_track(env):
@@ -233,8 +237,8 @@ async def test_liked_is_a_playlist_and_a_liked_track_without_a_file_is_a_track(e
         assert (await playlists.kept(s, 1))[0] == {t.id for _, t in await playlists.items(s, liked.id)}
 
     tag = (await c.post("/api/tags", json={"name": "На потом"})).json()["id"]
-    r = await c.post("/api/tags/assign", json={"nd_song_ids": [f"t:{waiting['library_track_id']}"], "add": [tag], "remove": []})
-    assert tag in r.json()["map"][f"t:{waiting['library_track_id']}"]
+    r = await c.post("/api/tags/assign", json={"track_ids": [waiting["library_track_id"]], "add": [tag], "remove": []})
+    assert tag in r.json()["map"][str(waiting["library_track_id"])]
 
     stars = (await c.get("/api/starred")).json()
     assert (stars["song_ids"], stars["refs"]) == (["ndK"], ["dz:999"])
@@ -246,11 +250,10 @@ async def test_a_track_without_a_file_is_put_into_playlists_like_any_other(env):
     c = env["client"]
     waiting = await catalog_track(555, "Ещё не скачан")
     a, b = await new_playlist(c, "Дорога"), await new_playlist(c, "Вечер")
-    key = f"t:{waiting}"
-    r = (await c.post("/api/playlists/membership", json={"nd_song_id": key, "add": [a, b]})).json()
+    r = (await c.post("/api/playlists/membership", json={"track_id": waiting, "add": [a, b]})).json()
     assert {x["name"]: x["has"] for x in r} == {"Дорога": True, "Вечер": True}
-    assert {x["name"]: x["has"] for x in (await c.get("/api/playlists/of-song", params={"nd_song_id": key})).json()} \
+    assert {x["name"]: x["has"] for x in (await c.get("/api/playlists/of-track", params={"track_id": waiting})).json()} \
         == {"Дорога": True, "Вечер": True}
-    r = (await c.post("/api/playlists/membership-many", json={"nd_song_ids": [key, "ndK"], "add": [], "remove": [b]})).json()
+    r = (await c.post("/api/playlists/membership-many", json={"track_ids": [waiting, *await tids("ndK")], "add": [], "remove": [b]})).json()
     assert {x["name"]: x["count"] for x in r} == {"Дорога": 1, "Вечер": 0}
-    assert (await c.get("/api/playlists/members")).json() == {"song_ids": [key]}
+    assert (await c.get("/api/playlists/members")).json() == {"track_ids": [waiting]}

@@ -2,7 +2,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { api } from '../api/client';
 import { hubEvents } from './events';
 
-/** The library songs that are in some playlist of the user's («Микс дня» apart): what the «+ / ✓» of a track row
+/** The tracks (the Hub's ids, `lib/tags.ts` `tagKey`) that are in some playlist of the user's («Микс дня» apart): what the «+ / ✓» of a track row
  * goes by (`components/PlaylistsButton.tsx`). One request for the whole library, asked again when a playlist changes. */
 
 let ids = new Set<string>();
@@ -32,7 +32,7 @@ export function refreshInPlaylists(force = false): Promise<void> {
     .playlistMembers(AbortSignal.timeout(15_000))
     .then(
       (r) => {
-        ids = new Set(r.song_ids);
+        ids = new Set(r.track_ids.map(String));
         loadedAt = Date.now();
         emit();
       },

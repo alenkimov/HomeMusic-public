@@ -1,3 +1,4 @@
+import { tagKey } from '../lib/tags';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
@@ -148,7 +149,7 @@ export function PlayerPage() {
             )}
           </div>
         </div>
-        <SaveButton songId={info?.nd_song_id} refId={track.ref} title={track.title} data={{ ...track }} size={26} />
+        <SaveButton songId={info?.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} size={26} />
         {/* a track that is not in the library yet can be downloaded into it; one that is needs no mark */}
         {owned || dl === 'done' ? null : dl ? (
           <span className="flex h-11 w-11 shrink-0 items-center justify-center text-info" title="Скачивается в библиотеку">
@@ -157,7 +158,7 @@ export function PlayerPage() {
         ) : (
           <IconButton icon="download" label="Скачать в библиотеку" onClick={download} busy={busy} />
         )}
-        <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id }} inPlayer lean />
+        <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id, library_track_id: info?.track_id ?? track.library_track_id }} inPlayer lean />
       </div>
 
       {track.rec && (

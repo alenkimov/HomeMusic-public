@@ -202,3 +202,27 @@ def filed_track(**fields):
     if "added_by" in file:
         fields.setdefault("created_by", file["added_by"])
     return Track(**fields, files=[TrackFile(**file)])
+
+
+async def tids(*songs: str) -> list[int]:
+    """The Hub's track ids of these Navidrome songs, in order (one the Hub has no file of is left out)."""
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import TrackFile
+
+    async with session_scope() as s:
+        by_song = dict((await s.execute(select(TrackFile.nd_song_id, TrackFile.track_id))).all())
+    return [by_song[x] for x in songs if x in by_song]
+
+
+async def by_songs(tag_map: dict) -> dict[str, list[int]]:
+    """A map of tags by the Hub's track ids (`GET /api/tags`), told by the Navidrome songs of the tracks' files."""
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import TrackFile
+
+    async with session_scope() as s:
+        songs = dict((await s.execute(select(TrackFile.track_id, TrackFile.nd_song_id))).all())
+    return {songs[int(k)]: v for k, v in tag_map.items() if songs.get(int(k))}

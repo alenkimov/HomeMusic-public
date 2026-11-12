@@ -6,7 +6,7 @@ import { addToQueue, next, stopListening, useListen, type ListenTrack } from '..
 import { canPlayAll } from '../lib/player';
 import { enc, navigate } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
-import { openTagsSheet } from '../lib/tags';
+import { openTagsSheet, tagKey } from '../lib/tags';
 import { artistSeed, canWave, startWave, trackSeed } from '../lib/wave';
 import { Icon, type IconName } from './Icon';
 import { TrackPlaylists } from './PlaylistsButton';
@@ -17,8 +17,9 @@ export interface MenuTrack {
   artist: string;
   ref?: string | null;
   nd_song_id?: string | null;
-  /** what the Hub calls the track (`lib/tags.ts` `tagKey`), if it knows it */
+  /** what the Hub calls the track (`lib/tags.ts` `tagKey`), if it knows it: given as is, or as the track's id */
   key?: string | null;
+  library_track_id?: number | null;
   artist_ref?: string | null;
   album_ref?: string | null;
   /** the song's Navidrome album and artist (the library pages of a browser) */
@@ -122,18 +123,18 @@ function TrackMenu({ track, extra, inPlayer, lean, noTags, onClose }: { track: M
           <MenuItem
             icon="playlist"
             label="Добавить в плейлист"
-            hint={track.nd_song_id ? undefined : 'Трек скачается в библиотеку'}
+            hint={tagKey(track) ? undefined : 'Трек скачается в библиотеку'}
             onClick={() => setPicking(true)}
           />
         )}
-        {track.nd_song_id && !noTags && (
+        {tagKey(track) && !noTags && (
           <MenuItem
             icon="tag"
             label="Теги"
             hint="Язык, жанр и свои — по ним фильтруются списки"
             onClick={() => {
               onClose();
-              openTagsSheet([track.nd_song_id as string], track.title);
+              openTagsSheet([tagKey(track) as string], track.title);
             }}
           />
         )}

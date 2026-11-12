@@ -9,7 +9,7 @@ import httpx
 import pytest
 import respx
 
-from tests.support import app_client, filed_track
+from tests.support import app_client, by_songs, filed_track, tids
 
 LRC = "[ti:Song]\n[00:01.50]первая\n[00:03.00][00:09.00]припев\n[00:05.25]<00:05.25>два <00:05.90>слова\n"
 
@@ -288,34 +288,34 @@ async def test_tags_languages_genres_and_ones_own(env):
     # «без слов» is always there to be put on by hand, though no track has it yet
     assert set(by["lang"]) == {"японский", "английский", "без слов"} and by["lang"]["без слов"]["count"] == 0
     assert set(by["genre"]) == {"Asian Music"} and by["own"] == {}
-    assert sorted(r["map"]["nd1"]) == sorted([by["lang"]["японский"]["id"], by["lang"]["английский"]["id"], by["genre"]["Asian Music"]["id"]])
-    assert "nd2" not in r["map"]
+    assert sorted((await by_songs(r["map"]))["nd1"]) == sorted([by["lang"]["японский"]["id"], by["lang"]["английский"]["id"], by["genre"]["Asian Music"]["id"]])
+    assert "nd2" not in (await by_songs(r["map"]))
 
     # a tag of one's own, on several tracks at once; the same name again is the same tag
     chill = (await c.post("/api/tags", json={"name": "  chill "})).json()
     assert chill["group"] == "own" and (await c.post("/api/tags", json={"name": "CHILL"})).json()["id"] == chill["id"]
-    r = (await c.post("/api/tags/assign", json={"nd_song_ids": ["nd1", "nd2"], "add": [chill["id"]]})).json()
-    assert chill["id"] in r["map"]["nd1"] and r["map"]["nd2"] == [chill["id"]]
+    r = (await c.post("/api/tags/assign", json={"track_ids": await tids("nd1", "nd2"), "add": [chill["id"]]})).json()
+    assert chill["id"] in (await by_songs(r["map"]))["nd1"] and (await by_songs(r["map"]))["nd2"] == [chill["id"]]
 
     # a tag the Hub set, taken off by hand, stays off; put back by hand, it stays on
     en = by["lang"]["английский"]["id"]
-    await c.post("/api/tags/assign", json={"nd_song_ids": ["nd1"], "remove": [en, chill["id"]]})
+    await c.post("/api/tags/assign", json={"track_ids": await tids("nd1"), "remove": [en, chill["id"]]})
     async with session_scope() as s:
         await tags.sync(s)
     r = (await c.get("/api/tags")).json()
-    assert en not in r["map"]["nd1"] and chill["id"] not in r["map"]["nd1"]
-    await c.post("/api/tags/assign", json={"nd_song_ids": ["nd1"], "add": [en]})
+    assert en not in (await by_songs(r["map"]))["nd1"] and chill["id"] not in (await by_songs(r["map"]))["nd1"]
+    await c.post("/api/tags/assign", json={"track_ids": await tids("nd1"), "add": [en]})
     async with session_scope() as s:
         await tags.sync(s)
-    assert en in (await c.get("/api/tags")).json()["map"]["nd1"]
+    assert en in (await by_songs((await c.get("/api/tags")).json()["map"]))["nd1"]
 
     # «no lyrics for this track» is «без слов», and the languages of the old text are gone
     await c.post("/api/lyrics/choose", json={"track_id": b, "source": None})
     await c.post("/api/lyrics/choose", json={"track_id": a, "source": None})
     r = (await c.get("/api/tags")).json()
     names = {t["id"]: t["name"] for g in r["groups"] for t in g["tags"]}
-    assert [names[i] for i in r["map"]["nd2"] if names[i] != "chill"] == ["без слов"]
-    assert "японский" not in [names[i] for i in r["map"]["nd1"]] and "английский" in [names[i] for i in r["map"]["nd1"]]
+    assert [names[i] for i in (await by_songs(r["map"]))["nd2"] if names[i] != "chill"] == ["без слов"]
+    assert "японский" not in [names[i] for i in (await by_songs(r["map"]))["nd1"]] and "английский" in [names[i] for i in (await by_songs(r["map"]))["nd1"]]
 
 
 async def test_no_words_by_hand_by_a_source_and_what_it_does_to_the_search(env):
@@ -335,18 +335,18 @@ async def test_no_words_by_hand_by_a_source_and_what_it_does_to_the_search(env):
     async def state() -> tuple[dict, dict]:
         r = (await c.get("/api/tags")).json()
         names = {t["id"]: t["name"] for g in r["groups"] for t in g["tags"]}
-        return {song: sorted(names[i] for i in ids) for song, ids in r["map"].items()}, {v: k for k, v in names.items()}
+        return {song: sorted(names[i] for i in ids) for song, ids in (await by_songs(r["map"])).items()}, {v: k for k, v in names.items()}
 
     _, ids = await state()
     # put on by hand (a track just uploaded, never looked for): the text is not looked for at all
-    await c.post("/api/tags/assign", json={"nd_song_ids": ["nd1"], "add": [ids["без слов"]]})
+    await c.post("/api/tags/assign", json={"track_ids": await tids("nd1"), "add": [ids["без слов"]]})
     assert (await state())[0] == {"nd1": ["без слов"]}
     r = (await c.get("/api/lyrics", params={"nd_song_id": "nd1"})).json()
     assert (r["kind"], r["pinned"]) == ("none", True) and calls == []
 
     # taken off: the track is looked for again, as a new one — and the tag stays off though a source says «instrumental»
     answers["lrclib"] = Found("lrclib", instrumental=True)
-    await c.post("/api/tags/assign", json={"nd_song_ids": ["nd1"], "remove": [ids["без слов"]]})
+    await c.post("/api/tags/assign", json={"track_ids": await tids("nd1"), "remove": [ids["без слов"]]})
     async with session_scope() as s:
         assert (await s.execute(select(Lyrics).where(Lyrics.track_id == a))).scalar_one_or_none() is None
     r = (await c.get("/api/lyrics", params={"nd_song_id": "nd1"})).json()
@@ -371,8 +371,8 @@ async def test_own_tags_are_renamed_merged_deleted_and_selections_follow(env):
     chill = (await c.post("/api/tags", json={"name": "chill"})).json()["id"]
     calm = (await c.post("/api/tags", json={"name": "calm"})).json()["id"]
     road = (await c.post("/api/tags", json={"name": "для дороги"})).json()["id"]
-    await c.post("/api/tags/assign", json={"nd_song_ids": ["nd1"], "add": [chill, road]})
-    await c.post("/api/tags/assign", json={"nd_song_ids": ["nd2"], "add": [calm]})
+    await c.post("/api/tags/assign", json={"track_ids": await tids("nd1"), "add": [chill, road]})
+    await c.post("/api/tags/assign", json={"track_ids": await tids("nd2"), "add": [calm]})
 
     sel = (await c.post("/api/tags/selections", json={"name": " Тихое ", "scope": "liked", "filter": {str(calm): "yes", str(road): "no", "bogus": "yes"}})).json()
     assert (sel["name"], sel["filter"]) == ("Тихое", {str(calm): "yes", str(road): "no"})
@@ -384,12 +384,12 @@ async def test_own_tags_are_renamed_merged_deleted_and_selections_follow(env):
     assert "в дорогу" in [t["name"] for g in r["groups"] for t in g["tags"]]
 
     r = (await c.post(f"/api/tags/{calm}/merge", json={"into": chill})).json()
-    assert sorted(r["map"]["nd1"]) == sorted([chill, road]) and r["map"]["nd2"] == [chill]
+    assert sorted((await by_songs(r["map"]))["nd1"]) == sorted([chill, road]) and (await by_songs(r["map"]))["nd2"] == [chill]
     assert calm not in [t["id"] for g in r["groups"] for t in g["tags"]]
     assert (await c.get("/api/tags/selections/all")).json()[0]["filter"] == {str(chill): "yes", str(road): "no"}
 
     r = (await c.delete(f"/api/tags/{road}")).json()
-    assert r["map"]["nd1"] == [chill] and (await c.get("/api/tags/selections/all")).json()[0]["filter"] == {str(chill): "yes"}
+    assert (await by_songs(r["map"]))["nd1"] == [chill] and (await c.get("/api/tags/selections/all")).json()[0]["filter"] == {str(chill): "yes"}
     assert (await c.delete(f"/api/tags/{road}")).status_code == 404
 
     r = (await c.put(f"/api/tags/selections/{sel['id']}", json={"name": "Спокойное", "scope": "library", "filter": {"untagged": "no"}})).json()

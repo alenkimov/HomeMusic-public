@@ -96,10 +96,9 @@ export function AlbumPage({ refId }: { refId: string }) {
       markDownloading(new Set(missing.map((t) => t.ref)));
     }
     if (owned.length) {
-      const song_ids = owned.map((t) => t.nd_song_id).filter((x): x is string => !!x);
-      const library_track_ids = owned.filter((t) => !t.nd_song_id && t.library_track_id).map((t) => t.library_track_id as number);
+      const track_ids = owned.map((t) => t.library_track_id).filter((x): x is number => x != null);
       for (const id of ids) {
-        const ok = await attempt(() => api.addToPlaylist(id, { song_ids, library_track_ids }));
+        const ok = await attempt(() => api.addToPlaylist(id, { track_ids }));
         if (!ok) return;
       }
     }

@@ -27,7 +27,7 @@ class TagOut(BaseModel):
 
 class TagsOut(BaseModel):
     groups: list[dict[str, Any]]  # {id, title, tags: [TagOut]}
-    map: dict[str, list[int]]  # track (`tags.key_of`: its Navidrome song, else "t:<track id>") -> its tags
+    map: dict[int, list[int]]  # track (the Hub's id) -> its tags
 
 
 class TagCreateIn(BaseModel):
@@ -35,7 +35,7 @@ class TagCreateIn(BaseModel):
 
 
 class TagAssignIn(BaseModel):
-    nd_song_ids: list[str] = Field(min_length=1, max_length=5000)  # tracks, named as `tags.key_of` names them
+    track_ids: list[int] = Field(min_length=1, max_length=5000)
     add: list[int] = Field(default_factory=list, max_length=100)
     remove: list[int] = Field(default_factory=list, max_length=100)
 
@@ -66,7 +66,7 @@ async def create(body: TagCreateIn, user: User = Depends(current_user),
 async def assign(body: TagAssignIn, user: User = Depends(current_user),
                  s: AsyncSession = Depends(get_session, scope="function")):
     """Tags onto tracks and off them, several tracks at once."""
-    await tags.assign(s, user.id, list(dict.fromkeys(body.nd_song_ids)), body.add, body.remove)
+    await tags.assign_tracks(s, user.id, await tags.known_tracks(s, body.track_ids), body.add, body.remove)
     await s.commit()
     return await _out(s, user)
 

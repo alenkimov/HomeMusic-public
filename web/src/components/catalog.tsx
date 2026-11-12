@@ -61,6 +61,7 @@ export function listenTrack(t: TrackOut): ListenTrack {
   return {
     ref: t.ref,
     nd_song_id: t.nd_song_id,
+    library_track_id: t.library_track_id,
     title: t.title,
     artist: t.artists?.length ? t.artists.join(', ') : t.artist,
     cover_url: t.cover_url,
@@ -488,7 +489,7 @@ export function TrackRow({
         <div className={rowClass}>{body}</div>
       )}
       <div className="-ml-2 flex shrink-0 items-center">
-        <SaveButton songId={track.owned ? track.nd_song_id : null} refId={track.ref} title={track.title} data={{ ...track }} className="!w-10" />
+        <SaveButton songId={track.owned ? track.nd_song_id : null} refId={track.ref} listKey={tagKey(track)} title={track.title} data={{ ...track }} className="!w-10" />
         {track.owned ? (
           // a plain browser: the row itself plays it, a second ▷ would only take the title's room
           STANDALONE && !(link && track.album_ref) && play ? null : <TrackStatus owned downloading={false} onDownload={download} onPlay={play} />

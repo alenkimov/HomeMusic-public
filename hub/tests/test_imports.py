@@ -14,7 +14,7 @@ import pytest
 import respx
 from sqlalchemy import select
 
-from tests.support import FakeDeezer, FakeProvider, app_client, cand, filed_track
+from tests.support import FakeDeezer, FakeProvider, app_client, by_songs, cand, filed_track, tids
 
 
 def track(artist: str, title: str, duration_s: int | None = 200, **extra) -> dict:
@@ -297,7 +297,7 @@ async def test_what_waits_shows_in_its_playlist_and_extras_follow_the_tracks(env
     c, state = env["client"], env["state"]
     imp = await prepared(c)
     mine = (await c.post("/api/playlists", json={"name": "Моё"})).json()["id"]  # a playlist of the user's own
-    await c.post(f"/api/playlists/{mine}/add", json={"song_ids": ["ndB"]})  # Осень is in it
+    await c.post(f"/api/playlists/{mine}/add", json={"track_ids": await tids("ndB")})  # Осень is in it
     tag = (await c.post("/api/tags", json={"name": "из Яндекса"})).json()["id"]
     r = await c.post(f"/api/imports/{imp['id']}/start", json={
         "collection_ids": [x["id"] for x in imp["collections"]], "mode": "economy",
@@ -310,7 +310,7 @@ async def test_what_waits_shows_in_its_playlist_and_extras_follow_the_tracks(env
 
     # «После переноса»: what the library has got its place in the other playlist (once), its tag and its ♥
     assert await playlist_tracks(c, "Моё") == [("Осень", "ndB"), ("Город золотой", "ndA")]
-    tags = (await c.get("/api/tags")).json()["map"]
+    tags = await by_songs((await c.get("/api/tags")).json()["map"])
     assert tag in tags["ndA"] and tag in tags["ndB"]
     assert {"ndA", "ndB"} <= set(state["stars"])
 
@@ -326,7 +326,7 @@ async def test_what_waits_shows_in_its_playlist_and_extras_follow_the_tracks(env
     await run_imports()
     assert await playlist_tracks(c, "Дорога") == [("Группа крови", "ndC"), ("Город золотой", "ndA"), ("Осень", "ndB")]
     assert await playlist_tracks(c, "Моё") == [("Осень", "ndB"), ("Город золотой", "ndA"), ("Группа крови", "ndC")]
-    assert tag in (await c.get("/api/tags")).json()["map"]["ndC"] and "ndC" in state["stars"]
+    assert tag in (await by_songs((await c.get("/api/tags")).json()["map"]))["ndC"] and "ndC" in state["stars"]
 
 
 async def test_likes_are_downloaded_from_the_oldest(env):

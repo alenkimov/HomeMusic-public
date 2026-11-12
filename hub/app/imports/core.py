@@ -149,7 +149,8 @@ def item_out(it: ImportItem, kind: str, nd_song_id: str | None = None, dl: Downl
         id=it.id, collection_id=it.collection_id, position=it.position, kind=ITEM_KIND.get(kind, "track"),
         artist=raw.get("artist") or raw.get("name") or "", title=raw.get("title") or raw.get("name") or "",
         album=raw.get("album"), duration_s=raw.get("duration_s"), cover_url=raw.get("cover_url"), ref=it.ref,
-        match=it.match, score=it.score, status=it.status, nd_song_id=nd_song_id, download_item_id=it.download_item_id,
+        match=it.match, score=it.score, status=it.status, nd_song_id=nd_song_id,
+        track_id=it.track_id if ITEM_KIND.get(kind, "track") == "track" else None, download_item_id=it.download_item_id,
         download_status=dl.status if dl else None, error=dl.error if dl else None,
     )
 

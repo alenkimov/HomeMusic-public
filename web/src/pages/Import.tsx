@@ -653,7 +653,7 @@ function ItemRow({ n, it, review, busy, onPlay, onPick }: { n: number; it: Impor
       ) : (
         <div className="flex min-w-0 flex-1 items-center gap-3">{inner}</div>
       )}
-      {it.kind === 'track' && (it.ref?.startsWith('dz:') || it.nd_song_id) && <TrackMenuButton track={{ title: it.title, artist: it.artist, ref: it.ref, nd_song_id: it.nd_song_id }} />}
+      {it.kind === 'track' && (it.ref?.startsWith('dz:') || it.nd_song_id) && <TrackMenuButton track={{ title: it.title, artist: it.artist, ref: it.ref, nd_song_id: it.nd_song_id, library_track_id: it.track_id }} />}
       {needsPick ? (
         <Button small busy={busy} onClick={onPick}>
           Выбрать файл

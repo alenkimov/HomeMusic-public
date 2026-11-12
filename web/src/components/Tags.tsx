@@ -62,7 +62,7 @@ function Body({ songIds, title, pick }: { songIds: string[]; title: string; pick
     }
     if (!add.length && !remove.length) return closeTagsSheet();
     setBusy(true);
-    const data = await attempt(() => api.tagsAssign({ nd_song_ids: songIds, add: add.map((t) => t.id), remove: remove.map((t) => t.id) }));
+    const data = await attempt(() => api.tagsAssign({ tracks: songIds, add: add.map((t) => t.id), remove: remove.map((t) => t.id) }));
     setBusy(false);
     if (!data) return;
     setTagsData(data);
@@ -232,7 +232,7 @@ function NewTag({ onMade }: { onMade: (id: number) => void }) {
     const tag = await attempt(() => api.tagCreate(title));
     if (tag) {
       const songs = selectedTracks().map((x) => x.tag_key).filter((x): x is string => !!x);
-      const data = await attempt(() => (songs.length ? api.tagsAssign({ nd_song_ids: songs, add: [tag.id], remove: [] }) : api.tags()));
+      const data = await attempt(() => (songs.length ? api.tagsAssign({ tracks: songs, add: [tag.id], remove: [] }) : api.tags()));
       if (data) setTagsData(data);
       onMade(tag.id);
       toast(songs.length ? `Тег «${tag.name}» поставлен: ${tracksWord(songs.length)}` : `Тег «${tag.name}» создан — выделите треки и поставьте его кнопкой 🏷`, 'success');

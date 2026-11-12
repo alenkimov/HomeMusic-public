@@ -166,5 +166,5 @@ async def test_a_catalog_track_listened_to_becomes_a_track_and_counts_as_one(c):
     top = (await c.get("/api/stats", params={"period": "week", "limit": 5})).json()["tracks"]["items"]
     assert [(x["name"], x["plays"]) for x in top if x["name"] == "Новая песня"] == [("Новая песня", 1)]
     tag = (await c.post("/api/tags", json={"name": "Услышал"})).json()["id"]
-    r = await c.post("/api/tags/assign", json={"nd_song_ids": [f"t:{tracks['hm:777'].id}"], "add": [tag], "remove": []})
-    assert tag in r.json()["map"][f"t:{tracks['hm:777'].id}"]
+    r = await c.post("/api/tags/assign", json={"track_ids": [tracks["hm:777"].id], "add": [tag], "remove": []})
+    assert tag in r.json()["map"][str(tracks["hm:777"].id)]

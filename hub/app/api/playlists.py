@@ -31,8 +31,9 @@ from app.auth import current_user
 from app.db import get_session
 from app.jobs.queue import notify
 from app.library import songs as library_songs
-from app.models import Playlist, PlaylistCover, Track, TrackFile, User
+from app.models import Playlist, PlaylistCover, Track, User
 from app.playlists_mirror import MIX, drop_mirror, enqueue_mirror
+from app.tags import known_tracks
 
 router = APIRouter(prefix="/api/playlists", tags=["playlists"])
 log = logging.getLogger(__name__)
@@ -127,53 +128,27 @@ async def tracks_out(s: AsyncSession, user: User, rows: list[Track]) -> list[NdS
     return [drawn.get(t.nd_song_id) or (track_with_file(t) if t.path else track_without_file(t)) for t in rows]
 
 
-async def _tracks_of_songs(s: AsyncSession, songs: list[str]) -> dict[str, int]:
-    """What a page calls a track -> the track: the Navidrome song of its file, or — for a track with no file —
-    the Hub's own id, as "t:<id>" (`tags.key_of`)."""
-    from app.tags import TRACK_KEY
-
-    out: dict[str, int] = {}
-    own = {k: int(k[len(TRACK_KEY):]) for k in songs if k.startswith(TRACK_KEY) and k[len(TRACK_KEY):].isdigit()}
-    if own:
-        known = set((await s.execute(select(Track.id).where(Track.id.in_(list(own.values()))))).scalars())
-        out.update((k, tid) for k, tid in own.items() if tid in known)
-    songs = [k for k in songs if not k.startswith(TRACK_KEY)]
-    for k in range(0, len(songs), 500):
-        out.update((song, tid) for song, tid in (await s.execute(
-            select(TrackFile.nd_song_id, TrackFile.track_id).where(TrackFile.nd_song_id.in_(songs[k:k + 500])))).all())
-    return out
-
-
 @router.get("", response_model=list[PlaylistOut])
 async def list_playlists(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     return await _outs(s, await playlists.of_user(s, user.id, kinds=LISTED))
 
 
-@router.get("/of-song", response_model=list[PlaylistOfSongOut])
-async def of_song(nd_song_id: str, user: User = Depends(current_user),
-                  s: AsyncSession = Depends(get_session, scope="function")):
-    """The user's playlists for a song's «in playlists» menu: which of them have the song, the ones changed last
-    first."""
-    track = (await _tracks_of_songs(s, [nd_song_id])).get(nd_song_id)
+@router.get("/of-track", response_model=list[PlaylistOfSongOut])
+async def of_track(track_id: int, user: User = Depends(current_user),
+                   s: AsyncSession = Depends(get_session, scope="function")):
+    """The user's playlists for a track's «in playlists» window: which of them have the track, the ones changed
+    last first."""
     rows = await playlists.of_user(s, user.id)
-    has = await playlists.having(s, user.id, [track], kinds=(playlists.USER,)) if track is not None else {}
+    has = await playlists.having(s, user.id, [track_id], kinds=(playlists.USER,))
     return [PlaylistOfSongOut(**o.model_dump(), has=p.id in has) for p, o in zip(rows, await _outs(s, rows), strict=True)]
 
 
 @router.get("/members")
 async def members(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    """The tracks that are in some playlist of the user's — what the «+ / ✓» of a track row goes by — named as
-    tags name a track (`tags.key_of`): by the Navidrome song of its file, else by the Hub's id. «Микс дня» is not
-    counted: the Hub fills it, the user did not put the tracks there."""
-    from app.tags import key_of
-
+    """The tracks that are in some playlist of the user's — what the «+ / ✓» of a track row goes by. «Микс дня» is
+    not counted: the Hub fills it, the user did not put the tracks there."""
     _liked, listed = await playlists.kept(s, user.id)
-    ids = list(listed)
-    keys: set[str] = set()
-    for k in range(0, len(ids), 500):
-        keys.update(key_of(tid, song) for tid, song in (await s.execute(
-            select(Track.id, Track.nd_song_id).where(Track.id.in_(ids[k:k + 500])))).all())
-    return {"song_ids": sorted(keys)}
+    return {"track_ids": sorted(listed)}
 
 
 async def _set_membership(s: AsyncSession, user: User, track_ids: list[int], add: list[str], remove: list[str]) -> None:
@@ -192,39 +167,36 @@ async def _set_membership(s: AsyncSession, user: User, track_ids: list[int], add
 @router.post("/membership", response_model=list[PlaylistOfSongOut])
 async def membership(body: PlaylistMembershipIn, user: User = Depends(current_user),
                      s: AsyncSession = Depends(get_session, scope="function")):
-    """Put a song into some playlists and take it out of others, in one go (every place it has in a playlist it is
-    taken out of)."""
-    track = (await _tracks_of_songs(s, [body.nd_song_id])).get(body.nd_song_id)
-    if track is None:
-        raise HTTPException(404, "Этой песни нет в библиотеке")
-    await _set_membership(s, user, [track], body.add, body.remove)
-    return await of_song(body.nd_song_id, user, s)
+    """Put a track into some playlists and take it out of others, in one go (every place it has in a playlist it
+    is taken out of)."""
+    if not await known_tracks(s, [body.track_id]):
+        raise HTTPException(404, "Хаб не знает этот трек")
+    await _set_membership(s, user, [body.track_id], body.add, body.remove)
+    return await of_track(body.track_id, user, s)
 
 
-async def _of_songs(s: AsyncSession, user: User, song_ids: list[str]) -> list[PlaylistOfSongsOut]:
-    ids = await _tracks_of_songs(s, song_ids)
+async def _of_tracks(s: AsyncSession, user: User, track_ids: list[int]) -> list[PlaylistOfSongsOut]:
     rows = await playlists.of_user(s, user.id)
-    has = await playlists.having(s, user.id, list(ids.values()), kinds=(playlists.USER,))
+    has = await playlists.having(s, user.id, track_ids, kinds=(playlists.USER,))
     return [PlaylistOfSongsOut(**o.model_dump(), count=len(has.get(p.id, ())))
             for p, o in zip(rows, await _outs(s, rows), strict=True)]
 
 
-@router.post("/of-songs", response_model=list[PlaylistOfSongsOut])
-async def of_songs(body: PlaylistSongsIn, user: User = Depends(current_user),
-                   s: AsyncSession = Depends(get_session, scope="function")):
-    """The user's playlists for several picked songs: how many of them each has, the ones changed last first."""
-    return await _of_songs(s, user, list(dict.fromkeys(body.nd_song_ids)))
+@router.post("/of-tracks", response_model=list[PlaylistOfSongsOut])
+async def of_tracks(body: PlaylistSongsIn, user: User = Depends(current_user),
+                    s: AsyncSession = Depends(get_session, scope="function")):
+    """The user's playlists for several picked tracks: how many of them each has, the ones changed last first."""
+    return await _of_tracks(s, user, await known_tracks(s, body.track_ids))
 
 
 @router.post("/membership-many", response_model=list[PlaylistOfSongsOut])
 async def membership_many(body: PlaylistMembershipManyIn, user: User = Depends(current_user),
                           s: AsyncSession = Depends(get_session, scope="function")):
-    """Put several songs into some playlists (the ones each lacks, in the order given) and take them all out of
+    """Put several tracks into some playlists (the ones each lacks, in the order given) and take them all out of
     others."""
-    songs = list(dict.fromkeys(body.nd_song_ids))
-    ids = await _tracks_of_songs(s, songs)
-    await _set_membership(s, user, [ids[x] for x in songs if x in ids], body.add, body.remove)
-    return await _of_songs(s, user, songs)
+    ids = await known_tracks(s, body.track_ids)
+    await _set_membership(s, user, ids, body.add, body.remove)
+    return await _of_tracks(s, user, ids)
 
 
 @router.post("", response_model=PlaylistOut)
@@ -241,12 +213,9 @@ async def create_playlist(body: PlaylistCreateIn, user: User = Depends(current_u
 async def add(playlist_id: str, body: PlaylistAddIn, user: User = Depends(current_user),
               s: AsyncSession = Depends(get_session, scope="function")):
     p = await _own(s, user, playlist_id, change=True)
-    by_song = await _tracks_of_songs(s, list(body.song_ids))
-    known = set((await s.execute(select(Track.id).where(Track.id.in_(body.library_track_ids)))).scalars()) \
-        if body.library_track_ids else set()
-    ids = [by_song[x] for x in body.song_ids if x in by_song] + [i for i in body.library_track_ids if i in known]
+    ids = await known_tracks(s, body.track_ids)
     if not ids:
-        raise HTTPException(400, "Этих треков нет в библиотеке")
+        raise HTTPException(400, "Хаб не знает эти треки")
     added = await playlists.add(s, p, ids)
     await _changed(s, p)
     return {"ok": True, "added": len(added)}

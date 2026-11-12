@@ -115,11 +115,11 @@ const setSheet = (next: SheetState | null) => {
 };
 
 /** «Теги» of one track or of several picked ones. */
-/** What the Hub calls a track when asked about its tags: the Navidrome song of its file, else the Hub's own id of
- * the track — a track of a playlist that has no file yet is tagged like any other. Null: the Hub does not know the
- * track (a catalog track nobody kept). */
-export const tagKey = (t: { nd_song_id?: string | null; library_track_id?: number | null }): string | null =>
-  t.nd_song_id ?? (t.library_track_id ? `t:${t.library_track_id}` : null);
+/** What a page calls a track to the Hub's tags and playlists: the Hub's own id of the track (a string here: it is
+ * a key of maps and sets) — the same whether the track has a file or not. Null: the Hub does not know the track (a
+ * catalog track nobody kept). */
+export const tagKey = (t: { key?: string | null; library_track_id?: number | null }): string | null =>
+  t.key ?? (t.library_track_id != null ? String(t.library_track_id) : null);
 
 export const openTagsSheet = (songIds: string[], title: string) => songIds.length && setSheet({ songIds, title });
 /** The same window, to choose the tags files will get once they are imported. */

@@ -114,10 +114,11 @@ One release, built in passes that each leave the tests green:
 4. Imports and downloads on top of it. *(done: a download knows its track before there is a file and puts it into
    its playlists at once; a ♥ knows nothing of downloads — the song is starred in Navidrome when a scan finds its
    file)*
-5. The API and the web on `id`/`ref`. *(in part: the assistant works with the Hub's playlists; a page names a
-   track with no file by the Hub's id ("t:<id>"). Not done: a track that has a file is still named by its
-   Navidrome song in the web API — the player, the offline cache and the Android app's embedded pages are built
-   on that id)*
+5. The API and the web on `id`/`ref`. *(done for what the Hub owns: tags and playlists name a track by the Hub's
+   id, with a file or without, and so does the assistant's work with playlists. Not done: ♥, listening events and
+   dislikes are still told by the Navidrome song of the file or the catalog ref — the page's store of likes with
+   its offline queue, the player and the Android app's embedded pages are built on those names — and a file is
+   streamed by its Navidrome song)*
 6. What is left of 1.x deleted; the migrations of 1.x replaced by one that makes the 2.0 schema. *(done:
    `migrations/versions` holds the one baseline, made of the models; a database of 1.x is refused with a plain
    message)

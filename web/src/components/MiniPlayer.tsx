@@ -1,3 +1,4 @@
+import { tagKey } from '../lib/tags';
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { fmtDuration, providerLabel } from '../lib/format';
 import { downloadRef, hasNext, hasPrev, next, prev, seek, setVolume, stopListening, toggle, useListen } from '../lib/listen';
@@ -125,8 +126,8 @@ export function MiniPlayer() {
                 onChange={(e) => setVolume(Number(e.target.value) / 100)} />
             </div>
           )}
-          <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id }} className="w-9" inPlayer />
-          <SaveButton songId={info?.nd_song_id} refId={track.ref} title={track.title} data={{ ...track }} className="-mr-1" />
+          <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id, library_track_id: info?.track_id ?? track.library_track_id }} className="w-9" inPlayer />
+          <SaveButton songId={info?.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} className="-mr-1" />
           <button
             type="button"
             onClick={toggle}
