@@ -210,3 +210,29 @@
     --tabbar-h: 84px; /* a computer has the player bar (`DesktopPlayer`) where a phone has the tab bar */
   }
 }
+
+/* the player's light in motion (`pages/Player.tsx`, «Вид текста» → «Фон»): three soft copies of the cover drift */
+@keyframes hm-drift-a {
+  from {
+    transform: translate(0, 0) scale(1) rotate(0deg);
+  }
+  to {
+    transform: translate(18%, 22%) scale(1.25) rotate(40deg);
+  }
+}
+@keyframes hm-drift-b {
+  from {
+    transform: translate(0, 0) scale(1.15) rotate(0deg);
+  }
+  to {
+    transform: translate(-24%, 16%) scale(0.95) rotate(-55deg);
+  }
+}
+@keyframes hm-drift-c {
+  from {
+    transform: translate(0, 0) scale(1) rotate(0deg);
+  }
+  to {
+    transform: translate(14%, -26%) scale(1.3) rotate(30deg);
+  }
+}

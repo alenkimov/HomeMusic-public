@@ -2,6 +2,9 @@
 
 - `file`    — the text in the file's own tags, or an .lrc next to it: what the owner put there comes first;
 - `lrclib`  — LRCLIB, a free and open database (line-synced, some word-synced), no key;
+- `lrcred`  — lrc.red: word-synced texts found by the recording's ISRC, no key;
+- `lyricsplus` — LyricsPlus (a public instance of the open YouLy+ backend): word-synced texts by ISRC or by the
+  names; what it serves is gathered from music services, and the instance is somebody's own — it may go away;
 - `netease` — NetEase Cloud Music, strong on Asian music; its API is not an official one and may change;
 - `ovh`     — lyrics.ovh, plain text only: the last resort.
 
@@ -29,8 +32,10 @@ log = logging.getLogger(__name__)
 
 UA = "HomeMusicHub/0.1 (self-hosted music server; https://github.com/justman-1/HomeMusic-public)"
 DURATION_TOLERANCE_S = 3
-TITLES = {"file": "Теги файла", "lrclib": "LRCLIB", "netease": "NetEase", "ovh": "lyrics.ovh"}
-ORDER = ["file", "lrclib", "netease", "ovh"]
+TITLES = {"file": "Теги файла", "lrclib": "LRCLIB", "lrcred": "lrc.red", "lyricsplus": "LyricsPlus",
+          "netease": "NetEase", "ovh": "lyrics.ovh"}
+ORDER = ["file", "lrclib", "lrcred", "lyricsplus", "netease", "ovh"]
+ISRC_TOLERANCE_S = 5  # an ISRC names the recording: the length only guards against a wrong record
 
 
 @dataclass
@@ -40,6 +45,7 @@ class Query:
     album: str | None = None
     duration_s: int | None = None
     path: Path | None = None  # the file in the library
+    isrc: str | None = None  # the recording's code: a source that knows it needs no guessing by names
 
 
 @dataclass
@@ -152,6 +158,72 @@ async def from_lrclib(q: Query) -> Found | None:
         return best
 
 
+# --- lrc.red ------------------------------------------------------------------------------------------
+
+
+def _length_agrees(q: Query, seconds: Any, tolerance: int) -> bool:
+    return not (q.duration_s and isinstance(seconds, (int, float)) and seconds > 0
+                and abs(float(seconds) - q.duration_s) > tolerance)
+
+
+async def from_lrcred(q: Query) -> Found | None:
+    """lrc.red knows a text by the ISRC of the recording: no ISRC, nothing to ask."""
+    if not q.isrc:
+        return None
+    async with make_client(headers={"User-Agent": UA}, timeout=20) as c:
+        r = await c.get(f"https://lrc.red/s/{quote(q.isrc.upper(), safe='')}.json")
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        meta = r.json() or {}
+        if not _length_agrees(q, meta.get("duration"), ISRC_TOLERANCE_S):
+            return None
+        files = meta.get("files") or {}
+        if url := files.get("lyricsfile"):
+            r = await c.get(url)
+            if r.status_code == 200:
+                try:
+                    lines = parse.parse_lyricsfile(yaml.safe_load(r.text))
+                    if lines:
+                        return Found("lrcred", lines=lines)
+                except yaml.YAMLError:
+                    pass
+        if url := files.get("lrc"):
+            r = await c.get(url)
+            if r.status_code == 200 and (lines := parse.parse_lrc(r.text)):
+                return Found("lrcred", lines=lines)
+    return None
+
+
+# --- LyricsPlus ---------------------------------------------------------------------------------------
+
+LYRICSPLUS_URL = "https://lyricsplus.prjktla.my.id/v2/lyrics/get"
+
+
+async def from_lyricsplus(q: Query) -> Found | None:
+    """By the ISRC where there is one; else by the names and the length, which the service matches itself — then
+    its text is taken only if its length agrees with the track's."""
+    params: dict[str, Any] = {"isrc": q.isrc.upper()} if q.isrc else {"title": q.title, "artist": q.artist}
+    if not q.isrc:
+        if not q.duration_s:
+            return None  # names alone, with no length to check the answer by, are a guess
+        params["duration"] = q.duration_s
+        if q.album:
+            params["album"] = q.album
+    async with make_client(headers={"User-Agent": UA}, timeout=25) as c:
+        r = await c.get(LYRICSPLUS_URL, params=params)
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    d = r.json() or {}
+    total = ((d.get("metadata") or {}).get("totalDuration"))
+    seconds = total / 1000 if isinstance(total, (int, float)) and total > 3600 else total  # it gives ms
+    if not _length_agrees(q, seconds, ISRC_TOLERANCE_S if q.isrc else DURATION_TOLERANCE_S):
+        return None
+    lines = parse.parse_lyricsplus(d.get("lyrics"))
+    return Found("lyricsplus", lines=lines) if lines else None
+
+
 # --- NetEase ------------------------------------------------------------------------------------------
 
 NETEASE_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -218,7 +290,8 @@ async def from_ovh(q: Query) -> Found | None:
 
 
 PROVIDERS: dict[str, Callable[[Query], Awaitable[Found | None]]] = {
-    "file": from_file, "lrclib": from_lrclib, "netease": from_netease, "ovh": from_ovh,
+    "file": from_file, "lrclib": from_lrclib, "lrcred": from_lrcred, "lyricsplus": from_lyricsplus,
+    "netease": from_netease, "ovh": from_ovh,
 }
 
 

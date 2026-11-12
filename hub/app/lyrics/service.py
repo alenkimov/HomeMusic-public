@@ -76,7 +76,7 @@ def enabled(settings: dict[str, Any]) -> list[str]:
 def query_of(track: Track, album: str | None = None) -> Query:
     main = track.artist.split(",")[0].strip() or track.artist
     return Query(artist=main, title=track.title, album=album, duration_s=track.duration_s,
-                 path=get_settings().library_dir / track.path if track.path else None)
+                 path=get_settings().library_dir / track.path if track.path else None, isrc=track.isrc)
 
 
 async def track_of(s: AsyncSession, *, nd_song_id: str | None = None, ref: str | None = None) -> Track | None:
@@ -94,20 +94,29 @@ async def track_of(s: AsyncSession, *, nd_song_id: str | None = None, ref: str |
 
 
 async def find(q: Query, sources: list[str]) -> Found | None:
-    """The first source that has the text. A plain text is kept as a fallback while a later source may have a timed
-    one: timings are what the player is for."""
-    plain: Found | None = None
+    """The best text the sources have. The kind matters more than the source: a text timed by the word beats one
+    timed by the line, and that beats a plain one — timings are what the player is for. Of two of a kind the
+    earlier source wins. So the sources are asked in order until one has the words timed; what the earlier ones
+    gave is kept to fall back on."""
+    best: Found | None = None
     instrumental = False
     for source in sources:
+        if best is not None and RANK[AT_BEST.get(source, "word")] <= RANK[best.kind]:
+            continue  # it has nothing better than what is in hand: not asked
         found = await ask(source, q)
         if found is None or found.kind == "none":
             instrumental = instrumental or bool(found and found.instrumental)
             continue
-        if found.lines or source == "file":  # the owner's own text is taken as it is
+        if source == "file" or found.kind == "word":  # the owner's own text is taken as it is; nothing beats words
             return found
-        plain = plain or found
+        if best is None or RANK[found.kind] > RANK[best.kind]:
+            best = found
     # no text anywhere, and a source says there are no words: kept as that (the «без слов» tag, app/tags.py)
-    return plain or (Found(INSTRUMENTAL, instrumental=True) if instrumental else None)
+    return best or (Found(INSTRUMENTAL, instrumental=True) if instrumental else None)
+
+
+RANK = {"plain": 1, "synced": 2, "word": 3}
+AT_BEST = {"ovh": "plain"}  # the best kind of text a source ever has, where that is not «timed by the word»
 
 
 INSTRUMENTAL = "instrumental"  # `Lyrics.source` of a track a source called an instrumental

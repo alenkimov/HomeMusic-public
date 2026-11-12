@@ -28,6 +28,16 @@ export interface LyricsOut {
   plain?: string | null;
   offset_ms: number;
   pinned: boolean;
+  /** how the text is read, for a Japanese, Chinese or Korean one */
+  reading?: LyricsReading | null;
+}
+
+export interface LyricsReading {
+  lang: string;
+  /** Latin letters, line for line with the lyrics ("" where there is nothing to read) */
+  lines: string[];
+  /** Japanese: each line cut into pieces [text, its kana or null] — the kana goes over the kanji */
+  ruby?: [string, string | null][][];
 }
 
 export interface LyricsCandidate {
@@ -58,6 +68,73 @@ export function activeLine(lines: readonly LyricsLine[], ms: number): number {
   }
   return at;
 }
+
+/** Where the singing stops for a while (an intro, a solo): shown as a countdown instead of a line that hangs lit.
+ * A line with no end of its own is taken to last as long as its words would take to sing. */
+export const BREAK_MS = 7000;
+
+export function breakAt(lines: readonly LyricsLine[], at: number, ms: number): { left: number } | null {
+  const next = lines[at + 1];
+  if (!next) return null;
+  if (at < 0) return next.t >= BREAK_MS && ms < next.t ? { left: next.t - ms } : null;
+  const line = lines[at];
+  const sung = line.end ?? line.t + Math.min(6000, 1500 + line.text.length * 120);
+  return next.t - sung >= BREAK_MS && ms >= sung ? { left: next.t - ms } : null;
+}
+
+// --- the look of the text -------------------------------------------------------------------------------
+
+/** How this listener wants the text to look (kept in the browser). Things to try on and take off: each is a
+ * switch, off until switched on. */
+export interface LyricsLook {
+  /** Latin letters under a line of a Japanese, Chinese or Korean text */
+  reading: boolean;
+  /** kana over the kanji of a Japanese text */
+  furigana: boolean;
+  /** the lines away from the one that is sung are blurred */
+  blur: boolean;
+  /** the page's light: the cover blurred and still ("cover"), or its colours drifting ("drift") */
+  background: 'cover' | 'drift';
+  /** the text takes the whole screen, which stays awake */
+  fullscreen: boolean;
+}
+
+const LOOK_KEY = 'hm-lyrics-look';
+const LOOK_DEFAULT: LyricsLook = { reading: false, furigana: false, blur: false, background: 'cover', fullscreen: false };
+
+function loadLook(): LyricsLook {
+  try {
+    const v = JSON.parse(localStorage.getItem(LOOK_KEY) ?? '{}') as Partial<LyricsLook>;
+    return { reading: v.reading === true, furigana: v.furigana === true, blur: v.blur === true,
+      background: v.background === 'drift' ? 'drift' : 'cover', fullscreen: false };
+  } catch {
+    return LOOK_DEFAULT;
+  }
+}
+
+let look = loadLook();
+const lookSubs = new Set<() => void>();
+
+export function setLyricsLook(next: Partial<LyricsLook>) {
+  look = { ...look, ...next };
+  try {
+    // the whole screen is asked for by a tap, each time: a page cannot take it by itself when it opens
+    localStorage.setItem(LOOK_KEY, JSON.stringify({ ...look, fullscreen: false }));
+  } catch {
+    /* storage unavailable: the choice lives until the page is closed */
+  }
+  lookSubs.forEach((f) => f());
+}
+
+export const useLyricsLook = (): LyricsLook =>
+  useSyncExternalStore(
+    (cb) => {
+      lookSubs.add(cb);
+      return () => void lookSubs.delete(cb);
+    },
+    () => look,
+    () => LOOK_DEFAULT,
+  );
 
 // --- translation ----------------------------------------------------------------------------------------
 

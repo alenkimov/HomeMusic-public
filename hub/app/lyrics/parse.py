@@ -106,6 +106,28 @@ def parse_lyricsfile(doc: Any) -> list[Line]:
     return out
 
 
+def parse_lyricsplus(rows: Any) -> list[Line]:
+    """LyricsPlus: lines `{time, duration, text, syllabus: [{time, duration, text}]}`, in ms."""
+    out: list[Line] = []
+    for ln in rows or []:
+        if not isinstance(ln, dict) or not isinstance(ln.get("time"), (int, float)):
+            continue
+        text = str(ln.get("text") or "").strip()
+        if not text:
+            continue
+        line: Line = {"t": int(ln["time"]), "text": text}
+        if isinstance(ln.get("duration"), (int, float)):
+            line["end"] = int(ln["time"] + ln["duration"])
+        words = [{"t": int(w["time"]), "text": str(w.get("text") or "")}
+                 for w in ln.get("syllabus") or []
+                 if isinstance(w, dict) and isinstance(w.get("time"), (int, float)) and w.get("text")]
+        if len(words) > 1:
+            line["words"] = words
+        out.append(line)
+    out.sort(key=lambda x: x["t"])
+    return out
+
+
 def kind_of(lines: list[Line] | None, plain: str | None) -> str:
     if lines:
         return "word" if any(ln.get("words") for ln in lines) else "synced"

@@ -27,6 +27,9 @@ class LyricsOut(BaseModel):
     plain: str | None = None
     offset_ms: int = 0
     pinned: bool = False
+    # how the text is read (app/lyrics/reading.py), for a Japanese, Chinese or Korean one: `{"lang", "lines":
+    # [Latin letters, line for line with `lines` or with the lines of `plain`], "ruby"?: [[[piece, kana or null]…]…]}`
+    reading: dict[str, Any] | None = None
 
 
 class CandidateOut(BaseModel):
@@ -72,8 +75,12 @@ class SettingsOut(BaseModel):
 
 
 def _out(row: Lyrics) -> LyricsOut:
+    from app.lyrics import reading, translate, translations
+
+    text = translations.source_lines(row)
     return LyricsOut(track_id=row.track_id, kind=row.kind, source=row.source, source_title=TITLES.get(row.source or ""),
-                     lines=row.lines_json, plain=row.plain, offset_ms=row.offset_ms, pinned=row.pinned)
+                     lines=row.lines_json, plain=row.plain, offset_ms=row.offset_ms, pinned=row.pinned,
+                     reading=reading.of(text, translate.detect("\n".join(text))) if text else None)
 
 
 async def _own(s: AsyncSession, track_id: int) -> Track:

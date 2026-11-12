@@ -25,6 +25,8 @@ dependencies = [
     "openai==3.35.1",
     "sse-starlette>=2.2.1",
     "unidecode>=1.4.0",
+    "pykakasi>=2.3.0",
+    "pypinyin>=0.55.0",
     "aiogram>=3.13,<4",
 ]
 

@@ -227,8 +227,12 @@ async def llm(lines: list[str], target: str, *, artist: str = "", title: str = "
     try:
         async with LLMClient() as client:
             extra = {"reasoning_effort": "none"} if is_local(client.base_url) else None
-            for start in range(0, len(lines), LLM_BATCH):
-                batch = lines[start:start + LLM_BATCH]
+            async def ask(start: int, count: int) -> list[str]:
+                """`count` lines from `start`, translated. An answer that is not line for line with them — a
+                wrong number of lines, a line left empty — is asked for once more; still wrong, the lines are
+                halved and each half asked for on its own, down to a single line: one stubborn line does not
+                cost the whole song its translation."""
+                batch = lines[start:start + count]
                 before = "\n".join(lines[max(0, start - 4):start])
                 user = (f"Song: {artist} — {title}\n"
                         + (f"The lines just before these (for context only, do not translate them):\n{before}\n\n" if before else "")
@@ -242,11 +246,18 @@ async def llm(lines: list[str], target: str, *, artist: str = "", title: str = "
                         messages=[{"role": "system", "content": SYSTEM.format(language=language)},
                                   {"role": "user", "content": user}])
                     got = (extract_json_object(resp.choices[0].message.content or "") or {}).get("lines")
-                    if _same_shape(got, len(batch)):
-                        break
-                if not _same_shape(got, len(batch)):
+                    if _same_shape(got, len(batch)) and all(x.strip() for x in got):
+                        return [re.sub(r"^\d+\.\s*", "", x).strip() for x in got]
+                if count == 1:
+                    if _same_shape(got, 1):
+                        return [re.sub(r"^\d+\.\s*", "", got[0]).strip() or batch[0]]  # a sound the model left alone
                     raise TranslateError("ИИ вернул не столько строк, сколько в тексте")
-                out.extend(re.sub(r"^\d+\.\s*", "", x).strip() for x in got)
+                half = count // 2
+                log.info("lyrics: the model miscounted %d lines, asking for them in halves", count)
+                return await ask(start, half) + await ask(start + half, count - half)
+
+            for start in range(0, len(lines), LLM_BATCH):
+                out.extend(await ask(start, min(LLM_BATCH, len(lines) - start)))
     except openai.APITimeoutError as e:
         raise TranslateError("ИИ не ответил вовремя") from e
     except openai.APIConnectionError as e:

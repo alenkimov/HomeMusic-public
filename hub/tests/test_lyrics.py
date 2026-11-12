@@ -103,7 +103,8 @@ async def test_sources_in_order_then_the_database(env):
                    ovh=Found("ovh", plain="просто текст"))
     r = (await c.get("/api/lyrics", params={"nd_song_id": "nd1"})).json()
     assert (r["track_id"], r["kind"], r["source"], r["source_title"]) == (track_id, "synced", "netease", "NetEase")
-    assert r["lines"] == [{"t": 1000, "text": "строка"}] and calls == ["file", "lrclib", "netease"]
+    # the sources that may have the words timed are still asked; one that only has plain texts no longer is
+    assert r["lines"] == [{"t": 1000, "text": "строка"}] and calls == ["file", "lrclib", "lrcred", "lyricsplus", "netease"]
 
     calls.clear()
     assert (await c.get("/api/lyrics", params={"nd_song_id": "nd1"})).json()["kind"] == "synced"
@@ -127,7 +128,7 @@ async def test_not_found_is_remembered_and_a_choice_is_kept(env):
     c, calls, answers = env["client"], env["calls"], env["answers"]
     track_id = await add_track()
     r = (await c.get("/api/lyrics", params={"nd_song_id": "nd1"})).json()
-    assert r["kind"] == "none" and len(calls) == 4
+    assert r["kind"] == "none" and len(calls) == 6
     calls.clear()
     assert (await c.get("/api/lyrics", params={"nd_song_id": "nd1"})).json()["kind"] == "none" and calls == []
 
@@ -136,7 +137,7 @@ async def test_not_found_is_remembered_and_a_choice_is_kept(env):
     assert [(x["source"], x["kind"], x["preview"]) for x in found] == [("lrclib", "synced", "a"), ("ovh", "plain", "b\nc")]
 
     # «Другой вариант» asks each source on its own: what it has, or that it failed, and how long it took
-    assert [x["id"] for x in (await c.get("/api/lyrics/sources")).json()] == ["file", "lrclib", "netease", "ovh"]
+    assert [x["id"] for x in (await c.get("/api/lyrics/sources")).json()] == ["file", "lrclib", "lrcred", "lyricsplus", "netease", "ovh"]
     r = (await c.get("/api/lyrics/probe", params={"track_id": track_id, "source": "ovh"})).json()
     assert (r["status"], r["kind"], r["preview"], r["source_title"]) == ("found", "plain", "b\nc", "lyrics.ovh") and r["seconds"] >= 0
     assert (await c.get("/api/lyrics/probe", params={"track_id": track_id, "source": "netease"})).json()["status"] == "none"
@@ -166,12 +167,12 @@ async def test_settings_order_and_the_background_scan(env):
     await add_track("nd1")
     await add_track("nd2")
     r = (await c.get("/api/lyrics/settings")).json()
-    assert [x["id"] for x in r["sources"]] == ["file", "lrclib", "netease", "ovh"] and r["on_add"] and r["retry_days"] == 7
+    assert [x["id"] for x in r["sources"]] == ["file", "lrclib", "lrcred", "lyricsplus", "netease", "ovh"] and r["on_add"] and r["retry_days"] == 7
     assert r["stats"] == {"total": 2, "word": 0, "synced": 0, "plain": 0, "none": 0, "unchecked": 2}
 
     r = (await c.put("/api/lyrics/settings", json={"sources": [{"id": "ovh", "on": True}, {"id": "lrclib", "on": False},
                                                               {"id": "bogus", "on": True}], "retry_days": 30, "on_add": False})).json()
-    assert [(x["id"], x["on"]) for x in r["sources"]] == [("ovh", True), ("lrclib", False), ("file", True), ("netease", True)]
+    assert [(x["id"], x["on"]) for x in r["sources"]] == [("ovh", True), ("lrclib", False), ("file", True), ("lrcred", True), ("lyricsplus", True), ("netease", True)]
     assert r["retry_days"] == 30 and r["on_add"] is False
 
     answers["ovh"] = Found("ovh", plain="text")
@@ -396,3 +397,132 @@ async def test_own_tags_are_renamed_merged_deleted_and_selections_follow(env):
     assert (r["name"], r["scope"], r["filter"]) == ("Спокойное", "library", {"untagged": "no"})
     assert (await c.delete(f"/api/tags/selections/{sel['id']}")).json() == {"ok": True}
     assert (await c.get("/api/tags/selections/all")).json() == []
+
+
+async def test_the_kind_of_a_text_matters_more_than_its_source(env):
+    """A text timed by the word, from a later source, beats one timed by the line from an earlier one; of two of
+    a kind the earlier source wins."""
+    from app.lyrics.providers import Found
+
+    c, calls, answers = env["client"], env["calls"], env["answers"]
+    await add_track()
+    answers.update(lrclib=Found("lrclib", lines=[{"t": 0, "text": "по строкам"}]),
+                   lrcred=Found("lrcred", lines=[{"t": 0, "text": "тоже по строкам"}]),
+                   lyricsplus=Found("lyricsplus", lines=[{"t": 0, "text": "по словам", "words": [{"t": 0, "text": "по "}, {"t": 300, "text": "словам"}]}]),
+                   netease=Found("netease", lines=[{"t": 0, "text": "не спросят"}]))
+    r = (await c.get("/api/lyrics", params={"nd_song_id": "nd1"})).json()
+    assert (r["kind"], r["source"], r["source_title"]) == ("word", "lyricsplus", "LyricsPlus")
+    assert calls == ["file", "lrclib", "lrcred", "lyricsplus"]  # words in hand: nobody else is asked
+
+    answers.pop("lyricsplus")
+    answers.pop("netease")
+    r = (await c.post("/api/lyrics/reset", json={"track_id": r["track_id"]})).json()
+    assert (r["kind"], r["source"]) == ("synced", "lrclib")  # of two texts timed by the line, the earlier source's
+
+
+def test_lyricsplus_lines():
+    from app.lyrics import parse
+
+    lines = parse.parse_lyricsplus([
+        {"time": 2000, "duration": 1500, "text": "second line", "syllabus": [{"time": 2000, "duration": 700, "text": "second "},
+                                                                         {"time": 2700, "duration": 800, "text": "line"}]},
+        {"time": 0, "duration": 900, "text": "first", "syllabus": [{"time": 0, "duration": 900, "text": "first"}]},
+        {"time": 5000, "duration": 10, "text": "  "}, {"text": "no time"}, "junk"])
+    assert lines == [{"t": 0, "end": 900, "text": "first"},
+                     {"t": 2000, "end": 3500, "text": "second line", "words": [{"t": 2000, "text": "second "}, {"t": 2700, "text": "line"}]}]
+    assert parse.kind_of(lines, None) == "word"
+
+
+async def test_sources_that_know_a_recording_by_its_isrc():
+    from app.lyrics import providers
+    from app.lyrics.providers import Query
+
+    q = Query(artist="Queen", title="Bohemian Rhapsody", duration_s=355, isrc="gbum71029604")
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get("https://lrc.red/s/GBUM71029604.json").mock(return_value=httpx.Response(200, json={
+            "duration": 356.5, "files": {"lyricsfile": "https://lrc.red/s/GBUM71029604.lyricsfile.yaml"}}))
+        mock.get("https://lrc.red/s/GBUM71029604.lyricsfile.yaml").mock(return_value=httpx.Response(200, text=(
+            "lines:\n  - text: Is this the real life?\n    start_ms: 0\n    end_ms: 2906\n    words:\n"
+            "      - {text: 'Is ', start_ms: 0, end_ms: 458}\n      - {text: 'this', start_ms: 458, end_ms: 806}\n")))
+        found = await providers.from_lrcred(q)
+        assert found is not None and found.kind == "word" and found.lines[0]["words"][1] == {"t": 458, "text": "this"}
+        # no ISRC: nothing to ask; a record of another length is not this recording
+        assert await providers.from_lrcred(Query(artist="Queen", title="Bohemian Rhapsody", duration_s=355)) is None
+        assert await providers.from_lrcred(Query(artist="Queen", title="x", duration_s=200, isrc="GBUM71029604")) is None
+
+        route = mock.get(providers.LYRICSPLUS_URL).mock(return_value=httpx.Response(200, json={
+            "metadata": {"totalDuration": 356520},
+            "lyrics": [{"time": 0, "duration": 2906, "text": "Is this the real life?",
+                        "syllabus": [{"time": 0, "duration": 458, "text": "Is "}, {"time": 458, "duration": 348, "text": "this "}]}]}))
+        found = await providers.from_lyricsplus(q)
+        assert found is not None and (found.source, found.kind) == ("lyricsplus", "word")
+        assert dict(route.calls.last.request.url.params) == {"isrc": "GBUM71029604"}
+        # by the names it asks with the length, and with none it does not guess
+        await providers.from_lyricsplus(Query(artist="Queen", title="Bohemian Rhapsody", duration_s=355))
+        assert dict(route.calls.last.request.url.params) == {"title": "Bohemian Rhapsody", "artist": "Queen", "duration": "355"}
+        assert await providers.from_lyricsplus(Query(artist="Queen", title="Bohemian Rhapsody")) is None
+        mock.get(providers.LYRICSPLUS_URL).mock(return_value=httpx.Response(404, json={"error": {}}))
+        assert await providers.from_lyricsplus(q) is None
+
+
+def test_how_a_text_is_read():
+    from app.lyrics import reading
+
+    ja = reading.of(["名前を呼ぶよ", "Hello 世界", ""], "ja")
+    assert ja["lines"] == ["namae wo yobu yo", "Hello sekai", ""]
+    assert ja["ruby"][0] == [["名前", "なまえ"], ["を", None], ["呼ぶ", "よぶ"], ["よ", None]] and ja["ruby"][2] == []
+    assert reading.of(["月亮代表我的心 forever"], "zh")["lines"] == ["yuè liàng dài biǎo wǒ de xīn forever"]
+    # Korean: a consonant is carried over to a following vowel; two ㄹ in a row are «ll»
+    assert reading.of(["사랑해요", "한국어를 읽어요", "빨리 달려"], "ko")["lines"] == ["saranghaeyo", "hangugeoreul ilgeoyo", "ppalli dallyeo"]
+    assert reading.of(["plain english"], "en") is None and reading.of(["", " "], "ja") is None
+
+
+async def test_a_text_comes_with_its_reading(env):
+    from app.lyrics.providers import Found
+
+    c, answers = env["client"], env["answers"]
+    await add_track()
+    answers["lrclib"] = Found("lrclib", lines=[{"t": 0, "text": "名前を呼ぶよ"}, {"t": 4000, "text": "世界"}])
+    r = (await c.get("/api/lyrics", params={"nd_song_id": "nd1"})).json()
+    assert r["reading"]["lang"] == "ja" and r["reading"]["lines"] == ["namae wo yobu yo", "sekai"]
+    assert r["reading"]["ruby"][1] == [["世界", "せかい"]]
+    answers["lrclib"] = Found("lrclib", lines=[{"t": 0, "text": "just english"}])
+    r = (await c.post("/api/lyrics/reset", json={"track_id": r["track_id"]})).json()
+    assert r["reading"] is None
+
+
+async def test_a_model_that_miscounts_is_asked_for_the_lines_in_halves(monkeypatch):
+    """One stubborn line does not cost the whole song its translation."""
+    import json
+    from types import SimpleNamespace
+
+    from app.ai import llm as llm_mod
+    from app.lyrics import translate
+
+    asked: list[int] = []
+
+    class Completions:
+        async def create(self, **kw):
+            text = kw["messages"][1]["content"]
+            lines = [x.split(". ", 1)[1] for x in text.split("lines:\n", 1)[1].splitlines()]
+            asked.append(len(lines))
+            out = [f"<{x}>" for x in lines]
+            if len(lines) > 2 and "bad" in lines:
+                out = out[:-1]  # a line is lost whenever «bad» is among more than two
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"lines": out})))])
+
+    class Client:
+        base_url, model = "https://openrouter.ai/api/v1", "m"
+        _client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+    monkeypatch.setattr(llm_mod, "LLMClient", Client)
+    monkeypatch.setattr(llm_mod, "configured", lambda: True)
+    got = await translate.llm(["a", "b", "bad", "d", "e", "f", "g", "h"], "ru")
+    assert got == ["<a>", "<b>", "<bad>", "<d>", "<e>", "<f>", "<g>", "<h>"]
+    assert asked[:2] == [8, 8] and 2 in asked  # asked twice whole, then in halves down to where it counts right

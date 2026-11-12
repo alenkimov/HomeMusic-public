@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, errorMessage } from '../api/client';
 import { seek, useListen } from '../lib/listen';
-import { KIND_LABEL, activeLine, setTranslatePrefs, useTranslatePrefs, type LyricsLine, type LyricsOut, type LyricsTranslation, type LyricsTranslators, type TranslatePrefs } from '../lib/lyrics';
+import { KIND_LABEL, activeLine, breakAt, setLyricsLook, setTranslatePrefs, useLyricsLook, useTranslatePrefs, type LyricsLine, type LyricsLook, type LyricsOut, type LyricsReading, type LyricsTranslation, type LyricsTranslators, type TranslatePrefs } from '../lib/lyrics';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 import { Icon } from './Icon';
 import { Button, Checkbox, IconButton, Loading, Sheet, Spinner, cx } from './ui';
@@ -26,6 +26,9 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
   const [trError, setTrError] = useState<string | null>(null);
   const [forced, setForced] = useState<number | null>(null); // «translate anyway» of this track
   const [trOpen, setTrOpen] = useState(false);
+  const look = useLyricsLook();
+  const [lookOpen, setLookOpen] = useState(false);
+  const [holding, setHolding] = useState(false); // the listener is scrolling the text themselves
   const [, setTick] = useState(0);
   const position = useListen((s) => s.position);
   const playing = useListen((s) => s.phase === 'playing');
@@ -33,7 +36,16 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
   const clock = useRef({ pos: 0, at: 0 });
   const box = useRef<HTMLDivElement>(null);
   const held = useRef(0);
+  const holdTimer = useRef<number | undefined>(undefined);
   const saver = useRef<number | undefined>(undefined);
+  // the text stays where the listener scrolled it for a while, sharp (no blur), then follows the song again
+  const hold = () => {
+    held.current = performance.now() + HOLD_MS;
+    setHolding(true);
+    window.clearTimeout(holdTimer.current);
+    holdTimer.current = window.setTimeout(() => setHolding(false), HOLD_MS);
+  };
+  useEffect(() => () => window.clearTimeout(holdTimer.current), []);
 
   useEffect(() => {
     let alive = true;
@@ -74,6 +86,10 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
   const lines = useMemo<LyricsLine[]>(() => data?.lines ?? [], [data]);
   const offset = data?.offset_ms ?? 0;
   const at = timed ? activeLine(lines, ms - offset) : -1;
+  const pause = timed ? breakAt(lines, at, ms - offset) : null;
+  const reading = data?.reading ?? null;
+  const latin = look.reading ? reading?.lines : undefined;
+  const ruby = look.furigana ? reading?.ruby : undefined;
 
   useEffect(() => {
     if (at < 0 || performance.now() < held.current) return;
@@ -164,11 +180,15 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
           {trSince !== null ? `Перевожу… ${Math.round((performance.now() - trSince) / 1000)} с` : trError ? 'Перевод не удался' : prefs.on ? `Перевод: ${prefs.lang.toUpperCase()}` : 'Перевод'}
         </button>
       )}
+      {data.kind !== 'none' && (
+        <IconButton icon="sliders" size={16} label="Вид текста" onClick={() => setLookOpen(true)} className="!h-8 !w-8 text-muted hover:text-fg" />
+      )}
       <button type="button" onClick={() => setPicking(true)} className="rounded-full px-3 py-1.5 hover:bg-fg/10 hover:text-fg">
         Другой вариант
       </button>
     </div>
   );
+  const far = (i: number) => (look.blur && !holding && at >= 0 && i !== at ? { filter: `blur(${Math.min(3, Math.abs(i - at)) * 1.1}px)` } : undefined);
 
   return (
     <div className="flex h-full flex-col">
@@ -181,36 +201,54 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
       ) : (
         <div
           ref={box}
-          onWheel={() => (held.current = performance.now() + HOLD_MS)}
-          onTouchMove={() => (held.current = performance.now() + HOLD_MS)}
+          onWheel={hold}
+          onTouchMove={hold}
           className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-1 py-[20%] [mask-image:linear-gradient(transparent,black_18%,black_82%,transparent)]"
         >
           {timed ? (
-            lines.map((ln, i) => (
-              <button
-                key={i}
-                type="button"
-                data-line={i}
-                onClick={() => {
-                  held.current = 0;
-                  seek(Math.max(0, (ln.t + offset) / 1000));
-                }}
-                className={cx(
-                  'block w-full origin-left rounded-lg px-3 py-1.5 text-left text-2xl font-bold leading-snug transition-[color,opacity,transform] duration-300 hover:bg-fg/5',
-                  i === at ? 'scale-100 text-fg' : 'scale-[0.97] text-fg/40 hover:text-fg/70',
-                )}
-              >
-                {replace && tl?.[i] ? tl[i] : i === at && ln.words ? <Words line={ln} ms={ms - offset} /> : ln.text || '♪'}
-                {!replace && tl?.[i] && <span className="mt-0.5 block text-base font-semibold leading-snug text-fg/60">{tl[i]}</span>}
-              </button>
-            ))
+            <>
+              {pause && at < 0 && <Break left={pause.left} />}
+              {lines.map((ln, i) => (
+                <div key={i}>
+                  <button
+                    type="button"
+                    data-line={i}
+                    onClick={() => {
+                      held.current = 0;
+                      setHolding(false);
+                      seek(Math.max(0, (ln.t + offset) / 1000));
+                    }}
+                    style={far(i)}
+                    className={cx(
+                      'block w-full origin-left rounded-lg px-3 py-1.5 text-left text-2xl font-bold leading-snug transition-[color,opacity,transform] duration-300 hover:bg-fg/5',
+                      i === at && !pause ? 'scale-100 text-fg' : 'scale-[0.97] text-fg/40 hover:text-fg/70',
+                    )}
+                  >
+                    {replace && tl?.[i] ? tl[i] : i === at && ln.words && !pause ? <Words line={ln} ms={ms - offset} /> : ruby?.[i]?.length ? <Ruby pieces={ruby[i]} /> : ln.text || '♪'}
+                    {latin?.[i] && <span className="mt-0.5 block text-sm font-medium leading-snug tracking-wide text-fg/55">{latin[i]}</span>}
+                    {!replace && tl?.[i] && <span className="mt-0.5 block text-base font-semibold leading-snug text-fg/60">{tl[i]}</span>}
+                  </button>
+                  {pause && i === at && <Break left={pause.left} />}
+                </div>
+              ))}
+            </>
           ) : (
             tl ? (
               <div className="px-3 text-lg leading-relaxed text-fg/85">
                 {(data.plain ?? '').split('\n').map((line, i) => (
                   <p key={i} className="min-h-[1.2em] pb-1">
-                    {replace && tl[i] ? tl[i] : line}
+                    {replace && tl[i] ? tl[i] : ruby?.[i]?.length ? <Ruby pieces={ruby[i]} /> : line}
+                    {latin?.[i] && <span className="block text-sm leading-snug tracking-wide text-muted">{latin[i]}</span>}
                     {!replace && tl[i] && <span className="block text-base leading-snug text-muted">{tl[i]}</span>}
+                  </p>
+                ))}
+              </div>
+            ) : latin || ruby ? (
+              <div className="px-3 text-lg leading-relaxed text-fg/85">
+                {(data.plain ?? '').split('\n').map((line, i) => (
+                  <p key={i} className="min-h-[1.2em] pb-1">
+                    {ruby?.[i]?.length ? <Ruby pieces={ruby[i]} /> : line}
+                    {latin?.[i] && <span className="block text-sm leading-snug tracking-wide text-muted">{latin[i]}</span>}
                   </p>
                 ))}
               </div>
@@ -237,6 +275,7 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
           onClose={() => setTrOpen(false)}
         />
       )}
+      {lookOpen && <LookSheet look={look} reading={reading} timed={timed} onClose={() => setLookOpen(false)} />}
       {picking && data.track_id !== null && (
         <Variants
           trackId={data.track_id}
@@ -271,6 +310,95 @@ function Words({ line, ms }: { line: LyricsLine; ms: number }) {
         </span>
       ))}
     </>
+  );
+}
+
+/** A break in the singing: how long until the next line. */
+function Break({ left }: { left: number }) {
+  return (
+    <div className="flex items-center gap-3 px-3 py-2 text-fg/70" aria-label="Проигрыш">
+      <span className="flex gap-1.5" aria-hidden="true">
+        {[0, 1, 2].map((i) => (
+          <span key={i} className="h-2 w-2 animate-pulse rounded-full bg-current" style={{ animationDelay: `${i * 220}ms` }} />
+        ))}
+      </span>
+      <span className="text-sm tabular-nums">{Math.max(1, Math.ceil(left / 1000))} с</span>
+    </div>
+  );
+}
+
+/** A Japanese line with the kana over its kanji. */
+function Ruby({ pieces }: { pieces: [string, string | null][] }) {
+  return (
+    <>
+      {pieces.map(([text, kana], i) =>
+        kana ? (
+          <ruby key={i}>
+            {text}
+            <rt className="text-[0.45em] font-medium tracking-tight opacity-80">{kana}</rt>
+          </ruby>
+        ) : (
+          <span key={i}>{text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+const READING_NAME: Record<string, string> = { ja: 'японский', zh: 'китайский', ko: 'корейский' };
+
+/** «Вид текста»: things to try on and take off — how the text is read, the blur of the lines that are not sung, the
+ * page's light, the whole screen. Kept in the browser; each is off until switched on. */
+function LookSheet({ look, reading, timed, onClose }: { look: LyricsLook; reading: LyricsReading | null; timed: boolean; onClose: () => void }) {
+  const row = 'flex items-center justify-between gap-3 py-2 text-sm';
+  const hint = 'block text-xs text-muted';
+  const canFull = typeof document !== 'undefined' && !!document.documentElement.requestFullscreen;
+  return (
+    <Sheet open onClose={onClose} title="Вид текста">
+      <div className="space-y-1">
+        <label className={cx(row, 'cursor-pointer')}>
+          <span>
+            Произношение латиницей
+            <span className={hint}>{reading ? `Под каждой строкой: этот текст — ${READING_NAME[reading.lang] ?? reading.lang}` : 'Для японских, китайских и корейских текстов; у этого его нет'}</span>
+          </span>
+          <Checkbox checked={look.reading} label="Произношение латиницей" onChange={(reading) => setLyricsLook({ reading })} />
+        </label>
+        <label className={cx(row, 'cursor-pointer')}>
+          <span>
+            Фуригана
+            <span className={hint}>Чтение над иероглифами в японских текстах{reading?.lang === 'ja' ? '' : ' — этот текст не японский'}</span>
+          </span>
+          <Checkbox checked={look.furigana} label="Фуригана" onChange={(furigana) => setLyricsLook({ furigana })} />
+        </label>
+        <label className={cx(row, 'cursor-pointer')}>
+          <span>
+            Размытие соседних строк
+            <span className={hint}>{timed ? 'Чем дальше строка от той, что звучит, тем сильнее; пока листаете — резко' : 'Работает в текстах с таймингами'}</span>
+          </span>
+          <Checkbox checked={look.blur} label="Размытие соседних строк" onChange={(blur) => setLyricsLook({ blur })} />
+        </label>
+        <div className={row}>
+          <span>
+            Фон
+            <span className={hint}>Обложка, размытая и неподвижная, или её цвета в движении</span>
+          </span>
+          <span className="flex shrink-0 rounded-full bg-fg/10 p-0.5 text-xs">
+            {(['cover', 'drift'] as const).map((m) => (
+              <button key={m} type="button" onClick={() => setLyricsLook({ background: m })} aria-pressed={look.background === m} className={cx('rounded-full px-3 py-1.5', look.background === m ? 'bg-fg text-bg' : 'text-muted')}>
+                {m === 'cover' ? 'Как было' : 'В движении'}
+              </button>
+            ))}
+          </span>
+        </div>
+        <label className={cx(row, canFull && 'cursor-pointer')}>
+          <span>
+            Во весь экран
+            <span className={hint}>{canFull ? 'Текст на весь экран, экран не гаснет. Выйти — Esc или этот же переключатель' : 'Этот браузер не умеет открывать страницу во весь экран'}</span>
+          </span>
+          <Checkbox checked={look.fullscreen} disabled={!canFull} label="Во весь экран" onChange={(fullscreen) => setLyricsLook({ fullscreen })} />
+        </label>
+      </div>
+    </Sheet>
   );
 }
 
@@ -421,7 +549,7 @@ interface Asked {
   answer: Probe | null;
 }
 
-const SOURCE_HINT: Record<string, string> = { file: 'теги и .lrc рядом с файлом', lrclib: 'lrclib.net', netease: 'music.163.com', ovh: 'api.lyrics.ovh' };
+const SOURCE_HINT: Record<string, string> = { file: 'теги и .lrc рядом с файлом', lrclib: 'lrclib.net', lrcred: 'lrc.red — по коду записи', lyricsplus: 'lyricsplus — по коду записи или названию', netease: 'music.163.com', ovh: 'api.lyrics.ovh' };
 const secs = (n: number) => `${n.toFixed(1).replace('.', ',')} с`;
 
 /** «Другой вариант»: every source is asked at once, each on its own line — its clock runs while it looks, then what

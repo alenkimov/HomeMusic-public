@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
 import { Lyrics } from '../components/Lyrics';
+import { setLyricsLook, useLyricsLook } from '../lib/lyrics';
 import { SaveButton } from '../components/PlaylistsButton';
 import { TrackMenuButton } from '../components/TrackMenu';
 import { Cover, Empty, IconButton, Spinner, cx } from '../components/ui';
@@ -56,6 +57,28 @@ export function PlayerPage() {
       return false;
     }
   });
+  const look = useLyricsLook();
+  // «Во весь экран» (the text's «Вид»): the page takes the whole screen and keeps it awake; leaving the whole screen
+  // any way (Esc, the system's gesture) switches it off
+  useEffect(() => {
+    const el = document.documentElement;
+    if (look.fullscreen && !document.fullscreenElement) void el.requestFullscreen?.().catch(() => setLyricsLook({ fullscreen: false }));
+    if (!look.fullscreen && document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
+    const left = () => !document.fullscreenElement && setLyricsLook({ fullscreen: false });
+    document.addEventListener('fullscreenchange', left);
+    let lock: { release: () => Promise<void> } | null = null;
+    const wake = (navigator as Navigator & { wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock;
+    if (look.fullscreen) void wake?.request('screen').then((l) => (lock = l), () => undefined);
+    return () => {
+      document.removeEventListener('fullscreenchange', left);
+      void lock?.release().catch(() => undefined);
+    };
+  }, [look.fullscreen]);
+  useEffect(() => () => {
+    if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
+    setLyricsLook({ fullscreen: false });
+  }, []);
+  const full = look.fullscreen && lyrics;
   const toggleLyrics = () =>
     setLyrics((v) => {
       try {
@@ -100,7 +123,17 @@ export function PlayerPage() {
       {(track.cover_small_url || track.cover_url) && (
         // the cover, blurred, as the page's own light
         <div aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-          <img src={track.cover_small_url || track.cover_url || ''} alt="" className="h-full w-full scale-125 object-cover opacity-35 blur-3xl" />
+          {look.background === 'drift' ? (
+            // the cover's colours in slow motion: three soft copies of it, each drifting its own way
+            <div className="absolute inset-0 saturate-150">
+              {(['hm-drift-a', 'hm-drift-b', 'hm-drift-c'] as const).map((name, i) => (
+                <img key={name} src={track.cover_small_url || track.cover_url || ''} alt="" className="absolute h-[85%] w-[85%] rounded-full object-cover opacity-45 blur-3xl motion-reduce:!animate-none"
+                  style={{ left: ['-20%', '35%', '10%'][i], top: ['-15%', '5%', '40%'][i], animation: `${name} ${[34, 41, 47][i]}s ease-in-out infinite alternate` }} />
+              ))}
+            </div>
+          ) : (
+            <img src={track.cover_small_url || track.cover_url || ''} alt="" className="h-full w-full scale-125 object-cover opacity-35 blur-3xl" />
+          )}
           <div className="absolute inset-0 bg-bg/40" />
         </div>
       )}
@@ -115,7 +148,7 @@ export function PlayerPage() {
           cover's place */}
       <div className={cx(lyrics && 'lg:grid lg:grid-cols-[minmax(0,24rem)_minmax(0,1fr)] lg:items-start lg:gap-x-8 lg:px-4')}>
         {lyrics && (
-          <div className="h-[58dvh] min-h-72 px-3 pt-2 lg:sticky lg:top-2 lg:order-2 lg:h-[calc(100dvh-5.5rem)] lg:px-0">
+          <div className={cx('min-h-72 px-3 pt-2 lg:sticky lg:top-2 lg:order-2 lg:h-[calc(100dvh-5.5rem)] lg:px-0', full ? 'h-[calc(100dvh-13rem)]' : 'h-[58dvh]')}>
             <Lyrics refId={track.ref} songId={info?.nd_song_id ?? track.nd_song_id} />
           </div>
         )}
