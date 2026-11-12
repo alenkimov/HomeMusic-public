@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { selectedTracks, useSelectionCount } from '../lib/selection';
 import { api } from '../api/client';
 import { tracksWord } from '../lib/format';
 import { UNTAGGED, closeTagsSheet, filterWords, selectionsChanged, setTagsData, useTags, useTagsSheet, type Tag, type TagFilter, type TagSelection } from '../lib/tags';
@@ -156,8 +157,9 @@ export function TagFilterBar({ songIds, filter, onChange, onSave, saveLabel = '�
     }
     return { counts: out, untagged };
   }, [songIds, tags.map, tags.byId]);
+  const [fresh, setFresh] = useState<number[]>([]); // tags made here just now: shown though no track of the list has them yet
   if (!tags.loaded) return null;
-  const groups = tags.groups.map((g) => ({ ...g, tags: g.tags.filter((t) => present.counts.has(t.id) || filter[t.id]) })).filter((g) => g.tags.length || g.id === 'own');
+  const groups = tags.groups.map((g) => ({ ...g, tags: g.tags.filter((t) => present.counts.has(t.id) || filter[t.id] || fresh.includes(t.id)) })).filter((g) => g.tags.length || g.id === 'own');
   if (!groups.some((g) => g.tags.length)) return null;
   const tap = (key: string) => {
     const next = { ...filter };
@@ -191,6 +193,7 @@ export function TagFilterBar({ songIds, filter, onChange, onSave, saveLabel = '�
           <div className="flex flex-wrap gap-1.5">
             {g.tags.map((t) => chip(String(t.id), t.name, present.counts.get(t.id) ?? 0))}
             {g.id === 'own' && present.untagged > 0 && chip(UNTAGGED, 'без своих тегов', present.untagged)}
+            {g.id === 'own' && <NewTag onMade={(id) => setFresh((list) => [...list, id])} />}
           </div>
         </div>
       ))}
@@ -208,6 +211,71 @@ export function TagFilterBar({ songIds, filter, onChange, onSave, saveLabel = '�
         </div>
       )}
     </div>
+  );
+}
+
+/** «+» after the last tag of «Теги»: a new tag of one's own, made right here. With tracks picked in the list it is put
+ * on them at once; without — it is only made, to be put on tracks later (the 🏷 of the selection bar, a track's menu). */
+function NewTag({ onMade }: { onMade: (id: number) => void }) {
+  const picked = useSelectionCount();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const close = () => {
+    setOpen(false);
+    setName('');
+  };
+  const make = async () => {
+    const title = name.trim();
+    if (!title || busy) return;
+    setBusy(true);
+    const tag = await attempt(() => api.tagCreate(title));
+    if (tag) {
+      const songs = selectedTracks().map((x) => x.nd_song_id).filter((x): x is string => !!x);
+      const data = await attempt(() => (songs.length ? api.tagsAssign({ nd_song_ids: songs, add: [tag.id], remove: [] }) : api.tags()));
+      if (data) setTagsData(data);
+      onMade(tag.id);
+      toast(songs.length ? `Тег «${tag.name}» поставлен: ${tracksWord(songs.length)}` : `Тег «${tag.name}» создан — выделите треки и поставьте его кнопкой 🏷`, 'success');
+      close();
+    }
+    setBusy(false);
+  };
+  if (!open)
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title={picked ? `Новый тег — сразу на выделенные: ${tracksWord(picked)}` : 'Новый тег'}
+        aria-label="Новый тег"
+        className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-fg/10 text-muted transition hover:bg-accent hover:text-on-accent"
+      >
+        <Icon name="plus" size={13} stroke={2.6} />
+      </button>
+    );
+  return (
+    <form
+      className="flex items-center gap-1"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void make();
+      }}
+    >
+      <input
+        autoFocus
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === 'Escape' && close()}
+        onBlur={() => !name.trim() && close()}
+        placeholder={picked ? `тег для ${tracksWord(picked)}` : 'новый тег'}
+        aria-label="Название нового тега"
+        maxLength={64}
+        disabled={busy}
+        className="h-[22px] w-36 rounded-full bg-fg/10 px-2.5 text-xs text-fg outline-none ring-1 ring-accent placeholder:text-dim"
+      />
+      <button type="submit" disabled={!name.trim() || busy} aria-label="Создать тег" title="Создать (Enter)" className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-accent text-on-accent disabled:opacity-40">
+        <Icon name="check" size={13} stroke={3} />
+      </button>
+    </form>
   );
 }
 
