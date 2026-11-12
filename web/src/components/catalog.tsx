@@ -413,7 +413,7 @@ export function TrackRow({
               </span>
             )}
             <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('like', dragList(), asSel(track))}>
-              <SaveButton songId={likeTarget.songId} refId={track.ref} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('!w-9', dragMark === 'like' ? cx(marked, '!text-accent') : dragMark === 'unlike' ? cx(marked, '!text-muted') : !kept && shown)} />
+              <SaveButton songId={likeTarget.songId} refId={track.ref} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('!w-9', dragMark === 'like' || dragMark === 'lists' ? cx(marked, '!text-accent') : !kept && shown)} />
             </span>
           </div>
           {cols.duration && <span className="text-right text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>}

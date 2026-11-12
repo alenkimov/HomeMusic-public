@@ -4,6 +4,8 @@ import { Button, cx } from './ui';
 import { Icon } from './Icon';
 import { useDragAction, type DragKind } from '../lib/dragAction';
 import { tracksWord } from '../lib/format';
+import { closePlaylistsSheet, usePlaylistsSheet } from '../lib/playlistsSheet';
+import { BulkPlaylists } from './PlaylistsButton';
 import { ShareSheet } from './ShareSheet';
 import { TagsSheet } from './Tags';
 import { TelegramSetup } from './TelegramSetup';
@@ -50,6 +52,7 @@ export function Overlays() {
       <TagsSheet />
       <TelegramSetup />
       <ShareSheet />
+      <PlaylistsSheet />
 
       {dialog && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-5" role="alertdialog" aria-modal="true" aria-labelledby="hm-dialog-title">
@@ -74,7 +77,14 @@ export function Overlays() {
   );
 }
 
-const DRAG_VERB: Record<DragKind, string> = { like: 'добавить в «Любимое»', unlike: 'убрать из «Любимого»', queue: 'добавить в очередь', unqueue: 'убрать из очереди', share: 'поделиться', tags: 'поставить теги' };
+/** «В плейлисты» of the rows a drag passed (`lib/playlistsSheet.ts`). */
+function PlaylistsSheet() {
+  const tracks = usePlaylistsSheet();
+  if (!tracks.length) return null;
+  return <BulkPlaylists key={tracks.map((t) => t.ref).join('|')} tracks={tracks} onClose={closePlaylistsSheet} />;
+}
+
+const DRAG_VERB: Record<DragKind, string> = { like: 'добавить в «Любимое»', lists: 'открыть плейлисты', queue: 'добавить в очередь', unqueue: 'убрать из очереди', share: 'поделиться', tags: 'поставить теги' };
 
 /** While a row's button is dragged over other rows: what letting go will do, and how to call it off. */
 function DragActionHint() {
