@@ -6,7 +6,7 @@ import { AlbumPicker } from '../components/pickers';
 import { Button, Checkbox, Cover, ErrorState, ExplicitBadge, Field, IconButton, Loading, PageHeader, SectionTitle, Sheet, cx } from '../components/ui';
 import { fmtDuration, fmtLength, providerLabel, toIntOrNull, tracksWord, warningText } from '../lib/format';
 import { useAsync } from '../lib/hooks';
-import { LikeButton } from '../components/LikeButton';
+import { SaveButton } from '../components/PlaylistsButton';
 import { TrackMenuButton } from '../components/TrackMenu';
 import { listen, listenAll, type ListenTrack } from '../lib/listen';
 import { canPlay, playList } from '../lib/player';
@@ -183,7 +183,7 @@ export function LibraryAlbumPage({ id }: { id: number }) {
                 </span>
                 <span className="shrink-0 text-xs tabular-nums text-dim">{fmtDuration(t.duration_s)}</span>
               </button>
-              <LikeButton songId={t.nd_song_id} title={t.title} className="w-10" />
+              <SaveButton songId={t.nd_song_id} title={t.title} className="!w-10" />
               {playable.includes(t) && (
                 <IconButton icon="play" label={`Слушать «${t.title}»`} className="!text-accent" size={20} onClick={() => playFrom(t)} />
               )}

@@ -354,7 +354,7 @@ export function LikedPage() {
       ) : res.error ? (
         <ErrorState text={res.error} onRetry={() => res.reload()} />
       ) : !songs.length ? (
-        <Empty icon="heart" title="Пока ничего" text="Ставьте ♥ трекам — они соберутся здесь." />
+        <Empty icon="heart" title="Пока ничего" text="Нажмите «+» у трека — он окажется здесь." />
       ) : (
         <>
           <ListActions tracks={inOrder(shown ? shown.map((f) => songs[f.index]) : songs, sort)} context="liked" />

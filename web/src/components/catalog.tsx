@@ -8,18 +8,18 @@ import { STANDALONE } from '../lib/embedded';
 import { Link, enc, navigate } from '../lib/router';
 import { beginDragAction, dragActionOver, useDragMark } from '../lib/dragAction';
 import { beginDragSelect, dragSelectMoved, dragSelectOver, selectRange, toggleSelected, useSelected, useSelectionCount, type SelTrack } from '../lib/selection';
-import { toggleLike, useLiked } from '../lib/stars';
+import { useInPlaylists } from '../lib/inPlaylists';
+import { useLiked } from '../lib/stars';
 import { usePlayCounts } from '../lib/stats';
 import { PlaysCell } from './PlaysCell';
 import { TRACK_COLUMN_LABELS, setTrackColumn, trackGrid, useTrackColumns, type TrackColumns } from '../lib/trackColumns';
 import { toast } from '../lib/ui';
 import { Icon } from './Icon';
-import { LikeButton } from './LikeButton';
 import { openShare } from '../lib/shareTrack';
 import { useTags } from '../lib/tags';
 import { QueueButton } from './QueueButton';
 import { SwipeRow } from './SwipeRow';
-import { TrackPlaylists } from './PlaylistsButton';
+import { SaveButton, TrackPlaylists } from './PlaylistsButton';
 import { TrackMenuButton, type MenuExtra, type MenuTrack } from './TrackMenu';
 import { Checkbox, Cover, ExplicitBadge, IconButton, OwnedBadge, Spinner, cx } from './ui';
 
@@ -200,6 +200,7 @@ export function TrackRow({
 
   const likeTarget = { targetType: 'track' as const, songId: track.owned ? track.nd_song_id : null, ref: track.ref, data: { ...track } };
   const liked = useLiked(likeTarget);
+  const kept = useInPlaylists(likeTarget.songId) || liked; // the row's button shows ♥ or ✓
   const artistLine = track.artists?.length ? track.artists.join(', ') : track.artist;
   const menuTrack: MenuTrack = {
     title: track.title,
@@ -422,7 +423,7 @@ export function TrackRow({
               <QueueButton track={menuTrack.listen as ListenTrack} className={cx('!w-9', dragMark === 'queue' ? cx(marked, '!text-accent') : dragMark === 'unqueue' && cx(marked, '!text-muted'))} />
             </span>
             <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('like', dragList(), asSel(track))}>
-              <LikeButton songId={likeTarget.songId} refId={track.ref} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('!w-9', dragMark === 'like' ? cx(marked, '!text-accent') : dragMark === 'unlike' ? cx(marked, '!text-muted') : !liked && shown)} />
+              <SaveButton songId={likeTarget.songId} refId={track.ref} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('!w-9', dragMark === 'like' ? cx(marked, '!text-accent') : !kept && shown)} />
             </span>
           </div>
           {cols.duration && <span className="text-right text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>}
@@ -434,7 +435,6 @@ export function TrackRow({
     }
 
     const extras: MenuExtra[] = [
-      { icon: 'heart', label: liked ? 'Убрать из любимого' : 'В любимое', onClick: () => void toggleLike(likeTarget) },
       ...(!track.owned && dl !== 'done' && !downloading ? [{ icon: 'download' as const, label: 'Скачать', onClick: () => void download() }] : []),
       selectExtra,
       ...(menuExtra ?? []),
@@ -483,7 +483,7 @@ export function TrackRow({
         <div className={rowClass}>{body}</div>
       )}
       <div className="-ml-2 flex shrink-0 items-center">
-        <LikeButton songId={track.owned ? track.nd_song_id : null} refId={track.ref} pending={track.star_pending} title={track.title} data={{ ...track }} className="w-10" />
+        <SaveButton songId={track.owned ? track.nd_song_id : null} refId={track.ref} pending={track.star_pending} title={track.title} data={{ ...track }} className="!w-10" />
         {track.owned ? (
           // a plain browser: the row itself plays it, a second ▷ would only take the title's room
           STANDALONE && !(link && track.album_ref) && play ? null : <TrackStatus owned downloading={false} onDownload={download} onPlay={play} />

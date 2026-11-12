@@ -5,7 +5,7 @@ import { ArtistBubble, ReleaseCard, TrackRow, TrackTableHeader, listenTrack } fr
 import { TrackMenuButton } from '../components/TrackMenu';
 import { CandidateRow, fileRef } from '../components/candidate';
 import { Icon } from '../components/Icon';
-import { LikeButton } from '../components/LikeButton';
+import { SaveButton } from '../components/PlaylistsButton';
 import { WaveCard } from '../components/Wave';
 import { Button, Empty, ErrorState, IconButton, Notice, SectionTitle, Segmented, SkeletonRows, Spinner, cx } from '../components/ui';
 import { startDownload } from '../lib/actions';
@@ -387,7 +387,7 @@ function LibraryTrackRow({ t, onPlay }: { t: LibTrackOut; onPlay?: () => void })
     <div className="flex items-center pr-1">
       {row}
       {t.nd_song_id && <TrackMenuButton track={{ title: t.title, artist: t.artist, nd_song_id: t.nd_song_id }} />}
-      <LikeButton songId={t.nd_song_id} title={t.title} className={cx('w-10', !onPlay && 'mr-1')} />
+      <SaveButton songId={t.nd_song_id} title={t.title} className={cx('!w-10', !onPlay && 'mr-1')} />
       {onPlay && <IconButton icon="play" label={`Слушать «${t.title}»`} onClick={onPlay} className="!text-accent" />}
     </div>
   );

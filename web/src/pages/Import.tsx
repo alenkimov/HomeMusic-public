@@ -375,9 +375,11 @@ function Preview({ imp, onStarted }: { imp: ImportOut; onStarted: (r: ImportOut)
         <PlaylistsPick
           title={`${tracksWord(moved)} — в плейлисты`}
           picked={toPlaylists}
+          liked={like}
           onClose={() => setPlPicker(false)}
-          onDone={(list) => {
+          onDone={(list, liked) => {
             setToPlaylists(list);
+            setLike(liked);
             setPlPicker(false);
           }}
         />

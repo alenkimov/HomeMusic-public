@@ -14,6 +14,7 @@ import { STANDALONE } from './lib/embedded';
 import { hubEvents } from './lib/events';
 import { restoreListening, stopListening } from './lib/listen';
 import { restoreWave } from './lib/wave';
+import { resetInPlaylists } from './lib/inPlaylists';
 import { resetStars } from './lib/stars';
 import { startNotificationWatcher, stopNotificationWatcher } from './lib/notify';
 import { SessionContext } from './lib/session';
@@ -187,6 +188,7 @@ export function App() {
     invalidateCache();
     stopListening();
     resetStars();
+    resetInPlaylists();
     setMe(null);
     navigate(START, { replace: true });
   }, []);

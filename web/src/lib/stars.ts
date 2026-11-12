@@ -6,7 +6,7 @@ import { hubEvents } from './events';
 import { STANDALONE } from './embedded';
 import { HUB_DOWNLOAD_EVENT, markQueued } from './listen';
 import { newEventId, playEvent, routeContext } from './plays';
-import { toast, toastError } from './ui';
+import { toast, toastError, type Toast } from './ui';
 
 export interface LikeTarget {
   targetType?: FavoriteType;
@@ -166,8 +166,9 @@ export async function setLikes(list: readonly LikeTarget[], liked: boolean): Pro
   return done;
 }
 
-/** Track ♥ of a catalog track also downloads it (a browser); album/artist ♥ only records the typed favorite. */
-export async function toggleLike(t: LikeTarget, quiet = false): Promise<void> {
+/** Track ♥ of a catalog track also downloads it (a browser); album/artist ♥ only records the typed favorite.
+ * `change`: the line that says a track is in «Любимое» now offers «Изменить» — it opens the playlists. */
+export async function toggleLike(t: LikeTarget, quiet = false, change?: () => void): Promise<void> {
   const keys = aliases(t);
   const key = keys[0];
   if (!key || keys.some((a) => busy.has(a))) return;
@@ -211,7 +212,8 @@ export async function toggleLike(t: LikeTarget, quiet = false): Promise<void> {
       ? await api.download({ track_refs: [t.ref] }).then((r) => r.queued > 0 || r.expanding, () => false)
       : false;
     if (fetching && t.ref) markQueued(t.ref);
-    if (!quiet) toast(liked ? (fetching ? 'Добавлено в любимое — скачиваю в библиотеку' : 'Добавлено в любимое') : 'Убрано из любимого', 'success', fetching ? { label: 'Загрузки', to: '/downloads' } : undefined);
+    const link: Toast['link'] = liked && change && typeOf(t) === 'track' ? { label: 'Изменить', run: change } : fetching ? { label: 'Загрузки', to: '/downloads' } : undefined;
+    if (!quiet) toast(liked ? (fetching ? 'Добавлено в «Любимое» — скачиваю в библиотеку' : 'Добавлено в «Любимое»') : 'Убрано из «Любимого»', 'success', link);
   } catch (e) {
     if (generation !== epoch) return;
     if (previous) local.set(key, previous);

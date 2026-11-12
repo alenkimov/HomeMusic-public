@@ -94,6 +94,21 @@ async def of_song(nd_song_id: str, user: User = Depends(current_user)):
     return [x for _, x in sorted(out, key=lambda pair: pair[0], reverse=True)]
 
 
+@router.get("/members")
+async def members(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    """The songs that are in some playlist of the user's — what the «+ / ✓» of a track row goes by. «Микс дня» is
+    not counted: the Hub fills it, the user did not put the songs there."""
+    from app.models import MixSettings
+
+    mix = (await s.execute(select(MixSettings.nd_playlist_id).where(MixSettings.user_id == user.id))).scalar_one_or_none()
+
+    async def load(nd):
+        pls = [p for p in await nd.get_playlists() if p.get("owner") in (None, user.nd_username) and p["id"] != mix]
+        return await asyncio.gather(*(_songs_of(nd, p) for p in pls))
+
+    return {"song_ids": sorted({x for ids in await nd_call(user, load) for x in ids})}
+
+
 @router.post("/membership", response_model=list[PlaylistOfSongOut])
 async def membership(body: PlaylistMembershipIn, user: User = Depends(current_user),
                      s: AsyncSession = Depends(get_session, scope="function")):

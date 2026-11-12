@@ -5,7 +5,7 @@ import { STANDALONE } from '../lib/embedded';
 import { addRec, hideRec } from '../lib/smartShuffle';
 import { Link, enc } from '../lib/router';
 import { Icon } from './Icon';
-import { LikeButton } from './LikeButton';
+import { SaveButton } from './PlaylistsButton';
 import { TrackMenuButton } from './TrackMenu';
 import { Cover, IconButton, Spinner, cx } from './ui';
 
@@ -126,7 +126,7 @@ export function MiniPlayer() {
             </div>
           )}
           <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id }} className="w-9" inPlayer />
-          <LikeButton songId={info?.nd_song_id} refId={track.ref} title={track.title} data={{ ...track }} className="-mr-1" />
+          <SaveButton songId={info?.nd_song_id} refId={track.ref} title={track.title} data={{ ...track }} className="-mr-1" />
           <button
             type="button"
             onClick={toggle}

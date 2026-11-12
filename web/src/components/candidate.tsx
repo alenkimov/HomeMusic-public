@@ -5,7 +5,7 @@ import { listen, touchTrack, useListen, watchOnScreen, type ListenTrack } from '
 import { canPlayAll, playHubItems, type HubItem } from '../lib/player';
 import { ListenButton } from './catalog';
 import { Icon } from './Icon';
-import { LikeButton } from './LikeButton';
+import { SaveButton } from './PlaylistsButton';
 import { TrackMenuButton } from './TrackMenu';
 import { Cover, ExplicitBadge, cx } from './ui';
 
@@ -96,7 +96,7 @@ export function CandidateRow({ c, action, queue }: { c: Candidate; action?: Reac
       </div>
       {queue && (
         <div className="flex shrink-0 items-center self-center">
-          <LikeButton refId={ref} title={c.title} className="w-10" />
+          <SaveButton refId={ref} title={c.title} className="!w-10" />
           <span onPointerDown={() => touchTrack(ref)}>
             <ListenButton track={{ ref, title: c.title }} onListen={() => listenFiles(queue, c)} />
           </span>

@@ -4,8 +4,7 @@ import { cycleRepeat, cycleShuffle, hasNext, hasPrev, next, prev, seek, setVolum
 import { Link } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
 import { Icon } from './Icon';
-import { LikeButton } from './LikeButton';
-import { PlaylistsButton } from './PlaylistsButton';
+import { SaveButton } from './PlaylistsButton';
 import { TrackMenuButton } from './TrackMenu';
 import { Cover, IconButton, Spinner, cx } from './ui';
 
@@ -57,8 +56,7 @@ export function DesktopPlayer() {
                   </span>
                 </span>
               </Link>
-              <LikeButton songId={info?.nd_song_id} refId={track.ref} title={track.title} data={{ ...track }} size={18} className="ml-1 !w-9" />
-              {info?.nd_song_id && <PlaylistsButton songId={info.nd_song_id} title={track.title} />}
+              <SaveButton songId={info?.nd_song_id} refId={track.ref} title={track.title} data={{ ...track }} className="ml-1 !w-9" />
             </>
           ) : (
             <span className="flex items-center gap-3 text-sm text-dim">

@@ -116,3 +116,18 @@ async def test_a_playlist_is_renamed_and_given_a_picture_of_its_own(env):
     assert (await c.put("/api/playlists/a/cover", files={"file": ("x.txt", b"not a picture", "text/plain")})).status_code == 400
     r = (await c.delete("/api/playlists/a/cover")).json()
     assert r["cover_url"] == "/api/nd/cover/pl-a?v=3" and (await c.get("/api/playlists/a/cover")).status_code == 404
+
+
+async def test_the_songs_that_are_in_some_playlist(env):
+    """What a row's «+ / ✓» goes by: the songs of the user's own playlists, «Микс дня» apart."""
+    from sqlalchemy import select
+
+    from app import db
+    from app.models import MixSettings, User
+
+    c, _state = env
+    assert (await c.get("/api/playlists/members")).json() == {"song_ids": ["s1", "s2", "s3"]}
+    async with db.session_scope() as s:
+        user = (await s.execute(select(User))).scalars().first()
+        s.add(MixSettings(user_id=user.id, nd_playlist_id="b"))
+    assert (await c.get("/api/playlists/members")).json() == {"song_ids": ["s1", "s2"]}

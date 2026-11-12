@@ -357,6 +357,7 @@ export const api = {
   createPlaylist: (name: string) => request<PlaylistOut>('POST', '/api/playlists', { json: { name } }),
   addToPlaylist: (id: string, body: PlaylistAddIn) =>
     request<OkOut>('POST', `/api/playlists/${enc(id)}/add`, { json: body }),
+  playlistMembers: (signal?: AbortSignal) => request<{ song_ids: string[] }>('GET', '/api/playlists/members', { signal }),
   playlistsOfSong: (nd_song_id: string, signal?: AbortSignal) => request<PlaylistOfSongOut[]>('GET', withQuery('/api/playlists/of-song', { nd_song_id }), { signal }),
   playlistMembership: (body: { nd_song_id: string; add: string[]; remove: string[] }) => request<PlaylistOfSongOut[]>('POST', '/api/playlists/membership', { json: body }),
   playlistsOfSongs: (nd_song_ids: string[]) => request<PlaylistOfSongsOut[]>('POST', '/api/playlists/of-songs', { json: { nd_song_ids } }),

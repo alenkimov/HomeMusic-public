@@ -657,9 +657,11 @@ export function UploadPage() {
         <PlaylistsPick
           title={`${tracksWord(included.length)} — в плейлисты`}
           picked={playlists}
+          liked={like}
           onClose={() => setPlPicker(false)}
-          onDone={(list) => {
+          onDone={(list, liked) => {
             setPlaylists(list);
+            setLike(liked);
             setPlPicker(false);
           }}
         />
@@ -749,8 +751,7 @@ export function AfterImport({ count, like, onLike, playlists, onPlaylists, onPic
   return (
     <div className={cx(className, 'flex flex-wrap items-center gap-x-1 gap-y-2 rounded-xl bg-surface px-3 py-2')}>
       <span className="pr-2 text-sm text-muted">{label}</span>
-      <IconButton icon="heart" filled={like} label={like ? 'Не добавлять в «Любимое»' : 'Добавить в «Любимое»'} aria-pressed={like} onClick={() => onLike(!like)} className={like ? 'text-accent' : 'text-muted hover:text-fg'} />
-      <IconButton icon="playlist" label="В плейлисты" onClick={onPickPlaylists} className={playlists.length ? 'text-accent' : 'text-muted hover:text-fg'} />
+      <IconButton icon="playlist" label="В «Любимое» и плейлисты" onClick={onPickPlaylists} className={like || playlists.length ? 'text-accent' : 'text-muted hover:text-fg'} />
       <IconButton icon="tag" label="Теги" onClick={() => openTagsPick(`${tracksWord(count)} — теги`, tagIds, onTags)} className={picked.length ? 'text-accent' : 'text-muted hover:text-fg'} />
       <span className="mx-2 h-5 w-px bg-line" aria-hidden="true" />
       {nothing && <span className="text-xs text-dim">Только в библиотеку. Можно сразу добавить в «Любимое», плейлисты и поставить теги.</span>}

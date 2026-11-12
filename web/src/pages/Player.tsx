@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
-import { LikeButton } from '../components/LikeButton';
 import { Lyrics } from '../components/Lyrics';
-import { PlaylistsButton } from '../components/PlaylistsButton';
+import { SaveButton } from '../components/PlaylistsButton';
 import { TrackMenuButton } from '../components/TrackMenu';
 import { Cover, Empty, IconButton, Spinner, cx } from '../components/ui';
 import { fmtDuration, providerLabel } from '../lib/format';
@@ -149,8 +148,7 @@ export function PlayerPage() {
             )}
           </div>
         </div>
-        <LikeButton songId={info?.nd_song_id} refId={track.ref} title={track.title} data={{ ...track }} size={26} />
-        {info?.nd_song_id && <PlaylistsButton songId={info.nd_song_id} title={track.title} size={24} className="!h-11 !w-11" />}
+        <SaveButton songId={info?.nd_song_id} refId={track.ref} title={track.title} data={{ ...track }} size={26} />
         {/* a track that is not in the library yet can be downloaded into it; one that is needs no mark */}
         {owned || dl === 'done' ? null : dl ? (
           <span className="flex h-11 w-11 shrink-0 items-center justify-center text-info" title="Скачивается в библиотеку">

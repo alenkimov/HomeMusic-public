@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
+import type { PickedTrack } from './PlaylistsButton';
 import { tracksWord } from '../lib/format';
 import { addToQueue } from '../lib/listen';
 import { canPlayAll } from '../lib/player';
 import { useRoute } from '../lib/router';
 import { clearSelection, selectedTracks, useSelectionCount } from '../lib/selection';
 import { openShare } from '../lib/shareTrack';
-import { isLiked, setLikes, useLiked } from '../lib/stars';
 import { openTagsSheet } from '../lib/tags';
 import { toast } from '../lib/ui';
 import { BulkPlaylists } from './PlaylistsButton';
@@ -16,9 +16,7 @@ import { IconButton, cx } from './ui';
 export function SelectionBar() {
   const count = useSelectionCount();
   const route = useRoute();
-  const [liking, setLiking] = useState(false);
-  const [lists, setLists] = useState<string[] | null>(null);
-  useLiked({}); // the bar follows the ♥ of the picked tracks
+  const [lists, setLists] = useState<PickedTrack[] | null>(null);
   useEffect(() => clearSelection(), [route.path]);
   useEffect(() => {
     if (!count || lists) return; // while the playlists window is open, Esc closes it, not the selection
@@ -34,27 +32,17 @@ export function SelectionBar() {
     return list;
   };
   const picked = selectedTracks();
-  const targets = picked.map((t) => ({ songId: t.nd_song_id, ref: t.ref, data: { ...t.listen } }));
-  const allLiked = targets.every(isLiked);
   const owned = picked.map((t) => t.nd_song_id).filter((x): x is string => !!x);
-  // ♥ of the whole selection: on for those that lack it; when every one has it — off for all
-  const like = async () => {
-    setLiking(true);
-    const n = await setLikes(targets, !allLiked); // one request for them all
-    setLiking(false);
-    if (n) toast(allLiked ? `Убрано из любимого: ${tracksWord(n)}` : `В любимом: ${tracksWord(n)}`, 'success');
-  };
   const btn = '!h-10 !w-10';
   return (
     <div className="pointer-events-none fixed bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+12px+env(safe-area-inset-bottom))] left-(--side-w) right-0 z-40 flex justify-center px-3" role="region" aria-label="Выбранные треки">
       <div className="anim-up pointer-events-auto flex max-w-full items-center gap-1 rounded-2xl border border-line bg-raised py-1.5 pl-4 pr-1.5 shadow-2xl">
         <span className="mr-2 whitespace-nowrap text-sm font-semibold">{tracksWord(count)}</span>
-        <IconButton icon="heart" filled={allLiked} size={20} busy={liking} label={allLiked ? 'Убрать все из любимого' : 'Все — в любимое'} onClick={() => void like()} className={cx(btn, allLiked ? '!text-accent' : 'text-muted hover:text-fg')} />
         <IconButton
           icon="playlist"
           size={20}
-          label="В плейлисты: добавить или убрать"
-          onClick={() => (owned.length ? setLists(owned) : toast('Этих треков ещё нет в библиотеке — сначала скачайте их', 'info'))}
+          label="В «Любимое» и плейлисты: добавить или убрать"
+          onClick={() => setLists(picked.map((t) => ({ ref: t.ref, nd_song_id: t.nd_song_id, data: { ...t.listen } })))}
           className={cx(btn, 'text-muted hover:text-fg')}
         />
         <IconButton
@@ -83,7 +71,7 @@ export function SelectionBar() {
       </div>
       {lists && (
         <div className="pointer-events-auto">
-          <BulkPlaylists songIds={lists} onClose={() => setLists(null)} />
+          <BulkPlaylists tracks={lists} onClose={() => setLists(null)} />
         </div>
       )}
     </div>
