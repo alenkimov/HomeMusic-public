@@ -19,6 +19,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     select,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, column_property, mapped_column, relationship
 
@@ -835,7 +836,11 @@ class Playlist(Base):
     Navidrome (`nd_playlist_id`); `mirrored` — the songs the mirror was last given."""
 
     __tablename__ = "playlists"
-    __table_args__ = (Index("ix_playlists_user", "user_id", "kind"),)
+    __table_args__ = (
+        Index("ix_playlists_user", "user_id", "kind"),
+        # «Любимое» and «Микс дня» are one per user: two requests at once cannot make two
+        Index("uq_playlists_one_of_a_kind", "user_id", "kind", unique=True, sqlite_where=text("kind IN ('liked', 'mix')")),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))

@@ -265,7 +265,7 @@ export async function addRec(track: ListenTrack): Promise<void> {
   if (!rec) return;
   try {
     if (s?.context === 'liked' || (!s && getListenState().context === 'liked')) {
-      await toggleLike({ targetType: 'track', songId: track.nd_song_id, ref: track.ref, data: { ...track } });
+      await toggleLike({ targetType: 'track', trackId: track.library_track_id, songId: track.nd_song_id, ref: track.ref, data: { ...track } });
       await api.smartAdd(rec.session, { ref: track.ref, nd_song_id: track.nd_song_id });
       toast(`«${track.title}» в любимом`, 'success');
     } else {

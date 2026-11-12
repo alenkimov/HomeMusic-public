@@ -317,7 +317,7 @@ export const api = {
   playEvents: (events: PlayEventIn[], expectedUserId?: number) => request<PlayEventsOut>('POST', '/api/plays/events', { json: { events, expected_user_id: expectedUserId } }),
   dislikes: (signal?: AbortSignal) => request<DislikeOut[]>('GET', '/api/dislikes', { signal }),
   dislike: (body: DislikeIn) => request<DislikeOut>('POST', '/api/dislikes', { json: body }),
-  undislike: (q: { ref?: string | null; nd_song_id?: string | null; artist_ref?: string | null }) =>
+  undislike: (q: { track_id?: number | null; ref?: string | null; nd_song_id?: string | null; artist_ref?: string | null }) =>
     request<{ removed: number }>('DELETE', withQuery('/api/dislikes', q)),
 
   // «Микс дня» and the taste onboarding

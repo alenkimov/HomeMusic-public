@@ -7,7 +7,6 @@ import json
 import logging
 import shutil
 import uuid
-from datetime import timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -19,17 +18,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import UploadCommitIn, UploadCommitOut, UploadOut
 from app.auth import current_user
 from app.config import get_settings
-from app.db import get_session, session_scope
+from app.db import get_session
 from app.events import bus
 from app.jobs.downloads import enqueue_scan
-from app.jobs.queue import RetryLater, enqueue, handler, notify
+from app.jobs.queue import notify
 from app.library import probe, tagger
 from app.library.importer import ImportSpec, import_file
-from app.models import Album, Job, Track, Upload, User, utcnow
+from app.models import Album, Upload, User
 
 log = logging.getLogger(__name__)
-PLAYLIST_ADD_RETRY_S = 15
-PLAYLIST_ADD_WAIT_S = 30 * 60  # a scan of a big library is slow; then the playlist takes what is ready
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 
@@ -213,48 +210,17 @@ async def commit(payload: str = Form(...), cover: UploadFile | None = File(None)
             if p is not None and p.kind == playlists.USER and await playlists.add(s, p, track_ids):
                 await enqueue_mirror(s, p.id)
     if body.star and track_ids:
-        # Navidrome knows the new files only after its scan: the ♥ gets them then
-        await enqueue(s, "upload_playlist_add", {
-            "user_id": user.id, "star": True, "track_ids": track_ids,
-            "until": (utcnow() + timedelta(seconds=PLAYLIST_ADD_WAIT_S)).isoformat()}, delay_s=PLAYLIST_ADD_RETRY_S)
+        from app.api.schemas import FavoriteTarget
+        from app.favorites import command, project_liked
+
+        # the like is the track's own: Navidrome gets the ♥ when its scan has found the file (`deliver_pending`)
+        await command(s, user, [FavoriteTarget(track_id=t) for t in track_ids], liked=True, client="hub",
+                      context="upload")
+        await project_liked(s, user.id)
     await s.commit()
     notify()
     bus.publish(user.id, "library", {"kind": "imported", "album_id": album.id})
     return UploadCommitOut(album_id=album.id, imported=imported)
-
-
-@handler("upload_playlist_add")
-async def handle_playlist_add(job: Job) -> None:
-    """«В Любимое» of uploaded files: they get their ♥ in their order once the library scan has given them Navidrome
-    song ids. After `until` the ones that have ids go, the rest are left out."""
-    from app.api.schemas import FavoriteTarget
-    from app.auth import user_navidrome
-    from app.favorites import command
-
-    p = job.payload_json
-    async with session_scope() as s:
-        user = await s.get(User, int(p["user_id"]))
-        tracks = [await s.get(Track, int(i)) for i in p["track_ids"]]
-        songs = [t.nd_song_id for t in tracks if t is not None]  # a track deleted meanwhile is not waited for
-        names = {t.nd_song_id: {"title": t.title, "artist": t.artist} for t in tracks if t is not None and t.nd_song_id}
-    if user is None or not songs:
-        return
-    if any(x is None for x in songs) and utcnow().isoformat() < p["until"]:
-        raise RetryLater(PLAYLIST_ADD_RETRY_S, "waiting for the library scan")
-    ready = [x for x in songs if x]
-    if not ready:
-        log.warning("upload: no song ids for the ♥ after the wait")
-        return
-    nd = user_navidrome(user)
-    try:
-        if p.get("star"):
-            # through the favorites journal, as a ♥ set by hand: mixes and «Любимое» see it the same way
-            async with session_scope() as s:
-                await command(s, user, [FavoriteTarget(nd_song_id=x, target_data=names.get(x)) for x in ready],
-                              liked=True, client="hub", context="upload", nd=nd)
-    finally:
-        await nd.aclose()
-    bus.publish(user.id, "library", {"kind": "playlist", "playlist_id": None, "star": bool(p.get("star"))})
 
 
 def purge_stale_uploads(days: int = 7) -> int:

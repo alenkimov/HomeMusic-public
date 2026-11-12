@@ -50,7 +50,7 @@ function emit() {
   subs.forEach((f) => f());
 }
 
-const likeTarget = (t: SelTrack) => ({ songId: t.nd_song_id, ref: t.ref, data: { ...t.listen } });
+const likeTarget = (t: SelTrack) => ({ trackId: t.tag_key ? Number(t.tag_key) : null, songId: t.nd_song_id, ref: t.ref, data: { ...t.listen } });
 /** In «Любимое» or in some playlist: the row's button shows ♥ or ✓. */
 const kept = (t: SelTrack) => isLiked(likeTarget(t)) || inPlaylists(t.nd_song_id);
 

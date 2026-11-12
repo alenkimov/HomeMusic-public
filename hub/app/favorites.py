@@ -60,7 +60,7 @@ def aliases(obj: Any) -> set[str]:
     # an event that knows its track (`PlayEvent.track_id`) is tied to every other event of that track by it
     track = getattr(obj, "track_id", None) if typ == "track" else None
     return {x for x in (f"ref:{obj.ref}" if obj.ref else None, f"nd:{nd}" if nd else None,
-                        f"t:{track}" if track and (obj.ref or nd) else None) if x}
+                        f"t:{track}" if track else None) if x}
 
 
 class AliasIndex:
@@ -297,6 +297,22 @@ async def subjects_of(s: AsyncSession, events: Iterable[Any] = (), *, refs: Iter
     return out
 
 
+async def name_track(s: AsyncSession, target: FavoriteTarget) -> None:
+    """Fill in what the target does not say of its track: given the Hub's id — the catalog ref and the Navidrome
+    song it has; given those — the Hub's id, if the Hub knows the track."""
+    from fastapi import HTTPException
+
+    from app.library import tracks as registry
+
+    if target.track_id:
+        names = await registry.names_of(s, target.track_id)
+        if names is None:
+            raise HTTPException(404, "Хаб не знает этот трек")
+        target.ref, target.nd_song_id = target.ref or names[0], target.nd_song_id or names[1]
+    else:
+        target.track_id = await registry.id_of(s, target.ref, target.nd_song_id)
+
+
 async def remember(s: AsyncSession, target: FavoriteTarget, *, extra_aliases: Iterable[str] = ()) -> FavoriteSubject:
     """Keep the verified names of an album or an artist together. A track is not kept here (`subjects_of`): what
     is known of it is told, nothing is written."""
@@ -345,9 +361,11 @@ async def record(s: AsyncSession, user_id: int, target: FavoriteTarget, liked: b
     target = target.model_copy()
     if target.target_type == "track":
         target.ref, target.nd_song_id = await Ids(s).complete(target.ref, target.nd_song_id)
+        await name_track(s, target)
     if target.target_type == "track":
         # the same name for a track before it has a file and after: its catalog ref, if it has one
-        name = f"ref:{target.ref}" if target.ref else f"nd:{target.nd_song_id}"
+        name = (f"ref:{target.ref}" if target.ref else f"nd:{target.nd_song_id}" if target.nd_song_id
+                else f"t:{target.track_id}")
     else:
         name = (await remember(s, target)).canonical_key
     eid = event_id or decision_id(operation or uuid.uuid4().hex, target.target_type, name)
@@ -384,6 +402,7 @@ async def command(s: AsyncSession, user: User, targets: list[FavoriteTarget], *,
                 if typ == "track":
                     from app.plays import Ids
                     t.ref, t.nd_song_id = await Ids(s).complete(t.ref, t.nd_song_id)
+                    await name_track(s, t)
             active = []
             states = None  # what is liked now: told once for the whole group, not anew for each of its targets
             for target in group:
@@ -401,7 +420,8 @@ async def command(s: AsyncSession, user: User, targets: list[FavoriteTarget], *,
                 if states is None:
                     states = await snapshot(s, user.id)
                 current = next((x for x in states.values() if x.target_type == typ and
-                    ((x.ref and x.ref == target.ref) or (x.nd_id and x.nd_id == getattr(target, ND_FIELDS[typ])))), None)
+                    ((x.ref and x.ref == target.ref) or (x.nd_id and x.nd_id == getattr(target, ND_FIELDS[typ]))
+                     or (target.track_id and f"t:{target.track_id}" in x.aliases))), None)
                 if current and current.event.ts > at:
                     events.append(await record(s, user.id, target, liked, ts=at, event_id=eid,
                                                client=client, context=context))
@@ -513,7 +533,13 @@ async def project_liked(s: AsyncSession, user_id: int, starred: list[dict] | Non
     states = [st for st in (await snapshot(s, user_id)).values() if st.target_type == "track"]
     for st in states:
         decided.update(st.aliases)
-        if st.liked and (track_id := await _liked_track(s, user_id, st.ref, st.nd_id, st.data)) is not None:
+        if not st.liked:
+            continue
+        # the journal names the track itself where an event knew it; else it is found, or made, by what it was called
+        track_id = next((int(a[2:]) for a in st.aliases if a.startswith("t:")), None)
+        if track_id is None:
+            track_id = await _liked_track(s, user_id, st.ref, st.nd_id, st.data)
+        if track_id is not None:
             want.setdefault(track_id, st.since or st.event.ts)
     rows = (await s.execute(
         select(ImportItem, Import.created_at).join(ImportCollection, ImportCollection.id == ImportItem.collection_id)

@@ -299,6 +299,8 @@ export type FavoriteType = 'track' | 'album' | 'artist';
 
 export interface FavoriteTarget {
   target_type: FavoriteType;
+  /** a track: the Hub's id of it, if the Hub knows it */
+  track_id?: number | null;
   ref?: string | null;
   nd_song_id?: string | null;
   nd_album_id?: string | null;
@@ -974,6 +976,8 @@ export type PlayKind = 'start' | 'progress' | 'interrupted' | 'error' | 'skip' |
 
 export interface PlayEventIn {
   target_type?: FavoriteType;
+  /** a track: the Hub's id of it, if the Hub knows it */
+  track_id?: number | null;
   nd_album_id?: string | null;
   nd_artist_id?: string | null;
   target_data?: Record<string, unknown> | null;
@@ -1009,6 +1013,7 @@ export interface PlayEventsOut {
 }
 
 export interface DislikeIn {
+  track_id?: number | null;
   ref?: string | null;
   nd_song_id?: string | null;
   artist_ref?: string | null;
@@ -1020,6 +1025,8 @@ export interface DislikeIn {
 
 export interface DislikeOut {
   id: number;
+  /** the Hub's track, if the Hub knows the song */
+  track_id?: number | null;
   ref: string | null;
   nd_song_id: string | null;
   artist_ref: string | null;

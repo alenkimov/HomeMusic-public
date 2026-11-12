@@ -10,6 +10,8 @@ import { toast, toastError, type Toast } from './ui';
 
 export interface LikeTarget {
   targetType?: FavoriteType;
+  /** a track: the Hub's id of it, if the Hub knows it — what a ♥ goes by first */
+  trackId?: number | null;
   songId?: string | null;
   ndId?: string | null;
   ref?: string | null;
@@ -39,7 +41,8 @@ const typeOf = (t: LikeTarget) => t.targetType ?? 'track';
 const typedKey = (type: FavoriteType, alias: string) => `${type}:${alias}`;
 function aliases(t: LikeTarget): string[] {
   const id = t.ndId ?? t.songId ?? (typeOf(t) === 'track' && t.ref ? refSongs.get(t.ref) : undefined);
-  const direct = [t.ref ? `ref:${t.ref}` : '', id ? `nd:${id}` : ''].filter(Boolean).map((a) => typedKey(typeOf(t), a));
+  const track = typeOf(t) === 'track' && t.trackId ? `t:${t.trackId}` : '';
+  const direct = [track, t.ref ? `ref:${t.ref}` : '', id ? `nd:${id}` : ''].filter(Boolean).map((a) => typedKey(typeOf(t), a));
   return [...new Set(direct.flatMap((key) => [key, ...(linkedAliases.get(key) ?? [])]))];
 }
 function emit() {
@@ -112,6 +115,7 @@ function apiTarget(t: LikeTarget): FavoriteTarget {
   const id = t.ndId ?? t.songId ?? (type === 'track' && t.ref ? refSongs.get(t.ref) : undefined);
   return {
     target_type: type, ref: t.ref, target_data: t.data,
+    ...(type === 'track' && t.trackId ? { track_id: t.trackId } : {}),
     ...(id ? { [type === 'track' ? 'nd_song_id' : type === 'album' ? 'nd_album_id' : 'nd_artist_id']: id } : {}),
   };
 }

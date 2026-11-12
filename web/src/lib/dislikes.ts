@@ -9,6 +9,8 @@ import { toast, toastError } from './ui';
  * ref and/or its Navidrome song; the Hub fills in the other id where it can. Marking shows a toast with «Отменить». */
 
 export interface DislikeTarget {
+  /** the Hub's id of the track, if the Hub knows it */
+  track_id?: number | null;
   ref?: string | null;
   nd_song_id?: string | null;
   artist_ref?: string | null;
@@ -57,7 +59,7 @@ export function refreshDislikes(force = false): Promise<void> {
 }
 
 const matches = (d: DislikeOut, t: DislikeTarget) =>
-  t.artist_ref ? d.artist_ref === t.artist_ref : (!!t.ref && d.ref === t.ref) || (!!t.nd_song_id && d.nd_song_id === t.nd_song_id);
+  t.artist_ref ? d.artist_ref === t.artist_ref : (!!t.track_id && d.track_id === t.track_id) || (!!t.ref && d.ref === t.ref) || (!!t.nd_song_id && d.nd_song_id === t.nd_song_id);
 
 export function isDisliked(t: DislikeTarget): boolean {
   return rows.some((d) => matches(d, t));
@@ -75,9 +77,9 @@ export function useDisliked(t: DislikeTarget): boolean {
 /** Marks or unmarks «Не нравится»; the toast after marking undoes it. */
 export async function setDisliked(t: DislikeTarget, on: boolean, quiet = false): Promise<boolean> {
   const before = rows;
-  const what = t.artist_ref ? { artist_ref: t.artist_ref } : { ref: t.ref, nd_song_id: t.nd_song_id };
+  const what = t.artist_ref ? { artist_ref: t.artist_ref } : { track_id: t.track_id, ref: t.ref, nd_song_id: t.nd_song_id };
   rows = on
-    ? [{ id: 0, ref: t.ref ?? null, nd_song_id: t.nd_song_id ?? null, artist_ref: t.artist_ref ?? null, artist: t.artist ?? null, title: t.title ?? null, source: 'pwa', created_at: new Date().toISOString() }, ...rows]
+    ? [{ id: 0, track_id: t.track_id ?? null, ref: t.ref ?? null, nd_song_id: t.nd_song_id ?? null, artist_ref: t.artist_ref ?? null, artist: t.artist ?? null, title: t.title ?? null, source: 'pwa', created_at: new Date().toISOString() }, ...rows]
     : rows.filter((d) => !matches(d, t));
   emit();
   try {

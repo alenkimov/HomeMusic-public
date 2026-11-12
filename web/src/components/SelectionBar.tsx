@@ -36,7 +36,7 @@ export function SelectionBar() {
     return list;
   };
   const picked = selectedTracks();
-  const likes = picked.map((t) => isLiked({ songId: t.nd_song_id, ref: t.ref }));
+  const likes = picked.map((t) => isLiked({ trackId: t.tag_key ? Number(t.tag_key) : null, songId: t.nd_song_id, ref: t.ref }));
   // as a row's button, for them all: ♥ when every one is in «Любимое», ✓ when every one is kept somewhere, else «+»
   const kept = likes.every(Boolean) ? 'liked' : picked.every((t, i) => likes[i] || inPlaylists(t.nd_song_id)) ? 'listed' : 'none';
   const tagKeys = picked.map((t) => t.tag_key).filter((x): x is string => !!x);

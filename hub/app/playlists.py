@@ -11,6 +11,7 @@ from collections.abc import Iterable
 from datetime import datetime
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Playlist, PlaylistItem, Track, TrackFile, utcnow
@@ -31,7 +32,13 @@ async def liked(s: AsyncSession, user_id: int) -> Playlist:
     """«Любимое» of the user (made on the first call)."""
     p = (await s.execute(select(Playlist).where(Playlist.user_id == user_id, Playlist.kind == LIKED)
                          .order_by(Playlist.id).limit(1))).scalar_one_or_none()
-    return p or await create(s, user_id, LIKED_NAME, kind=LIKED)
+    if p is None:
+        # two requests at once (a page asks for the likes twice as it opens) must not make two: the database lets
+        # one in, and both read it
+        await s.execute(insert(Playlist).values(user_id=user_id, kind=LIKED, name=LIKED_NAME).on_conflict_do_nothing())
+        p = (await s.execute(select(Playlist).where(Playlist.user_id == user_id, Playlist.kind == LIKED)
+                             .order_by(Playlist.id).limit(1))).scalar_one()
+    return p
 
 
 async def own(s: AsyncSession, user_id: int, playlist_id: int) -> Playlist | None:

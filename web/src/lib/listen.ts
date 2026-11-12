@@ -163,7 +163,7 @@ const RESTART_AFTER_S = 3;
 const FINISH_SHARE = 0.9;
 
 /** The track being played, as reported to the Hub: `started` once its `start` was sent. */
-type OpenPlay = { ref: string; context: string; launch: Launch; started: boolean; playbackId: string; listenedMs: number; anchor: number | null; account: number | null; ndSongId?: string | null };
+type OpenPlay = { ref: string; context: string; launch: Launch; started: boolean; playbackId: string; listenedMs: number; anchor: number | null; account: number | null; ndSongId?: string | null; trackId?: number | null };
 let played: OpenPlay | null = null;
 let OPEN_PLAY_KEY = (() => {
   try {
@@ -199,7 +199,7 @@ function checkpoint() {
     listened_ms: Math.round(p.listenedMs), nd_song_id: p.ndSongId, track_metadata: metadata(), account: p.account, updated_ms: Date.now(),
     launch_id: p.launch.id, launch_origin: p.launch.origin };
   try { localStorage.setItem(OPEN_PLAY_KEY, JSON.stringify(snapshot)); } catch (e) { console.error('Could not persist listening checkpoint', e); }
-  playEvent('progress', { ref: p.ref, nd_song_id: p.ndSongId }, snapshot);
+  playEvent('progress', { ref: p.ref, nd_song_id: p.ndSongId, track_id: p.trackId }, snapshot);
 }
 
 type SavedPlay = { ref: string; context: string; playback_id: string; device_id: string; listened_ms: number;
@@ -285,8 +285,9 @@ function reportStart() {
   if (state.phase !== 'playing') return;
   p.started = true;
   p.ndSongId = state.info.nd_song_id;
+  p.trackId = state.info.track_id ?? state.track?.library_track_id ?? null;
   p.anchor = performance.now();
-  playEvent('start', { ref: p.ref, nd_song_id: p.ndSongId }, { context: p.context, playback_id: p.playbackId, device_id: deviceId, listened_ms: 0, track_metadata: metadata(), account: p.account, launch_id: p.launch.id, launch_origin: p.launch.origin });
+  playEvent('start', { ref: p.ref, nd_song_id: p.ndSongId, track_id: p.trackId }, { context: p.context, playback_id: p.playbackId, device_id: deviceId, listened_ms: 0, track_metadata: metadata(), account: p.account, launch_id: p.launch.id, launch_origin: p.launch.origin });
   checkpoint();
 }
 
@@ -299,7 +300,7 @@ function reportEnd(ended = false, failed = false, interrupted = false) {
   const duration = state.duration || state.track.duration_s || 0;
   const position = ended ? duration : state.position;
   const kind = interrupted ? 'interrupted' : failed ? 'error' : ended || (duration > 0 && position >= duration * FINISH_SHARE) ? 'finish' : 'skip';
-  const persisted = playEvent(kind, { ref: p.ref, nd_song_id: p.ndSongId }, { position_s: position, duration_s: duration || null, context: p.context, playback_id: p.playbackId, device_id: deviceId, listened_ms: Math.round(p.listenedMs), track_metadata: metadata(), account: p.account, launch_id: p.launch.id, launch_origin: p.launch.origin });
+  const persisted = playEvent(kind, { ref: p.ref, nd_song_id: p.ndSongId, track_id: p.trackId }, { position_s: position, duration_s: duration || null, context: p.context, playback_id: p.playbackId, device_id: deviceId, listened_ms: Math.round(p.listenedMs), track_metadata: metadata(), account: p.account, launch_id: p.launch.id, launch_origin: p.launch.origin });
   if (persisted) try { localStorage.removeItem(OPEN_PLAY_KEY); } catch (e) { console.error('Could not close listening checkpoint', e); }
 }
 

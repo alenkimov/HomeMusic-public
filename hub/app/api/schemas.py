@@ -247,6 +247,9 @@ class TrackPatchIn(BaseModel):
 
 class FavoriteTarget(BaseModel):
     target_type: Literal["track", "album", "artist"] = "track"
+    # a track: the Hub's id of it, if the Hub knows it — then nothing else need be said; else its catalog ref.
+    # `nd_song_id` is how an app that talks to Navidrome names it
+    track_id: int | None = Field(default=None, ge=1)
     ref: str | None = Field(default=None, min_length=1, max_length=64)
     nd_song_id: str | None = Field(default=None, min_length=1, max_length=64)
     nd_album_id: str | None = Field(default=None, min_length=1, max_length=64)
@@ -258,8 +261,10 @@ class FavoriteTarget(BaseModel):
         import json
 
         ids = {"track": self.nd_song_id, "album": self.nd_album_id, "artist": self.nd_artist_id}
-        if not (self.ref or ids[self.target_type]) or any(v for k, v in ids.items() if k != self.target_type):
-            raise ValueError("ref or matching nd_song_id/nd_album_id/nd_artist_id is required; identifiers must name exactly one target type")
+        named = self.ref or ids[self.target_type] or (self.target_type == "track" and self.track_id)
+        if not named or any(v for k, v in ids.items() if k != self.target_type) or \
+                (self.track_id and self.target_type != "track"):
+            raise ValueError("track_id, ref or matching nd_song_id/nd_album_id/nd_artist_id is required; identifiers must name exactly one target type")
         if self.target_data is not None and len(json.dumps(self.target_data, ensure_ascii=False)) > 8192:
             raise ValueError("target_data exceeds 8192 characters")
         return self
@@ -879,6 +884,7 @@ class DislikeIn(BaseModel):
     """«Не нравится»: a track (`ref` and/or `nd_song_id`) or an artist (`artist_ref`, catalog). `artist`/`title`
     are for showing the list."""
 
+    track_id: int | None = Field(default=None, ge=1)  # the Hub's track, if the Hub knows it
     ref: str | None = Field(default=None, max_length=64)
     nd_song_id: str | None = Field(default=None, max_length=64)
     artist_ref: str | None = Field(default=None, max_length=64)
@@ -889,14 +895,15 @@ class DislikeIn(BaseModel):
 
     @model_validator(mode="after")
     def _one_target(self) -> DislikeIn:
-        track = bool(self.ref or self.nd_song_id)
+        track = bool(self.track_id or self.ref or self.nd_song_id)
         if track == bool(self.artist_ref):
-            raise ValueError("a track (ref / nd_song_id) or an artist (artist_ref)")
+            raise ValueError("a track (track_id / ref / nd_song_id) or an artist (artist_ref)")
         return self
 
 
 class DislikeOut(BaseModel):
     id: int
+    track_id: int | None = None  # the Hub's track, if the Hub knows the song
     ref: str | None = None
     nd_song_id: str | None = None
     artist_ref: str | None = None

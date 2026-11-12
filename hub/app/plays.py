@@ -284,15 +284,25 @@ async def record_events(s: AsyncSession, user_id: int, raw: Iterable[Any], now: 
         from app.favorites import snapshot
         before_favorites = await snapshot(s, user_id, now)
     fill = Ids(s)
+    # an event that names its track by the Hub's id: what else the track is called is read from the library
+    named = {e.track_id for e in events if e.target_type == "track" and e.track_id}
+    known = {tid: (ref, nd) for tid, ref, nd in (await s.execute(
+        select(Track.id, Track.ref, Track.nd_song_id).where(Track.id.in_(named)))).all()} if named else {}
     for e in events:
         if e.event_id in seen:
             out.duplicates += 1
             continue
         seen.add(e.event_id)
         ref, nd = await fill.complete(e.ref, e.nd_song_id) if e.target_type == "track" else (e.ref, None)
+        track_id = e.track_id if e.target_type == "track" and e.track_id in known else None
+        if track_id:
+            ref, nd = ref or known[track_id][0], nd or known[track_id][1]
+        elif e.target_type == "track" and not (ref or nd):
+            out.rejected.append({"index": events.index(e), "event_id": e.event_id, "detail": "track_id: no such track"})
+            continue
         metadata = await _listening_metadata(s, e, nd) if e.kind in ("start", "progress", "interrupted", "error", "skip", "finish") else None
         values = dict(user_id=user_id, event_id=e.event_id, ts=event_time(e.ts, now), kind=e.kind, ref=ref,
-                      nd_song_id=nd, position_s=e.position_s, duration_s=e.duration_s, context=e.context,
+                      nd_song_id=nd, track_id=track_id, position_s=e.position_s, duration_s=e.duration_s, context=e.context,
                       client=e.client, received_at=now, playback_id=e.playback_id, device_id=e.device_id,
                       listened_ms=e.listened_ms, track_metadata=metadata, target_type=e.target_type, nd_album_id=e.nd_album_id,
                       nd_artist_id=e.nd_artist_id, target_data=e.target_data, reverts_event_id=e.reverts_event_id,

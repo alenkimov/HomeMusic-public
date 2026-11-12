@@ -19,7 +19,7 @@ import { Button, Cover, Loading, Sheet, cx } from './ui';
 export function SaveButton({ songId, refId, listKey, title, data, size = 20, className }: { songId?: string | null; refId?: string | null; /** what the track is called in the list of tracks kept in playlists (`lib/tags.ts` `tagKey`): a track with no file yet has no `songId` */ listKey?: string | null; title: string; data?: Record<string, unknown>; size?: number; className?: string }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const target: LikeTarget = { targetType: 'track', songId, ref: refId, data };
+  const target: LikeTarget = { targetType: 'track', trackId: listKey ? Number(listKey) : null, songId, ref: refId, data };
   const liked = useLiked(target);
   const listed = useInPlaylists(listKey);
   if (!songId && !refId) return null;
@@ -119,7 +119,7 @@ export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_
   // what the Hub knows the track by: its own id of it, file or no file. None: a catalog track the Hub has not met
   // — putting it anywhere downloads it
   const songId = tagKey(track);
-  const target: LikeTarget = { targetType: 'track', songId: track.nd_song_id, ref: track.ref, data: track.data };
+  const target: LikeTarget = { targetType: 'track', trackId: songId ? Number(songId) : null, songId: track.nd_song_id, ref: track.ref, data: track.data };
   const [wasLiked] = useState(() => isLiked(target));
   const [liked, setLiked] = useState(wasLiked);
   // the order of the opening: a tick does not make a row jump
@@ -245,7 +245,7 @@ export interface PickedTrack {
  * library has not got is downloaded when it is added somewhere. */
 export function BulkPlaylists({ tracks, onClose }: { tracks: PickedTrack[]; onClose: () => void }) {
   const n = tracks.length;
-  const targets = useMemo<LikeTarget[]>(() => tracks.map((t) => ({ targetType: 'track' as const, songId: t.nd_song_id, ref: t.ref, data: t.data })), [tracks]);
+  const targets = useMemo<LikeTarget[]>(() => tracks.map((t) => ({ targetType: 'track' as const, trackId: t.key ? Number(t.key) : null, songId: t.nd_song_id, ref: t.ref, data: t.data })), [tracks]);
   const songIds = useMemo(() => tracks.map((t) => t.key).filter((x): x is string => !!x), [tracks]);
   const [likedCount] = useState(() => targets.filter(isLiked).length);
   const [rows, setRows] = useState<PlaylistOfSongsOut[] | null>(null);

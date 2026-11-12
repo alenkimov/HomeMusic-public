@@ -96,3 +96,22 @@ async def test_liked_is_a_playlist_and_a_like_goes_on_top(s):
     assert await playlists.kept(s, 1) == ({a, b}, {a, c})
     assert await playlists.having(s, 1, [a, c]) == {liked.id: {a}, evening.id: {a, c}}
     assert [p.id for p in await playlists.of_user(s, 1)] == [evening.id]  # «Любимое» is not in the list of playlists
+
+
+async def test_there_is_one_liked_playlist_however_it_is_asked_for(s):
+    """Two requests at once each found none and each made one: the database lets only one in."""
+    from sqlalchemy import func, select
+    from sqlalchemy.exc import IntegrityError
+
+    from app import playlists
+    from app.models import Playlist
+
+    first = await playlists.liked(s, 1)
+    assert (await playlists.liked(s, 1)).id == first.id
+    with pytest.raises(IntegrityError):
+        async with s.begin_nested():
+            s.add(Playlist(user_id=1, kind=playlists.LIKED, name="Любимое"))
+            await s.flush()
+    s.add(Playlist(user_id=1, kind=playlists.USER, name="Любимое"))  # a playlist of one's own may be called so
+    await s.flush()
+    assert (await s.execute(select(func.count()).select_from(Playlist).where(Playlist.kind == playlists.LIKED))).scalar_one() == 1

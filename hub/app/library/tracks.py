@@ -21,6 +21,26 @@ def _same_length(a: int | None, b: int | None, tol: int = 3) -> bool:
     return a is None or b is None or abs(a - b) <= tol
 
 
+async def names_of(s: AsyncSession, track_id: int) -> tuple[str | None, str | None] | None:
+    """What a track is called outside the Hub: (its catalog ref, the Navidrome song of its newest file). None: no
+    such track."""
+    row = (await s.execute(select(Track.ref, Track.nd_song_id).where(Track.id == track_id))).first()
+    return (row[0], row[1]) if row is not None else None
+
+
+async def id_of(s: AsyncSession, ref: str | None, nd_song_id: str | None) -> int | None:
+    """The track that has this Navidrome song among its files, else the one of this catalog ref."""
+    from app.models import TrackFile
+
+    if nd_song_id:
+        found = (await s.execute(select(TrackFile.track_id).where(TrackFile.nd_song_id == nd_song_id)
+                                 .order_by(TrackFile.id.desc()).limit(1))).scalar_one_or_none()
+        if found is not None:
+            return found
+    track = await by_ref(s, ref) if ref else None
+    return track.id if track is not None else None
+
+
 def _names(c: CatalogTrack) -> dict:
     """What a track says of its song, as the catalog tells it."""
     return dict(

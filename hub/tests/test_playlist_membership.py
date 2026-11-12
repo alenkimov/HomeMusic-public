@@ -257,3 +257,43 @@ async def test_a_track_without_a_file_is_put_into_playlists_like_any_other(env):
     r = (await c.post("/api/playlists/membership-many", json={"track_ids": [waiting, *await tids("ndK")], "add": [], "remove": [b]})).json()
     assert {x["name"]: x["count"] for x in r} == {"Дорога": 1, "Вечер": 0}
     assert (await c.get("/api/playlists/members")).json() == {"track_ids": [waiting]}
+
+
+async def test_a_like_an_event_and_a_dislike_name_the_track_by_the_hubs_id(env):
+    """A page says which track by the Hub's id and nothing else — with a file or without."""
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import PlayEvent
+
+    c = env["client"]
+    waiting = await catalog_track(555, "Ещё не скачан")
+    (owned,) = await tids("ndK")
+
+    # ♥
+    r = await c.post("/api/star", json={"targets": [{"track_id": waiting}, {"track_id": owned}]})
+    assert r.status_code == 200, r.text
+    stars = (await c.get("/api/starred")).json()
+    assert (stars["song_ids"], stars["refs"]) == (["ndK"], ["dz:555"])
+    assert {a for x in stars["subjects"] for a in x["aliases"]} >= {f"t:{waiting}", "ref:dz:555", f"t:{owned}", "nd:ndK"}
+    assert (await c.post("/api/star", json={"targets": [{"track_id": waiting}], "unstar": True})).status_code == 200
+    assert (await c.get("/api/starred")).json()["refs"] == []
+    assert (await c.post("/api/star", json={"targets": [{"track_id": 999999}]})).status_code == 404
+
+    # the listening history
+    r = await c.post("/api/plays/events", json={"events": [
+        {"event_id": "e1", "ts": "2026-01-01T10:00:00Z", "kind": "finish", "track_id": waiting, "client": "pwa"},
+        {"event_id": "e2", "ts": "2026-01-01T10:05:00Z", "kind": "finish", "track_id": 999999, "client": "pwa"}]})
+    assert r.status_code == 200, r.text
+    assert (r.json()["accepted"], [x["event_id"] for x in r.json()["rejected"]]) == (1, ["e2"])
+    async with session_scope() as s:
+        row = (await s.execute(select(PlayEvent).where(PlayEvent.event_id == "e1"))).scalar_one()
+        assert (row.track_id, row.ref, row.nd_song_id) == (waiting, "dz:555", None)
+
+    # «Не нравится»
+    r = await c.post("/api/dislikes", json={"track_id": owned, "title": "Группа крови", "artist": "Кино"})
+    assert r.status_code == 200, r.text
+    assert (r.json()["track_id"], r.json()["nd_song_id"]) == (owned, "ndK")
+    assert [x["track_id"] for x in (await c.get("/api/dislikes")).json()] == [owned]
+    assert (await c.delete("/api/dislikes", params={"track_id": owned})).json() == {"removed": 1}
+    assert (await c.get("/api/dislikes")).json() == []

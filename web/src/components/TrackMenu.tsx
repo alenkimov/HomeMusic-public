@@ -81,7 +81,8 @@ function TrackMenu({ track, extra, inPlayer, lean, noTags, onClose }: { track: M
   const [picking, setPicking] = useState(false);
   const trackWave = trackSeed(track);
   const artistWave = artistSeed(track);
-  const target: DislikeTarget = { ref: track.ref, nd_song_id: track.nd_song_id, artist: track.artist, title: track.title };
+  const key = tagKey(track);
+  const target: DislikeTarget = { track_id: key ? Number(key) : null, ref: track.ref, nd_song_id: track.nd_song_id, artist: track.artist, title: track.title };
   const artist: DislikeTarget | null = track.artist_ref ? { artist_ref: track.artist_ref, artist: track.artist } : null;
   const disliked = useDisliked(target);
   const artistDisliked = useDisliked(artist ?? { artist_ref: '\u0000' });

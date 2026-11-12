@@ -200,7 +200,7 @@ export function TrackRow({
   const cols = useTrackColumns();
   const [picking, setPicking] = useState(false);
 
-  const likeTarget = { targetType: 'track' as const, songId: track.owned ? track.nd_song_id : null, ref: track.ref, data: { ...track } };
+  const likeTarget = { targetType: 'track' as const, trackId: track.library_track_id, songId: track.owned ? track.nd_song_id : null, ref: track.ref, data: { ...track } };
   const liked = useLiked(likeTarget);
   const kept = useInPlaylists(tagKey(track)) || liked; // the row's button shows ♥ or ✓
   const artistLine = track.artists?.length ? track.artists.join(', ') : track.artist;
