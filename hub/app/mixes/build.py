@@ -47,7 +47,7 @@ GENERATOR_TITLES = {
     "favorites": "Любимое", "stash": "Тайник", "ytm_radio": "Похожее: радио YouTube Music",
     "lastfm_similar": "Похожее: Last.fm", "deezer_radio": "Похожее: радио Deezer",
     "yandex_similar": "Незнакомое: похожие Яндекса", "similar_artists": "Незнакомое: похожие исполнители",
-    "new_releases": "Новинки", "yandex_wave": "Моя волна Яндекса",
+    "new_releases": "Новинки", "yandex_wave": "Моя волна Яндекса", "listenbrainz": "ListenBrainz: Weekly Exploration",
 }
 BANNED_VERSIONS = {"karaoke", "instrumental", "cover", "slowed", "sped up", "8d", "bass boosted", "remix", "live"}
 REJECT_REASONS = ("disliked", "version", "duration", "recent", "negative_score")  # `keep_reason`

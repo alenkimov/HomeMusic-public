@@ -66,6 +66,9 @@ async def lifespan(app: FastAPI):
         from app.mixes.discover import loop as discoveries_loop
 
         tasks.append(asyncio.create_task(discoveries_loop(), name="discoveries"))
+        from app.listenbrainz import loop as listenbrainz_loop
+
+        tasks.append(asyncio.create_task(listenbrainz_loop(), name="listenbrainz"))
         tasks.append(asyncio.create_task(playlist_adds_loop(), name="playlist-adds"))
         await telegram_chats.start_all()
         tasks.append(asyncio.create_task(_sync_tags(), name="tags"))
@@ -106,6 +109,7 @@ def create_app() -> FastAPI:
         insights,
         library,
         links,
+        listenbrainz,
         listen,
         lyrics,
         medialib,
@@ -128,7 +132,7 @@ def create_app() -> FastAPI:
                   openapi_url="/api/openapi.json", redoc_url=None)
     for r in (auth.router, search.router, catalog.router, downloads.router, listen.router, library.router, medialib.router,
               uploads.router, playlists.router, plays.router, mixes.router, wave.router, smart_shuffle.router, imports.router, events.router, system.router, admin.router,
-              insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, discoveries.router):
+              insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, discoveries.router, listenbrainz.router):
         app.include_router(r)
     try:
         from app.api import assistant

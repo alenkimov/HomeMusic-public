@@ -45,6 +45,11 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(String(320), unique=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
     # the user's own Telegram bot (app/telegram.py): its key (Fernet) and the private chat it sends tracks to
+    # the user's ListenBrainz account, if they gave one (app/listenbrainz.py): the token (Fernet), the name it is
+    # of, and the time of the last listen sent there
+    lb_token_enc: Mapped[str | None] = mapped_column(Text)
+    lb_user: Mapped[str | None] = mapped_column(String(128))
+    lb_sent_until: Mapped[datetime | None] = mapped_column(DateTime)
     tg_bot_token_enc: Mapped[str | None] = mapped_column(Text)
     tg_bot_username: Mapped[str | None] = mapped_column(String(64))
     tg_chat_id: Mapped[str | None] = mapped_column(String(32))

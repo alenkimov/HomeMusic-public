@@ -890,6 +890,16 @@ export interface AssistantEvent {
   status: string;
 }
 
+/** The user's ListenBrainz account (pages/ListenBrainz.tsx). */
+export interface ListenBrainzOut {
+  connected: boolean;
+  user?: string | null;
+  /** the last listen that went there, UTC */
+  sent_until?: string | null;
+  /** `send`: how many listens went this time */
+  sent?: number;
+}
+
 /** «Открытия недели» (pages/Discoveries.tsx). */
 export interface DiscoveriesOut {
   /** every issue, the newest first; `week` is its Monday, YYYY-MM-DD */

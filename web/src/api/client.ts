@@ -23,6 +23,7 @@ import type {
   DislikeOut,
   DownloadBatchOut,
   DiscoveriesOut,
+  ListenBrainzOut,
   DownloadIn,
   ReleasesOut,
   DownloadItemOut,
@@ -408,6 +409,11 @@ export const api = {
   tagSelectionSave: (id: number, body: Omit<TagSelection, 'id'>) => request<TagSelection>('PUT', `/api/tags/selections/${id}`, { json: body }),
   tagSelectionDelete: (id: number) => request<OkOut>('DELETE', `/api/tags/selections/${id}`),
   ndSongs: (signal?: AbortSignal) => request<NdSongOut[]>('GET', '/api/nd/songs', { signal }),
+  // ListenBrainz
+  listenbrainz: (signal?: AbortSignal) => request<ListenBrainzOut>('GET', '/api/listenbrainz', { signal }),
+  listenbrainzConnect: (token: string) => request<ListenBrainzOut>('POST', '/api/listenbrainz/connect', { json: { token } }),
+  listenbrainzSend: (again: boolean) => request<ListenBrainzOut>('POST', withQuery('/api/listenbrainz/send', { again: again || undefined })),
+  listenbrainzDisconnect: () => request<ListenBrainzOut>('DELETE', '/api/listenbrainz'),
   // «Открытия недели»
   discoveries: (issue: number | null, signal?: AbortSignal) => request<DiscoveriesOut>('GET', withQuery('/api/discoveries', { issue: issue ?? undefined }), { signal }),
   discoveriesBuild: () => request<OkOut>('POST', '/api/discoveries/build'),

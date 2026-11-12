@@ -48,6 +48,8 @@ OBSCURE_WEIGHT = 1.5  # against ~1.0 of standing first in one source's list: a l
 SEEDS = 16
 BUILD_HOUR = 5  # Monday, local time
 GENS = ("ytm_radio", "lastfm_similar", "deezer_radio", "yandex_similar", "similar_artists")
+LISTENBRAINZ = "listenbrainz"  # the user's «Weekly Exploration» there, if they have an account (app/listenbrainz.py)
+WEIGHTS = {LISTENBRAINZ: 1.2}  # made for this user out of what people with the same taste listen to
 JOB = "discover_build"
 CHECK_EVERY_S = 1800
 
@@ -115,7 +117,7 @@ async def pick(p: Profile, cands: list[Cand], *, known_artists: set[str], past: 
             rejected[reason] = rejected.get(reason, 0) + 1
     for c in kept:
         c.familiar = False
-        c.score = builder.score_parts(c, cfg.weights, p)["generators"]
+        c.score = builder.score_parts(c, {**cfg.weights, **WEIGHTS}, p)["generators"]
     kept.sort(key=lambda c: -c.score)
     pool = kept[:FAN_CHECK]
     vectors = await builder.sound(p, pool, stats)
@@ -136,6 +138,18 @@ async def pick(p: Profile, cands: list[Cand], *, known_artists: set[str], past: 
     out.sort(key=lambda c: -c.score)
     stats["rejected"], stats["kept"], stats["candidates"] = rejected, len(out), len(cands)
     return builder.order(builder._take(out, SIZE, {}, 1), vectors)
+
+
+async def listenbrainz_tracks(user_id: int) -> list[CatalogTrack]:
+    from app import listenbrainz
+    from app.mixes.resolve import resolve_hits
+
+    async with session_scope() as s:
+        user = await s.get(User, user_id)
+        if user is None or not user.lb_token_enc:
+            raise builder.Off("ListenBrainz не подключён")
+    hits = await listenbrainz.weekly_exploration(user_id)
+    return [t for t in await resolve_hits(LISTENBRAINZ, hits) if t is not None]
 
 
 async def known_artists_of(user_id: int) -> set[str]:
@@ -187,6 +201,7 @@ async def build_for(user_id: int, now: datetime | None = None) -> DiscoveryIssue
         seeds = p.seeds(SEEDS) or await builder.cold_seeds(p, SEEDS)
     stats: dict[str, Any] = {"seeds": [f"{t.artist} — {t.title}" for t in seeds]}
     gens = {k: v for k, v in builder.generators(p, seeds).items() if k in GENS}
+    gens[LISTENBRAINZ] = lambda: listenbrainz_tracks(user_id)
     results = await builder.run_generators(gens)
     cands = builder.merge(results)
     await builder.link_library(cands)
