@@ -86,7 +86,7 @@ const ROUTES: RouteDef[] = [
   ['/assistant/:id', 'assistant', (p) => <AssistantTaskPage key={p.id} id={Number(p.id)} />],
   ['/upload', 'more', () => <UploadPage />],
   ['/playlists', STANDALONE ? 'library' : 'more', () => <PlaylistsPage />],
-  ['/import', 'more', () => <ImportsPage />],
+  ['/import', 'more', (_, r) => <ImportsPage key={r.query.get('from') ?? ''} from={r.query.get('from') === 'spotify' ? 'spotify' : r.query.get('from') === 'yandex' ? 'yandex' : null} />],
   ['/import/:id', 'more', (p) => <ImportPage key={p.id} id={Number(p.id)} />],
   [
     '/import/:id/items',

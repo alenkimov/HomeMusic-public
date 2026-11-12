@@ -2,6 +2,7 @@ import { openTelegramSetup } from '../lib/telegram';
 import { useEffect, useState, type ReactNode } from 'react';
 import { STANDALONE } from '../lib/embedded';
 import { useSession } from '../lib/session';
+import { BrandIcon } from '../components/BrandIcon';
 import { Icon, type IconName } from '../components/Icon';
 import { PageHeader, cx } from '../components/ui';
 import { notifyPermission, requestNotifyPermission, type NotifyPermission } from '../lib/notify';
@@ -94,7 +95,8 @@ export function MorePage() {
         <Item icon="playlist" to="/playlists" title="Плейлисты" sub="Ваши плейлисты в Navidrome" />
         {STANDALONE && <Item icon="tag" to="/tags" title="Теги" sub="Язык, жанр и свои; подборки по тегам" />}
         {STANDALONE && <Item icon="chart" to="/stats" title="Статистика" sub="Что вы слушали: треки, исполнители, жанры; история из Spotify" />}
-        <Item icon="transfer" to="/import" title="Перенести музыку" sub="Из Яндекс Музыки и Spotify: ♥, плейлисты, альбомы" />
+        <Item icon="transfer" brand="yandex" to="/import?from=yandex" title="Перенести из Яндекс Музыки" sub="«Мне нравится», плейлисты, альбомы и исполнители" />
+        <Item icon="transfer" brand="spotify" to="/import?from=spotify" title="Перенести из Spotify" sub="Плейлисты и «Любимые треки» из файлов CSV" />
         <Item icon="send" title="Telegram" sub="Свой бот: отправка треков себе, в группы и каналы" onClick={() => openTelegramSetup()} />
         {me.is_admin && <Item icon="lyrics" to="/lyrics-sources" title="Тексты песен" sub="Источники текстов и их порядок, поиск для библиотеки" />}
         {me.is_admin && <Item icon="user" to="/admin" title="Пользователи и приглашения" sub="Расходы на ИИ, песни, коды для новых людей" />}
@@ -134,7 +136,10 @@ function Item({
   onClick,
   right,
   danger,
+  brand,
 }: {
+  /** the mark of a music service instead of the icon (components/BrandIcon) */
+  brand?: string;
   icon: IconName;
   title: string;
   sub?: string;
@@ -146,7 +151,7 @@ function Item({
 }) {
   const inner = (
     <>
-      <Icon name={icon} size={22} className={danger ? 'text-danger' : 'text-muted'} />
+      {brand ? <BrandIcon service={brand} size={22} className="shrink-0" /> : <Icon name={icon} size={22} className={danger ? 'text-danger' : 'text-muted'} />}
       <span className="min-w-0 flex-1">
         <span className={cx('block', danger && 'text-danger')}>{title}</span>
         {sub && <span className="block truncate text-xs text-muted">{sub}</span>}

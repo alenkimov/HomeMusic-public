@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { ImportCollectionOut, ImportItemOut, ImportMode, ImportOut } from '../api/types';
+import { BrandIcon } from '../components/BrandIcon';
 import { Icon, type IconName } from '../components/Icon';
 import { ListenButton } from '../components/catalog';
 import { Button, Checkbox, Cover, Empty, ErrorState, IconButton, Loading, Notice, PageHeader, ProgressBar, Radio, SectionTitle, SkeletonRows, Spinner, cx } from '../components/ui';
@@ -59,8 +60,10 @@ function sourceTitle(imp: ImportOut): string {
 
 // --- the list of imports + a new one ---------------------------------------------------------------
 
-export function ImportsPage() {
+/** `from`: the page of one service — its past transfers and its way in («Ещё» has an entry for each); none: both. */
+export function ImportsPage({ from = null }: { from?: 'yandex' | 'spotify' | null }) {
   const res = useAsync((s) => api.imports(s), []);
+  const past = (res.data ?? []).filter((imp) => !from || (imp.source === 'spotify' ? 'spotify' : 'yandex') === from);
   useHubEvent('import', () => res.reload(true));
   const [busy, setBusy] = useState<'device' | 'profile' | 'token' | 'csv' | null>(null);
   const csvRef = useRef<HTMLInputElement>(null);
@@ -85,17 +88,17 @@ export function ImportsPage() {
 
   return (
     <div>
-      <PageHeader title="Перенести музыку" back={EMBEDDED ? '/library' : '/more'} />
+      <PageHeader title={from === 'spotify' ? 'Перенос из Spotify' : from === 'yandex' ? 'Перенос из Яндекс Музыки' : 'Перенести музыку'} back={EMBEDDED ? '/library' : '/more'} />
       {res.loading ? (
         <SkeletonRows n={2} />
       ) : res.error ? (
         <ErrorState text={res.error} onRetry={() => res.reload()} />
-      ) : res.data?.length ? (
+      ) : past.length ? (
         <ul className="mx-4 mb-2 overflow-hidden rounded-xl bg-surface">
-          {res.data.map((imp) => (
+          {past.map((imp) => (
             <li key={imp.id} className="border-b border-line/60 last:border-0">
               <Link to={`/import/${imp.id}`} className="flex min-h-16 items-center gap-3 px-4 py-2 hover:bg-fg/5">
-                <Icon name="transfer" size={22} className="shrink-0 text-muted" />
+                <BrandIcon service={imp.source === 'spotify' ? 'spotify' : 'yandex'} size={22} className="shrink-0" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{sourceTitle(imp)}</span>
                   <span className={cx('block truncate text-xs', imp.status === 'failed' ? 'text-danger' : 'text-muted')}>{statusLine(imp)}</span>
@@ -107,8 +110,10 @@ export function ImportsPage() {
         </ul>
       ) : null}
 
-      <SectionTitle>Из Яндекс Музыки</SectionTitle>
-      <div className="card mx-4 space-y-3 p-4">
+      {from !== 'spotify' && (
+      <>
+      {!from && <SectionTitle>Из Яндекс Музыки</SectionTitle>}
+      <div className={cx('card mx-4 space-y-3 p-4', from && 'mt-3')}>
         <p className="text-sm text-muted">«Мне нравится», плейлисты (и закрытые), любимые альбомы и исполнители. Подписка Плюс не нужна.</p>
         <Button variant="primary" block icon="lock" busy={busy === 'device'} disabled={!!busy} onClick={() => start('device')}>
           Войти через Яндекс
@@ -134,9 +139,13 @@ export function ImportsPage() {
           </Button>
         </div>
       </details>
+      </>
+      )}
 
-      <SectionTitle>Из Spotify</SectionTitle>
-      <div className="card mx-4 space-y-3 p-4">
+      {from !== 'yandex' && (
+      <>
+      {!from && <SectionTitle>Из Spotify</SectionTitle>}
+      <div className={cx('card mx-4 space-y-3 p-4', from && 'mt-3')}>
         <p className="text-sm text-muted">Плейлисты и «Любимые треки» из файлов CSV. Подписка Premium не нужна.</p>
         <ol className="list-decimal space-y-1 pl-5 text-sm text-muted">
           <li>
@@ -177,8 +186,20 @@ export function ImportsPage() {
         </div>
         <p className="text-xs text-dim">Exportify — сторонний открытый сервис: вход идёт на сайте Spotify, Хаб получает только файл со списком треков.</p>
       </div>
+      {!EMBEDDED && (
+        <Link to="/stats" className="card mx-4 mt-3 flex items-center gap-3 p-4 hover:bg-hover">
+          <Icon name="chart" size={22} className="shrink-0 text-muted" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">История прослушиваний</span>
+            <span className="block text-xs text-muted">Что вы слушали в Spotify за все годы — импортируется на странице «Статистика»</span>
+          </span>
+          <Icon name="chevron" size={18} className="text-dim" />
+        </Link>
+      )}
+      </>
+      )}
 
-      <p className="px-6 py-6 text-center text-xs text-dim">Вход через Spotify и YouTube Music появятся позже.</p>
+      {!from && <p className="px-6 py-6 text-center text-xs text-dim">Вход через Spotify и YouTube Music появятся позже.</p>}
     </div>
   );
 }
