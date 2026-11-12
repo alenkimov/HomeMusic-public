@@ -12,7 +12,7 @@ import httpx
 import pytest
 import respx
 
-from tests.support import app_client
+from tests.support import app_client, filed_track
 
 LLM = "https://llm.test/v1"
 
@@ -107,7 +107,7 @@ async def yandex_import() -> dict:
     """A done Yandex import whose «Мне нравится» (newest first: Осень, Группа крови) starred ndA and ndB."""
     from app.db import session_scope
     from app.matching.normalize import fingerprint
-    from app.models import Import, ImportCollection, ImportItem, Track, User
+    from app.models import Import, ImportCollection, ImportItem, User
 
     async with session_scope() as s:
         user = (await s.execute(User.__table__.select())).first()
@@ -120,7 +120,7 @@ async def yandex_import() -> dict:
         await s.flush()
         for pos, nd_id in enumerate(["ndB", "ndA"]):
             artist, title = SONGS[nd_id]
-            t = Track(uid=str(uuid.uuid4()), path=f"{artist}/{title}.mp3", nd_song_id=nd_id, artist=artist,
+            t = filed_track(uid=str(uuid.uuid4()), path=f"{artist}/{title}.mp3", nd_song_id=nd_id, artist=artist,
                       title=title, fingerprint=fingerprint(artist, title))
             s.add(t)
             await s.flush()

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.api.schemas import FavoriteTarget, PlayEventIn
 from app.favorites import command, fold, reconcile, record, snapshot
 from app.models import FavoriteSubject, Import, NavidromeSync, PlayEvent, User
+from tests.support import filed_track
 
 NOW = datetime(2026, 10, 26, 12)
 
@@ -196,8 +197,8 @@ async def test_incomplete_snapshot_does_not_remove_state(ledger):
 async def test_v1_profile_counts_one_server_and_legacy_like_and_neutral_unlike(ledger):
     from app.db import session_scope
     from app.mixes.taste import build_profile
-    from app.plays import record_events
     from app.models import utcnow
+    from app.plays import record_events
 
     user, _ = ledger
     async with session_scope() as s:
@@ -293,14 +294,14 @@ async def test_pending_album_is_delivered_after_verified_library_binding(ledger)
 async def test_legacy_import_album_artist_provenance_is_recovered_without_restarring(ledger):
     from app.db import session_scope
     from app.favorites import recover_import_subjects
-    from app.models import Album, ImportCollection, ImportItem, Track
+    from app.models import Album, ImportCollection, ImportItem
     user, _ = ledger
     async with session_scope() as s:
         album = Album(uid="a9", title="Album", album_artist="A", deezer_album_id="9")
         imp = Import(user_id=user.id, source="yandex", method="token")
         s.add_all([album, imp])
         await s.flush()
-        s.add(Track(uid="t9", path="a/t.mp3", nd_song_id="song9", album_id=album.id,
+        s.add(filed_track(uid="t9", path="a/t.mp3", nd_song_id="song9", album_id=album.id,
                     artist="A", title="T", fingerprint="a|t"))
         collections = [ImportCollection(import_id=imp.id, kind=k, external_id=k, title=k) for k in ("albums", "artists")]
         s.add_all(collections)

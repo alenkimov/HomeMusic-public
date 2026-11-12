@@ -21,8 +21,9 @@ from app.config import get_settings
 from app.library import tagger
 from app.library.importer import _move, _write_cover_file, album_reldir, library_abs, library_lock, tagdata_for
 from app.library.layout import track_filename, unique_path
+from app.library.tracks import current_file, files_of
 from app.matching.normalize import fingerprint
-from app.models import Album, Track
+from app.models import Album, Track, TrackFile
 
 log = logging.getLogger(__name__)
 
@@ -45,26 +46,30 @@ async def _album_cover(album: Album) -> bytes | None:
 
 async def relocate_track(s: AsyncSession, track: Track, album: Album, *, cover: bytes | None = None,
                          retag: bool = True) -> None:
-    """Write album/track fields into the file and move it to the album folder if the path changed."""
-    old_abs = library_abs(track.path)
+    """Write album/track fields into the file and move it to the album folder if the path changed. A track without
+    a file only gets the fields."""
+    file = await current_file(s, track.id)
     track.album_id = album.id
     track.album = album.title
     track.album_artist = album.album_artist
     track.year = album.year
     track.fingerprint = fingerprint(track.artist, track.title)
+    if file is None:
+        return
+    old_abs = library_abs(file.path)
     if retag and old_abs.is_file():
-        await asyncio.to_thread(tagger.write_tags, old_abs, tagdata_for(track, album, cover=cover))
+        await asyncio.to_thread(tagger.write_tags, old_abs, tagdata_for(track, album, file, cover=cover))
     ext = old_abs.suffix.lstrip(".") or "mp3"
     new_dir_rel = album_reldir(album)
     new_name = track_filename(track.disc_no, track.track_no, track.title, ext)
     new_rel = PurePosixPath(new_dir_rel, new_name).as_posix()
-    if new_rel != track.path and old_abs.is_file():
+    if new_rel != file.path and old_abs.is_file():
         dest = library_abs(new_rel)
         if dest.exists():
             dest = unique_path(dest.parent, new_name)
         await asyncio.to_thread(_move, old_abs, dest)
-        track.path = PurePosixPath(new_dir_rel, dest.name).as_posix()
-        track.nd_song_id = None  # re-linked after the next scan
+        file.path = PurePosixPath(new_dir_rel, dest.name).as_posix()
+        file.nd_song_id = None  # re-linked after the next scan
         await asyncio.to_thread(_remove_empty_dirs, old_abs.parent)
 
 
@@ -93,9 +98,10 @@ async def set_album_cover(s: AsyncSession, album: Album, image: bytes) -> Album:
         d = library_abs(album_reldir(album))
         await asyncio.to_thread(_write_cover_file, d, cover)
         album.cover_path = (album_reldir(album) / "cover.jpg").as_posix()
-        tracks = (await s.execute(select(Track).where(Track.album_id == album.id))).scalars().all()
-        for t in tracks:
-            p = library_abs(t.path)
+        paths = (await s.execute(select(TrackFile.path).join(Track, Track.id == TrackFile.track_id)
+                                 .where(Track.album_id == album.id))).scalars().all()
+        for rel in paths:
+            p = library_abs(rel)
             if p.is_file():
                 await asyncio.to_thread(tagger.update_tags, p, cover=cover)
         await s.flush()
@@ -138,9 +144,10 @@ async def update_track(s: AsyncSession, track: Track, **fields) -> Track:
             if v is not None:
                 setattr(track, k, v)
         album = await s.get(Album, track.album_id) if track.album_id else None
-        p = library_abs(track.path)
         if album is None:
-            if p.is_file():
+            file = await current_file(s, track.id)
+            p = library_abs(file.path) if file else None
+            if p is not None and p.is_file():
                 await asyncio.to_thread(tagger.update_tags, p, **{k: v for k, v in fields.items() if v is not None})
             await s.flush()
             return track
@@ -150,13 +157,14 @@ async def update_track(s: AsyncSession, track: Track, **fields) -> Track:
 
 
 async def trash_track(s: AsyncSession, track: Track) -> None:
-    """Move the file to MUSIC_ROOT/.trash/<date>/<path> (purged after N days) and delete the row."""
+    """Move the track's files to MUSIC_ROOT/.trash/<date>/<path> (purged after N days) and delete the track."""
     async with library_lock:
-        src = library_abs(track.path)
-        if src.is_file():
-            dest = get_settings().trash_dir / datetime.now().strftime("%Y-%m-%d") / Path(*PurePosixPath(track.path).parts)
-            await asyncio.to_thread(_move, src, dest)
-            await asyncio.to_thread(_remove_empty_dirs, src.parent)
+        for file in await files_of(s, track.id):
+            src = library_abs(file.path)
+            if src.is_file():
+                dest = get_settings().trash_dir / datetime.now().strftime("%Y-%m-%d") / Path(*PurePosixPath(file.path).parts)
+                await asyncio.to_thread(_move, src, dest)
+                await asyncio.to_thread(_remove_empty_dirs, src.parent)
         album_id = track.album_id
         await s.delete(track)
         await s.flush()

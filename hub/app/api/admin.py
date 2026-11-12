@@ -26,7 +26,7 @@ from app.api.schemas import (
 from app.auth import admin_user, user_navidrome
 from app.db import get_session
 from app.library.navidrome import NavidromeAdmin
-from app.models import AiUsage, DownloadItem, Invite, Track, Upload, User, utcnow
+from app.models import AiUsage, DownloadItem, Invite, Track, TrackFile, Upload, User, utcnow
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -95,8 +95,8 @@ async def _stats(s: AsyncSession, user_ids: list[int]) -> dict[int, dict[str, An
                else "downloads_active" if status in ACTIVE else None)
         if key:
             out[uid][key] = out[uid].get(key, 0) + n
-    rows = await s.execute(select(Track.added_by, func.count(Track.id))
-                           .where(Track.added_by.in_(user_ids)).group_by(Track.added_by))
+    rows = await s.execute(select(TrackFile.added_by, func.count(TrackFile.id))
+                           .where(TrackFile.added_by.in_(user_ids)).group_by(TrackFile.added_by))
     for uid, n in rows:
         out[uid]["tracks_added"] = n
     rows = await s.execute(select(Upload.user_id, func.count(Upload.id))

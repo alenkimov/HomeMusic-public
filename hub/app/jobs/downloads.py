@@ -31,6 +31,7 @@ from app.library import probe
 from app.library.importer import ImportSpec, cleanup_dir, import_file, staging_dir_for
 from app.library.navidrome import admin_client
 from app.library.owned import find_existing, quiet, star_only
+from app.library.tracks import current_file
 from app.matching.select import (
     classify,
     match_catalog,
@@ -39,7 +40,7 @@ from app.matching.select import (
     trusted_original,
     uploaded_in_time,
 )
-from app.models import DownloadBatch, DownloadItem, Job, PendingPlaylistAdd, Track, User
+from app.models import DownloadBatch, DownloadItem, Job, PendingPlaylistAdd, Track, TrackFile, User
 from app.net import make_client
 from app.providers.base import Candidate, ProviderError, TrackQuery, file_ref
 from app.services import svc
@@ -293,7 +294,8 @@ async def handle_download_item(job: Job) -> None:
             )
             existing_id = existing.id if existing else None
             linked = bool(existing and existing.nd_song_id)
-            other_file = bool(existing and chosen and existing.source_url != chosen.get("page_url"))
+            have = await current_file(s, existing.id) if existing else None
+            other_file = bool(have and chosen and have.source_url != chosen.get("page_url"))
         if other_file:
             # the user picked another file of a song the library has (an uncensored re-upload of a censored copy):
             # it goes next to the old one as a new version (PLAN 8.6), and ♥ moves over to it
@@ -588,7 +590,7 @@ async def handle_scan(job: Job) -> None:
         await mixes_done(s, done_items)
         await process_playlist_adds(s)
         still = (
-            await s.execute(select(func.count()).select_from(Track).where(Track.nd_song_id.is_(None)))
+            await s.execute(select(func.count()).select_from(TrackFile).where(TrackFile.nd_song_id.is_(None)))
         ).scalar_one()
     if not still:
         return
@@ -613,11 +615,13 @@ def _same_path(nd_path: str | None, rel: str) -> bool:
 
 
 async def link_unlinked(nd) -> int:
-    """Find Navidrome song ids for tracks that don't have one yet (search3 by title, match by real path)."""
+    """Find Navidrome song ids for files that don't have one yet (search3 by title, match by real path)."""
     async with session_scope() as s:
-        tracks = (await s.execute(select(Track).where(Track.nd_song_id.is_(None)).limit(500))).scalars().all()
+        rows = (await s.execute(select(TrackFile, Track).join(Track, Track.id == TrackFile.track_id)
+                                .where(TrackFile.nd_song_id.is_(None)).limit(500))).all()
+        taken: set[str] = set()
         n = 0
-        for t in tracks:
+        for f, t in rows:
             hit = None
             # NFC: Navidrome finds nothing by a decomposed title («и» + U+0306 for «й»); its album and artist are
             # asked next for a title it still can't find
@@ -628,21 +632,22 @@ async def link_unlinked(nd) -> int:
                     log.warning("search3 failed for track %s: %r", t.id, e)
                     continue
                 songs = res.get("song", [])
-                hit = next((x for x in songs if _same_path(x.get("path"), t.path)), None)
+                hit = next((x for x in songs if _same_path(x.get("path"), f.path)), None)
                 if hit is None and i == 0:
                     hit = next(
                         (
                             x for x in songs
                             if _nfc(x.get("title")) == _nfc(t.title) and _nfc(x.get("album")) == _nfc(t.album)
                             and (t.duration_s is None or abs((x.get("duration") or 0) - t.duration_s) <= 2)
-                            and not any(o.nd_song_id == x["id"] for o in tracks)
+                            and x["id"] not in taken
                         ),
                         None,
                     )
                 if hit:
                     break
             if hit:
-                t.nd_song_id = hit["id"]
+                f.nd_song_id = hit["id"]
+                taken.add(hit["id"])
                 n += 1
         return n
 

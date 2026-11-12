@@ -9,7 +9,7 @@ import httpx
 import pytest
 import respx
 
-from tests.support import app_client
+from tests.support import app_client, filed_track
 
 LRC = "[ti:Song]\n[00:01.50]первая\n[00:03.00][00:09.00]припев\n[00:05.25]<00:05.25>два <00:05.90>слова\n"
 
@@ -82,10 +82,9 @@ async def env(hub_env, monkeypatch):
 async def add_track(nd_song_id: str = "nd1") -> int:
     from app.db import session_scope
     from app.matching.normalize import fingerprint
-    from app.models import Track
 
     async with session_scope() as s:
-        t = Track(uid=str(uuid.uuid4()), path=f"Кино/{nd_song_id}.mp3", nd_song_id=nd_song_id, artist="Кино, Гость",
+        t = filed_track(uid=str(uuid.uuid4()), path=f"Кино/{nd_song_id}.mp3", nd_song_id=nd_song_id, artist="Кино, Гость",
                   title="Группа крови", duration_s=245, fingerprint=fingerprint("Кино", nd_song_id))
         s.add(t)
         await s.flush()

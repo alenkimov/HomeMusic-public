@@ -8,7 +8,7 @@ import httpx
 import pytest
 import respx
 
-from tests.support import app_client
+from tests.support import app_client, filed_track
 
 
 @pytest.fixture
@@ -27,10 +27,9 @@ async def client(hub_env):
 async def add_track(nd: str, **kw) -> int:
     from app.db import session_scope
     from app.matching.normalize import fingerprint
-    from app.models import Track
 
     async with session_scope() as s:
-        t = Track(uid=str(uuid.uuid4()), path=f"Кино/{nd}.mp3", nd_song_id=nd, artist="Кино", title=nd,
+        t = filed_track(uid=str(uuid.uuid4()), path=f"Кино/{nd}.mp3", nd_song_id=nd, artist="Кино", title=nd,
                   fingerprint=fingerprint("Кино", nd), **kw)
         s.add(t)
         await s.flush()

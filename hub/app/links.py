@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.library.tracks import current_file
 from app.models import Track, TrackLink, utcnow
 
 TITLES = {"spotify": "Spotify", "yandex": "Яндекс Музыка", "ytm": "YouTube Music", "deezer": "Deezer",
@@ -101,7 +102,8 @@ async def of_track(s: AsyncSession, track: Track) -> dict[str, Any]:
     if track.deezer_track_id:
         ids["deezer"] = str(track.deezer_track_id)
     urls: dict[str, str] = {}
-    src = track.source_url or ""
+    file = await current_file(s, track.id)
+    src = (file.source_url if file else None) or ""
     if m := YOUTUBE_ID.search(src):  # the upload the file is from
         ids["youtube"], urls["youtube"] = m.group(1), f"https://www.youtube.com/watch?v={m.group(1)}"
     elif "soundcloud.com/" in src:

@@ -14,6 +14,7 @@ import respx
 
 from app.mixes import sources
 from app.mixes.sources import Hit, SourceDown
+from tests.support import filed_track
 from tests.test_ytdlp import ytm_response, ytm_row
 
 FIX = Path(__file__).parent / "fixtures" / "mixes"
@@ -273,10 +274,9 @@ async def test_resolve_prefers_the_library(db) -> None:
     from app.db import session_scope
     from app.matching.normalize import fingerprint
     from app.mixes.resolve import resolve_hits
-    from app.models import Track
 
     async with session_scope() as s:
-        s.add(Track(uid=str(uuid.uuid4()), path="a/b.mp3", nd_song_id="ndOwn", artist="Своя группа", title="Песня",
+        s.add(filed_track(uid=str(uuid.uuid4()), path="a/b.mp3", nd_song_id="ndOwn", artist="Своя группа", title="Песня",
                     duration_s=200, fingerprint=fingerprint("Своя группа", "Песня")))
 
     [t] = await resolve_hits("lastfm", [Hit("Своя группа", "Песня", 201)])

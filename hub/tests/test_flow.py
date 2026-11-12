@@ -17,7 +17,7 @@ import httpx
 import pytest
 import respx
 
-from tests.support import FakeDeezer, FakeProvider, app_client
+from tests.support import FakeDeezer, FakeProvider, app_client, filed_track
 
 FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
 pytestmark = pytest.mark.skipif(shutil.which(FFMPEG) is None, reason="ffmpeg not installed")
@@ -758,10 +758,9 @@ async def add_unlinked(path: str, title: str, album: str = "Альбом", artis
 
     from app.db import session_scope
     from app.matching.normalize import fingerprint
-    from app.models import Track
 
     async with session_scope() as s:
-        t = Track(uid=str(uuid.uuid4()), path=path, artist=artist, title=title, album=album, duration_s=4,
+        t = filed_track(uid=str(uuid.uuid4()), path=path, artist=artist, title=title, album=album, duration_s=4,
                   fingerprint=fingerprint(artist, title))
         s.add(t)
         await s.flush()

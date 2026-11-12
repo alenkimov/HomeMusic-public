@@ -18,8 +18,9 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    select,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, column_property, mapped_column, relationship
 
 
 def utcnow() -> datetime:
@@ -151,14 +152,14 @@ class Album(Base):
 
 
 class Track(Base):
+    """A song the Hub knows (ARCHITECTURE.md): its names and length. Nothing here is about a file — a track has
+    none, one or several (`TrackFile`), and the one that plays is the newest."""
+
     __tablename__ = "tracks"
     __table_args__ = (Index("ix_tracks_fingerprint", "fingerprint"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    uid: Mapped[str] = mapped_column(String(36), unique=True)  # HOMEMUSIC_TRACK_ID (Navidrome track PID)
     album_id: Mapped[int | None] = mapped_column(ForeignKey("albums.id", ondelete="SET NULL"), index=True)
-    path: Mapped[str] = mapped_column(String(1024), unique=True)  # relative to library/, forward slashes
-    nd_song_id: Mapped[str | None] = mapped_column(String(64), index=True)
     artist: Mapped[str] = mapped_column(String(512))
     title: Mapped[str] = mapped_column(String(512))
     album: Mapped[str | None] = mapped_column(String(512))
@@ -168,19 +169,46 @@ class Track(Base):
     year: Mapped[int | None] = mapped_column(Integer)
     genre: Mapped[str | None] = mapped_column(String(128))
     duration_s: Mapped[int | None] = mapped_column(Integer)
-    bitrate_kbps: Mapped[int | None] = mapped_column(Integer)
-    codec: Mapped[str | None] = mapped_column(String(16))
     isrc: Mapped[str | None] = mapped_column(String(16), index=True)
     deezer_track_id: Mapped[str | None] = mapped_column(String(32), index=True)
     explicit: Mapped[bool | None] = mapped_column(Boolean)
+    fingerprint: Mapped[str] = mapped_column(String(1024))  # normalized "artist|title"
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # its files: given with a new track they are saved with it. Never read through here (a query names them)
+    files: Mapped[list[TrackFile]] = relationship(lazy="raise", passive_deletes=True, cascade="save-update, merge")
+
+
+class TrackFile(Base):
+    """A file of the library that plays a track. `uid` is written into the file as HOMEMUSIC_TRACK_ID (Navidrome's
+    track PID); `nd_song_id` — the song Navidrome made of the file, known after its scan."""
+
+    __tablename__ = "track_files"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), index=True)
+    uid: Mapped[str] = mapped_column(String(36), unique=True)
+    path: Mapped[str] = mapped_column(String(1024), unique=True)  # relative to library/, forward slashes
+    nd_song_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    bitrate_kbps: Mapped[int | None] = mapped_column(Integer)
+    codec: Mapped[str | None] = mapped_column(String(16))
     source: Mapped[str | None] = mapped_column(String(32))  # hitmoz/hitmos_fm/ytdlp/upload/manual
     source_url: Mapped[str | None] = mapped_column(String(2048))
     source_upload_date: Mapped[date | None] = mapped_column(Date)
     acquired_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     locked: Mapped[bool] = mapped_column(Boolean, default=False)
-    fingerprint: Mapped[str] = mapped_column(String(1024))  # normalized "artist|title"
     warnings: Mapped[list[Any]] = mapped_column(JSON, default=list)
     added_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+# What plays a track, read with the track: the Navidrome song and the path of its newest file (none: the track has
+# no file, or Navidrome has not scanned it yet). Read-only — a file is changed through its own row.
+Track.nd_song_id = column_property(
+    select(TrackFile.nd_song_id).where(TrackFile.track_id == Track.id, TrackFile.nd_song_id.is_not(None))
+    .order_by(TrackFile.id.desc()).limit(1).correlate_except(TrackFile).scalar_subquery())
+Track.path = column_property(
+    select(TrackFile.path).where(TrackFile.track_id == Track.id)
+    .order_by(TrackFile.id.desc()).limit(1).correlate_except(TrackFile).scalar_subquery())
 
 
 class CatalogCache(Base):

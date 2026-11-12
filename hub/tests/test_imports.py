@@ -14,7 +14,7 @@ import pytest
 import respx
 from sqlalchemy import select
 
-from tests.support import FakeDeezer, FakeProvider, app_client, cand
+from tests.support import FakeDeezer, FakeProvider, app_client, cand, filed_track
 
 
 def track(artist: str, title: str, duration_s: int | None = 200, **extra) -> dict:
@@ -103,10 +103,9 @@ async def env(hub_env, monkeypatch):
 async def add_library_track(raw: dict, nd_song_id: str) -> int:
     from app.db import session_scope
     from app.matching.normalize import fingerprint
-    from app.models import Track
 
     async with session_scope() as s:
-        t = Track(uid=str(uuid.uuid4()), path=f"{raw['artist']}/{raw['title']}.mp3", nd_song_id=nd_song_id,
+        t = filed_track(uid=str(uuid.uuid4()), path=f"{raw['artist']}/{raw['title']}.mp3", nd_song_id=nd_song_id,
                   artist=raw["artist"], title=raw["title"], duration_s=raw["duration_s"],
                   fingerprint=fingerprint(raw["artist"], raw["title"]))
         s.add(t)

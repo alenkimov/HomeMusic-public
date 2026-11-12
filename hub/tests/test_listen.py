@@ -9,7 +9,7 @@ import httpx
 import pytest
 import respx
 
-from tests.support import FakeDeezer, FakeProvider, app_client, cand
+from tests.support import FakeDeezer, FakeProvider, app_client, cand, filed_track
 
 AUDIO = bytes(range(256)) * 1024  # 256 KiB standing in for an MP3
 
@@ -524,7 +524,6 @@ async def test_a_full_request_joining_browser_resolution_does_not_play_the_previ
 async def test_import_finishing_during_resolution_replaces_the_preview(env, monkeypatch):
     from app.db import session_scope
     from app.matching.normalize import fingerprint
-    from app.models import Track
 
     entered, release = asyncio.Event(), asyncio.Event()
 
@@ -542,7 +541,7 @@ async def test_import_finishing_during_resolution_replaces_the_preview(env, monk
         path.parent.mkdir(parents=True)
         path.write_bytes(AUDIO)
         async with session_scope() as s:
-            s.add(Track(uid="imported-during-search", path=rel, artist="Кино", title="Группа крови",
+            s.add(filed_track(uid="imported-during-search", path=rel, artist="Кино", title="Группа крови",
                         duration_s=245, isrc="RUA1D8800001", nd_song_id="qa-song",
                         fingerprint=fingerprint("Кино", "Группа крови")))
     finally:
@@ -596,17 +595,17 @@ async def test_nothing_to_play(env):
 
 async def test_owned_track_plays_the_library_file(env, monkeypatch):
     from unittest.mock import AsyncMock
-    from app.services import svc
+
     from app.db import session_scope
     from app.matching.normalize import fingerprint
-    from app.models import Track
+    from app.services import svc
 
     rel = "Кино/1988 - Группа крови/1-01 - Группа крови.mp3"
     f = env["music"] / "library" / rel
     f.parent.mkdir(parents=True)
     f.write_bytes(AUDIO)
     async with session_scope() as s:
-        s.add(Track(uid="u1", path=rel, artist="Кино", title="Группа крови", duration_s=245, isrc="RUA1D8800001",
+        s.add(filed_track(uid="u1", path=rel, artist="Кино", title="Группа крови", duration_s=245, isrc="RUA1D8800001",
                     fingerprint=fingerprint("Кино", "Группа крови")))
     c = env["client"]
     album_lookup = AsyncMock(return_value=svc.deezer.album)
@@ -623,7 +622,9 @@ async def test_owned_track_plays_the_library_file(env, monkeypatch):
     async with session_scope() as s:
         from sqlalchemy import update
 
-        await s.execute(update(Track).values(nd_song_id="nd7"))
+        from app.models import TrackFile
+
+        await s.execute(update(TrackFile).values(nd_song_id="nd7"))
     r = await c.get("/api/listen", params={"ref": "dz:100"})
     assert r.json()["kind"] == "library" and r.json()["nd_song_id"] == "nd7"
 
@@ -632,14 +633,13 @@ async def test_library_song_of_a_mix_plays_its_file(env):
     """A song only the library has (`nd:<song>`, a mix's track) plays its file in the page's player."""
     from app.db import session_scope
     from app.matching.normalize import fingerprint
-    from app.models import Track
 
     rel = "Кино/1988 - Группа крови/1-02 - Закрой за мной дверь.mp3"
     f = env["music"] / "library" / rel
     f.parent.mkdir(parents=True)
     f.write_bytes(AUDIO)
     async with session_scope() as s:
-        s.add(Track(uid="u2", path=rel, artist="Кино", title="Закрой за мной дверь", duration_s=260,
+        s.add(filed_track(uid="u2", path=rel, artist="Кино", title="Закрой за мной дверь", duration_s=260,
                     nd_song_id="nd9", fingerprint=fingerprint("Кино", "Закрой за мной дверь")))
     c = env["client"]
     r = await c.get("/api/listen", params={"ref": "nd:nd9"})

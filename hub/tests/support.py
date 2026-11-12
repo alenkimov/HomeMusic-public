@@ -183,3 +183,22 @@ class FakeDeezer:
 
     async def aclose(self):
         pass
+
+
+FILE_FIELDS = ("uid", "path", "nd_song_id", "bitrate_kbps", "codec", "source", "source_url", "source_upload_date",
+               "acquired_at", "locked", "warnings", "added_by")
+
+
+def filed_track(**fields):
+    """A track with the file that plays it, as one object to `s.add`: the file's fields (`path`, `nd_song_id`,
+    `source`…) go to its `TrackFile`, the rest to the `Track`."""
+    import uuid
+
+    from app.models import Track, TrackFile
+
+    file = {k: fields.pop(k) for k in FILE_FIELDS if k in fields}
+    file.setdefault("uid", str(uuid.uuid4()))
+    file.setdefault("path", f"{file['uid']}.mp3")
+    if "added_by" in file:
+        fields.setdefault("created_by", file["added_by"])
+    return Track(**fields, files=[TrackFile(**file)])

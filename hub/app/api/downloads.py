@@ -17,6 +17,7 @@ from app.events import bus
 from app.jobs.downloads import create_items, item_links, item_out, item_ref
 from app.jobs.queue import enqueue, notify
 from app.library.owned import ACTIVE_STATUSES, find_existing, quiet
+from app.library.tracks import current_file
 from app.models import DownloadBatch, DownloadItem, Job, PendingPlaylistAdd, User
 from app.providers.base import Candidate, TrackQuery
 from app.services import svc
@@ -154,7 +155,8 @@ async def create_batch(
             s, artist=q.artist, title=q.title, duration_s=q.duration_s, isrc=q.isrc,
             deezer_track_id=meta.get("deezer_track_id"))
         # a picked file the library has not got is downloaded next to the song's older version (`jobs.downloads`)
-        if have and (it.candidate is None or have.source_url == it.candidate.page_url):
+        file = await current_file(s, have.id) if have else None
+        if have and (it.candidate is None or (file is not None and file.source_url == it.candidate.page_url)):
             owned += 1
         entries.append((q, meta, it.candidate))
     queued = await create_items(s, batch, entries, force=body.force, star=body.star, favorite_events=favorite_events,

@@ -20,7 +20,7 @@ from app.auth import current_user, user_navidrome
 from app.db import get_session
 from app.library.navidrome import NavidromeClient, SubsonicError
 from app.mixes.resolve import library_track
-from app.models import CatalogCache, ImportItem, Track, User
+from app.models import CatalogCache, ImportItem, Track, TrackFile, User
 
 router = APIRouter(prefix="/api/nd", tags=["medialib"])
 
@@ -52,9 +52,12 @@ async def songs_out(s: AsyncSession, songs: list[dict]) -> list[NdSongOut]:
     listening data know the song by it), the rest are `nd:<song>`."""
     ids = [x["id"] for x in songs if x.get("id")]
     rows: dict[str, Track] = {}
+    acquired: dict[str, datetime] = {}
     for i in range(0, len(ids), 500):
-        q = select(Track).where(Track.nd_song_id.in_(ids[i:i + 500]))
-        rows.update((t.nd_song_id, t) for t in (await s.execute(q)).scalars())
+        q = (select(Track, TrackFile.nd_song_id, TrackFile.acquired_at).join(TrackFile, TrackFile.track_id == Track.id)
+             .where(TrackFile.nd_song_id.in_(ids[i:i + 500])))
+        for t, song, at in (await s.execute(q)).all():
+            rows[song], acquired[song] = t, at
     out = []
     for x in songs:
         sid = x.get("id")
@@ -74,7 +77,7 @@ async def songs_out(s: AsyncSession, songs: list[dict]) -> list[NdSongOut]:
             explicit=t.explicit if t is not None else None,
             cover_url=cover_url(x.get("coverArt"), BIG_COVER), cover_small_url=cover_url(x.get("coverArt")),
             owned=True, library_track_id=t.id if t is not None else None, nd_song_id=sid,
-            added_at=t.acquired_at if t is not None else None,
+            added_at=acquired.get(sid),
             nd_album_id=x.get("albumId"), nd_artist_id=x.get("artistId"), nd_artist_ids=artist_ids,
         ))
     return out

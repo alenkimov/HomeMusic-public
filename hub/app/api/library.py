@@ -31,18 +31,21 @@ from app.jobs.downloads import enqueue_scan
 from app.jobs.queue import notify
 from app.library import editor, tagger
 from app.library.importer import album_reldir, library_abs
+from app.library.tracks import current_file, current_files
 from app.matching.normalize import normalize_title
-from app.models import Album, Track, User
+from app.models import Album, Track, TrackFile, User
 
 router = APIRouter(tags=["library"])
 
 
-def track_out(t: Track) -> LibTrackOut:
+def track_out(t: Track, f: TrackFile | None) -> LibTrackOut:
+    """A track of the library with what its file is (`f`: the file that plays it)."""
     return LibTrackOut(
         id=t.id, nd_song_id=t.nd_song_id, album_id=t.album_id, artist=t.artist, title=t.title, album=t.album,
         album_artist=t.album_artist, track_no=t.track_no, disc_no=t.disc_no, year=t.year, duration_s=t.duration_s,
-        bitrate_kbps=t.bitrate_kbps, codec=t.codec, explicit=t.explicit, source=t.source, locked=t.locked,
-        warnings=t.warnings or [], path=t.path,
+        bitrate_kbps=f.bitrate_kbps if f else None, codec=f.codec if f else None, explicit=t.explicit,
+        source=f.source if f else None, locked=bool(f and f.locked), warnings=(f.warnings if f else None) or [],
+        path=f.path if f else "",
     )
 
 
@@ -54,10 +57,11 @@ async def album_out(s: AsyncSession, a: Album, *, with_tracks: bool = False) -> 
     tracks = (
         await s.execute(select(Track).where(Track.album_id == a.id).order_by(Track.disc_no, Track.track_no, Track.id))
     ).scalars().all()
+    files = await current_files(s, [t.id for t in tracks]) if with_tracks else {}
     return LibAlbumOut(
         id=a.id, uid=a.uid, title=a.title, album_artist=a.album_artist, year=a.year, release_type=a.release_type,
         genre=a.genre, deezer_album_id=a.deezer_album_id, track_count=len(tracks), has_cover=_has_cover(a),
-        tracks=[track_out(t) for t in tracks] if with_tracks else None,
+        tracks=[track_out(t, files.get(t.id)) for t in tracks] if with_tracks else None,
     )
 
 
@@ -107,10 +111,10 @@ async def create_album(body: AlbumCreateIn, user: User = Depends(current_user), 
 @router.get("/api/library/track-source", response_model=TrackSourceOut)
 async def track_source(nd_song_id: str, user: User = Depends(current_user),
                        s: AsyncSession = Depends(get_session, scope="function")):
-    t = (await s.execute(select(Track).where(Track.nd_song_id == nd_song_id).limit(1))).scalar_one_or_none()
-    if t is None:
+    f = (await s.execute(select(TrackFile).where(TrackFile.nd_song_id == nd_song_id).limit(1))).scalar_one_or_none()
+    if f is None:
         raise HTTPException(404, "Трек не найден")
-    return TrackSourceOut(source=t.source, source_url=t.source_url, acquired_at=t.acquired_at)
+    return TrackSourceOut(source=f.source, source_url=f.source_url, acquired_at=f.acquired_at)
 
 
 @router.get("/api/library/albums/{album_id}", response_model=LibAlbumOut)
@@ -193,7 +197,8 @@ async def patch_track(track_id: int, body: TrackPatchIn, user: User = Depends(cu
         raise HTTPException(404, "Трек не найден")
     await editor.update_track(s, t, **body.model_dump(exclude_unset=True))
     await _after_edit(s, user, t.album_id)
-    return track_out(t)
+    await s.refresh(t)
+    return track_out(t, await current_file(s, t.id))
 
 
 @router.delete("/api/library/tracks/{track_id}")

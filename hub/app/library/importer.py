@@ -21,7 +21,7 @@ from app.config import get_settings
 from app.library import tagger
 from app.library.layout import album_dirname, next_version_path, sanitize_component, track_filename, unique_path
 from app.matching.normalize import fingerprint, normalize_artist, normalize_title
-from app.models import Album, Track, utcnow
+from app.models import Album, Track, TrackFile, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -116,8 +116,8 @@ async def get_or_create_album(s: AsyncSession, spec: ImportSpec) -> Album:
     return a
 
 
-def tagdata_for(track: Track, album: Album, *, cover: bytes | None = None, artists: list[str] | None = None,
-                track_total: int | None = None) -> tagger.TagData:
+def tagdata_for(track: Track, album: Album, file: TrackFile, *, cover: bytes | None = None,
+                artists: list[str] | None = None, track_total: int | None = None) -> tagger.TagData:
     return tagger.TagData(
         title=track.title,
         artist=track.artist,
@@ -132,12 +132,12 @@ def tagdata_for(track: Track, album: Album, *, cover: bytes | None = None, artis
         isrc=track.isrc,
         explicit=track.explicit,
         release_type=album.release_type,
-        track_uid=track.uid,
+        track_uid=file.uid,
         album_uid=album.uid,
-        source=track.source,
-        source_url=track.source_url,
-        source_date=track.source_upload_date,
-        acquired=track.acquired_at,
+        source=file.source,
+        source_url=file.source_url,
+        source_date=file.source_upload_date,
+        acquired=file.acquired_at,
         deezer_track_id=track.deezer_track_id,
         deezer_album_id=album.deezer_album_id,
         cover=cover,
@@ -166,7 +166,8 @@ def is_original(source_date: date | None, explicit: bool | None) -> bool:
 
 
 async def import_file(s: AsyncSession, src: Path, spec: ImportSpec) -> Track:
-    """Tag `src` (a file in staging/), move it into the library and create the Track row (caller commits)."""
+    """Tag `src` (a file in staging/), move it into the library and make its track and file rows (caller
+    commits)."""
     async with library_lock:
         album = await get_or_create_album(s, spec)
         cover = tagger.prepare_cover(spec.cover) if spec.cover else None
@@ -176,9 +177,7 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec) -> Track:
             cover = (album_dir / "cover.jpg").read_bytes()
 
         track = Track(
-            uid=str(uuid.uuid4()),
             album_id=album.id,
-            path="",
             artist=spec.artist,
             title=spec.title,
             album=album.title,
@@ -188,23 +187,28 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec) -> Track:
             year=album.year,
             genre=spec.genre or album.genre,
             duration_s=spec.duration_s,
-            bitrate_kbps=spec.bitrate_kbps,
-            codec=spec.codec,
             isrc=spec.isrc.upper() if spec.isrc else None,
             deezer_track_id=str(spec.deezer_track_id) if spec.deezer_track_id else None,
             explicit=spec.explicit,
+            fingerprint=fingerprint(spec.artist, spec.title),
+            created_by=spec.added_by,
+        )
+        file = TrackFile(
+            uid=str(uuid.uuid4()),
+            path="",
+            bitrate_kbps=spec.bitrate_kbps,
+            codec=spec.codec,
             source=spec.source,
             source_url=spec.source_url,
             source_upload_date=spec.source_upload_date,
             acquired_at=utcnow(),
             locked=is_original(spec.source_upload_date, spec.explicit),
-            fingerprint=fingerprint(spec.artist, spec.title),
             warnings=list(spec.warnings),
             added_by=spec.added_by,
         )
 
         await asyncio.to_thread(
-            tagger.write_tags, src, tagdata_for(track, album, cover=cover, artists=spec.artists,
+            tagger.write_tags, src, tagdata_for(track, album, file, cover=cover, artists=spec.artists,
                                                 track_total=spec.track_total)
         )
 
@@ -218,10 +222,13 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec) -> Track:
             await asyncio.to_thread(_write_cover_file, album_dir, cover)
             album.cover_path = (album_dir_rel / "cover.jpg").as_posix()
 
-        track.path = PurePosixPath(album_dir_rel, dest.name).as_posix()
+        file.path = PurePosixPath(album_dir_rel, dest.name).as_posix()
         s.add(track)
         await s.flush()
-        log.info("imported %s", track.path, extra={"user_id": spec.added_by})
+        file.track_id = track.id
+        s.add(file)
+        await s.flush()
+        log.info("imported %s", file.path, extra={"user_id": spec.added_by})
         return track
 
 

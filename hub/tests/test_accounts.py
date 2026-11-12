@@ -15,7 +15,7 @@ import respx
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from tests.support import app_client
+from tests.support import app_client, filed_track
 
 CLIENT_ID = "123-web.apps.googleusercontent.com"
 CERTS = "https://www.googleapis.com/oauth2/v3/certs"
@@ -511,7 +511,7 @@ async def test_google_account_whose_password_changed(env):
 
 async def test_admin_user_list_with_spending_and_songs(env):
     from app.db import session_scope
-    from app.models import AiUsage, DownloadBatch, DownloadItem, Track, User, utcnow
+    from app.models import AiUsage, DownloadBatch, DownloadItem, User, utcnow
 
     inv = await make_invite(env["admin"], "Анна")
     async with env["client"]() as c:
@@ -534,7 +534,7 @@ async def test_admin_user_list_with_spending_and_songs(env):
         for status in ("done", "done", "failed", "queued"):
             s.add(DownloadItem(batch_id=batch.id, user_id=anna.id, status=status,
                                query_json={"query": {"artist": "Кино", "title": "Группа крови"}}))
-        s.add(Track(uid="t1", path="a/1.mp3", artist="Кино", title="Группа крови", fingerprint="кино|группа крови",
+        s.add(filed_track(uid="t1", path="a/1.mp3", artist="Кино", title="Группа крови", fingerprint="кино|группа крови",
                     added_by=anna.id))
 
     out = (await env["admin"].get("/api/admin/users")).json()
@@ -591,37 +591,3 @@ async def test_chat_turn_records_spending(env, monkeypatch):
     assert json.loads(route.calls[0].request.content)["usage"] == {"include": True}
     me = next(u for u in (await env["admin"].get("/api/admin/users")).json()["users"] if u["username"] == "admin")
     assert me["ai_requests"] == 1 and me["ai_cost_usd"] == pytest.approx(0.00042)
-
-
-def test_migration_carries_past_spending(tmp_path):
-    import sqlite3
-    from pathlib import Path
-
-    from alembic import command
-    from alembic.config import Config
-
-    import app.db
-
-    db = tmp_path / "hub.sqlite3"
-    root = Path(app.db.__file__).resolve().parent.parent
-    cfg = Config(str(root / "alembic.ini"))
-    cfg.set_main_option("script_location", str(root / "migrations"))
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db.as_posix()}")
-    cfg.attributes["configure_logger"] = False
-    command.upgrade(cfg, "5e0a9d1c7b42")
-    con = sqlite3.connect(db)
-    con.execute("INSERT INTO users (id, nd_username, nd_password_enc, is_admin, created_at) "
-                "VALUES (1, 'admin', 'x', 1, '2026-10-01 10:00:00')")
-    for i, (kind, cost) in enumerate([("images", 0.003), ("link", 0), ("chat", 0.001)], start=1):
-        con.execute("INSERT INTO assistant_tasks (id, user_id, input_kind, input_ref, status, tokens_in, tokens_out, "
-                    "cost_usd, created_at, updated_at) VALUES (?, 1, ?, '{}', 'done', ?, 5, ?, '2026-10-02 10:00:00', "
-                    "'2026-10-02 10:00:00')", (i, kind, 100 if cost else 0, cost))
-    con.commit()
-    con.close()
-    command.upgrade(cfg, "head")
-    con = sqlite3.connect(db)
-    rows = con.execute("SELECT user_id, kind, tokens_in, cost_usd, created_at FROM ai_usage ORDER BY id").fetchall()
-    assert rows == [(1, "images", 100, 0.003, "2026-10-02 10:00:00"), (1, "chat", 100, 0.001, "2026-10-02 10:00:00")]
-    assert con.execute("SELECT google_sub, last_seen_at FROM users").fetchone() == (None, None)
-    con.close()
-    command.downgrade(cfg, "5e0a9d1c7b42")

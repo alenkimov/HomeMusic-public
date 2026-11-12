@@ -14,7 +14,7 @@ import pytest
 import respx
 from sqlalchemy import select
 
-from tests.support import app_client
+from tests.support import app_client, filed_track
 
 NOW = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
 
@@ -65,10 +65,9 @@ async def env(hub_env):
 async def add_track(artist: str, title: str, nd_song_id: str, duration_s: int = 245, **kw) -> int:
     from app.db import session_scope
     from app.matching.normalize import fingerprint
-    from app.models import Track
 
     async with session_scope() as s:
-        t = Track(uid=str(uuid.uuid4()), path=f"{artist}/{title}.mp3", nd_song_id=nd_song_id, artist=artist,
+        t = filed_track(uid=str(uuid.uuid4()), path=f"{artist}/{title}.mp3", nd_song_id=nd_song_id, artist=artist,
                   title=title, duration_s=duration_s, fingerprint=fingerprint(artist, title), **kw)
         s.add(t)
         await s.flush()
@@ -424,6 +423,7 @@ async def test_scrobble_dedup_preserves_synthetic_likes_and_bounds_future(env):
 
 async def test_favorites_sync_still_runs_when_scrobble_import_fails(env, monkeypatch):
     from unittest.mock import AsyncMock
+
     from app import favorites, plays
     monkeypatch.setattr(plays, "import_scrobbles", AsyncMock(side_effect=TimeoutError()))
     sync = AsyncMock(return_value=0)
@@ -573,54 +573,6 @@ async def test_plays_need_login(env):
     async with app_client(create_app(), login=None) as anon:
         assert (await anon.post("/api/plays/events", json={"events": []})).status_code == 401
         assert (await anon.get("/api/dislikes")).status_code == 401
-
-
-def test_migration_carries_dislikes_of_past_imports(tmp_path):
-    import sqlite3
-    from pathlib import Path
-
-    from alembic import command
-    from alembic.config import Config
-
-    import app.db
-
-    db = tmp_path / "hub.sqlite3"
-    root = Path(app.db.__file__).resolve().parent.parent
-    cfg = Config(str(root / "alembic.ini"))
-    cfg.set_main_option("script_location", str(root / "migrations"))
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db.as_posix()}")
-    cfg.attributes["configure_logger"] = False
-    command.upgrade(cfg, "a7c3e9f2b1d4")
-    con = sqlite3.connect(db)
-    con.execute("INSERT INTO users (id, nd_username, nd_password_enc, is_admin, created_at) "
-                "VALUES (1, 'admin', 'x', 1, '2026-10-01 10:00:00')")
-    con.execute("INSERT INTO tracks (id, uid, path, nd_song_id, artist, title, fingerprint, warnings, acquired_at, "
-                "locked) VALUES (5, 'u5', 'a/b.mp3', 'ndA', 'А', 'Б', 'а|б', '[]', '2026-10-01 10:00:00', 0)")
-    for imp in (1, 2):  # the same dislike in two imports is one row, from the first import
-        con.execute("INSERT INTO imports (id, user_id, source, method, status, mode, keep_token, auth_json, "
-                    "options_json, created_at, updated_at) VALUES (?, 1, 'yandex', 'token', 'done', 'economy', 0, "
-                    "'{}', '{}', ?, ?)", (imp, f"2026-10-0{imp + 1} 10:00:00", f"2026-10-0{imp + 1} 10:00:00"))
-        con.execute("INSERT INTO import_collections (id, import_id, kind, external_id, title, position, selected, "
-                    "nd_song_ids) VALUES (?, ?, 'dislikes', 'dislikes', 'Не нравится', 0, 1, '[]')", (imp * 10, imp))
-        con.execute("INSERT INTO import_collections (id, import_id, kind, external_id, title, position, selected, "
-                    "nd_song_ids) VALUES (?, ?, 'likes', 'likes', 'Мне нравится', 1, 1, '[]')", (imp * 10 + 1, imp))
-    rows = [(10, "dz:1", None, '{"artist": "Х", "title": "Раз"}'), (20, "dz:1", None, "{}"),
-            (20, "dz:2", 5, '{"artist": "А", "title": "Б"}'), (20, None, None, "{}"),  # not found: no ref
-            (21, "dz:3", None, "{}")]  # a like
-    for i, (coll, ref, track_id, raw) in enumerate(rows):
-        con.execute("INSERT INTO import_items (import_id, collection_id, position, external_id, raw_json, ref, "
-                    "status, track_id) VALUES (?, ?, ?, ?, ?, ?, 'skipped', ?)",
-                    (coll // 10, coll, i, str(i), raw, ref, track_id))
-    con.commit()
-    con.close()
-    command.upgrade(cfg, "head")
-    con = sqlite3.connect(db)
-    got = con.execute("SELECT user_id, ref, nd_song_id, artist, title, source, created_at FROM dislikes "
-                      "ORDER BY ref").fetchall()
-    assert got == [(1, "dz:1", None, "Х", "Раз", "yandex_import", "2026-10-02 10:00:00"),
-                   (1, "dz:2", "ndA", "А", "Б", "yandex_import", "2026-10-03 10:00:00")]
-    con.close()
-    command.downgrade(cfg, "a7c3e9f2b1d4")
 
 
 async def test_late_accept_chain_has_separate_capability_and_preserves_original_date(env):

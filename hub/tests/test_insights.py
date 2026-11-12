@@ -16,6 +16,7 @@ from sqlalchemy import event as sa_event
 
 from app.mixes.taste_math import Trace, calculate_profile, saturation
 from app.mixes.taste_snapshot import TasteEvent, TasteSnapshot
+from tests.support import filed_track
 
 NOW = datetime(2026, 3, 15, 12, 0)
 TZ = "Europe/Moscow"
@@ -91,7 +92,7 @@ async def hub(hub_env, db_file, tmp_path, monkeypatch):
     from app.db import dispose, init_engine, session_scope
     from app.main import create_app
     from app.matching.normalize import fingerprint
-    from app.models import Session, Track, User
+    from app.models import Session, User
     from app.security import new_token
 
     write_config(tmp_path, "mixes:\n  taste_model: v2\nanalytics:\n  exclude_users: [qa]\n")
@@ -109,7 +110,7 @@ async def hub(hub_env, db_file, tmp_path, monkeypatch):
             s.add(Session(id=digest, user_id=u.id, expires_at=datetime(2100, 1, 1)))
         for artist, title, nd, dz, dur in (("Кино", "Группа крови", "ndK", "100", 245),
                                            ("Би-2", "Полковнику", "ndM", "200", 200)):
-            s.add(Track(uid=str(uuid.uuid4()), path=f"{artist}/{title}.mp3", nd_song_id=nd, artist=artist, title=title,
+            s.add(filed_track(uid=str(uuid.uuid4()), path=f"{artist}/{title}.mp3", nd_song_id=nd, artist=artist, title=title,
                         duration_s=dur, deezer_track_id=dz, fingerprint=fingerprint(artist, title)))
     app = create_app()
     transport = httpx.ASGITransport(app=app)

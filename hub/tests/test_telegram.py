@@ -11,7 +11,7 @@ import pytest
 import respx
 from aiogram.exceptions import TelegramForbiddenError, TelegramUnauthorizedError
 
-from tests.support import app_client
+from tests.support import app_client, filed_track
 
 TOKEN = "123456789:made-up-key-of-no-bot"  # made up: the shape of a key, no bot behind it
 
@@ -86,13 +86,12 @@ async def env(hub_env, monkeypatch):
 async def add_track(music, nd_song_id: str, size: int = 2000) -> None:
     from app.db import session_scope
     from app.matching.normalize import fingerprint
-    from app.models import Track
 
     path = music / "library" / "Кино" / "Группа крови.mp3"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"\0" * size)
     async with session_scope() as s:
-        s.add(Track(uid=str(uuid.uuid4()), path="Кино/Группа крови.mp3", nd_song_id=nd_song_id, artist="Кино",
+        s.add(filed_track(uid=str(uuid.uuid4()), path="Кино/Группа крови.mp3", nd_song_id=nd_song_id, artist="Кино",
                     title="Группа крови", duration_s=245, fingerprint=fingerprint("Кино", "Группа крови")))
 
 

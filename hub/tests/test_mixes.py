@@ -18,7 +18,7 @@ import respx
 from sqlalchemy import func, select
 
 from app.catalog.models import CatalogTrack
-from tests.support import FakeDeezer, app_client
+from tests.support import FakeDeezer, app_client, filed_track
 
 NOW = datetime(2026, 10, 22, 12, 0)
 
@@ -122,7 +122,6 @@ async def add_track(n: int, *, music: Path | None = None, deezer: bool = True) -
     """A library song «Свой n — Песня n» (Navidrome nd<n>, Deezer dz:<n> unless `deezer` is false)."""
     from app.db import session_scope
     from app.matching.normalize import fingerprint
-    from app.models import Track
 
     path = f"Свой {n}/Песня {n}.mp3"
     if music is not None:
@@ -130,7 +129,7 @@ async def add_track(n: int, *, music: Path | None = None, deezer: bool = True) -
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_bytes(b"mp3")
     async with session_scope() as s:
-        t = Track(uid=str(uuid.uuid4()), path=path, nd_song_id=f"nd{n}", artist=f"Свой {n}", title=f"Песня {n}",
+        t = filed_track(uid=str(uuid.uuid4()), path=path, nd_song_id=f"nd{n}", artist=f"Свой {n}", title=f"Песня {n}",
                   duration_s=200, deezer_track_id=str(n) if deezer else None,
                   fingerprint=fingerprint(f"Свой {n}", f"Песня {n}"))
         s.add(t)

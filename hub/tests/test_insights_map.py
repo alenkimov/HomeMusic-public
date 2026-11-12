@@ -11,7 +11,7 @@ import pytest
 from app.config import get_settings
 from app.insights.maps import anchors, facet_layout
 from app.mixes import embedder
-from tests.test_insights import add, listeners, hub, wave_item  # noqa: F401
+from tests.test_insights import add, hub, listeners, wave_item  # noqa: F401
 
 BASE = "http://embedder.test"
 SPACE = {"model": "fake", "space_id": "snap", "dim": 2}

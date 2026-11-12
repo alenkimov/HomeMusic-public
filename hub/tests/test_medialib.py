@@ -13,7 +13,7 @@ import httpx
 import pytest
 import respx
 
-from tests.support import app_client
+from tests.support import app_client, filed_track
 
 OK = {"status": "ok", "version": "1.16.1"}
 SONGS = [
@@ -82,10 +82,9 @@ async def env(hub_env):
 async def add_track(artist: str, title: str, nd_song_id: str, **kw) -> int:
     from app.db import session_scope
     from app.matching.normalize import fingerprint
-    from app.models import Track
 
     async with session_scope() as s:
-        t = Track(uid=str(uuid.uuid4()), path=f"{artist}/{title}.mp3", nd_song_id=nd_song_id, artist=artist,
+        t = filed_track(uid=str(uuid.uuid4()), path=f"{artist}/{title}.mp3", nd_song_id=nd_song_id, artist=artist,
                   title=title, duration_s=245, fingerprint=fingerprint(artist, title), **kw)
         s.add(t)
         await s.flush()

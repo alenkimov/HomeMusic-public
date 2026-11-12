@@ -10,8 +10,9 @@ from sqlalchemy import select
 
 from app import db
 from app.jobs.downloads import process_playlist_adds
-from app.models import DownloadBatch, DownloadItem, PendingPlaylistAdd, Track, User
+from app.models import DownloadBatch, DownloadItem, PendingPlaylistAdd, User
 from app.security import encrypt
+from tests.support import filed_track
 
 
 @pytest.fixture
@@ -72,7 +73,7 @@ async def seed(user_id, statuses):
 
 
 async def finish(s, item):
-    track = Track(uid=str(uuid.uuid4()), path=f"{item.id}.mp3", artist="Artist", title=f"Song {item.id}",
+    track = filed_track(uid=str(uuid.uuid4()), path=f"{item.id}.mp3", artist="Artist", title=f"Song {item.id}",
                   fingerprint=str(item.id), nd_song_id=f"song{item.id}")
     s.add(track)
     await s.flush()

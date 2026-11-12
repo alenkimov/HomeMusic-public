@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from app import light
-from tests.support import cand
+from tests.support import cand, filed_track
 from tests.test_listen import AUDIO, env, search_files  # noqa: F401  (the fixture)
 
 VARIANT = "x-homemusic-variant"
@@ -49,14 +49,13 @@ async def song(env, name: str, nd_id: str, body: bytes = AUDIO) -> Path:
     """A library song `nd:<nd_id>` whose file is called `name`."""
     from app.db import session_scope
     from app.matching.normalize import fingerprint
-    from app.models import Track
 
     rel = f"Artist/Album/{name}"
     f = env["music"] / "library" / rel
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_bytes(body)
     async with session_scope() as s:
-        s.add(Track(uid=nd_id, path=rel, artist="Artist", title=name, duration_s=200, nd_song_id=nd_id,
+        s.add(filed_track(uid=nd_id, path=rel, artist="Artist", title=name, duration_s=200, nd_song_id=nd_id,
                     fingerprint=fingerprint("Artist", name)))
     return f
 
@@ -329,12 +328,11 @@ async def test_real_ffmpeg_halves_a_320_mp3_and_the_copy_is_reproducible(env):
     make_audio(plain, "libopus", 128)
     from app.db import session_scope
     from app.matching.normalize import fingerprint
-    from app.models import Track
 
     async with session_scope() as s:
         for uid, p in (("a", f), ("b", plain)):
             rel = p.relative_to(env["music"] / "library").as_posix()
-            s.add(Track(uid=uid, path=rel, artist="Artist", title=p.name, duration_s=12, nd_song_id=uid,
+            s.add(filed_track(uid=uid, path=rel, artist="Artist", title=p.name, duration_s=12, nd_song_id=uid,
                         fingerprint=fingerprint("Artist", p.name)))
 
     r = await c.get("/api/listen/stream", params={"ref": "nd:a", "q": "mobile"}, headers={"Range": "bytes=0-"})
