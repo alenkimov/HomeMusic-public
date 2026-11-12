@@ -99,7 +99,7 @@ export function MorePage() {
         {STANDALONE && <Item icon="chart" to="/stats" title="Статистика" sub="Что вы слушали: треки, исполнители, жанры; история из Spotify" />}
         <Item icon="transfer" brand="yandex" to="/import?from=yandex" title="Перенести из Яндекс Музыки" sub="«Мне нравится», плейлисты, альбомы и исполнители" />
         <Item icon="transfer" brand="spotify" to="/import?from=spotify" title="Перенести из Spotify" sub="Плейлисты и «Любимые треки» из файлов CSV" />
-        {STANDALONE && <Item icon="wave" to="/listenbrainz" title="ListenBrainz" sub="Необязательно: ещё один источник «Открытий недели»" />}
+        {STANDALONE && <Item icon="wave" brand="listenbrainz" to="/listenbrainz" title="ListenBrainz" sub="Необязательно: ещё один источник «Открытий недели»" />}
         <Item icon="send" title="Telegram" sub="Свой бот: отправка треков себе, в группы и каналы" onClick={() => openTelegramSetup()} />
         {me.is_admin && <Item icon="lyrics" to="/lyrics-sources" title="Тексты песен" sub="Источники текстов и их порядок, поиск для библиотеки" />}
         {me.is_admin && <Item icon="user" to="/admin" title="Пользователи и приглашения" sub="Расходы на ИИ, песни, коды для новых людей" />}

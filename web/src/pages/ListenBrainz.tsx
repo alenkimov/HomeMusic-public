@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api/client';
 import type { ListenBrainzOut } from '../api/types';
+import { BrandIcon } from '../components/BrandIcon';
 import { Button, ErrorState, Field, Loading, Notice, PageHeader } from '../components/ui';
 import { parseTime } from '../lib/format';
 import { useAsync } from '../lib/hooks';
@@ -54,6 +55,7 @@ export function ListenBrainzPage() {
         <Loading />
       ) : (
         <div className="mx-auto max-w-xl space-y-4 px-4 pb-8">
+          <BrandIcon service="listenbrainz" size={56} />
           <p className="text-sm text-muted">
             ListenBrainz — бесплатный открытый сервис, который по истории прослушиваний подбирает музыку людей с похожим вкусом. Хаб работает и без него; с ним в «Открытиях недели» появляется ещё один источник — плейлист Weekly Exploration.
           </p>
