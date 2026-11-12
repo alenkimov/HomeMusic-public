@@ -431,7 +431,7 @@ export function TrackRow({
               e.preventDefault();
             }}
           >
-            <TrackMenuButton track={menuTrack} extra={menuExtra} noTags picked={selected} onUnpick={() => toggleSelected(asSel(track))} className={cx('!h-8 !w-8', shown)} />
+            <TrackMenuButton track={menuTrack} extra={menuExtra} noTags picked={selected} onPick={selecting ? () => toggleSelected(asSel(track)) : undefined} className={cx('!h-8 !w-8', shown)} />
           </span>
         </div>
       );

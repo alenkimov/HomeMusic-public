@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { setDisliked, useDisliked, type DislikeTarget } from '../lib/dislikes';
 import { STANDALONE } from '../lib/embedded';
@@ -39,25 +39,32 @@ export interface MenuExtra {
  * «по исполнителю» (MIXES.md 7) where the wave can play, and «Не нравится» for the track and for its artist
  * (MIXES.md 3.2) — it keeps them out of mixes and «Моя волна»; set again, it is taken off. A track disliked while
  * the page's player plays it is skipped. */
-export function TrackMenuButton({ track, extra, className, inPlayer, lean, noTags, picked, onUnpick }: { track: MenuTrack; extra?: MenuExtra[]; className?: string; inPlayer?: boolean; lean?: boolean; noTags?: boolean; picked?: boolean; onUnpick?: () => void }) {
+export function TrackMenuButton({ track, extra, className, inPlayer, lean, noTags, picked, onPick }: { track: MenuTrack; extra?: MenuExtra[]; className?: string; inPlayer?: boolean; lean?: boolean; noTags?: boolean; picked?: boolean; onPick?: () => void }) {
   const [open, setOpen] = useState(false);
+  // rows are being picked (`onPick`): the button picks this row or takes it out, and the menu is a right click away
+  const menu = (e: MouseEvent) => {
+    e.preventDefault();
+    setOpen(true);
+  };
   return (
     <>
       {picked ? (
-        // the row is picked: the button is its tick — a click takes the row out, the menu is a right click away
         <IconButton
           icon="check"
           size={18}
           label={`Снять выделение: «${track.title}» (меню — правой кнопкой)`}
-          onClick={() => onUnpick?.()}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setOpen(true);
-          }}
+          onClick={() => onPick?.()}
+          onContextMenu={menu}
           className={cx(className, '!text-accent !opacity-100')}
         />
       ) : (
-        <IconButton icon="more" label={`Ещё: «${track.title}»`} onClick={() => setOpen(true)} className={cx('text-muted hover:text-fg', className)} />
+        <IconButton
+          icon="more"
+          label={onPick ? `Выбрать «${track.title}» (меню — правой кнопкой)` : `Ещё: «${track.title}»`}
+          onClick={() => (onPick ? onPick() : setOpen(true))}
+          onContextMenu={onPick ? menu : undefined}
+          className={cx('text-muted hover:text-fg', className)}
+        />
       )}
       {open && createPortal(<TrackMenu track={track} extra={extra} inPlayer={inPlayer} lean={lean} noTags={noTags} onClose={() => setOpen(false)} />, document.body)}
     </>
