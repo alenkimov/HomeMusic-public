@@ -1,3 +1,4 @@
+import { useUnseenReleases } from '../lib/releases';
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api/client';
 import type { NdSongOut } from '../api/types';
@@ -58,6 +59,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
       window.clearTimeout(timer);
     };
   }, [liked.reload]);
+  const newReleases = useUnseenReleases();
   const shown = active === 'assistant' ? 'more' : active;
   const item = 'flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm transition-colors';
   const at = (to: string) => route.path === to;
@@ -66,7 +68,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
     <aside className="fixed bottom-(--tabbar-h) left-0 top-0 z-30 flex w-(--side-w) flex-col border-r border-line bg-surface/60" aria-label="Разделы и медиатека">
       <nav className="space-y-0.5 p-2" aria-label="Разделы">
         {NAV.map((t) => {
-          const on = shown === t.id && !(t.id === 'more' && at('/stats'));
+          const on = shown === t.id && !(t.id === 'more' && (at('/stats') || at('/releases')));
           return (
             <Fragment key={t.id}>
             <Link to={on ? t.to : (last[t.id] ?? t.to)} aria-current={on ? 'page' : undefined} className={cx(item, on ? 'bg-fg/10 font-semibold text-fg' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
@@ -76,6 +78,13 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
                 <span className="min-w-5 rounded-full bg-accent px-1.5 text-center text-[11px] font-bold leading-5 text-on-accent">{activeDownloads > 99 ? '99+' : activeDownloads}</span>
               )}
             </Link>
+            {t.id === 'downloads' && (
+              <Link to="/releases" aria-current={at('/releases') ? 'page' : undefined} className={cx(item, at('/releases') ? 'bg-fg/10 font-semibold text-fg' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
+                <Icon name="disc" size={20} stroke={at('/releases') ? 2.4 : 2} />
+                <span className="flex-1">Релизы</span>
+                {newReleases > 0 && <span className="min-w-5 rounded-full bg-accent px-1.5 text-center text-[11px] font-bold leading-5 text-on-accent">{newReleases > 99 ? '99+' : newReleases}</span>}
+              </Link>
+            )}
             {t.id === 'downloads' && (
               <Link to="/stats" aria-current={at('/stats') ? 'page' : undefined} className={cx(item, at('/stats') ? 'bg-fg/10 font-semibold text-fg' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
                 <Icon name="chart" size={20} stroke={at('/stats') ? 2.4 : 2} />

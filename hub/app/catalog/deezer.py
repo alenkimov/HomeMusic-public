@@ -384,6 +384,12 @@ class DeezerClient:
 
         return await self._cached_list(f"dz:artist_albums:{id_}", self.cfg.ttl_artist_s, CatalogAlbum, produce)
 
+    async def artist_albums_now(self, id_: str | int, name: str = "") -> list[CatalogAlbum]:
+        """The artist's releases as the catalog has them now, newest first — not the week-old cached list of
+        `get_artist_albums`: the «Релизы» feed is about what came out yesterday."""
+        items = await self._get_all(f"artist/{id_}/albums")
+        return dedupe_and_sort([map_album(x, {"id": id_, "name": name}) for x in items])
+
     async def get_artist_page(self, id_: str | int) -> ArtistPage:
         artist, top, albums = await asyncio.gather(
             self.get_artist(id_), self.get_artist_top(id_), self.get_artist_albums(id_)

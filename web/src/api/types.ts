@@ -890,6 +890,28 @@ export interface AssistantEvent {
   status: string;
 }
 
+/** A release of a followed artist («Релизы», pages/Releases.tsx). */
+export interface ReleaseOut {
+  album_ref: string;
+  title: string;
+  artist: string;
+  artist_ref: string;
+  record_type: string;
+  /** YYYY-MM-DD */
+  release_date: string;
+  cover_url?: string | null;
+  nb_tracks?: number | null;
+  /** not seen before this opening of the feed */
+  new: boolean;
+}
+
+export interface ReleasesOut {
+  /** how many artists are followed */
+  artists: number;
+  unseen: number;
+  items: ReleaseOut[];
+}
+
 export interface LibraryEvent {
   kind: 'imported' | 'changed' | 'starred' | 'unstarred';
   album_id?: number | null;

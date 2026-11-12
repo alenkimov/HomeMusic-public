@@ -23,6 +23,7 @@ import type {
   DislikeOut,
   DownloadBatchOut,
   DownloadIn,
+  ReleasesOut,
   DownloadItemOut,
   ImportIn,
   ImportItemsOut,
@@ -406,6 +407,10 @@ export const api = {
   tagSelectionSave: (id: number, body: Omit<TagSelection, 'id'>) => request<TagSelection>('PUT', `/api/tags/selections/${id}`, { json: body }),
   tagSelectionDelete: (id: number) => request<OkOut>('DELETE', `/api/tags/selections/${id}`),
   ndSongs: (signal?: AbortSignal) => request<NdSongOut[]>('GET', '/api/nd/songs', { signal }),
+  // «Релизы» (lib/releases.ts)
+  releases: (signal?: AbortSignal) => request<ReleasesOut>('GET', '/api/releases', { signal }),
+  releasesCount: () => request<{ unseen: number }>('GET', '/api/releases/count'),
+  releasesSeen: () => request<OkOut>('POST', '/api/releases/seen'),
   // «Статистика» (lib/stats.ts)
   stats: (q: { period: StatsPeriod; by: StatsBy; limit: number }, signal?: AbortSignal) => request<StatsOut>('GET', withQuery('/api/stats', { ...q, tz: timeZone() }), { signal }),
   statsAuto: (kind: string, signal?: AbortSignal) => request<StatsAutoOut>('GET', `/api/stats/auto/${encodeURIComponent(kind)}`, { signal }),

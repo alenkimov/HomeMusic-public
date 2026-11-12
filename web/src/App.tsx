@@ -15,6 +15,7 @@ import { hubEvents } from './lib/events';
 import { restoreListening, stopListening } from './lib/listen';
 import { restoreWave } from './lib/wave';
 import { resetInPlaylists } from './lib/inPlaylists';
+import { resetReleases } from './lib/releases';
 import { resetStars } from './lib/stars';
 import { startNotificationWatcher, stopNotificationWatcher } from './lib/notify';
 import { SessionContext } from './lib/session';
@@ -46,6 +47,7 @@ import { PlayerPage } from './pages/Player';
 import { PlaylistsPage } from './pages/Playlists';
 import { SearchPage, searchTab } from './pages/Search';
 import { SharePage } from './pages/Share';
+import { ReleasesPage } from './pages/Releases';
 import { StatsPage } from './pages/Stats';
 import { UploadPage } from './pages/Upload';
 
@@ -62,6 +64,7 @@ const STANDALONE_ROUTES: RouteDef[] = [
   ['/selection/:id', 'library', (p) => <SelectionPage key={p.id} id={p.id} />],
   ['/tags', 'library', () => <TagsPage />],
   ['/stats', 'more', () => <StatsPage />],
+  ['/releases', 'more', () => <ReleasesPage />],
   ['/auto/:kind', 'library', (p) => <AutoPlaylistPage key={p.kind} kind={p.kind} />],
   ['/lib/albums', 'library', () => <NdAlbumsPage />],
   ['/lib/album/:id', 'library', (p) => <NdAlbumPage key={p.id} id={p.id} />],
@@ -189,6 +192,7 @@ export function App() {
     stopListening();
     resetStars();
     resetInPlaylists();
+    resetReleases();
     setMe(null);
     navigate(START, { replace: true });
   }, []);

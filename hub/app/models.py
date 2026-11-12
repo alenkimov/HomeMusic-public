@@ -803,6 +803,41 @@ class ListenHistory(Base):
     source: Mapped[str] = mapped_column(String(16), default="spotify")
 
 
+class ArtistRelease(Base):
+    """A release of an artist the user follows (♥ on the artist's page) — the «Релизы» feed, app/releases.py."""
+
+    __tablename__ = "artist_releases"
+    __table_args__ = (
+        UniqueConstraint("user_id", "album_ref", name="uq_artist_releases"),
+        Index("ix_artist_releases_user_date", "user_id", "release_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    artist_ref: Mapped[str] = mapped_column(String(64))  # the followed artist it was found at
+    artist: Mapped[str] = mapped_column(String(512))
+    album_ref: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(512))
+    record_type: Mapped[str] = mapped_column(String(16), default="album")  # album | single | ep | compilation
+    release_date: Mapped[date] = mapped_column(Date)
+    cover_url: Mapped[str | None] = mapped_column(String(512))
+    nb_tracks: Mapped[int | None] = mapped_column(Integer)
+    found_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    seen_at: Mapped[datetime | None] = mapped_column(DateTime)  # the user has opened the feed since
+
+
+class ArtistReleaseCheck(Base):
+    """When the releases of a followed artist were last looked up."""
+
+    __tablename__ = "artist_release_checks"
+    __table_args__ = (UniqueConstraint("user_id", "artist_ref", name="uq_artist_release_checks"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    artist_ref: Mapped[str] = mapped_column(String(64))
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AppSetting(Base):
     """A setting of the whole server that the admin changes in the app (the order of lyrics sources)."""
 
