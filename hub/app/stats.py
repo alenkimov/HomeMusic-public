@@ -115,8 +115,11 @@ async def plays(s: AsyncSession, user_id: int, lib: Library | None = None) -> li
     now = utcnow()
     out: list[Play] = []
 
-    def play(ts: datetime, ms: int, counted: bool, nd: str | None, ref: str | None, meta: dict[str, Any]) -> None:
-        tid = lib.by_song.get(nd) if nd else None
+    def play(ts: datetime, ms: int, counted: bool, nd: str | None, ref: str | None, meta: dict[str, Any],
+             track_id: int | None = None) -> None:
+        tid = track_id if track_id in lib.tracks else None
+        if tid is None and nd:
+            tid = lib.by_song.get(nd)
         if tid is None and ref:
             tid = lib.by_ref.get(ref)
         title, artist = str(meta.get("title") or ""), str(meta.get("artist_credit") or "")
@@ -125,7 +128,7 @@ async def plays(s: AsyncSession, user_id: int, lib: Library | None = None) -> li
         out.append(Play(ts, ms, counted, tid, ref or f"nd:{nd}", title, artist, meta.get("album")))
 
     rows = (await s.execute(
-        select(PlayEvent.ts, PlayEvent.kind, PlayEvent.ref, PlayEvent.nd_song_id, PlayEvent.playback_id,
+        select(PlayEvent.ts, PlayEvent.kind, PlayEvent.ref, PlayEvent.nd_song_id, PlayEvent.track_id, PlayEvent.playback_id,
                PlayEvent.device_id, PlayEvent.listened_ms, PlayEvent.duration_s, PlayEvent.track_metadata, PlayEvent.client)
         .where(PlayEvent.user_id == user_id, PlayEvent.ts <= now, PlayEvent.kind.in_(LISTEN_KINDS),
                PlayEvent.superseded_scrobble.is_(False)).order_by(PlayEvent.ts, PlayEvent.id))).all()
@@ -134,9 +137,9 @@ async def plays(s: AsyncSession, user_id: int, lib: Library | None = None) -> li
         if r.playback_id and r.device_id:
             groups[(r.device_id, r.playback_id)].append(r)
         elif r.kind == "finish" and r.client == "navidrome":
-            tid = lib.by_song.get(r.nd_song_id) if r.nd_song_id else None
+            tid = r.track_id if r.track_id in lib.tracks else lib.by_song.get(r.nd_song_id) if r.nd_song_id else None
             seconds = r.duration_s or (lib.tracks[tid].duration_s if tid else None) or 0
-            play(r.ts, int(seconds * 1000), True, r.nd_song_id, r.ref, r.track_metadata or {})
+            play(r.ts, int(seconds * 1000), True, r.nd_song_id, r.ref, r.track_metadata or {}, tid)
     for events in groups.values():
         listened = [e.listened_ms for e in events if e.listened_ms is not None]
         if not listened:
@@ -150,7 +153,8 @@ async def plays(s: AsyncSession, user_id: int, lib: Library | None = None) -> li
         if ms < TOUCHED_MS:
             continue
         play(events[0].ts, ms, ms >= listened_threshold_ms(duration),
-             next((e.nd_song_id for e in events if e.nd_song_id), None), next((e.ref for e in events if e.ref), None), meta)
+             next((e.nd_song_id for e in events if e.nd_song_id), None), next((e.ref for e in events if e.ref), None), meta,
+             next((e.track_id for e in events if e.track_id), None))
 
     history = (await s.execute(select(ListenHistory.ts, ListenHistory.ms, ListenHistory.key, ListenHistory.spotify_id,
                                       ListenHistory.title, ListenHistory.artist, ListenHistory.album)

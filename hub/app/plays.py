@@ -137,6 +137,27 @@ class Ids:
 # --- events --------------------------------------------------------------------------------------------------
 
 
+ATTACH_TRACKS = """
+UPDATE play_events SET track_id = COALESCE(
+    (SELECT f.track_id FROM track_files f WHERE f.nd_song_id = play_events.nd_song_id ORDER BY f.id DESC LIMIT 1),
+    (SELECT t.id FROM tracks t WHERE t.ref = play_events.ref))
+WHERE track_id IS NULL AND target_type = 'track'
+  AND (nd_song_id IN (SELECT nd_song_id FROM track_files WHERE nd_song_id IS NOT NULL)
+       OR ref IN (SELECT ref FROM tracks WHERE ref IS NOT NULL))
+"""
+
+
+async def attach_tracks(s: AsyncSession, user_id: int | None = None) -> int:
+    """Events that name no track yet get the Hub's track they are about: by the Navidrome song of any of its files,
+    else by its catalog ref. Run when events come in and when the library learns something (a scan linked files, a
+    catalog track became a track). An event keeps its track from then on — a file replaced, a song Navidrome gave
+    a new id, none of it loses the listening history."""
+    from sqlalchemy import text
+
+    sql = ATTACH_TRACKS + (" AND user_id = :user_id" if user_id is not None else "")
+    return (await s.execute(text(sql), {"user_id": user_id} if user_id is not None else {})).rowcount or 0
+
+
 def event_time(ts: datetime, now: datetime | None = None) -> datetime:
     """UTC without tzinfo; an obviously wrong clock is corrected, with a three-calendar-year intake window."""
     now = now or utcnow()
@@ -299,6 +320,9 @@ async def record_events(s: AsyncSession, user_id: int, raw: Iterable[Any], now: 
             await remove_dislikes(s, user_id, ref=ref if e.target_type == "track" else None, nd_song_id=nd,
                                   artist_ref=(ref or f"nd:{e.nd_artist_id}") if e.target_type == "artist" else None, complete=False)
     await _meet_listened(s, user_id, events)
+    if out.accepted:
+        await s.flush()
+        await attach_tracks(s, user_id)
     if causal_batch and out.accepted:
         after_favorites = await snapshot(s, user_id, now)
         for key, state in after_favorites.items():
@@ -473,6 +497,8 @@ async def import_scrobbles(user: User) -> int:
             s.add(sync)
         sync.last_scrobble_id = max([last, *(int(x["id"]) for x in rows)])
         sync.synced_at = utcnow()
+        if added:
+            await attach_tracks(s, user.id)
     return added
 
 

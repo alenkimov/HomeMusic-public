@@ -424,6 +424,7 @@ class PlayEvent(Base):
         Index("ix_play_events_user_target_ts", "user_id", "target_type", "ts", "id"),
         Index("ix_play_events_playback", "user_id", "device_id", "playback_id"),
         Index("ix_play_events_user_launch", "user_id", "launch_id"),
+        Index("ix_play_events_track", "track_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -433,6 +434,9 @@ class PlayEvent(Base):
     kind: Mapped[str] = mapped_column(String(16))  # start/skip/finish/like/unlike/dislike/undislike
     ref: Mapped[str | None] = mapped_column(String(64))  # catalog track
     nd_song_id: Mapped[str | None] = mapped_column(String(64))  # Navidrome song
+    # the Hub's track the event is about (`app.plays.attach_tracks`): `ref` and `nd_song_id` are what the client
+    # called it then — a song's id changes with its file, the track stays. None: a catalog track the Hub never kept
+    track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id", ondelete="SET NULL"))
     target_type: Mapped[str] = mapped_column(String(16), default="track", server_default="track")
     nd_album_id: Mapped[str | None] = mapped_column(String(64), index=True)
     nd_artist_id: Mapped[str | None] = mapped_column(String(64), index=True)

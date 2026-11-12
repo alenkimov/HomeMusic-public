@@ -585,7 +585,9 @@ async def handle_scan(job: Job) -> None:
         for item in done_items:
             bus.publish(item.user_id, "download", item_out(item, links=links[item.id]).model_dump(mode="json"))
         from app.favorites import deliver_pending
+        from app.plays import attach_tracks
 
+        await attach_tracks(s)  # what was listened to from the catalog is this track's history now
         await deliver_pending(s)
         await restar_replaced(s, done_items)
         await imports_done(s, done_items)

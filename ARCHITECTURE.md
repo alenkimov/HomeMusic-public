@@ -107,9 +107,10 @@ One release, built in passes that each leave the tests green:
 1. `track_files` split off `tracks`; a track named by its catalog ref. *(done)*
 2. Playlists in the Hub, the mirror, tags on any track; «Любимое» shown as a playlist made of the journal of
    likes. *(done; the journal still decides, and `favorite_subjects` is still there)*
-3. Events, dislikes, statistics, taste, mixes and the wave on `track_id`. *(in part: a track listened to becomes
-   a track of the Hub, the statistics know it by any ref; events have no `track_id` yet, taste, mixes and the wave
-   are as they were)*
+3. Events on `track_id`. *(done: an event names its track for good — `plays.attach_tracks` — and the statistics
+   and the journal of likes go by it. Not done, on purpose: taste, mixes, the wave and their analytics keep their
+   own keys — they reason about catalog tracks, most of which the Hub never keeps, so those are not Tracks and
+   have no `track_id` to go by; the same holds for a dislike of a catalog track)*
 4. Imports and downloads on top of it. *(done: a download knows its track before there is a file and puts it into
    its playlists at once; a ♥ knows nothing of downloads — the song is starred in Navidrome when a scan finds its
    file)*

@@ -57,7 +57,10 @@ def subject_data(raw: dict[str, Any] | None) -> dict[str, Any]:
 def aliases(obj: Any) -> set[str]:
     typ = obj.target_type or "track"
     nd = getattr(obj, ND_FIELDS[typ], None)
-    return {x for x in (f"ref:{obj.ref}" if obj.ref else None, f"nd:{nd}" if nd else None) if x}
+    # an event that knows its track (`PlayEvent.track_id`) is tied to every other event of that track by it
+    track = getattr(obj, "track_id", None) if typ == "track" else None
+    return {x for x in (f"ref:{obj.ref}" if obj.ref else None, f"nd:{nd}" if nd else None,
+                        f"t:{track}" if track and (obj.ref or nd) else None) if x}
 
 
 class AliasIndex:
