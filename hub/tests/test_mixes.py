@@ -359,7 +359,7 @@ async def test_build_queues_quiet_downloads_and_writes_the_playlist(env, monkeyp
     assert all(d.query_json["mix"]["id"] == mix.id for d in dls) and {j.priority for j in jobs} == {-10}
     assert all(r.downloaded_for_mix for r in active if not r.familiar)
     r = await env["client"].get("/api/downloads")
-    assert r.status_code == 200 and all(x["star"] for x in r.json())  # clients hide them
+    assert r.status_code == 200 and all(x["quiet"] for x in r.json())  # clients hide them
     # the playlist «Микс дня» has the songs the library has, in the mix's order
     pl = env["nd"].playlists[settings.nd_playlist_id]
     assert pl["name"] == "Микс дня" and pl["songs"] == [r.nd_song_id for r in active if r.nd_song_id]

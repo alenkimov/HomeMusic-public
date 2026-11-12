@@ -60,7 +60,7 @@ export function DownloadsPage() {
   useHubEvent('import', () => imports.reload(true));
   const running = (imports.data ?? []).filter((x) => x.status === 'running');
   useInterval(() => imports.reload(true), running.length ? 15_000 : null);
-  const items = useMemo(() => (res.data ?? []).filter((x) => !x.star), [res.data]);
+  const items = useMemo(() => (res.data ?? []).filter((x) => !x.quiet), [res.data]);
   const byTab = useMemo(() => {
     const out: Record<Tab, DownloadItemOut[]> = { now: [], problems: [], done: [] };
     for (const x of items) out[tabOf(x)].push(x);
@@ -335,7 +335,6 @@ function TableRow(p: RowProps) {
         <span className="truncate text-xs text-muted">{item.provider ? providerLabel(item.provider) : '—'}</span>
         <span className="min-w-0 text-xs text-dim">
           {active || item.status === 'cancelled' ? <StatusChip status={item.status} progress={item.progress} /> : fmtWhen(item.updated_at)}
-          {item.liked && item.status !== 'done' && <span className="ml-1.5 text-accent" title="♥ поставится после загрузки">♥</span>}
         </span>
         <span className="flex items-center justify-end">
           <Actions {...p} />

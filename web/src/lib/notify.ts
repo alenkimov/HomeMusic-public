@@ -82,7 +82,7 @@ export function useActiveDownloads(): number {
 }
 
 function remember(item: DownloadItemOut) {
-  if (!item.star && DOWNLOAD_ACTIVE.includes(item.status)) activeDownloads.add(item.id);
+  if (!item.quiet && DOWNLOAD_ACTIVE.includes(item.status)) activeDownloads.add(item.id);
   else activeDownloads.delete(item.id);
 }
 

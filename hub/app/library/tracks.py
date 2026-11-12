@@ -21,6 +21,15 @@ def _same_length(a: int | None, b: int | None, tol: int = 3) -> bool:
     return a is None or b is None or abs(a - b) <= tol
 
 
+def _names(c: CatalogTrack) -> dict:
+    """What a track says of its song, as the catalog tells it."""
+    return dict(
+        artist=c.artist, title=c.title, album=c.album_title, album_artist=c.album_artist,
+        track_no=c.track_no, disc_no=c.disc_no, year=c.release_date.year if c.release_date else None,
+        duration_s=c.duration_s, isrc=c.isrc.upper() if c.isrc else None, explicit=c.explicit,
+        fingerprint=fingerprint(c.artist, c.title))
+
+
 async def of_catalog(s: AsyncSession, c: CatalogTrack, *, user_id: int | None = None) -> Track:
     """The track of this catalog track; made if the Hub does not know the song. A track the Hub has under no
     catalog name yet (an uploaded file, say) that is this very song — the same ISRC, or the same names and length —
@@ -28,6 +37,11 @@ async def of_catalog(s: AsyncSession, c: CatalogTrack, *, user_id: int | None = 
     ref = c.ref if c.source != "nd" else None
     track = await by_ref(s, ref)
     if track is not None:
+        if track.title == ref or not track.artist:
+            # met by its ref alone (a like that said nothing of the song): now it is known what the song is
+            for k, v in _names(c).items():
+                setattr(track, k, v)
+            track.catalog = c.model_dump(mode="json")
         return track
     unnamed = select(Track).where(Track.ref.is_(None)).order_by(Track.id.desc())
     if c.isrc:
@@ -42,11 +56,7 @@ async def of_catalog(s: AsyncSession, c: CatalogTrack, *, user_id: int | None = 
             track.ref = ref
         track.catalog = track.catalog or c.model_dump(mode="json")
         return track
-    track = Track(
-        ref=ref, artist=c.artist, title=c.title, album=c.album_title, album_artist=c.album_artist,
-        track_no=c.track_no, disc_no=c.disc_no, year=c.release_date.year if c.release_date else None,
-        duration_s=c.duration_s, isrc=c.isrc.upper() if c.isrc else None, explicit=c.explicit,
-        fingerprint=fingerprint(c.artist, c.title), catalog=c.model_dump(mode="json"), created_by=user_id)
+    track = Track(ref=ref, **_names(c), catalog=c.model_dump(mode="json"), created_by=user_id)
     s.add(track)
     await s.flush()
     await s.refresh(track)  # what is read with a track (its song, its path) is there to be read: none, for now

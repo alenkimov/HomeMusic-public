@@ -105,9 +105,13 @@ events, dislikes and the items of mixes.
 One release, built in passes that each leave the tests green:
 
 1. `track_files` split off `tracks`; a track named by its catalog ref. *(done)*
-2. Playlists in the Hub, the mirror, tags on any track *(done)*; «Любимое» as a playlist and the old
-   favorites removed *(next)*.
-3. Events, dislikes, statistics, taste, mixes and the wave on `track_id`.
-4. Imports and downloads on top of it.
+2. Playlists in the Hub, the mirror, tags on any track; «Любимое» shown as a playlist made of the journal of
+   likes. *(done; the journal still decides, and `favorite_subjects` is still there)*
+3. Events, dislikes, statistics, taste, mixes and the wave on `track_id`. *(in part: a track listened to becomes
+   a track of the Hub, the statistics know it by any ref; events have no `track_id` yet, taste, mixes and the wave
+   are as they were)*
+4. Imports and downloads on top of it. *(done: a download knows its track before there is a file and puts it into
+   its playlists at once; a ♥ knows nothing of downloads — the song is starred in Navidrome when a scan finds its
+   file)*
 5. The API and the web on `id`/`ref`.
 6. What is left of 1.x deleted; the migrations of 1.x replaced by one that makes the 2.0 schema.

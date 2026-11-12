@@ -42,7 +42,6 @@ async def lifespan(app: FastAPI):
 
     from app import listen, telegram_chats
     from app.housekeeping import scheduler_loop
-    from app.jobs.downloads import playlist_adds_loop
     from app.jobs.queue import WorkerPool, recover_stale
     from app.mixes import smart, wave
     from app.mixes.core import schedule_loop
@@ -73,7 +72,6 @@ async def lifespan(app: FastAPI):
         from app.listenbrainz import loop as listenbrainz_loop
 
         tasks.append(asyncio.create_task(listenbrainz_loop(), name="listenbrainz"))
-        tasks.append(asyncio.create_task(playlist_adds_loop(), name="playlist-adds"))
         await telegram_chats.start_all()
         tasks.append(asyncio.create_task(_sync_tags(), name="tags"))
     log.info("hub started")

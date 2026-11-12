@@ -904,8 +904,8 @@ window.addEventListener(HUB_DOWNLOAD_EVENT, (e) => {
 
 hubEvents.on('download', (d) => {
   const ref = d.track_ref;
-  // a download queued only for ♥ is never «качается», but once imported the track is in the library
-  if (ref && d.star && d.status === 'done' && state.downloads.get(ref) !== 'done') {
+  // a quiet download is never «качается», but once imported the track is in the library
+  if (ref && d.quiet && d.status === 'done' && state.downloads.get(ref) !== 'done') {
     set({ downloads: new Map(state.downloads).set(ref, 'done') });
     return;
   }

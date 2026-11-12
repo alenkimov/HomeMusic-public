@@ -199,7 +199,6 @@ export async function toggleLike(t: LikeTarget, quiet = false, change?: () => vo
     } else {
       if (target.nd_song_id) await api.star({ song_ids: [target.nd_song_id], unstar: !liked }, signal);
       else if (!liked && t.ref) await api.star({ refs: [t.ref], unstar: true }, signal);
-      else if (t.ref) await api.download({ track_refs: [t.ref], star: true }, signal);
       if (generation !== epoch) return;
       playEvent(liked ? 'like' : 'unlike', target, { event_id: operation.eventId, ts: operation.ts, context });
     }

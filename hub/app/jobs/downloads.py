@@ -30,7 +30,7 @@ from app.jobs.queue import PermanentError, enqueue, handler, notify, on_final_fa
 from app.library import probe
 from app.library.importer import ImportSpec, cleanup_dir, import_file, staging_dir_for
 from app.library.navidrome import admin_client
-from app.library.owned import find_existing, quiet, star_only
+from app.library.owned import find_existing, quiet
 from app.library.tracks import current_file
 from app.matching.select import (
     classify,
@@ -40,7 +40,7 @@ from app.matching.select import (
     trusted_original,
     uploaded_in_time,
 )
-from app.models import DownloadBatch, DownloadItem, Job, PendingPlaylistAdd, Track, TrackFile, User
+from app.models import DownloadBatch, DownloadItem, Job, PlaylistItem, Track, TrackFile, User
 from app.net import make_client
 from app.providers.base import Candidate, ProviderError, TrackQuery, file_ref
 from app.services import svc
@@ -49,7 +49,7 @@ log = logging.getLogger(__name__)
 
 TERMINAL = ("done", "failed", "cancelled", "needs_review")
 FAILED = ("failed", "needs_review")
-USER_FLAGS = ("star", "requested", "star_event_id", "star_cancelled", "star_failed", "favorite_client", "favorite_context")
+USER_FLAGS = ("requested", "playlists")  # what a request that joins a download under way may set on it
 MAX_TRIES_PER_PROVIDER = 3
 MAX_SHOWN = 15  # candidates kept on the item for the user to pick from
 MAX_SHOWN_REUPLOADS = 5
@@ -89,8 +89,7 @@ def item_out(item: DownloadItem, *, detail: bool = False,
         nd_song_id=links[0],
         playlist_id=links[1],
         track_ref=item_ref(item),
-        star=quiet(item.query_json),
-        liked=bool((item.query_json or {}).get("star")) and not bool((item.query_json or {}).get("star_failed")),
+        quiet=quiet(item.query_json),
         import_id=((item.query_json or {}).get("import") or {}).get("id"),
         candidates=[Candidate(**c) for c in item.candidates_json or []] if detail else None,
         chosen=Candidate(**item.chosen_candidate_json) if item.chosen_candidate_json else None,
@@ -114,19 +113,15 @@ async def update_item(item_id: int, **fields: Any) -> DownloadItem | None:
         if item is None:
             return None
         if "query_json" in fields:
-            # ♥ / an explicit download may have joined this item meanwhile (`api.downloads.join_active`): the job's
+            # an explicit download may have joined this item meanwhile (`api.downloads.join_active`): the job's
             # copy of query_json predates it
             cur = item.query_json or {}
             fields["query_json"] = {**fields["query_json"], **{k: cur[k] for k in USER_FLAGS if k in cur}}
         for k, v in fields.items():
             setattr(item, k, v)
-        if item.status in FAILED and star_only(item.query_json):
-            # a download queued only for ♥ that failed is shown to the user as a download from now on (Downloads,
-            # notifications): the ♥ doesn't just vanish. It still stars the song once a file is picked.
-            item.query_json = {**item.query_json, "requested": True}
-        if item.status in (*FAILED, "cancelled"):
-            from app.favorites import download_failed
-            await download_failed(s, item)
+        if fields.get("track_id") and (item.query_json or {}).get("playlists"):
+            # a provider's file asked for with playlists: it is a track now, and goes into them
+            await into_playlists(s, item.user_id, item.query_json["playlists"], [item.track_id])
         await s.flush()
         await s.refresh(item)
         if "status" in fields and item.status in TERMINAL:
@@ -309,7 +304,6 @@ async def handle_download_item(job: Job) -> None:
                                      track_id=existing_id, warnings=["Уже есть в библиотеке"])
             if linked and item is not None:
                 async with session_scope() as s:
-                    await star_liked(s, [item])
                     await imports_done(s, [item])
             await after_import(user_id, linked)
             return
@@ -527,10 +521,8 @@ async def import_downloaded(item_id: int, user_id: int, q: TrackQuery, meta: dic
 
 
 async def after_import(user_id: int, linked: bool) -> None:
-    async with session_scope() as s:
-        if linked:
-            await process_playlist_adds(s)
-        else:
+    if not linked:
+        async with session_scope() as s:
             await enqueue_scan(s)
     notify()
 
@@ -538,8 +530,6 @@ async def after_import(user_id: int, linked: bool) -> None:
 @on_final_failure("download_item")
 async def _download_failed(job: Job, exc: Exception) -> None:
     await update_item(int(job.payload_json["item_id"]), status="failed", error=f"{exc}"[:500])
-    async with session_scope() as s:
-        await process_playlist_adds(s)
 
 
 # --- scan + link + playlists ---------------------------------------------------------------------
@@ -594,10 +584,12 @@ async def handle_scan(job: Job) -> None:
         links = await item_links(s, done_items)
         for item in done_items:
             bus.publish(item.user_id, "download", item_out(item, links=links[item.id]).model_dump(mode="json"))
-        await star_liked(s, done_items)
+        from app.favorites import deliver_pending
+
+        await deliver_pending(s)
+        await restar_replaced(s, done_items)
         await imports_done(s, done_items)
         await mixes_done(s, done_items)
-        await process_playlist_adds(s)
         still = (
             await s.execute(select(func.count()).select_from(TrackFile).where(TrackFile.nd_song_id.is_(None)))
         ).scalar_one()
@@ -679,137 +671,74 @@ async def mixes_done(s: AsyncSession, items: list[DownloadItem]) -> None:
         await downloads_changed(s, items)
 
 
-async def star_liked(s: AsyncSession, items: list[DownloadItem]) -> None:
-    """Items queued with ♥ (`DownloadIn.star`) are done: star their songs in Navidrome for the user who asked. A
-    picked file imported as one more file of a track (`replaces_song`: the song of the file before it) takes the
-    ♥ off that song."""
+async def restar_replaced(s: AsyncSession, items: list[DownloadItem]) -> None:
+    """A picked file imported as one more file of a track (`replaces_song`: the song of the file before it): a ♥
+    the user has on the track moves, in Navidrome, from that song to the new file's."""
+    from app import playlists
+    from app.api.schemas import FavoriteTarget
     from app.auth import user_navidrome
+    from app.favorites import remember
 
-    liked = [i for i in items if i.track_id]
-    if not liked:
-        return
-    old = {i.id: i.query_json["replaces_song"] for i in liked if i.query_json.get("replaces_song")}
-    songs = dict((await s.execute(select(Track.id, Track.nd_song_id).where(
-        Track.id.in_({i.track_id for i in liked})))).all())
-    by_user: dict[int, list[str]] = {}
-    off_by_user: dict[int, list[str]] = {}
-    for i in liked:
-        if nd_id := songs.get(i.track_id):
-            from app.api.schemas import FavoriteTarget
-            from app.favorites import record, remember, snapshot
-            from app.models import PlayEvent
-
-            i = await s.get(DownloadItem, i.id, populate_existing=True)
-            if i is None:
-                continue
-            if not i.query_json.get("star") or i.query_json.get("star_cancelled"):
-                continue
-            ref = item_ref(i)
-            target = FavoriteTarget(ref=ref, nd_song_id=nd_id, target_data=i.query_json.get("query"))
-            extra = [f"nd:{old[i.id]}"] if i.id in old else []
-            original = (await s.execute(select(PlayEvent).where(PlayEvent.user_id == i.user_id,
-                PlayEvent.event_id == i.query_json.get("star_event_id")))).scalar_one_or_none()
-            if original and original.ref:
-                extra.append(f"ref:{original.ref}")  # a picked provider file may acquire a catalog ref later
-            await remember(s, target, extra_aliases=extra)
-            states = await snapshot(s, i.user_id)
-            state = next((x for x in states.values() if x.target_type == "track" and
-                          (x.nd_id == nd_id or ref and x.ref == ref)), None)
-            if state and not state.liked:
-                # A terminal failure rolls back the promise, but a successful manual retry may restore it.
-                if original is None or state.event.event_id != original.event_id:
-                    continue
-                event = await record(s, i.user_id, target, True, operation=f"retry:{original.event_id}",
-                                     client="hub", context="download:retry", mirror_pending=True)
-                i.query_json = {**i.query_json, "star_event_id": event.event_id}
-            i.query_json = {**i.query_json, "star_failed": False}
-            by_user.setdefault(i.user_id, []).append(nd_id)
-            if (off := old.get(i.id)) and off != nd_id:
-                off_by_user.setdefault(i.user_id, []).append(off)
-    for user_id, song_ids in by_user.items():
-        user = await s.get(User, user_id)
-        if user is None:
+    for i in items:
+        old = (i.query_json or {}).get("replaces_song")
+        row = None
+        if old and i.track_id:
+            row = (await s.execute(select(Track.nd_song_id, Track.ref).where(Track.id == i.track_id))).first()
+        if row is None or not row[0] or row[0] == old:
             continue
+        new, ref = row
+        liked = await playlists.liked(s, i.user_id)
+        user = await s.get(User, i.user_id)
+        if user is None or (await s.execute(select(PlaylistItem.id).where(
+                PlaylistItem.playlist_id == liked.id, PlaylistItem.track_id == i.track_id).limit(1))).first() is None:
+            continue
+        await remember(s, FavoriteTarget(ref=ref, nd_song_id=new), extra_aliases=[f"nd:{old}"])
         nd = user_navidrome(user)
         try:
-            await nd.star(song_ids=song_ids)
-            from app.favorites import snapshot
-            for state in (await snapshot(s, user_id)).values():
-                if state.target_type == "track" and state.nd_id in song_ids:
-                    state.event.mirror_pending = False
-            bus.publish(user_id, "library", {"kind": "starred", "song_ids": song_ids})
-            if off := off_by_user.get(user_id):
-                await nd.unstar(song_ids=off)
-                bus.publish(user_id, "library", {"kind": "unstarred", "song_ids": off})
+            await nd.star(song_ids=[new])
+            await nd.unstar(song_ids=[old])
+            bus.publish(i.user_id, "library", {"kind": "starred", "song_ids": [new]})
         except Exception as e:
-            log.warning("star after download failed for user %s: %r", user_id, e)
+            log.warning("♥ not moved to the new file of track %s: %r", i.track_id, e)
         finally:
             await nd.aclose()
 
 
-async def playlist_adds_loop() -> None:
-    """Additions left waiting when the Hub was stopped."""
-    while True:
-        try:
-            async with session_scope() as s:
-                await process_playlist_adds(s)
-        except Exception:
-            log.exception("pending playlist additions failed")
-        await asyncio.sleep(30)
-
-
-async def process_playlist_adds(s: AsyncSession) -> None:
-    """Downloads asked for with a playlist: a track goes into it when its download is done, the tracks of one
-    request in the order they were asked for. A download still on its way holds the ones after it back. One that
-    waits for a file to be picked by hand does not: the others go in, and when its file is picked it takes its own
-    place among them (a row that went in stays here as the mark of that place — `applied_song_id` is its track —
-    until nothing before it is waiting). One that failed or was cancelled is left out."""
+async def into_playlists(s: AsyncSession, user_id: int, playlist_ids: list[Any], track_ids: list[int]) -> None:
+    """Put the tracks at the end of the user's playlists, in this order (one already there stays where it is)."""
     from app import playlists
     from app.playlists_mirror import enqueue_mirror
 
-    # Nothing waits: no need to take the database (this runs every half a minute and after every library scan).
-    if (await s.execute(select(PendingPlaylistAdd.id).limit(1))).first() is None:
-        return
-    rows = (await s.execute(
-        select(PendingPlaylistAdd, DownloadItem.status, DownloadItem.track_id)
-        .join(DownloadItem, DownloadItem.id == PendingPlaylistAdd.download_item_id)
-        .order_by(PendingPlaylistAdd.playlist_id, DownloadItem.batch_id, PendingPlaylistAdd.position,
-                  PendingPlaylistAdd.id))).all()
-    groups: dict[tuple[int, str], list[tuple[PendingPlaylistAdd, str, int | None]]] = {}
-    for add, status, track_id in rows:
-        groups.setdefault((add.user_id, add.playlist_id), []).append((add, status, track_id))
-    for (user_id, playlist_id), entries in groups.items():
-        p = await playlists.own(s, user_id, int(playlist_id)) if str(playlist_id).isdigit() else None
-        if p is None:  # the playlist is gone
-            for add, _, _ in entries:
-                await s.delete(add)
-            continue
-        changed = False
-        for k, (add, status, track_id) in enumerate(entries):
-            if add.applied_song_id or status in ("failed", "cancelled", "needs_review"):
-                continue
-            if status != "done" or not track_id:
-                break  # still on its way: the ones after it wait for their turn
-            if await playlists.add(s, p, [track_id]):
-                after = next((int(x.applied_song_id) for x, _, _ in entries[k + 1:] if x.applied_song_id), None)
-                if after is not None:  # it was waiting for a file while later ones went in: its place is before them
-                    items = await playlists.items(s, p.id)
-                    mine = next(i.id for i, tr in reversed(items) if tr.id == track_id)
-                    order = [i.id for i, _ in items if i.id != mine]
-                    at = next((n for n, (_, tr) in enumerate(x for x in items if x[0].id != mine) if tr.id == after), len(order))
-                    await playlists.reorder(s, p, order[:at] + [mine] + order[at:])
-                changed = True
-            add.applied_song_id = str(track_id)
-        waiting = False
-        for add, status, _ in entries:
-            if status in ("failed", "cancelled") or (add.applied_song_id and not waiting):
-                await s.delete(add)
-            else:
-                waiting = True
-        if changed:
+    for pid in dict.fromkeys(str(x) for x in playlist_ids):
+        p = await playlists.own(s, user_id, int(pid)) if pid.isdigit() else None
+        if p is not None and p.kind == playlists.USER and await playlists.add(s, p, track_ids):
             await enqueue_mirror(s, p.id)
             bus.publish(user_id, "library", {"kind": "playlist", "playlist_id": str(p.id)})
-    await s.flush()
+
+
+async def known_track(s: AsyncSession, q: TrackQuery, meta: dict[str, Any], user_id: int) -> Track | None:
+    """The track a download is of, known before there is any file: the library's own if it has the song, else the
+    catalog track it was asked for by — a track of the Hub from now on (ARCHITECTURE.md), so it has its place in a
+    playlist at once and the file, when it comes, is that track's. None: a provider's file asked for under no
+    catalog name — it is a track once imported."""
+    from app.library import tracks as registry
+
+    have = await find_existing(s, artist=q.artist, title=q.title, duration_s=q.duration_s, isrc=q.isrc,
+                               deezer_track_id=meta.get("deezer_track_id"))
+    if have is not None:
+        return have
+    ref = str(meta.get("track_ref") or "")
+    src, _, ident = ref.partition(":")
+    if src not in ("dz", "hm", "mb") or not ident:
+        return None
+    album = meta.get("deezer_album_id")
+    return await registry.of_catalog(s, CatalogTrack(
+        ref=ref, source=src, id=ident, title=q.title, artist=q.artist, artists=meta.get("artists") or [],
+        album_title=meta.get("album") or q.album, album_artist=meta.get("album_artist"), track_no=meta.get("track_no"),
+        disc_no=meta.get("disc_no"), isrc=q.isrc or meta.get("isrc"), explicit=q.explicit,
+        release_date=meta.get("release_date"), duration_s=q.duration_s or meta.get("duration_s"),
+        album_ref=f"dz:{album}" if album else None, cover_url=meta.get("cover_url"),
+        cover_small_url=meta.get("cover_url")), user_id=user_id)
 
 
 async def create_items(
@@ -818,18 +747,20 @@ async def create_items(
     entries: list[tuple[TrackQuery, dict[str, Any], Candidate | None]],
     *,
     force: bool = False,
-    star: bool = False,
-    start_position: int = 0,
-    favorite_events: dict[str, str] | None = None,
     also_playlists: list[str] | None = None,
 ) -> int:
-    """`also_playlists`: playlists besides the batch's own that get the songs as well."""
-    for i, (q, meta, cand) in enumerate(entries):
+    """`also_playlists`: playlists besides the batch's own that get the tracks as well. A track known already
+    (`known_track`) goes into the playlists now, in the order asked for; a file that is no track yet, when it is
+    imported."""
+    playlist_ids = list(dict.fromkeys(x for x in (batch.target_playlist_id, *(also_playlists or [])) if x))
+    known: list[int] = []
+    for q, meta, cand in entries:
         query_json: dict[str, Any] = {"query": q.model_dump(), "meta": meta}
-        if star:
-            query_json["star"] = True  # ♥: star the song once it is in Navidrome (`star_liked`)
-            if batch.origin == "assistant":
-                query_json.update(favorite_client="assistant", favorite_context="assistant:bulk" if len(entries) > 1 else "assistant")
+        track = await known_track(s, q, meta, batch.user_id)
+        if track is not None:
+            known.append(track.id)
+        elif playlist_ids:
+            query_json["playlists"] = playlist_ids
         item = DownloadItem(
             batch_id=batch.id,
             user_id=batch.user_id,
@@ -839,24 +770,9 @@ async def create_items(
         )
         s.add(item)
         await s.flush()
-        if star:
-            from app.favorites import download_requested, snapshot
-            ref = item_ref(item)
-            if favorite_events and ref in favorite_events:
-                current = await snapshot(s, batch.user_id)
-                state = next((x for x in current.values() if x.ref == ref and x.target_type == "track"), None)
-                item.query_json = {**item.query_json, "star_event_id": favorite_events[ref],
-                                   "star": bool(state and state.liked), "star_cancelled": not bool(state and state.liked)}
-                if state is None or not state.liked:
-                    # This quiet download was cancelled before expansion finished.
-                    item.status = "cancelled"
-            else:
-                await download_requested(s, item)
-        for pid in dict.fromkeys(x for x in (batch.target_playlist_id, *(also_playlists or [])) if x):
-            s.add(PendingPlaylistAdd(playlist_id=pid, user_id=batch.user_id,
-                                     download_item_id=item.id, position=start_position + i))
-        if item.status != "cancelled":
-            await enqueue(s, "download_item", {"item_id": item.id})
+        await enqueue(s, "download_item", {"item_id": item.id})
+    if playlist_ids and known:
+        await into_playlists(s, batch.user_id, playlist_ids, known)
     return len(entries)
 
 
@@ -913,8 +829,6 @@ async def handle_expand_batch(job: Job) -> None:
         batch = await s.get(DownloadBatch, int(p["batch_id"]))
         if batch is None:
             return
-        await create_items(s, batch, entries, force=bool(p.get("force")), star=bool(p.get("star")),
-                           start_position=int(p.get("position", 0)), favorite_events=p.get("favorite_events"),
-                           also_playlists=p.get("also_playlists"))
+        await create_items(s, batch, entries, force=bool(p.get("force")), also_playlists=p.get("also_playlists"))
     notify()
     bus.publish(batch.user_id, "batch", {"batch_id": batch.id, "queued": len(entries)})

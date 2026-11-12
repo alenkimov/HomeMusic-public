@@ -301,8 +301,7 @@ class TrackOut(CatalogTrack):
     owned: bool = False
     library_track_id: int | None = None
     nd_song_id: str | None = None
-    downloading: bool = False  # a download of it is under way (not counting ones queued only for ♥)
-    star_pending: bool = False  # the user ♥ it and a download that stars it is under way: show it liked
+    downloading: bool = False  # a download of it is under way (not counting the Hub's own quiet ones)
     # in a list: when the track was added to it (a playlist, the likes); else when it came into the library
     added_at: datetime | None = None
 
@@ -369,18 +368,6 @@ class DownloadIn(BaseModel):
     playlist_ids: list[str] = Field(default_factory=list, max_length=50)  # several playlists at once
     new_playlist_name: str | None = None
     force: bool = False  # re-download even if owned (new file next to the old one)
-    star: bool = False  # ♥ on a track that isn't downloaded yet: star the songs in Navidrome once they are
-    favorite_event_id: str | None = Field(default=None, min_length=1, max_length=64)
-    favorite_ts: datetime | None = None
-    favorite_client: str = Field(default="hub", min_length=1, max_length=32)
-    favorite_context: str | None = Field(default=None, max_length=128)
-
-    @model_validator(mode="after")
-    def _favorite_command(self):
-        if self.favorite_event_id and (not self.star or len(self.track_refs) != 1 or self.items or
-                                       self.album_ref or self.artist_ref or self.force):
-            raise ValueError("favorite_event_id requires one track ref and star=true")
-        return self
 
 
 class ListenOut(BaseModel):
@@ -431,11 +418,9 @@ class DownloadItemOut(BaseModel):
     nd_song_id: str | None = None  # Navidrome song once imported and scanned
     playlist_id: str | None = None  # target Navidrome playlist of the batch (Android: sync only that one offline)
     track_ref: str | None = None  # catalog track the item was made from (dz:…)
-    # queued only for ♥ (`DownloadIn.star`) or by an import, nobody asked to download it: not shown as a download
-    # (PWA, app notifications), not downloaded to the phone; false once the track is downloaded explicitly too, and
-    # once a download queued only for ♥ fails (`failed`/`needs_review`): the user sees it then
-    star: bool = False
-    liked: bool = False  # queued with ♥: the song is starred once imported
+    # queued by an import, a mix or the wave, nobody asked to download it: not shown as a download; false once the
+    # track is downloaded explicitly too
+    quiet: bool = False
     import_id: int | None = None  # queued by this import (`/api/imports`)
     candidates: list[Candidate] | None = None  # only in detail view
     chosen: Candidate | None = None
@@ -798,7 +783,7 @@ class HealthOut(BaseModel):
     today: date | None = None
     # id of the PWA build the Hub serves (index.html <meta name="hm-build">); pages compare it with their own
     web_build: str | None = None
-    capabilities: list[str] = ["typed_favorites_v1", "favorite_compensation_chains_v1", "catalog_favorite_download_v1",
+    capabilities: list[str] = ["typed_favorites_v1", "favorite_compensation_chains_v1",
                                "listening_checkpoints_v1", "launch_events_v1", "wave_origin_v1", "smart_shuffle_v1"]
 
 

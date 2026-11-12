@@ -80,9 +80,6 @@ export function DownloadDetailPage({ id }: { id: number }) {
           {item.status === 'needs_review' && (
             <Notice kind="info">Подходящий файл не найден автоматически. Выберите вариант ниже или вставьте ссылку на страницу трека.</Notice>
           )}
-          {item.liked && item.status !== 'done' && (
-            <Notice kind="info">Загрузка по ♥: песня попадёт в «Любимое», когда файл скачается.</Notice>
-          )}
           <div className="flex flex-wrap gap-2 pt-1">
             {active ? (
               <Button small variant="danger" icon="x" busy={busy === 'cancel'} onClick={() => run('cancel', () => api.cancel(item.id))}>

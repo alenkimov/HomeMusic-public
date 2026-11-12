@@ -244,37 +244,6 @@ async def test_missing_starred2_envelope_is_not_an_empty_snapshot():
     assert await nd.get_starred2() == {}
 
 
-@pytest.mark.parametrize("stage", ["queued", "searching", "downloading", "tagging", "importing", "needs_review"])
-async def test_pending_unlike_preserves_explicit_download_and_survives_stale_job(ledger, stage):
-    from app.db import session_scope
-    from app.favorites import download_requested
-    from app.jobs.downloads import update_item
-    from app.models import DownloadBatch, DownloadItem
-    user, other = ledger
-    async with session_scope() as s:
-        batches = [DownloadBatch(user_id=u.id, origin="catalog") for u in (user, other)]
-        s.add_all(batches)
-        await s.flush()
-        items = [DownloadItem(user_id=u.id, batch_id=b.id, status=stage,
-            query_json={"query": {}, "meta": {"track_ref": "dz:pending"}, "star": True, "requested": True})
-            for u, b in zip((user, other), batches)]
-        s.add_all(items)
-        await s.flush()
-        for item in items:
-            await download_requested(s, item)
-        stale = dict(items[0].query_json)
-        ids = [i.id for i in items]
-    async with session_scope() as s:
-        await command(s, user, [FavoriteTarget(ref="dz:pending")], liked=False, nd=AsyncMock())
-    await update_item(ids[0], query_json=stale)
-    async with session_scope() as s:
-        mine, theirs = [await s.get(DownloadItem, id_) for id_ in ids]
-        assert mine.status == stage and not mine.query_json["star"] and mine.query_json["star_cancelled"]
-        assert theirs.status == stage and theirs.query_json["star"]
-        assert not next(iter((await snapshot(s, user.id)).values())).liked
-        assert next(iter((await snapshot(s, other.id)).values())).liked
-
-
 async def test_pending_album_is_delivered_after_verified_library_binding(ledger):
     from app.db import session_scope
     from app.favorites import remember

@@ -332,18 +332,6 @@ class AssistantChat(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
-class PendingPlaylistAdd(Base):
-    __tablename__ = "pending_playlist_adds"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    playlist_id: Mapped[str] = mapped_column(String(64), index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    download_item_id: Mapped[int] = mapped_column(ForeignKey("download_items.id", ondelete="CASCADE"), index=True)
-    position: Mapped[int] = mapped_column(Integer, default=0)
-    applied_song_id: Mapped[str | None] = mapped_column(String(64))  # anchor while an earlier item needs review
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-
-
 class Import(Base):
     """Moving a user's collection over from a music service (Yandex Music now; Spotify, YouTube Music later)."""
 

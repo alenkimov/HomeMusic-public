@@ -110,10 +110,8 @@ TOOLS = [
     _fn("star", "♥ songs, albums, artists of the library.", {**SONGS, "album_ids": REFS, "artist_ids": REFS}),
     _fn("unstar", "Take ♥ off songs, albums, artists; `refs`: catalog tracks liked by an import and not downloaded "
         "yet (they will not be downloaded for that).", {**SONGS, "album_ids": REFS, "artist_ids": REFS, "refs": REFS}),
-    _fn("enqueue_download", "Download catalog tracks, albums or a whole discography, optionally into a playlist; "
-        "star=true puts the songs into ♥ instead.",
-        {"track_refs": REFS, "album_refs": REFS, "artist_ref": STR, "playlist_id": STR, "new_playlist_name": STR,
-         "star": {"type": "boolean"}}),
+    _fn("enqueue_download", "Download catalog tracks, albums or a whole discography, optionally into a playlist.",
+        {"track_refs": REFS, "album_refs": REFS, "artist_ref": STR, "playlist_id": STR, "new_playlist_name": STR}),
     _fn("cancel_downloads", "Cancel downloads that have not finished.", {"item_ids": IDS}, ["item_ids"]),
     _fn("retry_downloads", "Retry failed downloads.", {"item_ids": IDS}, ["item_ids"]),
     # --- need the user's confirmation ---
@@ -460,7 +458,7 @@ class ChatTools:
 
     async def _download(self, *, track_refs: list[str] | None = None, album_refs: list[str] | None = None,
                         artist_ref: str | None = None, playlist_id: str | None = None,
-                        new_playlist_name: str | None = None, star: bool = False) -> list[int]:
+                        new_playlist_name: str | None = None) -> list[int]:
         from app.api.downloads import create_batch
 
         tracks = [r for r in track_refs or [] if ":" in r]
@@ -469,7 +467,7 @@ class ChatTools:
         reqs += [DownloadIn(artist_ref=artist_ref)] if artist_ref else []
         batches = []
         for req in reqs:
-            req.playlist_id, req.star = playlist_id, star
+            req.playlist_id = playlist_id
             req.new_playlist_name = None if playlist_id else new_playlist_name
             out = await create_batch(self.s, self.user, req, origin="assistant")
             playlist_id = playlist_id or out.playlist_id  # the next batches go to the playlist the first one made
@@ -478,15 +476,15 @@ class ChatTools:
 
     async def enqueue_download(self, track_refs: list[str] | None = None, album_refs: list[str] | None = None,
                                artist_ref: str | None = None, playlist_id: str | None = None,
-                               new_playlist_name: str | None = None, star: bool = False) -> Any:
+                               new_playlist_name: str | None = None) -> Any:
         batches = await self._download(track_refs=track_refs, album_refs=album_refs, artist_ref=artist_ref,
-                                       playlist_id=playlist_id, new_playlist_name=new_playlist_name, star=star)
+                                       playlist_id=playlist_id, new_playlist_name=new_playlist_name)
         if not batches:
             raise ValueError("nothing to download")
         what = [tracks_word(len(track_refs))] if track_refs else []
         what += [f"альбомов: {len(album_refs)}"] if album_refs else []
         what += ["дискография"] if artist_ref else []
-        self.done.append("Поставлено в загрузку: " + ", ".join(what) + (" с ♥" if star else ""))
+        self.done.append("Поставлено в загрузку: " + ", ".join(what))
         return {"batches": batches}
 
     async def cancel_downloads(self, item_ids: list[int]) -> Any:

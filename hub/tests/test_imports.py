@@ -263,7 +263,7 @@ async def test_economy_import_likes_and_playlists_in_order(env):
     [job] = await jobs("download_item")
     assert job.priority == 0
     [dl] = (await c.get("/api/downloads")).json()
-    assert (dl["star"], dl["import_id"], dl["track_ref"]) == (True, imp["id"], "dz:100")
+    assert (dl["quiet"], dl["import_id"], dl["track_ref"]) == (True, imp["id"], "dz:100")
     assert {x["status"] for x in await items(c, imp) if x["title"] == "Группа крови" and x["kind"] == "track"} == {"queued"}
 
     # the download is over: the playlist is rewritten in order with it
@@ -360,7 +360,7 @@ async def test_full_import_downloads_in_the_background(env):
     [job] = await jobs("download_item")
     assert job.priority < 0
     [dl] = (await c.get("/api/downloads")).json()
-    assert dl["star"] and dl["import_id"] == imp["id"]
+    assert dl["quiet"] and dl["import_id"] == imp["id"]
     assert {x["download_item_id"] for x in await items(c, imp) if x["title"] == "Группа крови" and x["kind"] == "track"} == {dl["id"]}
     assert imp["stats"]["downloading"] == 1
     # the liked album is only matched (download_albums is off), the playlist exists already
@@ -373,7 +373,7 @@ async def test_full_import_downloads_in_the_background(env):
     [job] = await jobs("download_item")
     assert job.priority == 0
     [dl] = (await c.get("/api/downloads")).json()
-    assert not dl["star"]
+    assert not dl["quiet"]
 
 
 async def test_second_import_reuses_the_matches(env):  # two whole imports: ~2x a scenario
@@ -401,7 +401,7 @@ async def test_not_found_track_is_picked_by_hand(env):
     r = await c.post(f"/api/imports/items/{row['id']}/pick")
     assert r.status_code == 200, r.text
     dl = (await c.get(f"/api/downloads/{r.json()['download_item_id']}")).json()
-    assert (dl["title"], dl["star"], dl["import_id"]) == ("Нет такого", False, imp["id"])  # a visible download
+    assert (dl["title"], dl["quiet"], dl["import_id"]) == ("Нет такого", False, imp["id"])  # a visible download
     assert (await jobs("download_item"))[0].priority == 0
 
 

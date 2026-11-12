@@ -216,7 +216,7 @@ async def test_download_import_scan_playlist_dedupe(env):
     assert r.json()["owned_status"] == "full"
 
 
-async def test_review_does_not_block_playlist_and_clear_keeps_delayed_insertion_order(env):
+async def test_review_does_not_block_playlist_and_a_file_picked_later_joins_it(env):
     c, state = env["client"], env["state"]
     r = await c.post("/api/downloads", json={
         "items": [{"artist": "Неизвестный", "title": "Демо"},
@@ -233,23 +233,17 @@ async def test_review_does_not_block_playlist_and_clear_keeps_delayed_insertion_
     assert r.status_code == 200 and r.json()["removed"] == 1, r.text
     assert [i["status"] for i in (await c.get("/api/downloads")).json()] == ["needs_review"]
 
-    # Picking a file for the missing song fills the gap before the already added song.
+    # Asked for by its names only, the song is a track once a file is picked: it joins the playlist then.
     r = await c.post(f"/api/downloads/items/{review['id']}/retry", json={"candidate_index": 0})
     assert r.status_code == 200, r.text
     await drain_jobs()
-    assert state["playlists"]["pl1"]["songs"] == ["nd1", "nd0"]
+    assert state["playlists"]["pl1"]["songs"] == ["nd0", "nd1"]
     r = await c.post("/api/downloads/clear")
     assert r.status_code == 200 and r.json()["removed"] == 1, r.text
     assert (await c.get("/api/downloads")).json() == []
 
 
 async def test_downloads_are_retried_and_removed_several_at_once(env):
-    from sqlalchemy import select
-
-    from app.db import session_scope
-    from app.jobs.downloads import process_playlist_adds
-    from app.models import PendingPlaylistAdd
-
     c, state = env["client"], env["state"]
     r = await c.post("/api/downloads", json={
         "items": [{"artist": "Неизвестный", "title": "Демо"}, {"artist": "Кино", "title": "Группа крови"}],
@@ -273,10 +267,6 @@ async def test_downloads_are_retried_and_removed_several_at_once(env):
     assert (await c.get("/api/downloads")).json() == []
     one = (await c.get(f"/api/downloads/{review['id']}")).json()
     assert (one["status"], one["hidden"]) == ("cancelled", True)
-    async with session_scope() as s:
-        await process_playlist_adds(s)
-    async with session_scope() as s:
-        assert (await s.execute(select(PendingPlaylistAdd))).scalars().all() == []  # nothing is waited for any more
     assert state["playlists"]["pl1"]["songs"] == ["nd0"]
     assert (await c.post("/api/downloads/remove", json={"ids": [review["id"]]})).json() == {"removed": 0}
 
@@ -375,17 +365,18 @@ async def test_picked_reupload_gets_catalog_tags(env):
 async def test_liked_uncensored_file_goes_next_to_the_owned_censored_copy_and_takes_its_like(env):
     c, stars = env["client"], env["state"]["stars"]
     reups = add_reuploads(env)
-    r = await c.post("/api/downloads", json={"track_refs": ["dz:100"], "star": True})
+    await like(c, "dz:100")
+    r = await c.post("/api/downloads", json={"track_refs": ["dz:100"]})
     assert r.status_code == 200, r.text
     await drain_jobs()
     assert stars == ["nd0"] and env["fake"].fetched == 1  # the copy from hitmoz (censored, say) is liked
 
-    # ♥ on the uncensored re-upload in the search: that very file is downloaded, not "already in the library"
+    # the uncensored re-upload picked in the search: that very file is downloaded, not "already in the library"
     cand = {"provider": "yt_reupload", "provider_id": "r1", "artist": "кино", "title": "группа крови",
             "duration_s": 4, "page_url": "https://yt.test/watch?v=r1",
             "extra": {"reupload": True, "uncensored": True}}
     r = await c.post("/api/downloads", json={"items": [{"artist": "кино", "title": "группа крови",
-                                                        "candidate": cand}], "star": True})
+                                                        "candidate": cand}]})
     assert r.status_code == 200, r.text
     assert r.json()["already_owned"] == 0
     await drain_jobs()
@@ -400,9 +391,9 @@ async def test_liked_uncensored_file_goes_next_to_the_owned_censored_copy_and_ta
     r = await c.get("/api/catalog/album/dz:10")
     assert r.json()["tracks"][0]["nd_song_id"] == "nd1"
 
-    # ♥ on the same file again: already in the library, nothing downloaded
+    # the same file again: already in the library, nothing downloaded
     r = await c.post("/api/downloads", json={"items": [{"artist": "кино", "title": "группа крови",
-                                                        "candidate": cand}], "star": True})
+                                                        "candidate": cand}]})
     assert r.json()["already_owned"] == 1
     await drain_jobs()
     assert reups.fetched == 1 and stars == ["nd1"]
@@ -559,56 +550,67 @@ async def test_download_after_listening_takes_the_heard_file(env):
     assert r.json()["kind"] == "library"
 
 
-async def test_like_before_download_stars_the_song_once_imported(env):
+async def like(c, ref: str, *, liked: bool = True) -> None:
+    """♥ on a catalog track, as a page sets it: a like knows nothing of downloads."""
+    r = await c.post("/api/star", json={"targets": [{"ref": ref}], "unstar": not liked})
+    assert r.status_code == 200, r.text
+
+
+async def test_liked_track_gets_its_star_in_navidrome_once_it_has_a_file(env):
     c, stars = env["client"], env["state"]["stars"]
-    r = await c.post("/api/downloads", json={"track_refs": ["dz:100"], "star": True})
+    await like(c, "dz:100")
+    assert stars == []  # no file: nothing for Navidrome to star yet
+    body = (await c.get("/api/starred")).json()
+    assert (body["song_ids"], body["refs"]) == ([], ["dz:100"])  # liked all the same
+
+    r = await c.post("/api/downloads", json={"track_refs": ["dz:100"]})
     assert r.status_code == 200, r.text
     await drain_jobs()
     items = (await c.get("/api/downloads")).json()
-    assert [(i["status"], i["nd_song_id"]) for i in items] == [("done", "nd0")]
+    assert [(i["status"], i["nd_song_id"], i["quiet"]) for i in items] == [("done", "nd0", False)]
     assert stars == ["nd0"]
-    r = await c.get("/api/starred")
-    assert r.status_code == 200, r.text
-    body = r.json()
+    body = (await c.get("/api/starred")).json()
     assert {k: body[k] for k in ("song_ids", "album_ids", "artist_ids", "refs")} == {
         "song_ids": ["nd0"], "album_ids": [], "artist_ids": [], "refs": []}
     assert [(x["target_type"], x["ref"], x["liked"]) for x in body["subjects"]] == [("track", "dz:100", True)]
-
-    # ♥ on a track that is already owned: no new download, starred at once
-    stars.clear()
-    await c.post("/api/downloads", json={"track_refs": ["dz:100"], "star": True})
-    await drain_jobs()
-    assert stars == ["nd0"] and env["fake"].fetched == 1
 
     # a plain download stars nothing
     stars.clear()
     await c.post("/api/downloads", json={"track_refs": ["dz:100"]})
     await drain_jobs()
-    assert stars == []
+    assert stars == [] and env["fake"].fetched == 1
 
 
-async def test_failed_like_download_shows_up_and_stars_once_retried(env):
+async def test_a_like_outlives_a_download_that_failed(env):
     c, stars = env["client"], env["state"]["stars"]
     env["fake"].cands = []  # no source has the track
-    r = await c.post("/api/downloads", json={"track_refs": ["dz:100"], "star": True})
-    assert r.status_code == 200, r.text
+    await like(c, "dz:100")
+    await c.post("/api/downloads", json={"track_refs": ["dz:100"]})
     await drain_jobs()
-    # the ♥ download failed: it is the user's download now (Downloads, notifications), not the Hub's quiet one
     [item] = (await c.get("/api/downloads")).json()
-    assert (item["status"], item["star"], item["liked"]) == ("needs_review", False, False), item
-    assert stars == []
+    assert item["status"] == "needs_review" and stars == []
+    assert (await c.get("/api/starred")).json()["refs"] == ["dz:100"]  # the ♥ is the track's, file or no file
 
     env["fake"].cands = found
     r = await c.post(f"/api/downloads/items/{item['id']}/retry", json={})
     assert r.status_code == 200, r.text
     await drain_jobs()
     item = (await c.get(f"/api/downloads/{item['id']}")).json()
-    assert item["status"] == "done" and item["liked"], item
-    assert stars == [item["nd_song_id"]]  # the ♥ still applies once a file is downloaded
+    assert item["status"] == "done" and stars == [item["nd_song_id"]]
+
+
+async def test_a_track_unliked_before_its_file_came_is_not_starred(env):
+    c, stars = env["client"], env["state"]["stars"]
+    await like(c, "dz:100")
+    await like(c, "dz:100", liked=False)
+    await c.post("/api/downloads", json={"track_refs": ["dz:100"]})
+    await drain_jobs()
+    [item] = (await c.get("/api/downloads")).json()
+    assert item["status"] == "done" and stars == []
 
 
 @pytest.mark.parametrize("primary", ["available", "blocked", "unavailable"])
-async def test_like_download_uses_full_file_fallback_only_when_regular_source_fails(env, monkeypatch, primary):
+async def test_download_uses_full_file_fallback_only_when_regular_source_fails(env, monkeypatch, primary):
     from unittest.mock import AsyncMock
 
     from app.providers.base import ProviderError
@@ -626,70 +628,15 @@ async def test_like_download_uses_full_file_fallback_only_when_regular_source_fa
         env["fake"].down = True
 
     c = env["client"]
-    response = await c.post("/api/downloads", json={"track_refs": ["dz:100"], "star": True})
+    response = await c.post("/api/downloads", json={"track_refs": ["dz:100"]})
     assert response.status_code == 200, response.text
     await drain_jobs()
     [item] = (await c.get("/api/downloads")).json()
-    assert item["status"] == "done" and item["liked"], item
-    assert env["state"]["stars"] == [item["nd_song_id"]]
+    assert item["status"] == "done", item
     assert fallback.searched == fallback.fetched == (0 if primary == "available" else 1)
     if primary != "available":
         assert item["provider"] == "soundcloud"
         assert item["chosen"]["provider_id"] == "full"
-
-
-async def test_retry_failed_like_uses_new_fallback_and_restores_the_favorite(env):
-    from app.config import get_settings
-    from app.services import svc
-
-    sources = get_settings().cfg.sources
-    sources.download_fallback = []
-    env["fake"].cands = []
-    c = env["client"]
-    response = await c.post("/api/downloads", json={"track_refs": ["dz:100"], "star": True})
-    assert response.status_code == 200, response.text
-    await drain_jobs()
-    [item] = (await c.get("/api/downloads")).json()
-    assert item["status"] == "needs_review" and not item["liked"]
-
-    svc.providers["soundcloud"] = FakeProvider("soundcloud", lambda q: [
-        found(q)[0].model_copy(update={"provider": "soundcloud"}),
-    ], src=env["src"])
-    sources.download_fallback = ["soundcloud"]
-    response = await c.post(f"/api/downloads/items/{item['id']}/retry", json={})
-    assert response.status_code == 200, response.text
-    await drain_jobs()
-    item = (await c.get(f"/api/downloads/{item['id']}")).json()
-    assert item["status"] == "done" and item["liked"], item
-    assert env["state"]["stars"] == [item["nd_song_id"]]
-
-
-async def test_pending_unlike_before_expansion_prevents_star_but_keeps_explicit_download(env):
-    c, stars = env["client"], env["state"]["stars"]
-    assert (await c.post("/api/downloads", json={"track_refs": ["dz:100"], "star": True})).status_code == 200
-    # Explicit download joins after expansion, so it must survive the subsequent unlike.
-    await run_one_job()
-    assert (await c.post("/api/downloads", json={"track_refs": ["dz:100"]})).status_code == 200
-    r = await c.post("/api/star", json={"refs": ["dz:100"], "unstar": True})
-    assert r.status_code == 200, r.text
-    await drain_jobs()
-    [item] = (await c.get("/api/downloads")).json()
-    assert item["status"] == "done" and not item["liked"] and stars == []
-
-
-async def test_failed_like_unliked_before_retry_never_returns(env):
-    c, stars = env["client"], env["state"]["stars"]
-    env["fake"].cands = []
-    await c.post("/api/downloads", json={"track_refs": ["dz:100"], "star": True})
-    await drain_jobs()
-    [item] = (await c.get("/api/downloads")).json()
-    assert item["status"] == "needs_review"
-    assert (await c.post("/api/star", json={"refs": ["dz:100"], "unstar": True})).status_code == 200
-    env["fake"].cands = found
-    await c.post(f"/api/downloads/items/{item['id']}/retry", json={})
-    await drain_jobs()
-    item = (await c.get(f"/api/downloads/{item['id']}")).json()
-    assert item["status"] == "done" and not item["liked"] and stars == []
 
 
 async def test_search_tracks_come_in_pages(env):
@@ -706,52 +653,6 @@ async def test_search_tracks_come_in_pages(env):
     page = r.json()
     assert [t["ref"] for t in page["tracks"]] == [f"dz:{200 + i}" for i in range(23, 29)]
     assert page["next_offset"] is None
-
-
-async def test_like_download_is_quiet_until_downloaded_explicitly(env):
-    c, stars, state = env["client"], env["state"]["stars"], env["state"]
-    r = await c.post("/api/downloads", json={"track_refs": ["dz:100"], "star": True, "playlist_id": "pl9"})
-    assert r.status_code == 200, r.text
-    assert r.json()["playlist_id"] is None  # ♥ downloads stay out of playlists
-    await run_one_job()  # expand_batch: the item exists, not downloaded yet
-    items = (await c.get("/api/downloads")).json()
-    assert [(i["status"], i["star"], i["playlist_id"]) for i in items] == [("queued", True, None)]
-
-    track = (await c.get("/api/search", params={"q": "Кино"})).json()["tracks"][0]
-    assert track["ref"] == "dz:100" and not track["downloading"] and track["star_pending"]
-    r = await c.get(f"/api/catalog/album/{'dz:10'}")
-    assert r.json()["tracks"][0]["star_pending"]
-
-    # «Скачать» on it: the same download, now a visible one (no second item, no second file)
-    r = await c.post("/api/downloads", json={"track_refs": ["dz:100"]})
-    assert r.json()["queued"] == 1 and not r.json()["expanding"]
-    items = (await c.get("/api/downloads")).json()
-    assert [(i["id"], i["star"]) for i in items] == [(items[0]["id"], False)]
-    track = (await c.get("/api/search", params={"q": "Кино"})).json()["tracks"][0]
-    assert track["downloading"] and track["star_pending"]
-
-    await drain_jobs()
-    items = (await c.get("/api/downloads")).json()
-    assert [(i["status"], i["nd_song_id"]) for i in items] == [("done", "nd0")]
-    assert stars == ["nd0"] and env["fake"].fetched == 1  # still starred after the import
-    assert state["playlists"] == {}
-
-
-async def test_like_joins_an_explicit_download(env):
-    c, stars = env["client"], env["state"]["stars"]
-    await c.post("/api/downloads", json={"track_refs": ["dz:100"]})
-    await run_one_job()
-    r = await c.post("/api/downloads", json={"track_refs": ["dz:100"], "star": True})
-    assert r.json()["queued"] == 1 and not r.json()["expanding"]
-    items = (await c.get("/api/downloads")).json()
-    assert [i["star"] for i in items] == [False]  # asked for explicitly: stays a visible download
-    track = (await c.get("/api/search", params={"q": "Кино"})).json()["tracks"][0]
-    assert track["downloading"] and track["star_pending"]
-
-    await drain_jobs()
-    items = (await c.get("/api/downloads")).json()
-    assert [(i["status"], i["nd_song_id"]) for i in items] == [("done", "nd0")]
-    assert stars == ["nd0"] and env["fake"].fetched == 1
 
 
 async def add_unlinked(path: str, title: str, album: str = "Альбом", artist: str = "Артист") -> int:

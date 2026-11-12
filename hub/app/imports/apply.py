@@ -515,7 +515,5 @@ async def unlike_refs(s: AsyncSession, user_id: int, refs: list[str]) -> None:
             dl = await s.get(DownloadItem, it.download_item_id)
             if dl is not None and dl.status == "queued" and not (dl.query_json or {}).get("requested"):
                 dl.status = "cancelled"
-            elif dl is not None:
-                dl.query_json = {k: v for k, v in (dl.query_json or {}).items() if k != "star"}
         it.status = "skipped"
     await s.flush()

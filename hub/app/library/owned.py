@@ -19,19 +19,11 @@ from app.models import Album, DownloadItem, Track
 ACTIVE_STATUSES = ("queued", "searching", "downloading", "tagging", "importing")
 
 
-def star_only(query_json: dict[str, Any] | None) -> bool:
-    """A download queued only for ♥ (`DownloadIn.star`): the song is starred after the import, and nobody asked to
-    download it explicitly (`requested`). It is the Hub's own business: clients don't show it as a download."""
-    qj = query_json or {}
-    return bool(qj.get("star")) and not qj.get("requested")
-
-
 def quiet(query_json: dict[str, Any] | None) -> bool:
-    """A download nobody asked for explicitly: queued only for ♥ (`star_only`), by an import (`app.imports`), for
-    a «Микс дня» (`app.mixes`) or a track of «Моя волна» played to its end (`app.mixes.wave`). Clients don't show it
-    as a download."""
+    """A download nobody asked for explicitly: queued by an import (`app.imports`), for a «Микс дня» (`app.mixes`)
+    or a track of «Моя волна» played to its end (`app.mixes.wave`). Clients don't show it as a download."""
     qj = query_json or {}
-    return star_only(qj) or (bool(qj.get("import") or qj.get("mix") or qj.get("wave")) and not qj.get("requested"))
+    return bool(qj.get("import") or qj.get("mix") or qj.get("wave")) and not qj.get("requested")
 
 
 def _duration_ok(a: int | None, b: int | None, tol: int = 3) -> bool:
@@ -117,12 +109,9 @@ async def annotate_tracks(
     ).all()
     downloading_refs: set[str | None] = set()
     downloading_fps: set[str] = set()
-    star_refs: set[str | None] = set()
     for uid, q in active:
         q = q or {}
         ref = (q.get("meta") or {}).get("track_ref")
-        if q.get("star") and not q.get("star_failed") and user_id is not None and uid == user_id:
-            star_refs.add(ref)
         if quiet(q):
             continue
         downloading_refs.add(ref)
@@ -143,7 +132,6 @@ async def annotate_tracks(
             o.nd_song_id = hit.nd_song_id
         else:
             o.downloading = t.ref in downloading_refs or fp in downloading_fps
-            o.star_pending = t.ref in star_refs
         out.append(o)
     return out
 
@@ -204,4 +192,4 @@ async def annotate_albums(
     return out
 
 
-__all__ = ["ACTIVE_STATUSES", "_dz_id", "annotate_albums", "annotate_tracks", "find_existing", "quiet", "star_only"]
+__all__ = ["ACTIVE_STATUSES", "_dz_id", "annotate_albums", "annotate_tracks", "find_existing", "quiet"]

@@ -3,7 +3,7 @@ import { api } from '../api/client';
 import type { PlaylistOfSongOut, PlaylistOfSongsOut } from '../api/types';
 import { tracksWord } from '../lib/format';
 import { noteInPlaylists, useInPlaylists } from '../lib/inPlaylists';
-import { isLiked, markLikePending, setLikes, toggleLike, useLiked, type LikeTarget } from '../lib/stars';
+import { isLiked, setLikes, toggleLike, useLiked, type LikeTarget } from '../lib/stars';
 import { attempt, toast } from '../lib/ui';
 import { Icon } from './Icon';
 import { Button, Cover, Loading, Sheet, cx } from './ui';
@@ -14,13 +14,10 @@ import { Button, Cover, Loading, Sheet, cx } from './ui';
  *   ♥  in a green circle: it is in «Любимое» (and maybe in playlists too);
  *   ✓  in a green circle: it is in some playlist, but not in «Любимое».
  * A click on ♥ or ✓ opens the playlists with ticks (`TrackPlaylists`). A catalog track the library has not got is
- * downloaded when it is put anywhere. `pending`: a ♥ the Hub has promised to a download. */
-export function SaveButton({ songId, refId, listKey, pending, title, data, size = 20, className }: { songId?: string | null; refId?: string | null; /** what the track is called in the list of tracks kept in playlists (`lib/tags.ts` `tagKey`): a track with no file yet has no `songId` */ listKey?: string | null; pending?: boolean; title: string; data?: Record<string, unknown>; size?: number; className?: string }) {
+ * downloaded when it is put anywhere. */
+export function SaveButton({ songId, refId, listKey, title, data, size = 20, className }: { songId?: string | null; refId?: string | null; /** what the track is called in the list of tracks kept in playlists (`lib/tags.ts` `tagKey`): a track with no file yet has no `songId` */ listKey?: string | null; title: string; data?: Record<string, unknown>; size?: number; className?: string }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (pending && refId && !songId) markLikePending(refId);
-  }, [pending, refId, songId]);
   const target: LikeTarget = { targetType: 'track', songId, ref: refId, data };
   const liked = useLiked(target);
   const listed = useInPlaylists(listKey ?? songId);

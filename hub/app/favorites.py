@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import FavoriteTarget
 from app.models import (
     Album,
-    DownloadItem,
     FavoriteSubject,
     Import,
     ImportCollection,
@@ -374,46 +373,10 @@ async def command(s: AsyncSession, user: User, targets: list[FavoriteTarget], *,
 
 
 async def clear_pending(s: AsyncSession, user_id: int, ref: str):
+    """♥ taken off a catalog track: an import that brought it as liked no longer downloads it for that."""
     from app.imports.apply import unlike_refs
-    from app.jobs.downloads import item_ref
 
     await unlike_refs(s, user_id, [ref])
-    items = (await s.execute(select(DownloadItem).where(DownloadItem.user_id == user_id))).scalars()
-    for item in items:
-        if item_ref(item) != ref:
-            continue
-        q = dict(item.query_json or {})
-        was_star_only = q.get("star") and not q.get("requested") and not any(q.get(k) for k in ("import", "mix", "wave"))
-        q.update(star=False, star_cancelled=True)
-        item.query_json = q
-        if was_star_only and item.status == "queued":
-            item.status = "cancelled"
-    await s.flush()
-
-
-async def download_requested(s: AsyncSession, item: DownloadItem):
-    from app.jobs.downloads import item_ref
-    ref = item_ref(item)
-    if not ref:
-        return
-    event = await record(s, item.user_id, FavoriteTarget(ref=ref, target_data=item.query_json.get("query")), True,
-                         operation=f"download:{item.id}:{uuid.uuid4().hex}",
-                         client="assistant" if item.query_json.get("favorite_client") == "assistant" else "hub",
-                         context=item.query_json.get("favorite_context") or "download", mirror_pending=True)
-    item.query_json = {**item.query_json, "star_event_id": event.event_id, "star_cancelled": False, "star_failed": False}
-
-
-async def download_failed(s: AsyncSession, item: DownloadItem):
-    q = item.query_json or {}
-    if not q.get("star") or q.get("star_cancelled") or not q.get("star_event_id"):
-        return
-    original = (await s.execute(select(PlayEvent).where(PlayEvent.user_id == item.user_id,
-                                                       PlayEvent.event_id == q["star_event_id"]))).scalar_one_or_none()
-    if original:
-        await record(s, item.user_id, FavoriteTarget(ref=original.ref, nd_song_id=original.nd_song_id), False,
-                     operation=f"failed:{original.event_id}", reverts_event_id=original.event_id,
-                     client="hub", context="download:failed")
-        item.query_json = {**q, "star_failed": True}
 
 
 async def imported_targets(s: AsyncSession, user_id: int) -> set[tuple[str, str]]:
@@ -621,6 +584,35 @@ async def reconcile(s: AsyncSession, user: User, body: dict, *, now: datetime | 
     sync.favorites_synced_at = now
     sync.favorites_bootstrapped_at = sync.favorites_bootstrapped_at or now
     return changed
+
+
+async def deliver_pending(s: AsyncSession) -> None:
+    """Tracks liked when the library had no file of them, that have one now: their songs get the ♥ in Navidrome,
+    for the apps that talk to it. Called when a library scan has found new files."""
+    from app.auth import user_navidrome
+    from app.events import bus
+
+    users = (await s.execute(select(PlayEvent.user_id).where(
+        PlayEvent.kind == "like", PlayEvent.mirror_pending.is_(True)).distinct())).scalars().all()
+    for user_id in users:
+        ready = [st for st in (await snapshot(s, user_id)).values()
+                 if st.target_type == "track" and st.liked and st.event.mirror_pending and st.nd_id]
+        user = await s.get(User, user_id) if ready else None
+        if user is None:
+            continue
+        nd = user_navidrome(user)
+        try:
+            await nd.star(song_ids=[st.nd_id for st in ready])
+        except Exception as e:  # the next scan, or the next look at Navidrome's stars, delivers them
+            log.warning("♥ of user %s not delivered to Navidrome: %r", user_id, e)
+            continue
+        finally:
+            await nd.aclose()
+        for st in ready:
+            await remember(s, FavoriteTarget(ref=st.ref, nd_song_id=st.nd_id))
+            st.event.mirror_pending = False
+        bus.publish(user_id, "library", {"kind": "starred", "song_ids": [st.nd_id for st in ready]})
+    await s.flush()
 
 
 async def sync_user(user: User) -> int:

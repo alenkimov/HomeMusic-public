@@ -414,7 +414,7 @@ export function TrackRow({
               </span>
             )}
             <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('like', dragList(), asSel(track))}>
-              <SaveButton songId={likeTarget.songId} refId={track.ref} listKey={tagKey(track)} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('!w-9', dragMark === 'like' || dragMark === 'lists' ? cx(marked, '!text-accent') : !kept && shown)} />
+              <SaveButton songId={likeTarget.songId} refId={track.ref} listKey={tagKey(track)} title={track.title} data={likeTarget.data} className={cx('!w-9', dragMark === 'like' || dragMark === 'lists' ? cx(marked, '!text-accent') : !kept && shown)} />
             </span>
           </div>
           {cols.duration && <span className="text-right text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>}
@@ -488,7 +488,7 @@ export function TrackRow({
         <div className={rowClass}>{body}</div>
       )}
       <div className="-ml-2 flex shrink-0 items-center">
-        <SaveButton songId={track.owned ? track.nd_song_id : null} refId={track.ref} pending={track.star_pending} title={track.title} data={{ ...track }} className="!w-10" />
+        <SaveButton songId={track.owned ? track.nd_song_id : null} refId={track.ref} title={track.title} data={{ ...track }} className="!w-10" />
         {track.owned ? (
           // a plain browser: the row itself plays it, a second ▷ would only take the title's room
           STANDALONE && !(link && track.album_ref) && play ? null : <TrackStatus owned downloading={false} onDownload={download} onPlay={play} />

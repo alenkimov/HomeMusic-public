@@ -192,7 +192,6 @@ export interface TrackOut extends CatalogTrack {
   /** a download of it is under way (not counting ones queued only for ♥) */
   downloading: boolean;
   /** the user ♥ it and a download that stars it is under way: the ♥ shows filled */
-  star_pending?: boolean;
   /** in a list: when the track was added to it; else when it came into the library */
   added_at?: string | null;
 }
@@ -401,8 +400,6 @@ export interface DownloadIn {
   playlist_ids?: string[];
   new_playlist_name?: string | null;
   force?: boolean;
-  /** ♥ before download: the Hub stars the songs in Navidrome once they are imported */
-  star?: boolean;
 }
 
 /** GET /api/listen: what plays for a catalog track before it is downloaded. */
@@ -449,11 +446,8 @@ export interface DownloadItemOut {
   playlist_id?: string | null;
   /** catalog track the item came from */
   track_ref?: string | null;
-  /** queued only for ♥ or by an import (nobody asked to download it): not shown as a download; false once a
-   * download queued only for ♥ fails (the user sees it then) */
-  star?: boolean;
-  /** queued with ♥: the song is starred once imported */
-  liked?: boolean;
+  /** queued by an import, a mix or the wave (nobody asked to download it): not shown as a download */
+  quiet?: boolean;
   /** queued by this import (`/api/imports`) */
   import_id?: number | null;
   candidates?: Candidate[] | null;

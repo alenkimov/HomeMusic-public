@@ -778,17 +778,17 @@ async def test_file_listened_to_is_downloaded_by_its_ref(env):
     assert r.status_code == 404
 
 
-async def test_file_liked_in_the_search_is_downloaded_to_be_starred(env):
+async def test_file_of_the_search_is_downloaded_as_it_is(env):
     c, hm = env["client"], env["hm"]
     hm.cands = [cand("1", "https://cdn.test/good.mp3")]
     await search_files(c)
-    # ♥ on a row of the Files tab: that very file is downloaded quietly and starred after the import
-    r = await c.post("/api/downloads", json={"track_refs": ["file:hitmoz:1"], "star": True})
+    # a row of the Files tab: that very file is downloaded
+    r = await c.post("/api/downloads", json={"track_refs": ["file:hitmoz:1"]})
     assert r.status_code == 200, r.text
     assert r.json()["queued"] == 1
     items = (await c.get("/api/downloads")).json()
-    assert [(i["track_ref"], i["star"], i["chosen"]["page_url"]) for i in items] == [
-        ("file:hitmoz:1", True, "https://hitmoz.test/song/1")]
+    assert [(i["track_ref"], i["quiet"], i["chosen"]["page_url"]) for i in items] == [
+        ("file:hitmoz:1", False, "https://hitmoz.test/song/1")]
 
 
 async def test_listen_needs_login(env):
