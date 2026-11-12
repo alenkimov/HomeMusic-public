@@ -231,6 +231,7 @@ export function TrackRow({
     if (e.shiftKey && queue?.length) selectRange(queue.map(asSel), asSel(track));
     else toggleSelected(asSel(track));
   };
+  // a phone has no checkbox in the row: its menu is where picking starts (a computer's table has one)
   const selectExtra: MenuExtra = selected
     ? { icon: 'x', label: 'Снять выделение', onClick: () => toggleSelected(asSel(track)) }
     : { icon: 'check', label: 'Выбрать', hint: 'Отметьте несколько треков, чтобы отправить их разом', onClick: () => toggleSelected(asSel(track)) };
@@ -426,7 +427,7 @@ export function TrackRow({
           </div>
           {cols.duration && <span className="text-right text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>}
           <span data-row-actions className="contents">
-            <TrackMenuButton track={menuTrack} extra={[selectExtra, ...(menuExtra ?? [])]} className={cx('!h-8 !w-8', shown)} />
+            <TrackMenuButton track={menuTrack} extra={menuExtra} className={cx('!h-8 !w-8', shown)} />
           </span>
         </div>
       );
