@@ -287,6 +287,8 @@ export const api = {
     request<DownloadItemOut>('POST', `/api/downloads/items/${id}/retry`, { json: body }),
   cancel: (id: number) => request<DownloadItemOut>('POST', `/api/downloads/items/${id}/cancel`),
   clearDownloads: () => request<ClearOut>('POST', '/api/downloads/clear'),
+  removeDownloads: (ids: number[]) => request<{ removed: number }>('POST', '/api/downloads/remove', { json: { ids } }),
+  retryDownloads: (ids: number[]) => request<{ queued: number }>('POST', '/api/downloads/retry', { json: { ids } }),
 
   // library
   libAlbums: (q: string, offset = 0, limit = 50, signal?: AbortSignal) =>

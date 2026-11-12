@@ -456,6 +456,8 @@ export interface DownloadItemOut {
   import_id?: number | null;
   candidates?: Candidate[] | null;
   chosen?: Candidate | null;
+  /** taken off the list by the user (comes with an event: every open page drops it) */
+  hidden?: boolean;
   created_at: ISODateTime;
   updated_at: ISODateTime;
 }

@@ -219,6 +219,8 @@ class DownloadItem(Base):
     warnings: Mapped[list[Any]] = mapped_column(JSON, default=list)
     track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id", ondelete="SET NULL"))
     force: Mapped[bool] = mapped_column(Boolean, default=False)  # explicit re-download (new file next to locked one)
+    # taken off the «Загрузки» list by the user; the row stays: a playlist's order, an import and a mix lean on it
+    hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 

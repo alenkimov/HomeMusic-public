@@ -227,8 +227,10 @@ async def test_review_does_not_block_playlist_and_clear_keeps_delayed_insertion_
     items = (await c.get("/api/downloads")).json()
     review = next(i for i in items if i["status"] == "needs_review")
     assert state["playlists"]["pl1"]["songs"] == ["nd0"]
+    # the finished one leaves the list at once; its row stays, so the order below still holds
     r = await c.post("/api/downloads/clear")
-    assert r.status_code == 200 and r.json()["removed"] == 0, r.text
+    assert r.status_code == 200 and r.json()["removed"] == 1, r.text
+    assert [i["status"] for i in (await c.get("/api/downloads")).json()] == ["needs_review"]
 
     # Picking a file for the missing song fills the gap before the already added song.
     r = await c.post(f"/api/downloads/items/{review['id']}/retry", json={"candidate_index": 0})
@@ -236,7 +238,46 @@ async def test_review_does_not_block_playlist_and_clear_keeps_delayed_insertion_
     await drain_jobs()
     assert state["playlists"]["pl1"]["songs"] == ["nd1", "nd0"]
     r = await c.post("/api/downloads/clear")
-    assert r.status_code == 200 and r.json()["removed"] == 2, r.text
+    assert r.status_code == 200 and r.json()["removed"] == 1, r.text
+    assert (await c.get("/api/downloads")).json() == []
+
+
+async def test_downloads_are_retried_and_removed_several_at_once(env):
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.jobs.downloads import process_playlist_adds
+    from app.models import PendingPlaylistAdd
+
+    c, state = env["client"], env["state"]
+    r = await c.post("/api/downloads", json={
+        "items": [{"artist": "Неизвестный", "title": "Демо"}, {"artist": "Кино", "title": "Группа крови"}],
+        "new_playlist_name": "Review"})
+    assert r.status_code == 200, r.text
+    await drain_jobs()
+    items = (await c.get("/api/downloads")).json()
+    review = next(i for i in items if i["status"] == "needs_review")
+    done = next(i for i in items if i["status"] == "done")
+
+    # «Повторить» of several: only the ones that can be looked for again
+    r = (await c.post("/api/downloads/retry", json={"ids": [review["id"], done["id"], 999999]})).json()
+    assert r == {"queued": 1}
+    assert (await c.get(f"/api/downloads/{review['id']}")).json()["status"] == "queued"
+    await drain_jobs()
+    assert (await c.get(f"/api/downloads/{review['id']}")).json()["status"] == "needs_review"
+
+    # «Убрать»: the unfinished one is cancelled and gone from the list, the playlist goes on without it;
+    # the finished one is gone from the list only
+    assert (await c.post("/api/downloads/remove", json={"ids": [review["id"], done["id"]]})).json() == {"removed": 2}
+    assert (await c.get("/api/downloads")).json() == []
+    one = (await c.get(f"/api/downloads/{review['id']}")).json()
+    assert (one["status"], one["hidden"]) == ("cancelled", True)
+    async with session_scope() as s:
+        await process_playlist_adds(s)
+    async with session_scope() as s:
+        assert (await s.execute(select(PendingPlaylistAdd))).scalars().all() == []  # nothing is waited for any more
+    assert state["playlists"]["pl1"]["songs"] == ["nd0"]
+    assert (await c.post("/api/downloads/remove", json={"ids": [review["id"]]})).json() == {"removed": 0}
 
 
 def add_reuploads(env, *, has_track: bool = True) -> FakeProvider:

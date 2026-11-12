@@ -5,11 +5,11 @@ from __future__ import annotations
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import listen
-from app.api.schemas import DownloadBatchOut, DownloadIn, DownloadItemOut, DownloadTrackIn, RetryIn
+from app.api.schemas import DownloadBatchOut, DownloadIdsIn, DownloadIn, DownloadItemOut, DownloadTrackIn, RetryIn
 from app.auth import current_user, user_navidrome
 from app.catalog.models import split_ref
 from app.db import get_session
@@ -17,7 +17,7 @@ from app.events import bus
 from app.jobs.downloads import create_items, item_links, item_out, item_ref
 from app.jobs.queue import enqueue, notify
 from app.library.owned import ACTIVE_STATUSES, find_existing, quiet
-from app.models import DownloadBatch, DownloadItem, Job, PendingPlaylistAdd, User
+from app.models import DownloadBatch, DownloadItem, Job, User
 from app.providers.base import Candidate, TrackQuery
 from app.services import svc
 
@@ -185,9 +185,9 @@ async def create(body: DownloadIn, user: User = Depends(current_user), s: AsyncS
 
 
 @router.get("", response_model=list[DownloadItemOut])
-async def list_items(status: str | None = None, limit: int = Query(100, le=500), user: User = Depends(current_user),
+async def list_items(status: str | None = None, limit: int = Query(100, le=5000), user: User = Depends(current_user),
                      s: AsyncSession = Depends(get_session, scope="function")):
-    stmt = select(DownloadItem).where(DownloadItem.user_id == user.id)
+    stmt = select(DownloadItem).where(DownloadItem.user_id == user.id, DownloadItem.hidden.is_(False))
     if status:
         stmt = stmt.where(DownloadItem.status.in_([x.strip() for x in status.split(",") if x.strip()]))
     rows = (await s.execute(stmt.order_by(DownloadItem.id.desc()).limit(limit))).scalars().all()
@@ -295,11 +295,57 @@ async def cancel(item_id: int, user: User = Depends(current_user), s: AsyncSessi
     return out
 
 
+RETRIABLE = ("failed", "needs_review", "cancelled")
+
+
+async def _own_items(s: AsyncSession, user: User, ids: list[int]) -> list[DownloadItem]:
+    out: list[DownloadItem] = []
+    ids = list(dict.fromkeys(ids))
+    for i in range(0, len(ids), 400):
+        out += list((await s.execute(select(DownloadItem).where(
+            DownloadItem.user_id == user.id, DownloadItem.hidden.is_(False), DownloadItem.id.in_(ids[i:i + 400])))).scalars())
+    return out
+
+
+@router.post("/remove")
+async def remove(body: DownloadIdsIn, user: User = Depends(current_user),
+                 s: AsyncSession = Depends(get_session, scope="function")):
+    """«Убрать»: the downloads leave the list. One that is not finished is cancelled first — it will not be
+    downloaded, and a playlist that waited for it goes on without it; a finished one's track stays in the library.
+    The rows are kept: a playlist's order, an import and a mix lean on them."""
+    from app.favorites import download_failed
+
+    items = await _own_items(s, user, body.ids)
+    for item in items:
+        if item.status != "done" and item.status != "cancelled":
+            item.status = "cancelled"
+            await download_failed(s, item)
+        item.hidden = True
+    await s.commit()
+    for item in items:
+        bus.publish(user.id, "download", item_out(item).model_dump(mode="json"))
+    return {"removed": len(items)}
+
+
+@router.post("/retry")
+async def retry_many(body: DownloadIdsIn, user: User = Depends(current_user),
+                     s: AsyncSession = Depends(get_session, scope="function")):
+    """«Повторить» for several downloads at once: each is looked for again, as with its own ↻."""
+    items = [x for x in await _own_items(s, user, body.ids) if x.status in RETRIABLE]
+    for item in items:
+        item.chosen_candidate_json, item.status, item.error, item.progress = None, "queued", None, 0
+        await enqueue(s, "download_item", {"item_id": item.id})
+    await s.commit()
+    notify()
+    for item in items:
+        bus.publish(user.id, "download", item_out(item).model_dump(mode="json"))
+    return {"queued": len(items)}
+
+
 @router.post("/clear")
 async def clear(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    res = await s.execute(
-        delete(DownloadItem).where(DownloadItem.user_id == user.id, DownloadItem.status.in_(("done", "cancelled")))
-        # Keep the anchors needed to put a reviewed song back in order. They can be cleared after it is resolved.
-        .where(~DownloadItem.id.in_(select(PendingPlaylistAdd.download_item_id)))
-    )
+    """The finished and the cancelled ones leave the list (the tracks stay in the library)."""
+    res = await s.execute(update(DownloadItem).where(
+        DownloadItem.user_id == user.id, DownloadItem.hidden.is_(False),
+        DownloadItem.status.in_(("done", "cancelled"))).values(hidden=True))
     return {"removed": res.rowcount or 0}

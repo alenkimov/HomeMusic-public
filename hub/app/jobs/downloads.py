@@ -93,6 +93,7 @@ def item_out(item: DownloadItem, *, detail: bool = False,
         import_id=((item.query_json or {}).get("import") or {}).get("id"),
         candidates=[Candidate(**c) for c in item.candidates_json or []] if detail else None,
         chosen=Candidate(**item.chosen_candidate_json) if item.chosen_candidate_json else None,
+        hidden=bool(item.hidden),
         created_at=item.created_at,
         updated_at=item.updated_at,
     )

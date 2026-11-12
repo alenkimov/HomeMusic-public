@@ -438,8 +438,13 @@ class DownloadItemOut(BaseModel):
     import_id: int | None = None  # queued by this import (`/api/imports`)
     candidates: list[Candidate] | None = None  # only in detail view
     chosen: Candidate | None = None
+    hidden: bool = False  # taken off the list by the user (comes with an event: other open pages drop it too)
     created_at: datetime
     updated_at: datetime
+
+
+class DownloadIdsIn(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=5000)
 
 
 class RetryIn(BaseModel):
