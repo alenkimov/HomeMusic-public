@@ -20,7 +20,7 @@ def _set_pragmas(dbapi_conn, _record) -> None:
     cur.execute("PRAGMA journal_mode=WAL")
     cur.execute("PRAGMA synchronous=NORMAL")
     cur.execute("PRAGMA foreign_keys=ON")
-    cur.execute("PRAGMA busy_timeout=10000")
+    cur.execute("PRAGMA busy_timeout=60000")  # a writer waits for another one (a library scan settling a big import) rather than fail
     cur.close()
 
 
