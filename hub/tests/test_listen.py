@@ -795,3 +795,61 @@ async def test_listen_needs_login(env):
     async with app_client(env["app"], login=None) as anon:
         assert (await anon.get("/api/listen", params={"ref": "dz:100"})).status_code == 401
         assert (await anon.get("/api/listen/stream", params={"ref": "dz:100"})).status_code == 401
+
+
+async def test_a_track_two_ahead_is_copied_only_as_far_as_its_start(env, monkeypatch):
+    """The queue's next track is loaded whole; the ones after it are opened and stop at their start, and go on
+    from that byte when they are wanted."""
+    from app import listen
+
+    c, hm, mock = env["client"], env["hm"], env["mock"]
+    monkeypatch.setattr(listen, "HEAD_BYTES", 500)
+    seen: list[str | None] = []
+    gate = asyncio.Event()
+
+    def cdn(req: httpx.Request) -> httpx.Response:
+        seen.append(req.headers.get("range"))
+        # the first answer comes in pieces (1000 bytes, then the rest once `gate` opens), as a real source's does
+        return partway(req, 1000, gate=gate) if len(seen) == 1 else ranged(req)
+
+    mock.route(host="head.test").mock(side_effect=cdn)
+    hm.cands = [cand("1", "https://head.test/a.mp3")]
+    await search_files(c)
+
+    r = await c.get("/api/listen", params={"ref": "file:hitmoz:1", "ahead": "head"})
+    assert r.status_code == 200, r.text
+    await settled(lambda: listen._copies["file:hitmoz:1"].have >= 500)
+    await asyncio.sleep(0.2)
+    cp = listen._copies["file:hitmoz:1"]
+    assert (cp.have, cp.done, cp.failed, seen) == (1000, False, None, ["bytes=0-"])  # opened, and stopped at the start
+
+    # it is the next track now: the same copy goes on from the byte it stopped at
+    assert (await c.get("/api/listen", params={"ref": "file:hitmoz:1", "ahead": "whole"})).status_code == 200
+    await settled(lambda: cp.done)
+    assert (cp.have, seen) == (len(AUDIO), ["bytes=0-", "bytes=1000-"])
+    assert listen._copies["file:hitmoz:1"] is cp
+    gate.set()
+
+
+async def test_a_track_stopped_at_its_start_plays_whole_when_it_is_reached(env, monkeypatch):
+    from app import listen
+
+    c, hm, mock = env["client"], env["hm"], env["mock"]
+    monkeypatch.setattr(listen, "HEAD_BYTES", 500)
+    seen: list[str | None] = []
+    gate = asyncio.Event()
+
+    def cdn(req: httpx.Request) -> httpx.Response:
+        seen.append(req.headers.get("range"))
+        return partway(req, 1000, gate=gate) if len(seen) == 1 else ranged(req)
+
+    mock.route(host="head2.test").mock(side_effect=cdn)
+    hm.cands = [cand("1", "https://head2.test/a.mp3")]
+    await search_files(c)
+    url = (await c.get("/api/listen", params={"ref": "file:hitmoz:1", "ahead": "head"})).json()["stream_url"]
+    await settled(lambda: listen._copies["file:hitmoz:1"].have >= 500)
+
+    r = await c.get(url)  # the player reaches it
+    assert r.status_code == 200 and r.content == AUDIO
+    assert seen == ["bytes=0-", "bytes=1000-"]
+    gate.set()

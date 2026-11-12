@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -19,17 +20,21 @@ from app.models import TrackFile, User
 router = APIRouter(prefix="/api/listen", tags=["listen"])
 
 
-async def _choose(ref: str) -> listen.Choice:
+async def _choose(ref: str, *, background: bool = False) -> listen.Choice:
     try:
-        return await listen.choose(ref)
+        return await listen.choose(ref, background=background)
     except listen.ListenError as e:
         raise HTTPException(e.status, str(e)) from e
 
 
 @router.get("", response_model=ListenOut)
-async def resolve(ref: str, user: User = Depends(current_user)):
-    """Picks the file (may take a while: providers are searched), then the client plays `stream_url`."""
-    c = await _choose(ref)
+async def resolve(ref: str, ahead: Literal["whole", "head"] | None = None, user: User = Depends(current_user)):
+    """Picks the file (may take a while: providers are searched), then the client plays `stream_url`. `ahead`: the
+    client's queue plays the track soon — the Hub opens the file and copies it to its disk now (`listen.load_ahead`):
+    "whole" for the track that plays next, "head" for the ones after it (their start only)."""
+    c = await (_choose(ref, background=True) if ahead == "head" else _choose(ref))
+    if ahead:
+        listen.load_ahead(c, whole=ahead == "whole")
     cand = c.candidate
     async with session_scope() as s:
         track_id = None

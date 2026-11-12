@@ -276,7 +276,10 @@ export const api = {
     cachedGet<AlbumOut>(`/api/catalog/album/${enc(ref)}`, signal, fresh),
 
   // listening before download: picks the file (may take seconds), `stream_url` plays it
-  listen: (ref: string, signal?: AbortSignal) => request<ListenOut>('GET', withQuery('/api/listen', { ref }), { signal }),
+  /** `ahead`: the queue plays the track soon — the Hub opens its file and copies it to its disk now: 'whole' for
+   * the track that plays next, 'head' (its start only) for the ones after it. */
+  listen: (ref: string, signal?: AbortSignal, ahead?: 'whole' | 'head') =>
+    request<ListenOut>('GET', withQuery('/api/listen', ahead ? { ref, ahead } : { ref }), { signal }),
   // the catalog tracks on screen, top first: the Hub picks their files in the background (replaces the last list)
   listenPrefetch: (refs: string[]) => request<{ queued: number }>('POST', '/api/listen/prefetch', { json: { refs } }),
 

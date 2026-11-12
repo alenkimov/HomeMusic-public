@@ -156,7 +156,10 @@ let audio: HTMLAudioElement | null = null;
 export const listenAudio = (): HTMLAudioElement | null => audio;
 let pendingSeek = 0;
 let resolving: AbortController | null = null;
-let prefetching: { ref: string; ctl: AbortController } | null = null;
+/** How many tracks of the queue are loaded ahead (`prefetchNext`): the next one whole, the rest only their start. */
+const AHEAD = 3;
+/** What the Hub was asked to load ahead: ref -> how much of it, and the request. */
+const prefetching = new Map<string, { how: 'whole' | 'head'; ctl: AbortController }>();
 /** Seconds into a track after which ⏮ restarts it instead of going to the previous one. */
 const RESTART_AFTER_S = 3;
 /** Left after this share of a track: it counts as played to the end (`finish`), earlier — `skip`. */
@@ -381,9 +384,10 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
   if (autoplay) play(a);
   else a.load();
   mediaSession(track);
-  // the prefetch of this very track (it was next) is the request to wait for: don't abort it
-  if (prefetching?.ref !== track.ref) prefetching?.ctl.abort();
-  prefetching = null;
+  // what was asked for ahead is asked anew from here (`prefetchNext`); an abort stops only the page's waiting,
+  // the Hub goes on with what it has begun
+  for (const p of prefetching.values()) p.ctl.abort();
+  prefetching.clear();
   api.listen(track.ref, ctl.signal).then(
     (info) => {
       if (resolving !== ctl) return;
@@ -415,14 +419,27 @@ function refreshInfo() {
 
 /** Asks the Hub to pick the next track's file now (it remembers the pick), so it starts at once. */
 function prefetchNext() {
-  const nextTrack = state.queue[state.index + 1] ?? (state.repeat === 'all' && !onWave() ? state.queue[0] : undefined);
-  if (!nextTrack || prefetching?.ref === nextTrack.ref) return;
-  prefetching?.ctl.abort();
-  const ctl = new AbortController();
-  prefetching = { ref: nextTrack.ref, ctl };
-  api.listen(nextTrack.ref, ctl.signal).catch(() => {
-    /* the track itself will show the error when it is reached */
-  });
+  // the tracks the queue plays next, the nearest first: the Hub opens their files now (opening a source is what
+  // takes seconds) — the next one whole, the ones after it only their start, so skipping through them is instant
+  const ahead: ListenTrack[] = [];
+  for (let k = 1; k <= AHEAD && state.index + k < state.queue.length; k++) ahead.push(state.queue[state.index + k]);
+  if (!ahead.length && state.repeat === 'all' && !onWave() && state.queue.length) ahead.push(state.queue[0]);
+  const want = new Map(ahead.map((t, k) => [t.ref, k === 0 ? 'whole' : 'head'] as const));
+  for (const [ref, p] of prefetching) {
+    if (want.get(ref) === p.how) want.delete(ref); // asked for already, and for as much
+    else if (!want.has(ref)) {
+      p.ctl.abort(); // no longer coming up
+      prefetching.delete(ref);
+    }
+  }
+  for (const [ref, how] of want) {
+    prefetching.get(ref)?.ctl.abort(); // it was a start, it is the next track now
+    const ctl = new AbortController();
+    prefetching.set(ref, { how, ctl });
+    api.listen(ref, ctl.signal, how).catch(() => {
+      /* the track itself will show the error when it is reached */
+    });
+  }
 }
 
 // --- tracks on screen -------------------------------------------------------------------------------------
@@ -872,8 +889,8 @@ export function stopListening() {
   reportEnd();
   resolving?.abort();
   resolving = null;
-  prefetching?.ctl.abort();
-  prefetching = null;
+  for (const p of prefetching.values()) p.ctl.abort();
+  prefetching.clear();
   pendingSeek = 0;
   if (audio) {
     audio.pause();
