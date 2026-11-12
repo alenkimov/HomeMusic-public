@@ -268,3 +268,93 @@ export function BulkPlaylists({ songIds, onClose }: { songIds: string[]; onClose
     </Sheet>
   );
 }
+
+/** The same list of playlists, to choose where files will go once they are imported: nothing is changed here,
+ * «Готово» gives the choice back. */
+export function PlaylistsPick({ title, picked, onClose, onDone }: { title: string; picked: { id: string; name: string }[]; onClose: () => void; onDone: (list: { id: string; name: string }[]) => void }) {
+  const [rows, setRows] = useState<{ id: string; name: string; song_count: number; cover_url?: string | null }[] | null>(null);
+  const [want, setWant] = useState<Record<string, boolean>>(() => Object.fromEntries(picked.map((p) => [p.id, true])));
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    api.playlists()
+      .then((r) => alive && setRows(r))
+      .catch(() => {
+        if (alive) {
+          toast('Не удалось получить плейлисты', 'error');
+          onClose();
+        }
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const create = async () => {
+    const n = name.trim();
+    if (!n) return;
+    setBusy(true);
+    const p = await attempt(() => api.createPlaylist(n));
+    setBusy(false);
+    if (!p) return;
+    window.dispatchEvent(new Event('hm:playlists-changed'));
+    setRows((list) => [p, ...(list ?? [])]);
+    setWant((w) => ({ ...w, [p.id]: true }));
+    setName('');
+  };
+  const chosen = (rows ?? []).filter((p) => want[p.id]);
+  return (
+    <Sheet
+      open
+      onClose={onClose}
+      title={title}
+      footer={
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-xs text-muted">{chosen.length ? chosen.map((p) => p.name).join(', ') : 'Плейлисты не выбраны'}</span>
+          <Button onClick={onClose}>Отмена</Button>
+          <Button variant="primary" disabled={!rows} onClick={() => onDone(chosen.map((p) => ({ id: p.id, name: p.name })))}>
+            Готово
+          </Button>
+        </div>
+      }
+    >
+      {!rows ? (
+        <Loading />
+      ) : (
+        <div className="-mx-4 -my-3">
+          <form
+            className="flex items-center gap-2 px-4 py-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void create();
+            }}
+          >
+            <input className="input flex-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="Новый плейлист" aria-label="Название нового плейлиста" />
+            <Button type="submit" icon="plus" disabled={!name.trim() || busy}>
+              Создать
+            </Button>
+          </form>
+          <ul>
+            {rows.map((p) => {
+              const on = !!want[p.id];
+              return (
+                <li key={p.id}>
+                  <button type="button" role="checkbox" aria-checked={on} onClick={() => setWant((w) => ({ ...w, [p.id]: !on }))} className="flex min-h-14 w-full items-center gap-3 px-4 py-1.5 text-left transition hover:bg-fg/5">
+                    <Cover src={p.cover_url ? `${p.cover_url}&size=96` : null} size={40} icon="playlist" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[15px]">{p.name}</span>
+                      <span className="block text-xs text-muted">{tracksWord(p.song_count)}</span>
+                    </span>
+                    <span className={cx('flex h-6 w-6 shrink-0 items-center justify-center rounded-full', on ? 'bg-accent text-on-accent' : 'border-2 border-line')}>{on && <Icon name="check" size={14} stroke={3} />}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {!rows.length && <p className="px-4 pb-6 text-center text-sm text-muted">Плейлистов пока нет — создайте первый.</p>}
+        </div>
+      )}
+    </Sheet>
+  );
+}

@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { api, errorMessage, libraryCoverUrl, uploadCoverUrl } from '../api/client';
 import type { LibAlbumOut, ReleaseType, UploadCommitIn, UploadOut, UploadTrackIn } from '../api/types';
 import { Icon } from '../components/Icon';
-import { AlbumPicker, PlaylistPicker, type PlaylistPick } from '../components/pickers';
+import { AlbumPicker } from '../components/pickers';
+import { PlaylistsPick } from '../components/PlaylistsButton';
 import { Button, Checkbox, Cover, ErrorState, Field, IconButton, Loading, Notice, PageHeader, ProgressBar, SectionTitle, Sheet, cx } from '../components/ui';
 import { fmtDuration, fmtSize, plural, stripExt, toIntOrNull, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { navigate } from '../lib/router';
-import { setTagsData, useTags } from '../lib/tags';
+import { openTagsPick, useTags } from '../lib/tags';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 import { ReleaseTypeSelect } from './Library';
 
@@ -20,6 +21,7 @@ import { ReleaseTypeSelect } from './Library';
 
 export const AUDIO_ACCEPT = 'audio/*,.mp3,.m4a,.flac,.ogg,.opus,.wav';
 const MAX_SIZE = 500 * 1024 * 1024;
+const VIEW_KEY = 'hm-upload-view';
 const AUDIO_EXT = /\.(mp3|m4a|aac|flac|ogg|oga|opus|wav)$/i;
 
 export const isAudioFile = (f: File) => f.type.startsWith('audio/') || AUDIO_EXT.test(f.name);
@@ -127,11 +129,25 @@ export function UploadPage() {
   const [albumPicker, setAlbumPicker] = useState(false);
   const [cover, setCover] = useState<CoverChoice>({ kind: 'none' });
   const [coverTouched, setCoverTouched] = useState(false);
-  const [playlist, setPlaylist] = useState<{ id: string; name: string } | null>(null);
+  const [playlists, setPlaylists] = useState<{ id: string; name: string }[]>([]);
+  const [view, setView] = useState<'list' | 'albums'>(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) === 'albums' ? 'albums' : 'list';
+    } catch {
+      return 'list';
+    }
+  });
+  const chooseView = (v: 'list' | 'albums') => {
+    setView(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* storage unavailable: the choice lives until the page is closed */
+    }
+  };
   const [like, setLike] = useState(false);
   const [tagIds, setTagIds] = useState<number[]>([]); // the imported tracks get these tags of one's own
   const [plPicker, setPlPicker] = useState(false);
-  const [plBusy, setPlBusy] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [bulk, setBulk] = useState(false);
   /** group key → the library album with the same title and artist (null: the library has none) */
@@ -292,21 +308,6 @@ export function UploadPage() {
   const uploadingNow = transfers.some((t) => !t.error);
   const canCommit = included.length > 0 && invalid.length === 0 && albumOk && !uploadingNow;
 
-  const pickPlaylist = async (p: PlaylistPick) => {
-    if (p.kind === 'existing') {
-      setPlaylist({ id: p.playlist.id, name: p.playlist.name });
-      setPlPicker(false);
-      return;
-    }
-    setPlBusy(true);
-    const created = await attempt(() => api.createPlaylist(p.name));
-    setPlBusy(false);
-    if (created) {
-      setPlaylist({ id: created.id, name: created.name });
-      setPlPicker(false);
-    }
-  };
-
   const trackIn = (u: UploadOut, g: string | null): UploadTrackIn => {
     const r = rows[u.id];
     return { upload_id: u.id, title: r.title.trim(), artist: r.artist.trim(), track_no: toIntOrNull(r.trackNo), disc_no: toIntOrNull(r.discNo), genre: g };
@@ -329,7 +330,7 @@ export function UploadPage() {
             tracks: g.uploads.map((u) => trackIn(u, lib ? null : rows[u.id].genre.trim() || null)),
             // an album of the library keeps its cover
             cover_from_upload_id: lib ? null : (g.uploads.find((u) => u.tags.has_cover)?.id ?? null),
-            playlist_id: playlist?.id ?? null,
+            playlist_ids: playlists.map((p) => p.id),
             star: like,
             tag_ids: tagIds,
           }, null),
@@ -351,7 +352,7 @@ export function UploadPage() {
                 : { mode: 'new', title: albumTitle.trim(), album_artist: albumArtist.trim(), year: toIntOrNull(year), genre: genre.trim() || null, release_type: type },
             tracks: included.map((u) => trackIn(u, mode === 'new' ? genre.trim() || null : null)),
             cover_from_upload_id: cover.kind === 'upload' ? cover.id : null,
-            playlist_id: playlist?.id ?? null,
+            playlist_ids: playlists.map((p) => p.id),
             star: like,
             tag_ids: tagIds,
           },
@@ -471,6 +472,15 @@ export function UploadPage() {
               ))}
             </div>
             <span className="flex-1" />
+            {mode === 'tags' && (
+              <div className="flex overflow-hidden rounded-full bg-surface p-0.5 text-sm" role="radiogroup" aria-label="Как показать файлы">
+                {([['list', 'Списком'], ['albums', 'По альбомам']] as const).map(([v, label]) => (
+                  <button key={v} type="button" role="radio" aria-checked={view === v} onClick={() => chooseView(v)} className={cx('min-h-9 rounded-full px-3 transition', view === v ? 'bg-raised font-semibold text-fg' : 'text-muted hover:text-fg')}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
             <Button small icon="edit" disabled={!included.length} onClick={() => setBulk(true)}>
               Изменить выбранные
             </Button>
@@ -518,6 +528,16 @@ export function UploadPage() {
 
           {invalid.length > 0 && <div className="px-4 pt-3"><Notice kind="error">Заполните название и исполнителя у {tracksWord(invalid.length)}</Notice></div>}
 
+          {mode === 'tags' && view === 'albums' ? (
+            <AlbumsView
+              uploads={uploads}
+              rows={rows}
+              known={known}
+              setRow={setRow}
+              patchRows={(ids, patch) => setRows((prev) => ({ ...prev, ...Object.fromEntries(ids.filter((id) => prev[id]).map((id) => [id, { ...prev[id], ...patch }])) }))}
+              onRemove={removeUpload}
+            />
+          ) : (
           <div className="mx-4 mt-3 overflow-hidden rounded-xl bg-surface" role="table" aria-label="Файлы">
             <div role="row" className="hidden grid-cols-[2.75rem_minmax(0,3fr)_minmax(0,2fr)_minmax(0,2fr)_3.5rem_3.5rem_2.75rem] items-center gap-1 border-b border-line/60 pr-1 text-xs text-dim md:grid">
               <Checkbox checked={allOn} onChange={(v) => setRows((prev) => Object.fromEntries(Object.entries(prev).map(([id, r]) => [id, { ...r, include: v }])))} label="Выбрать все файлы" />
@@ -569,6 +589,7 @@ export function UploadPage() {
               );
             })}
           </div>
+          )}
           {summary && <p className="px-5 pt-2 text-xs text-muted">{summary}. Обложки берутся из самих файлов.</p>}
 
           {mode !== 'tags' && (
@@ -609,28 +630,16 @@ export function UploadPage() {
             </>
           )}
 
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-4 pt-5">
-            {like && (
-              <span className="flex items-center text-sm">
-                <Icon name="heart" size={18} filled className="mr-2 text-accent" />
-                В «Любимое»
-                <IconButton icon="x" size={18} label="Не добавлять в любимое" onClick={() => setLike(false)} />
-              </span>
-            )}
-            {playlist && (
-              <span className="flex min-w-0 items-center text-sm">
-                <Icon name="playlist" size={18} className="mr-2 shrink-0 text-muted" />
-                <span className="truncate">В плейлист «{playlist.name}»</span>
-                <IconButton icon="x" size={18} label="Не добавлять в плейлист" onClick={() => setPlaylist(null)} />
-              </span>
-            )}
-            {(!like || !playlist) && (
-              <Button small icon="playlist" onClick={() => setPlPicker(true)}>
-                {like || playlist ? 'Добавить ещё куда-нибудь' : 'Добавить ещё и в плейлист или «Любимое»'}
-              </Button>
-            )}
-          </div>
-          <UploadTags picked={tagIds} onChange={setTagIds} />
+          <AfterImport
+            count={included.length}
+            like={like}
+            onLike={setLike}
+            playlists={playlists}
+            onPlaylists={setPlaylists}
+            onPickPlaylists={() => setPlPicker(true)}
+            tagIds={tagIds}
+            onTags={setTagIds}
+          />
         </>
       )}
 
@@ -644,14 +653,17 @@ export function UploadPage() {
           setAlbumPicker(false);
         }}
       />
-      <PlaylistPicker
-        open={plPicker}
-        onClose={() => setPlPicker(false)}
-        onPick={pickPlaylist}
-        busy={plBusy}
-        title="Куда ещё добавить"
-        onLiked={like ? undefined : () => { setLike(true); setPlPicker(false); }}
-      />
+      {plPicker && (
+        <PlaylistsPick
+          title={`${tracksWord(included.length)} — в плейлисты`}
+          picked={playlists}
+          onClose={() => setPlPicker(false)}
+          onDone={(list) => {
+            setPlaylists(list);
+            setPlPicker(false);
+          }}
+        />
+      )}
       {bulk && (
         <BulkEdit
           count={included.length}
@@ -722,50 +734,198 @@ function CoverOption({ selected, label, onClick, children }: { selected: boolean
   );
 }
 
-/** The tags of one's own the imported tracks get at once (language and genre the Hub sets by itself, later). */
-function UploadTags({ picked, onChange }: { picked: number[]; onChange: (next: number[]) => void }) {
+/** «После загрузки»: where the imported tracks go besides the library — «Любимое», playlists, tags. The same icons
+ * as the selection bar's and the same windows; what is chosen stands beside them and is taken off by its ✕. */
+function AfterImport({ count, like, onLike, playlists, onPlaylists, onPickPlaylists, tagIds, onTags }: { count: number; like: boolean; onLike: (v: boolean) => void; playlists: { id: string; name: string }[]; onPlaylists: (list: { id: string; name: string }[]) => void; onPickPlaylists: () => void; tagIds: number[]; onTags: (ids: number[]) => void }) {
   const tags = useTags();
-  const [name, setName] = useState('');
-  const own = tags.groups.find((g) => g.id === 'own')?.tags ?? [];
-  const create = async () => {
-    const title = name.trim();
-    if (!title) return;
-    const t = await attempt(() => api.tagCreate(title));
-    if (!t) return;
-    const data = await attempt(() => api.tags());
-    if (data) setTagsData(data);
-    onChange([...new Set([...picked, t.id])]);
-    setName('');
-  };
+  const picked = tagIds.map((id) => tags.byId.get(id)).filter((t) => !!t);
+  const chip = 'flex min-w-0 items-center gap-1.5 rounded-full bg-fg/10 py-1 pl-3 pr-1 text-sm';
+  const off = (label: string, onClick: () => void) => (
+    <button type="button" aria-label={label} title={label} onClick={onClick} className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted hover:bg-fg/10 hover:text-fg">
+      <Icon name="x" size={13} stroke={2.5} />
+    </button>
+  );
+  const nothing = !like && !playlists.length && !picked.length;
   return (
-    <div className="flex flex-wrap items-center gap-1.5 px-4 pt-3">
-      <span className="flex items-center gap-1.5 pr-1 text-sm text-muted">
-        <Icon name="tag" size={16} />
-        Теги:
-      </span>
-      {own.map((t) => {
-        const on = picked.includes(t.id);
+    <div className="mx-4 mt-5 flex flex-wrap items-center gap-x-1 gap-y-2 rounded-xl bg-surface px-3 py-2">
+      <span className="pr-2 text-sm text-muted">После загрузки</span>
+      <IconButton icon="heart" filled={like} label={like ? 'Не добавлять в «Любимое»' : 'Добавить в «Любимое»'} aria-pressed={like} onClick={() => onLike(!like)} className={like ? 'text-accent' : 'text-muted hover:text-fg'} />
+      <IconButton icon="playlist" label="В плейлисты" onClick={onPickPlaylists} className={playlists.length ? 'text-accent' : 'text-muted hover:text-fg'} />
+      <IconButton icon="tag" label="Теги" onClick={() => openTagsPick(`${tracksWord(count)} — теги`, tagIds, onTags)} className={picked.length ? 'text-accent' : 'text-muted hover:text-fg'} />
+      <span className="mx-2 h-5 w-px bg-line" aria-hidden="true" />
+      {nothing && <span className="text-xs text-dim">Только в библиотеку. Можно сразу добавить в «Любимое», плейлисты и поставить теги.</span>}
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        {like && (
+          <span className={chip}>
+            <Icon name="heart" size={14} filled className="text-accent" />
+            Любимое
+            {off('Не добавлять в «Любимое»', () => onLike(false))}
+          </span>
+        )}
+        {playlists.map((p) => (
+          <span key={p.id} className={chip}>
+            <Icon name="playlist" size={14} className="shrink-0 text-muted" />
+            <span className="truncate">{p.name}</span>
+            {off(`Не добавлять в «${p.name}»`, () => onPlaylists(playlists.filter((x) => x.id !== p.id)))}
+          </span>
+        ))}
+        {picked.map((t) => (
+          <span key={t.id} className={chip}>
+            <Icon name="tag" size={14} className="shrink-0 text-muted" />
+            <span className="truncate">{t.name}</span>
+            {off(`Не ставить тег «${t.name}»`, () => onTags(tagIds.filter((x) => x !== t.id)))}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface ViewGroup {
+  key: string;
+  title: string;
+  albumArtist: string;
+  uploads: UploadOut[];
+}
+
+/** «По альбомам»: the files under the album their tags name — its cover, artist and length once, the tracks below
+ * (a group folds). The tick of an album is the tick of all its files; ✎ changes the album of them all. Files without
+ * an album are one group at the end: each becomes a single. */
+function AlbumsView({ uploads, rows, known, setRow, patchRows, onRemove }: { uploads: UploadOut[]; rows: Record<number, RowState>; known: Record<string, LibAlbumOut | null>; setRow: (id: number, patch: Partial<RowState>) => void; patchRows: (ids: number[], patch: Partial<RowState>) => void; onRemove: (u: UploadOut) => void }) {
+  const [closed, setClosed] = useState<Record<string, boolean>>({});
+  const [editing, setEditing] = useState<ViewGroup | null>(null);
+  const groups = useMemo(() => {
+    const map = new Map<string, ViewGroup>();
+    const loose: UploadOut[] = [];
+    for (const u of uploads) {
+      const r = rows[u.id];
+      if (!r) continue;
+      const title = r.album.trim();
+      if (!title) {
+        loose.push(u);
+        continue;
+      }
+      const by = (r.albumArtist || r.artist).trim();
+      const key = `${title.toLowerCase()}|${by.toLowerCase()}`;
+      const g = map.get(key) ?? { key, title, albumArtist: by, uploads: [] };
+      g.uploads.push(u);
+      map.set(key, g);
+    }
+    return [...map.values(), ...(loose.length ? [{ key: 'none', title: 'Без альбома', albumArtist: '', uploads: loose }] : [])];
+  }, [uploads, rows]);
+  const grid = 'grid grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-center gap-x-1 md:grid-cols-[2.75rem_3.5rem_minmax(0,3fr)_minmax(0,2fr)_3.5rem_2.75rem]';
+
+  return (
+    <div className="mx-4 mt-3 space-y-2" aria-label="Файлы по альбомам">
+      {groups.map((g) => {
+        const none = g.key === 'none';
+        const ids = g.uploads.map((u) => u.id);
+        const on = g.uploads.filter((u) => rows[u.id].include).length;
+        const length = g.uploads.reduce((n, u) => n + (u.tags.duration_s ?? 0), 0);
+        const withCover = g.uploads.find((u) => u.tags.has_cover);
+        const lib = none ? undefined : known[g.key];
+        const open = !closed[g.key];
         return (
-          <button key={t.id} type="button" aria-pressed={on} onClick={() => onChange(on ? picked.filter((x) => x !== t.id) : [...picked, t.id])} className={on ? 'flex items-center gap-1 rounded-full bg-accent px-3 py-1 text-sm text-on-accent' : 'rounded-full bg-fg/10 px-3 py-1 text-sm text-muted hover:text-fg'}>
-            {on && <Icon name="check" size={13} stroke={3} />}
-            {t.name}
-          </button>
+          <section key={g.key} className="overflow-hidden rounded-xl bg-surface">
+            <div className={cx('flex items-center gap-2 py-2 pr-2', !on && 'opacity-50')}>
+              <Checkbox checked={on === g.uploads.length} onChange={(v) => patchRows(ids, { include: v })} label={`Импортировать все файлы: ${g.title}`} />
+              {withCover ? (
+                <img src={uploadCoverUrl(withCover.id)} alt="" loading="lazy" className="h-12 w-12 shrink-0 rounded-md object-cover" />
+              ) : (
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-raised text-dim">
+                  <Icon name={none ? 'note' : 'disc'} size={22} />
+                </span>
+              )}
+              <button type="button" onClick={() => setClosed((c) => ({ ...c, [g.key]: open }))} aria-expanded={open} className="min-w-0 flex-1 text-left">
+                <span className="block truncate font-semibold">{g.title}</span>
+                <span className="block truncate text-xs text-muted">
+                  {none
+                    ? `${tracksWord(g.uploads.length)} ${plural(g.uploads.length, ['станет синглом', 'станут синглами', 'станут синглами'])}`
+                    : [g.albumArtist, tracksWord(g.uploads.length), length ? fmtDuration(length) : null].filter(Boolean).join(' · ')}
+                </span>
+              </button>
+              {lib ? (
+                <span className="shrink-0 rounded-full bg-info/15 px-2 py-0.5 text-[11px] text-info" title="Такой альбом уже есть в библиотеке — треки добавятся в него">уже есть в библиотеке</span>
+              ) : lib === null ? (
+                <span className="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-[11px] text-accent">новый альбом</span>
+              ) : null}
+              {!none && <IconButton icon="edit" size={18} label={`Изменить альбом ${g.title}`} className="text-muted hover:text-fg" onClick={() => setEditing(g)} />}
+              <IconButton icon={open ? 'down' : 'chevron'} size={18} label={open ? 'Свернуть' : 'Развернуть'} className="text-dim" onClick={() => setClosed((c) => ({ ...c, [g.key]: open }))} />
+            </div>
+            {open &&
+              g.uploads.map((u) => {
+                const r = rows[u.id];
+                const bad = (v: string) => r.include && !v.trim() && 'ring-1 ring-danger/70';
+                return (
+                  <div key={u.id} role="row" className={cx(grid, 'border-t border-line/60 py-1 pl-4 pr-1 md:py-0', !r.include && 'opacity-50')}>
+                    <Checkbox checked={r.include} onChange={(v) => setRow(u.id, { include: v })} label={`Импортировать ${u.orig_name}`} />
+                    <input className={cx(cell, 'hidden text-center md:block')} inputMode="numeric" value={r.trackNo} placeholder="—" aria-label="Номер трека" onChange={(e) => setRow(u.id, { trackNo: e.target.value.replace(/\D/g, '') })} />
+                    <div className="min-w-0">
+                      <input className={cx(cell, 'font-medium', bad(r.title))} value={r.title} placeholder="Название" aria-label="Название" onChange={(e) => setRow(u.id, { title: e.target.value })} />
+                      <div className="truncate px-2 pb-1 text-[11px] text-dim" title={u.orig_name}>
+                        {u.orig_name} · {fmtSize(u.size)}
+                        {u.error ? <span className="text-danger"> · {u.error}</span> : null}
+                      </div>
+                    </div>
+                    <IconButton icon="trash" label={`Удалить ${u.orig_name}`} size={18} className="text-dim md:order-last" onClick={() => onRemove(u)} />
+                    <input className={cx(cell, 'col-start-2 md:col-start-auto', bad(r.artist))} value={r.artist} placeholder="Исполнитель" aria-label="Исполнитель" onChange={(e) => setRow(u.id, { artist: e.target.value })} />
+                    <span className="hidden px-2 text-right text-xs tabular-nums text-dim md:block">{u.tags.duration_s ? fmtDuration(u.tags.duration_s) : ''}</span>
+                  </div>
+                );
+              })}
+          </section>
         );
       })}
-      <form
-        className="flex items-center gap-1"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void create();
-        }}
-      >
-        <input className="input !h-8 !w-36 !text-sm" value={name} onChange={(e) => setName(e.target.value)} placeholder="новый тег" aria-label="Новый тег" maxLength={64} />
-        {name.trim() && (
-          <Button small type="submit" icon="plus">
-            Создать
-          </Button>
-        )}
-      </form>
+      {editing && (
+        <AlbumEdit
+          group={editing}
+          first={rows[editing.uploads[0].id]}
+          onClose={() => setEditing(null)}
+          onApply={(patch) => {
+            patchRows(editing.uploads.map((u) => u.id), patch);
+            setEditing(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** ✎ of an album of «По альбомам»: its name, artist, year and genre, for all its files at once. */
+function AlbumEdit({ group, first, onClose, onApply }: { group: ViewGroup; first: RowState; onClose: () => void; onApply: (patch: Partial<RowState>) => void }) {
+  const [album, setAlbum] = useState(group.title);
+  const [albumArtist, setAlbumArtist] = useState(group.albumArtist);
+  const [year, setYear] = useState(first.year);
+  const [genre, setGenre] = useState(first.genre);
+  return (
+    <Sheet
+      open
+      onClose={onClose}
+      title={`Альбом — ${tracksWord(group.uploads.length)}`}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose}>Отмена</Button>
+          <Button variant="primary" disabled={!album.trim() || !albumArtist.trim()} onClick={() => onApply({ album: album.trim(), albumArtist: albumArtist.trim(), year, genre: genre.trim() })}>
+            Применить
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-3">
+        <Field label="Название альбома">
+          <input className="input" value={album} onChange={(e) => setAlbum(e.target.value)} autoFocus />
+        </Field>
+        <Field label="Исполнитель альбома">
+          <input className="input" value={albumArtist} onChange={(e) => setAlbumArtist(e.target.value)} />
+        </Field>
+        <Field label="Год">
+          <input className="input" inputMode="numeric" value={year} onChange={(e) => setYear(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+        </Field>
+        <Field label="Жанр">
+          <input className="input" value={genre} onChange={(e) => setGenre(e.target.value)} />
+        </Field>
+        <p className="text-xs text-dim">Если назвать альбом так же, как другой из этой загрузки или из библиотеки, файлы объединятся с ним.</p>
+      </div>
+    </Sheet>
   );
 }

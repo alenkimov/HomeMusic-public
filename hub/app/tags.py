@@ -46,7 +46,8 @@ def visible(user_id: int):
 async def sync(s: AsyncSession, track_ids: list[int] | None = None) -> None:
     """Set the tags the Hub tells by itself — languages and genre — for these tracks (all of them by default), and
     take off the ones it set that no longer hold (another text was chosen). What a user set or took off stays."""
-    q = (select(Track.id, Track.genre, Lyrics.kind, Lyrics.pinned, Lyrics.search_text)
+    await get_or_create(s, "lang", NO_WORDS[1], code=NO_WORDS[0])  # always there to be put on by hand
+    q = (select(Track.id, Track.genre, Lyrics.kind, Lyrics.pinned, Lyrics.search_text, Lyrics.source)
          .outerjoin(Lyrics, Lyrics.track_id == Track.id))
     if track_ids is not None:
         q = q.where(Track.id.in_(track_ids))
@@ -62,11 +63,11 @@ async def sync(s: AsyncSession, track_ids: list[int] | None = None) -> None:
         return cache[key]
 
     want: dict[int, set[int]] = {}
-    for track_id, genre, kind, pinned, text in rows:
+    for track_id, genre, kind, pinned, text, source in rows:
         ids: set[int] = set()
         if genre and genre.strip():
             ids.add(await tag_id("genre", genre.strip()))
-        if kind == "none" and pinned:
+        if kind == "none" and (pinned or source == NO_WORDS[0]):  # said by the listener, or by a lyrics source
             ids.add(await tag_id("lang", NO_WORDS[1], NO_WORDS[0]))
         elif kind and kind != "none" and text:
             for code in translate.languages(text):
@@ -107,7 +108,7 @@ async def catalog(s: AsyncSession, user_id: int) -> dict[str, Any]:
         mine = sorted((t for t in tags if t.group == gid), key=lambda t: (-counts.get(t.id, 0), t.name.lower()))
         groups.append({"id": gid, "title": title,
                        "tags": [{"id": t.id, "group": gid, "name": t.name, "code": t.code, "count": counts.get(t.id, 0)}
-                                for t in mine if gid == "own" or counts.get(t.id, 0)]})
+                                for t in mine if gid == "own" or counts.get(t.id, 0) or t.code == NO_WORDS[0]]})
     return {"groups": groups}
 
 
@@ -134,6 +135,18 @@ async def assign_tracks(s: AsyncSession, user_id: int, track_ids: list[int], add
     """The same by the Hub's own track ids (files just imported have no Navidrome id yet)."""
     remove = remove or []
     allowed = {t.id: t for t in (await s.execute(select(Tag).where(Tag.id.in_({*add, *remove}), visible(user_id)))).scalars()}
+    # «без слов» is not a mere mark: with it a track has no text and none is looked for (app/lyrics)
+    no_words = next((t.id for t in allowed.values() if t.group == "lang" and t.code == NO_WORDS[0]), None)
+    if no_words is not None and track_ids:
+        from app.lyrics import service as lyrics
+
+        if no_words in add:
+            add = [t for t in add if t != no_words]
+            await lyrics.set_no_words(s, track_ids, True)
+            await forgive_no_words(s, track_ids)
+            await sync(s, track_ids)  # the tag itself, and the languages of the text that is gone
+        elif no_words in remove:
+            await lyrics.set_no_words(s, track_ids, False)
     for tid in dict.fromkeys(add):
         if tid not in allowed:
             continue
@@ -152,6 +165,16 @@ async def assign_tracks(s: AsyncSession, user_id: int, track_ids: list[int], add
                 await s.execute(insert(TagRemoved).values([{"track_id": t, "tag_id": tid} for t in part])
                                 .on_conflict_do_nothing())
     return len(track_ids)
+
+
+async def forgive_no_words(s: AsyncSession, track_ids: list[int]) -> None:
+    """«Без слов» taken off these tracks before may be set again."""
+    tag = (await s.execute(select(Tag.id).where(Tag.group == "lang", Tag.code == NO_WORDS[0], Tag.user_id.is_(None))
+                           .limit(1))).scalar_one_or_none()
+    if tag is None:
+        return
+    for i in range(0, len(track_ids), CHUNK):
+        await s.execute(delete(TagRemoved).where(TagRemoved.tag_id == tag, TagRemoved.track_id.in_(track_ids[i:i + CHUNK])))
 
 
 # --- one's own tags: renaming, merging, deleting ------------------------------------------------------------

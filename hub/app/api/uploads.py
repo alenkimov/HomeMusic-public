@@ -203,10 +203,11 @@ async def commit(payload: str = Form(...), cover: UploadFile | None = File(None)
         from app import tags
 
         await tags.assign_tracks(s, user.id, track_ids, body.tag_ids)
-    if (body.playlist_id or body.star) and track_ids:
+    playlist_ids = list(dict.fromkeys([*([body.playlist_id] if body.playlist_id else []), *body.playlist_ids]))
+    if (playlist_ids or body.star) and track_ids:
         # Navidrome knows the new files only after its scan: the playlist and the ♥ get them then
         await enqueue(s, "upload_playlist_add", {
-            "user_id": user.id, "playlist_id": body.playlist_id, "star": body.star, "track_ids": track_ids,
+            "user_id": user.id, "playlist_ids": playlist_ids, "star": body.star, "track_ids": track_ids,
             "until": (utcnow() + timedelta(seconds=PLAYLIST_ADD_WAIT_S)).isoformat()}, delay_s=PLAYLIST_ADD_RETRY_S)
     await s.commit()
     notify()
@@ -224,6 +225,7 @@ async def handle_playlist_add(job: Job) -> None:
     from app.favorites import command
 
     p = job.payload_json
+    playlist_ids = p.get("playlist_ids") or ([p["playlist_id"]] if p.get("playlist_id") else [])
     async with session_scope() as s:
         user = await s.get(User, int(p["user_id"]))
         tracks = [await s.get(Track, int(i)) for i in p["track_ids"]]
@@ -235,12 +237,12 @@ async def handle_playlist_add(job: Job) -> None:
         raise RetryLater(PLAYLIST_ADD_RETRY_S, "waiting for the library scan")
     ready = [x for x in songs if x]
     if not ready:
-        log.warning("upload: no song ids for playlist %s after the wait", p.get("playlist_id"))
+        log.warning("upload: no song ids for playlists %s after the wait", playlist_ids)
         return
     nd = user_navidrome(user)
     try:
-        if p.get("playlist_id"):
-            await nd.update_playlist(p["playlist_id"], add=ready)
+        for pid in playlist_ids:
+            await nd.update_playlist(pid, add=ready)
         if p.get("star"):
             # through the favorites journal, as a ♥ set by hand: mixes and «Любимое» see it the same way
             async with session_scope() as s:
@@ -248,7 +250,7 @@ async def handle_playlist_add(job: Job) -> None:
                               liked=True, client="hub", context="upload", nd=nd)
     finally:
         await nd.aclose()
-    bus.publish(user.id, "library", {"kind": "playlist", "playlist_id": p.get("playlist_id"), "star": bool(p.get("star"))})
+    bus.publish(user.id, "library", {"kind": "playlist", "playlist_id": playlist_ids[0] if playlist_ids else None, "star": bool(p.get("star"))})
 
 
 def purge_stale_uploads(days: int = 7) -> int:

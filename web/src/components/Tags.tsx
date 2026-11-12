@@ -14,10 +14,10 @@ type Mark = 'all' | 'some' | 'none';
 export function TagsSheet() {
   const open = useTagsSheet();
   if (!open) return null;
-  return <Body key={open.songIds.join('|')} songIds={open.songIds} title={open.title} />;
+  return <Body key={open.songIds.join('|')} songIds={open.songIds} title={open.title} pick={open.pick} />;
 }
 
-function Body({ songIds, title }: { songIds: string[]; title: string }) {
+function Body({ songIds, title, pick }: { songIds: string[]; title: string; pick?: { ids: number[]; onDone: (ids: number[]) => void } }) {
   const tags = useTags();
   const n = songIds.length;
   const [want, setWant] = useState<Record<number, Mark>>({});
@@ -29,7 +29,7 @@ function Body({ songIds, title }: { songIds: string[]; title: string }) {
     for (const id of songIds) for (const t of tags.map[id] ?? []) out.set(t, (out.get(t) ?? 0) + 1);
     return out;
   }, [songIds, tags.map]);
-  const was = (t: Tag): Mark => ((counts.get(t.id) ?? 0) >= n ? 'all' : counts.get(t.id) ? 'some' : 'none');
+  const was = (t: Tag): Mark => pick ? (pick.ids.includes(t.id) ? 'all' : 'none') : ((counts.get(t.id) ?? 0) >= n ? 'all' : counts.get(t.id) ? 'some' : 'none');
   const now = (t: Tag): Mark => want[t.id] ?? was(t);
   const all = tags.groups.flatMap((g) => g.tags);
   const add = all.filter((t) => now(t) === 'all' && was(t) !== 'all');
@@ -55,6 +55,10 @@ function Body({ songIds, title }: { songIds: string[]; title: string }) {
     setBusy(false);
   };
   const save = async () => {
+    if (pick) {
+      pick.onDone(all.filter((t) => now(t) === 'all').map((t) => t.id));
+      return closeTagsSheet();
+    }
     if (!add.length && !remove.length) return closeTagsSheet();
     setBusy(true);
     const data = await attempt(() => api.tagsAssign({ nd_song_ids: songIds, add: add.map((t) => t.id), remove: remove.map((t) => t.id) }));
@@ -69,7 +73,7 @@ function Body({ songIds, title }: { songIds: string[]; title: string }) {
     <Sheet
       open
       onClose={closeTagsSheet}
-      title={n === 1 ? `Теги: ${title}` : `${tracksWord(n)} — теги`}
+      title={pick ? title : n === 1 ? `Теги: ${title}` : `${tracksWord(n)} — теги`}
       footer={
         <div className="flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-xs text-muted">
@@ -129,7 +133,9 @@ function Body({ songIds, title }: { songIds: string[]; title: string }) {
               </div>
             );
           })}
-          <p className="text-[11px] text-dim">Язык и жанр Хаб ставит сам: язык — по тексту песни, жанр — из каталога. Снятый вами тег он не вернёт.</p>
+          <p className="text-[11px] text-dim">
+            {pick ? 'Язык и жанр Хаб поставит сам после импорта: язык — по тексту песни, жанр — из файла.' : 'Язык и жанр Хаб ставит сам: язык — по тексту песни, жанр — из каталога. Снятый вами тег он не вернёт.'} «Без слов» — для инструментальной музыки: текст для такого трека Хаб не ищет.
+          </p>
         </div>
       )}
     </Sheet>

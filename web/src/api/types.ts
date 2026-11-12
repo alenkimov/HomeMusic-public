@@ -520,6 +520,8 @@ export interface UploadCommitIn {
   tracks: UploadTrackIn[];
   cover_from_upload_id?: number | null;
   playlist_id?: string | null;
+  /** the playlists the imported tracks go into as well */
+  playlist_ids?: string[];
   /** the imported tracks go into «Любимое» too */
   star?: boolean;
   /** ... and get these tags of one's own */

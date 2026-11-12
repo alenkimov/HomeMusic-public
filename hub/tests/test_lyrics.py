@@ -286,7 +286,9 @@ async def test_tags_languages_genres_and_ones_own(env):
         await tags.sync(s)
     r = (await c.get("/api/tags")).json()
     by = {g["id"]: {t["name"]: t for t in g["tags"]} for g in r["groups"]}
-    assert set(by["lang"]) == {"японский", "английский"} and set(by["genre"]) == {"Asian Music"} and by["own"] == {}
+    # «без слов» is always there to be put on by hand, though no track has it yet
+    assert set(by["lang"]) == {"японский", "английский", "без слов"} and by["lang"]["без слов"]["count"] == 0
+    assert set(by["genre"]) == {"Asian Music"} and by["own"] == {}
     assert sorted(r["map"]["nd1"]) == sorted([by["lang"]["японский"]["id"], by["lang"]["английский"]["id"], by["genre"]["Asian Music"]["id"]])
     assert "nd2" not in r["map"]
 
@@ -315,6 +317,84 @@ async def test_tags_languages_genres_and_ones_own(env):
     names = {t["id"]: t["name"] for g in r["groups"] for t in g["tags"]}
     assert [names[i] for i in r["map"]["nd2"] if names[i] != "chill"] == ["без слов"]
     assert "японский" not in [names[i] for i in r["map"]["nd1"]] and "английский" in [names[i] for i in r["map"]["nd1"]]
+
+
+async def test_no_words_by_hand_by_a_source_and_what_it_does_to_the_search(env):
+    from sqlalchemy import select
+
+    from app import tags
+    from app.db import session_scope
+    from app.lyrics.providers import Found
+    from app.models import Lyrics
+
+    c, calls, answers = env["client"], env["calls"], env["answers"]
+    a = await add_track("nd1")
+    b = await add_track("nd2")
+    async with session_scope() as s:
+        await tags.sync(s)
+
+    async def state() -> tuple[dict, dict]:
+        r = (await c.get("/api/tags")).json()
+        names = {t["id"]: t["name"] for g in r["groups"] for t in g["tags"]}
+        return {song: sorted(names[i] for i in ids) for song, ids in r["map"].items()}, {v: k for k, v in names.items()}
+
+    _, ids = await state()
+    # put on by hand (a track just uploaded, never looked for): the text is not looked for at all
+    await c.post("/api/tags/assign", json={"nd_song_ids": ["nd1"], "add": [ids["без слов"]]})
+    assert (await state())[0] == {"nd1": ["без слов"]}
+    r = (await c.get("/api/lyrics", params={"nd_song_id": "nd1"})).json()
+    assert (r["kind"], r["pinned"]) == ("none", True) and calls == []
+
+    # taken off: the track is looked for again, as a new one — and the tag stays off though a source says «instrumental»
+    answers["lrclib"] = Found("lrclib", instrumental=True)
+    await c.post("/api/tags/assign", json={"nd_song_ids": ["nd1"], "remove": [ids["без слов"]]})
+    async with session_scope() as s:
+        assert (await s.execute(select(Lyrics).where(Lyrics.track_id == a))).scalar_one_or_none() is None
+    r = (await c.get("/api/lyrics", params={"nd_song_id": "nd1"})).json()
+    assert (r["kind"], r["pinned"]) == ("none", False) and "lrclib" in calls
+    assert "nd1" not in (await state())[0]
+    # …until the listener says «no lyrics» in the lyrics window
+    await c.post("/api/lyrics/choose", json={"track_id": a, "source": None})
+    assert (await state())[0] == {"nd1": ["без слов"]}
+
+    # a source that calls the track an instrumental sets the tag by itself; a text found elsewhere outweighs it
+    await c.get("/api/lyrics", params={"nd_song_id": "nd2"})
+    assert (await state())[0]["nd2"] == ["без слов"]
+    answers["ovh"] = Found("ovh", plain="and you know that I love you\n" * 6)
+    await c.post("/api/lyrics/reset", json={"track_id": b})
+    assert (await state())[0]["nd2"] == ["английский"]
+
+
+async def test_an_upload_goes_into_several_playlists(env, monkeypatch):
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from app import auth
+    from app.api.uploads import handle_playlist_add
+    from app.db import session_scope
+    from app.models import User, utcnow
+
+    a = await add_track("nd1")
+    b = await add_track("nd2")
+    added: list[tuple[str, list[str]]] = []
+
+    class Nd:
+        async def update_playlist(self, pid, *, add=None, **kw):
+            added.append((pid, list(add or [])))
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(auth, "user_navidrome", lambda user: Nd())
+    async with session_scope() as s:
+        user = (await s.execute(select(User))).scalars().first()
+    until = utcnow().isoformat()
+    await handle_playlist_add(SimpleNamespace(payload_json={"user_id": user.id, "playlist_ids": ["p1", "p2"], "star": False,
+                                                           "track_ids": [a, b], "until": until}))
+    await handle_playlist_add(SimpleNamespace(payload_json={"user_id": user.id, "playlist_id": "old", "star": False,
+                                                           "track_ids": [a], "until": until}))  # a job queued before
+    assert added == [("p1", ["nd1", "nd2"]), ("p2", ["nd1", "nd2"]), ("old", ["nd1"])]
 
 
 async def test_own_tags_are_renamed_merged_deleted_and_selections_follow(env):

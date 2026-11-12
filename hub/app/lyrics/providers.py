@@ -47,6 +47,7 @@ class Found:
     source: str
     lines: list[parse.Line] | None = None
     plain: str | None = None
+    instrumental: bool = False  # the source says the track has no words at all (then there is no text)
 
     @property
     def kind(self) -> str:
@@ -130,7 +131,9 @@ async def from_lrclib(q: Query) -> Found | None:
     async with make_client(headers={"User-Agent": UA}, timeout=20) as c:
         r = await c.get("https://lrclib.net/api/get", params=params)
         if r.status_code == 200:
-            return _lrclib_found(r.json())
+            d = r.json()
+            # the record of this very track (artist, title, length) says so; a looser search match is not trusted
+            return Found("lrclib", instrumental=True) if d.get("instrumental") else _lrclib_found(d)
         if r.status_code != 404:
             r.raise_for_status()
         # no exact record: the search is looser about the names, the duration still has to agree
@@ -188,7 +191,9 @@ async def from_netease(q: Query) -> Found | None:
         if lines:
             return Found("netease", lines=lines)
     lrc = ((d.get("lrc") or {}).get("lyric") or "").strip()
-    if not lrc or "纯音乐" in lrc[:60]:  # «pure music»: NetEase's mark of an instrumental
+    if "纯音乐" in lrc[:60]:  # «pure music»: NetEase's mark of an instrumental
+        return Found("netease", instrumental=True)
+    if not lrc:
         return None
     lines = parse.parse_lrc(lrc)
     if lines:

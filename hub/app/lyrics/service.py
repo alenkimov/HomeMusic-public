@@ -97,14 +97,39 @@ async def find(q: Query, sources: list[str]) -> Found | None:
     """The first source that has the text. A plain text is kept as a fallback while a later source may have a timed
     one: timings are what the player is for."""
     plain: Found | None = None
+    instrumental = False
     for source in sources:
         found = await ask(source, q)
         if found is None or found.kind == "none":
+            instrumental = instrumental or bool(found and found.instrumental)
             continue
         if found.lines or source == "file":  # the owner's own text is taken as it is
             return found
         plain = plain or found
-    return plain
+    # no text anywhere, and a source says there are no words: kept as that (the «без слов» tag, app/tags.py)
+    return plain or (Found(INSTRUMENTAL, instrumental=True) if instrumental else None)
+
+
+INSTRUMENTAL = "instrumental"  # `Lyrics.source` of a track a source called an instrumental
+
+
+async def set_no_words(s: AsyncSession, track_ids: list[int], on: bool) -> None:
+    """«Без слов» put on tracks by hand, or taken off (app/tags.py). On: they have no text and none is looked for,
+    as if the listener said so in the lyrics window. Off: a track without a text is looked for again, as a new one."""
+    for i in range(0, len(track_ids), 300):
+        part = track_ids[i:i + 300]
+        rows = {r.track_id: r for r in (await s.execute(select(Lyrics).where(Lyrics.track_id.in_(part)))).scalars()}
+        for tid in part:
+            row = rows.get(tid)
+            if on:
+                if row is None:
+                    row = Lyrics(track_id=tid, offset_ms=0, pinned=False)
+                    s.add(row)
+                _store(row, None)
+                row.pinned, row.offset_ms = True, 0
+            elif row is not None and row.kind == "none":
+                await s.delete(row)  # the scan takes a track without a row as a new one
+    await s.flush()
 
 
 def _store(row: Lyrics, found: Found | None) -> None:
@@ -189,6 +214,10 @@ async def choose(s: AsyncSession, track: Track, source: str | None) -> Lyrics:
     row.pinned = True
     row.offset_ms = 0
     await s.flush()
+    if source is None:  # «no lyrics» said here outweighs a «без слов» tag taken off before
+        from app import tags
+
+        await tags.forgive_no_words(s, [track.id])
     await _retag(s, track.id)
     return row
 

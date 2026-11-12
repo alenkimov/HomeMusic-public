@@ -92,6 +92,8 @@ export function passes(tagIds: readonly number[] | undefined, filter: TagFilter,
 interface SheetState {
   songIds: string[];
   title: string;
+  /** only pick tags, for tracks the library has not got yet (an upload): these are ticked, «Готово» gives the choice back */
+  pick?: { ids: number[]; onDone: (ids: number[]) => void };
 }
 
 let sheet: SheetState | null = null;
@@ -114,6 +116,8 @@ const setSheet = (next: SheetState | null) => {
 
 /** «Теги» of one track or of several picked ones. */
 export const openTagsSheet = (songIds: string[], title: string) => songIds.length && setSheet({ songIds, title });
+/** The same window, to choose the tags files will get once they are imported. */
+export const openTagsPick = (title: string, ids: number[], onDone: (ids: number[]) => void) => setSheet({ songIds: [], title, pick: { ids, onDone } });
 export const closeTagsSheet = () => setSheet(null);
 
 // --- «Подборки по тегам»: saved filters -------------------------------------------------------------------
