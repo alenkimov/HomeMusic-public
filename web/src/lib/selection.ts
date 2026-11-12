@@ -46,11 +46,11 @@ export function clearSelection() {
   emit();
 }
 
-// --- a drag from a row's number over other rows -----------------------------------------------------------
+// --- a drag from a row's ⋯ over other rows -----------------------------------------------------------
 
 let drag: { list: readonly SelTrack[]; from: string; base: Map<string, SelTrack>; moved: boolean } | null = null;
 
-/** The mouse went down on a row's number: rows it passes until it comes up are picked, added to what was picked. */
+/** The mouse went down on a row's ⋯: rows it passes until it comes up are picked, added to what was picked. */
 export function beginDragSelect(list: readonly SelTrack[], t: SelTrack) {
   drag = { list, from: t.ref, base: new Map(picked), moved: false };
   // the click that follows the mouse coming up still has to know whether it was a drag

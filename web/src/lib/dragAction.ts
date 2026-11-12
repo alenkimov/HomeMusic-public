@@ -5,6 +5,7 @@ import type { SelTrack } from './selection';
 import { openShare } from './shareTrack';
 import { inPlaylists } from './inPlaylists';
 import { isLiked, setLikes } from './stars';
+import { openTagsSheet } from './tags';
 import { toast } from './ui';
 
 /** A row's «+», «в очередь» or «поделиться» held and dragged over other rows of the list: the same button of every
@@ -16,7 +17,7 @@ import { toast } from './ui';
  * playlists): that button opens the playlists. The queue: started on a queued track, the drag takes the tracks out
  * of the queue. */
 
-export type DragKind = 'like' | 'unlike' | 'queue' | 'unqueue' | 'share';
+export type DragKind = 'like' | 'unlike' | 'queue' | 'unqueue' | 'share' | 'tags';
 
 interface Drag {
   kind: DragKind;
@@ -54,6 +55,10 @@ const kept = (t: SelTrack) => isLiked(likeTarget(t)) || inPlaylists(t.nd_song_id
 
 async function apply(kind: DragKind, tracks: SelTrack[]) {
   if (kind === 'share') return openShare(tracks);
+  if (kind === 'tags') {
+    const owned = tracks.map((t) => t.nd_song_id).filter((x): x is string => !!x);
+    return owned.length ? openTagsSheet(owned, '') : toast('Этих треков ещё нет в библиотеке — сначала скачайте их', 'info');
+  }
   if (kind === 'queue') {
     const have = queuedRefs();
     const add = tracks.filter((t) => !have.has(t.ref));
@@ -97,7 +102,7 @@ function key(e: KeyboardEvent) {
 }
 
 /** The mouse went down on a row's button. */
-export function beginDragAction(kind: 'like' | 'queue' | 'share', list: readonly SelTrack[], t: SelTrack) {
+export function beginDragAction(kind: 'like' | 'queue' | 'share' | 'tags', list: readonly SelTrack[], t: SelTrack) {
   if (drag) stop();
   const liked = kind === 'like' && isLiked(likeTarget(t));
   if (kind === 'like' && !liked && kept(t)) return;

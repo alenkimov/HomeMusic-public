@@ -9,6 +9,7 @@ import { Link, enc, navigate } from '../lib/router';
 import { beginDragAction, dragActionOver, useDragMark } from '../lib/dragAction';
 import { beginDragSelect, dragSelectMoved, dragSelectOver, selectRange, toggleSelected, useSelected, useSelectionCount, type SelTrack } from '../lib/selection';
 import { useInPlaylists } from '../lib/inPlaylists';
+import { openTagsSheet } from '../lib/tags';
 import { useLiked } from '../lib/stars';
 import { usePlayCounts } from '../lib/stats';
 import { PlaysCell } from './PlaysCell';
@@ -322,35 +323,15 @@ export function TrackRow({
           className={cx('group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors', selected ? 'bg-accent/15 hover:bg-accent/20' : dragMark ? 'bg-accent/10' : 'hover:bg-fg/5 focus-within:bg-fg/5')}
           style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration, added, tagCols, plays) }}
         >
-          {/* the number picks the row; held and dragged over other rows, it picks them all. ▶ is on the cover */}
+          {/* the number is the queue button: «в очередь» on hovering the row, green once the track is queued */}
           {rowNumber !== undefined && (
-            <button
-              type="button"
-              data-row-pick
-              onMouseDown={(e) => {
-                if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey) return;
-                e.preventDefault(); // no text is selected while the mouse drags
-                beginDragSelect((queue?.length ? queue : [track]).map(asSel), asSel(track));
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!dragSelectMoved()) toggleSelected(asSel(track));
-              }}
-              aria-label={selected ? `Снять выделение: «${track.title}»` : `Выбрать «${track.title}»`}
-              title={selected ? 'Снять выделение' : 'Выбрать. Зажмите и протяните — выберутся все строки по пути'}
-              className="group/num relative flex h-10 w-8 cursor-pointer items-center justify-center text-sm tabular-nums text-dim"
-            >
-              {selected ? (
-                <span className="text-accent"><Icon name="check" size={18} stroke={3} /></span>
-              ) : (
-                <>
-                  <span className={cx('group-hover/num:opacity-0', current && 'text-accent')}>{current && !showCover ? playMark : rowNumber}</span>
-                  <span aria-hidden="true" className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/num:opacity-100">
-                    <span className="h-4 w-4 rounded-[5px] border-2 border-muted" />
-                  </span>
-                </>
-              )}
-            </button>
+            <span data-row-actions className="contents" onMouseDown={(e) => e.button === 0 && !e.shiftKey && !e.ctrlKey && !e.metaKey && beginDragAction('queue', dragList(), asSel(track))}>
+              <QueueButton
+                track={menuTrack.listen as ListenTrack}
+                instead={<span className={cx(current && 'text-accent')}>{current && !showCover ? playMark : rowNumber}</span>}
+                className={cx(dragMark === 'queue' ? cx(marked, '!text-accent') : dragMark === 'unqueue' && cx(marked, '!text-muted'))}
+              />
+            </span>
           )}
           <div
             onClick={toAlbum ? () => navigate(toAlbum) : action}
@@ -419,16 +400,38 @@ export function TrackRow({
                 <IconButton icon="share" size={19} label={`Поделиться: «${track.title}»`} onClick={() => openShare(menuTrack)} className={cx('!w-9', dragMark === 'share' ? cx(marked, '!text-accent') : cx('text-muted hover:text-fg', shown))} />
               </span>
             )}
-            <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('queue', dragList(), asSel(track))}>
-              <QueueButton track={menuTrack.listen as ListenTrack} className={cx('!w-9', dragMark === 'queue' ? cx(marked, '!text-accent') : dragMark === 'unqueue' && cx(marked, '!text-muted'))} />
-            </span>
+            {/* a list without numbers keeps «в очередь» here */}
+            {rowNumber === undefined && (
+              <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('queue', dragList(), asSel(track))}>
+                <QueueButton track={menuTrack.listen as ListenTrack} className={cx('!w-9', dragMark === 'queue' ? cx(marked, '!text-accent') : dragMark === 'unqueue' && cx(marked, '!text-muted'))} />
+              </span>
+            )}
+            {track.owned && track.nd_song_id && (
+              <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('tags', dragList(), asSel(track))}>
+                <IconButton icon="tag" size={19} label={`Теги: «${track.title}»`} onClick={() => openTagsSheet([track.nd_song_id as string], track.title)} className={cx('!w-9', dragMark === 'tags' ? cx(marked, '!text-accent') : cx('text-muted hover:text-fg', shown))} />
+              </span>
+            )}
             <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('like', dragList(), asSel(track))}>
               <SaveButton songId={likeTarget.songId} refId={track.ref} pending={track.star_pending} title={track.title} data={likeTarget.data} className={cx('!w-9', dragMark === 'like' ? cx(marked, '!text-accent') : dragMark === 'unlike' ? cx(marked, '!text-muted') : !kept && shown)} />
             </span>
           </div>
           {cols.duration && <span className="text-right text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>}
-          <span data-row-actions className="contents">
-            <TrackMenuButton track={menuTrack} extra={menuExtra} className={cx('!h-8 !w-8', shown)} />
+          {/* ⋯ held and dragged over other rows picks them all; a row that is picked wears a tick in its place */}
+          <span
+            data-row-actions
+            className="contents"
+            onMouseDown={(e) => {
+              if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey) return;
+              e.preventDefault(); // no text is selected while the mouse drags
+              beginDragSelect(dragList(), asSel(track));
+            }}
+            onClickCapture={(e) => {
+              if (!dragSelectMoved()) return;
+              e.stopPropagation(); // the drag came back to where it began: not a click on the button
+              e.preventDefault();
+            }}
+          >
+            <TrackMenuButton track={menuTrack} extra={menuExtra} noTags picked={selected} onUnpick={() => toggleSelected(asSel(track))} className={cx('!h-8 !w-8', shown)} />
           </span>
         </div>
       );
