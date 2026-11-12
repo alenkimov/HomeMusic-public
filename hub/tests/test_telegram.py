@@ -13,7 +13,7 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramUnauthorizedError
 
 from tests.support import app_client
 
-TOKEN = "123456789:AAEhBOweik6ad9r_QXMENQjcrGbqCr4K-bs"  # made up: the shape of a key, no bot behind it
+TOKEN = "123456789:made-up-key-of-no-bot"  # made up: the shape of a key, no bot behind it
 
 
 class FakeBot:
@@ -158,7 +158,7 @@ async def test_connect_bind_send_and_disconnect(env):
 
 async def test_a_refused_key_is_not_saved(env):
     c = env["client"]
-    other = "987654321:AAEhBOweik6ad9r_QXMENQjcrGbqCr4K-bs"  # well-formed, but Telegram does not know it
+    other = "987654321:another-made-up-key-of-no-bot"  # well-formed, but Telegram does not know it
     r = await c.post("/api/telegram/connect", json={"token": other})
     assert r.status_code == 400 and other not in r.text and "не принял" in r.json()["detail"]
     assert (await c.get("/api/telegram")).json()["connected"] is False
