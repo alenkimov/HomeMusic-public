@@ -651,6 +651,9 @@ def fallback_name(local: datetime, songs: list[Cand]) -> tuple[str, str]:
     return f"Микс дня · {WEEKDAYS[local.weekday()]}", desc
 
 
+NAME_BUDGETS = (300, 2048, 4096)  # tokens for the name: enough for a plain model, then for one that reasons
+
+
 async def name_mix(user_id: int, songs: list[Cand], local: datetime, stats: dict[str, Any]) -> tuple[str, str]:
     """A daylist-like name by an LLM from the songs' tags (Last.fm), the weekday and the time; no AI — a template."""
     from app.ai import llm
@@ -676,12 +679,25 @@ async def name_mix(user_id: int, songs: list[Cand], local: datetime, stats: dict
               f"Знакомых песен {fam}, новых {len(songs) - fam}.")
     try:
         async with llm.LLMClient() as client:
-            out, usage = await client.call_tool(
-                system=("Ты придумываешь название ежедневному музыкальному миксу в духе Spotify daylist: жанр или "
-                        "настроение + день недели или время суток, например «Ночной русский пост-панк на "
-                        f"{WEEKDAYS_ACC[4]}». По-русски, живо, без кавычек и эмодзи."),
-                user_content=prompt, tool_name="mix_name", tool_description="Название и описание микса дня",
-                parameters=NAME_TOOL, max_tokens=300)
+            usage = llm.LLMUsage()
+            # a name is two lines, but a reasoning model thinks out of the same budget: cut off, it is asked again
+            # with more room rather than the mix being left with the plain name
+            for budget in NAME_BUDGETS:
+                try:
+                    out, used = await client.call_tool(
+                        system=("Ты придумываешь название ежедневному музыкальному миксу в духе Spotify daylist: жанр "
+                                "или настроение + день недели или время суток, например «Ночной русский пост-панк на "
+                                f"{WEEKDAYS_ACC[4]}». По-русски, живо, без кавычек и эмодзи."),
+                        user_content=prompt, tool_name="mix_name", tool_description="Название и описание микса дня",
+                        parameters=NAME_TOOL, max_tokens=budget)
+                except llm.LLMTruncatedError as e:
+                    usage += e.usage
+                    if budget == NAME_BUDGETS[-1]:
+                        raise
+                    log.info("mix name: the answer was cut off at %s tokens, asking again with more", budget)
+                    continue
+                usage += used
+                break
     except Exception as e:
         log.info("mix name: llm failed: %r", e)
         return title, desc

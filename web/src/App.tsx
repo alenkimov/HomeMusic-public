@@ -30,6 +30,7 @@ import { AlbumPage } from './pages/Album';
 import { ArtistPage } from './pages/Artist';
 import { AssistantChatsPage, AssistantPage } from './pages/Assistant';
 import { AssistantTaskPage } from './pages/AssistantTask';
+import { setAssistantAccount } from './pages/AssistantChat';
 import { DownloadDetailPage } from './pages/DownloadDetail';
 import { DownloadsPage } from './pages/Downloads';
 import { HomePage } from './pages/Home';
@@ -139,13 +140,19 @@ export function App() {
   // a computer: the sections and the playlists in a panel on the left, the player in a bar along the bottom
   const desktop = useDesktop();
 
+  // who is signed in is told to what outlives a logout in the page's memory, before that user's screens are shown
+  const updateSession = useCallback((next: MeOut | null) => {
+    setAssistantAccount(next?.id ?? null);
+    setMe(next);
+  }, []);
+
   const boot = useCallback(() => {
     setBootError(undefined);
     api
       .me()
-      .then(setMe)
+      .then(updateSession)
       .catch((e) => {
-        if (e instanceof ApiError && e.status === 401) setMe(null);
+        if (e instanceof ApiError && e.status === 401) updateSession(null);
         else setBootError(errorMessage(e));
       });
   }, []);
@@ -162,7 +169,7 @@ export function App() {
   useEffect(() => {
     const onUnauthorized = () => {
       invalidateCache();
-      setMe(null);
+      updateSession(null);
     };
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
@@ -197,7 +204,7 @@ export function App() {
     resetStars();
     resetInPlaylists();
     resetReleases();
-    setMe(null);
+    updateSession(null);
     navigate(START, { replace: true });
   }, []);
 
@@ -220,7 +227,7 @@ export function App() {
   if (me === null) {
     return (
       <>
-        <LoginPage onLogin={setMe} />
+        <LoginPage onLogin={updateSession} />
         <Overlays />
       </>
     );

@@ -696,3 +696,20 @@ async def test_v2_shadow_does_not_repeat_build_services(env, monkeypatch, shadow
         jobs = list((await s.execute(select(Job).where(Job.kind == "download_item"))).scalars())
     active_downloads = [row for row in rows if row.state == "active" and row.download_item_id]
     assert len(jobs) == len(downloads) == len(active_downloads)
+
+
+async def test_two_requests_at_once_queue_one_build(env):
+    """The check and the insert are one statement: a build is not queued twice."""
+    from sqlalchemy import func
+    from sqlalchemy import select as _select
+
+    from app.db import session_scope as _scope
+    from app.mixes.core import enqueue_build
+    from app.models import Job, User
+
+    async with _scope() as s:
+        me = (await s.execute(_select(User.id))).scalars().first()
+        assert [await enqueue_build(s, me), await enqueue_build(s, me)] == [True, False]
+        job = (await s.execute(_select(Job).where(Job.kind == "mix_build"))).scalar_one()
+        assert (job.status, job.attempts, job.max_attempts, job.payload_json) == ("queued", 0, 3, {"user_id": me})
+        assert (await s.execute(_select(func.count()).select_from(Job).where(Job.kind == "mix_build"))).scalar_one() == 1

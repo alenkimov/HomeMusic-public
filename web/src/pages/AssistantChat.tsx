@@ -51,6 +51,8 @@ interface ChatState {
 }
 
 const CURRENT_KEY = 'hm.chat.current';
+// whose chat this is: the store outlives a logout (it is the page's own memory), so it is told who is signed in
+let account: number | null = null;
 let state: ChatState = { id: null, entries: [], loading: false, sending: false };
 // bumps when another chat opens: a reply to the previous one then only stays on the Hub
 let gen = 0;
@@ -64,8 +66,10 @@ function update(patch: Partial<ChatState> | ((s: ChatState) => Partial<ChatState
 
 function remember(id: number | null) {
   try {
-    if (id) sessionStorage.setItem(CURRENT_KEY, String(id));
-    else sessionStorage.removeItem(CURRENT_KEY);
+    sessionStorage.removeItem(CURRENT_KEY); // the key of older builds: it does not say whose chat it was
+    if (account === null) return;
+    if (id) sessionStorage.setItem(`${CURRENT_KEY}.${account}`, String(id));
+    else sessionStorage.removeItem(`${CURRENT_KEY}.${account}`);
   } catch {
     /* storage unavailable: the route still holds the chat */
   }
@@ -73,9 +77,10 @@ function remember(id: number | null) {
 
 /** The chat open last in this tab (the assistant's tab returns to it). */
 export function currentChatId(): number | null {
+  if (account === null) return null;
   if (state.id) return state.id;
   try {
-    return Number(sessionStorage.getItem(CURRENT_KEY)) || null;
+    return Number(sessionStorage.getItem(`${CURRENT_KEY}.${account}`)) || null;
   } catch {
     return null;
   }
@@ -113,6 +118,18 @@ export function newChat() {
   gen++;
   remember(null);
   update({ id: null, entries: [], loading: false, error: undefined, sending: false });
+}
+
+/** Someone else is signed in now (or nobody): the chat on the screen and a message not sent yet were the previous
+ * user's — they go, and a reply still on its way is dropped when it comes (`gen`). Called before the screens of
+ * the new user are shown. */
+export function setAssistantAccount(next: number | null) {
+  if (account === next) return;
+  state.entries.forEach((e) => e.images?.forEach((url) => URL.revokeObjectURL(url)));
+  draft = null;
+  account = null; // the previous user's pointer to their chat stays theirs: nothing is written under it
+  newChat();
+  account = next;
 }
 
 /** Forgets a chat deleted from the history if it is the open one. */

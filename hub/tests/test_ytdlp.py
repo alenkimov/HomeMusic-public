@@ -558,6 +558,7 @@ def media_servers(monkeypatch: pytest.MonkeyPatch, *answering: str) -> list[str]
         return host in answering
 
     monkeypatch.setattr(ytdlp_mod, "_media_host_answers", answers)
+    monkeypatch.setattr(ytdlp_mod, "_media_url_answers", lambda url, headers=None: True)  # no network in tests
     return probed
 
 
@@ -627,3 +628,68 @@ async def test_network_ytsearch_fallback_only() -> None:
     p = YtdlpProvider(YtdlpCfg(), use_music_search=False)
     res = await p.search(TrackQuery(artist="Кино", title="Группа крови"), limit=3)
     assert res and all(isinstance(c, Candidate) for c in res)
+
+
+def test_media_mirrors_try_rr1_as_well_as_the_number_the_client_was_given() -> None:
+    url = GV.replace("fvip=1", "fvip=4")
+    assert ytdlp_mod.media_mirrors(url) == [url.replace("rr7---sn-isp1", "rr1---sn-far2"),
+                                            url.replace("rr7---sn-isp1", "rr4---sn-far2")]
+
+
+def test_a_mirror_that_does_not_give_the_file_is_passed_by(monkeypatch: pytest.MonkeyPatch) -> None:
+    url = GV.replace("fvip=1", "fvip=4")
+    media_servers(monkeypatch, "rr1---sn-far2.googlevideo.com", "rr4---sn-far2.googlevideo.com")
+    monkeypatch.setattr(ytdlp_mod, "_media_url_answers", lambda u, headers=None: "rr4---" in u)  # rr1 answers 403
+    assert ytdlp_mod.answering_url(url) == url.replace("rr7---sn-isp1", "rr4---sn-far2")
+
+
+def test_the_log_speaks_of_a_switch_only_when_the_server_changed(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("INFO", logger=ytdlp_mod.log.name):
+        ytdlp_mod._log_switch("https://rr7---sn-isp1.googlevideo.com/", GV)  # the same server: nothing to say
+        assert not caplog.records
+        ytdlp_mod._log_switch("https://rr7---sn-isp1.googlevideo.com/", GV.replace("rr7---sn-isp1", "rr1---sn-far2"))
+        assert len(caplog.records) == 1
+
+
+async def test_fetch_asks_again_from_another_server_when_the_transfer_drops(monkeypatch: pytest.MonkeyPatch,
+                                                                             tmp_path: Path) -> None:
+    from yt_dlp.utils import DownloadError
+
+    class Flaky(FakeYDL):
+        tries: list[str | None] = []
+
+        def process_ie_result(self, info: dict, download: bool = False) -> dict:
+            Flaky.tries.append(info["formats"][0]["url"])
+            if len(Flaky.tries) == 1:
+                raise DownloadError("HTTPSConnectionPool(host='rr7---sn-isp1.googlevideo.com', port=443): Read timed out.")
+            return super().process_ie_result(info, download)
+
+    monkeypatch.setattr(ytdlp_mod.yt_dlp, "YoutubeDL", Flaky)
+    monkeypatch.setattr(FakeYDL, "formats", [{"format_id": "251", "url": GV}])
+    media_servers(monkeypatch, "rr7---sn-isp1.googlevideo.com", "rr1---sn-far2.googlevideo.com")
+    c = entry_to_candidate(FLAT_TOPIC)
+    assert c is not None
+    assert (await YtdlpProvider(YtdlpCfg()).fetch(c, tmp_path)).is_file()
+    # the server that dropped the transfer answers the probe, and is avoided all the same
+    assert Flaky.tries == [GV, GV.replace("rr7---sn-isp1", "rr1---sn-far2")]
+
+
+async def test_fetch_does_not_ask_again_for_what_another_try_cannot_mend(monkeypatch: pytest.MonkeyPatch,
+                                                                         tmp_path: Path) -> None:
+    from yt_dlp.utils import DownloadError
+
+    class Refused(FakeYDL):
+        tries = 0
+
+        def process_ie_result(self, info: dict, download: bool = False) -> dict:
+            Refused.tries += 1
+            raise DownloadError("HTTP Error 403: Forbidden")
+
+    monkeypatch.setattr(ytdlp_mod.yt_dlp, "YoutubeDL", Refused)
+    monkeypatch.setattr(FakeYDL, "formats", [{"format_id": "251", "url": GV}])
+    media_servers(monkeypatch, "rr7---sn-isp1.googlevideo.com")
+    c = entry_to_candidate(FLAT_TOPIC)
+    assert c is not None
+    with pytest.raises(Exception):  # noqa: B017  (the provider's own error wraps yt-dlp's)
+        await YtdlpProvider(YtdlpCfg()).fetch(c, tmp_path)
+    assert Refused.tries == 1

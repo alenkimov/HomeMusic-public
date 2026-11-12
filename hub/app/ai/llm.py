@@ -66,6 +66,15 @@ class LLMError(Exception):
     """The model could not be called or did not return usable structured output."""
 
 
+class LLMTruncatedError(LLMError):
+    """The model ran out of its output budget (a reasoning model spends it thinking): the caller may ask again with
+    a larger one. `usage`: what the cut-off call cost."""
+
+    def __init__(self, usage: LLMUsage) -> None:
+        super().__init__("Ответ модели обрезан (лимит токенов)")
+        self.usage = usage
+
+
 class _ModeUnsupported(Exception):
     """This structured-output mode does not work with the provider; try the next one."""
 
@@ -76,6 +85,12 @@ def _host(url: str) -> str:
 
 def is_openrouter(base_url: str) -> bool:
     return _host(base_url).endswith("openrouter.ai")
+
+
+def completion_limit(base_url: str, limit: int) -> dict[str, int]:
+    """The cap on one answer, as the server wants it named: OpenAI's own API takes `max_completion_tokens` (its
+    newer models reject `max_tokens`); OpenRouter, Ollama and the other compatible servers take `max_tokens`."""
+    return {"max_completion_tokens" if _host(base_url) == "api.openai.com" else "max_tokens": limit}
 
 
 def is_local(base_url: str) -> bool:
@@ -236,7 +251,7 @@ class LLMClient:
         max_tokens: int,
     ) -> tuple[dict, LLMUsage]:
         messages: list[dict] = [{"role": "system", "content": system}, {"role": "user", "content": user_content}]
-        kwargs: dict[str, Any] = {"messages": messages, "max_tokens": max_tokens}
+        kwargs: dict[str, Any] = {"messages": messages, **completion_limit(self.base_url, max_tokens)}
         if mode == "tools":
             kwargs["tools"] = [{
                 "type": "function",
@@ -267,10 +282,13 @@ class LLMClient:
                     return args, usage
         # no (usable) tool call: many servers answer with the JSON in the text instead
         args = extract_json_object(msg.content or "")
+        # a local model may write the call itself into the text: {"name": <the tool>, "arguments": {...}}
+        if args is not None and args.get("name") == tool_name and "arguments" in args:
+            args = _parse_arguments(args["arguments"])
         if args is not None:
             return args, usage
         if choice is not None and choice.finish_reason == "length":
-            raise LLMError("Ответ модели обрезан (лимит токенов)")
+            raise LLMTruncatedError(usage)
         raise _with_usage(_ModeUnsupported(f"no JSON in the answer: {(msg.content or '')[:120]!r}"), usage)
 
 

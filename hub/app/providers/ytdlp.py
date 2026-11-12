@@ -27,6 +27,7 @@ from http.cookiejar import LoadError, MozillaCookieJar
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote_plus, urlsplit
+from urllib.request import ProxyHandler, Request, build_opener
 
 import httpx
 import yt_dlp
@@ -56,6 +57,9 @@ _MEDIA_TYPES = {"m4a": "audio/mp4", "mp4": "audio/mp4", "webm": "audio/webm", "m
 STREAM_URL_TTL_S = 20 * 60  # audio URLs from a metadata lookup, reused by `stream` (googlevideo links live ~6 h)
 MEDIA_HOST_SUFFIX = ".googlevideo.com"
 MEDIA_PROBE_TIMEOUT_S = 5.0
+# what a download says when the server, not the file, is at fault: worth one more try from another server
+TRANSIENT_ERRORS = ("timed out", "timeout", "connection reset", "remote end closed",
+                    "http error 500", "http error 502", "http error 503", "http error 504")
 MEDIA_PROBE_TTL_S = 10 * 60  # how long a media server's probe result is trusted
 # YouTube may put an ad before the video: its audio URL answers 403 until the ad could be skipped (yt-dlp's
 # `available_at`). A stream waits that long, up to this; a longer ad makes the file count as not opening.
@@ -167,17 +171,34 @@ def media_mirrors(url: str) -> list[str]:
     qs = parse_qs(parts.query)
     fvip = (qs.get("fvip") or ["1"])[0]
     servers = [s for s in (qs.get("mn") or [""])[0].split(",") if s and f"---{s}." not in host]
-    return [parts._replace(netloc=f"rr{fvip}---{s}{MEDIA_HOST_SUFFIX}").geturl() for s in servers]
+    # the other cluster may know the file only as rr1, whatever `fvip` says of the one the client was sent to
+    return [parts._replace(netloc=f"rr{n}---{s}{MEDIA_HOST_SUFFIX}").geturl()
+            for s in servers for n in dict.fromkeys(("1", fvip))]
 
 
-def answering_url(url: str) -> str:
+def _media_url_answers(url: str, headers: dict | None = None) -> bool:
+    """The mirror serves this very file: its first byte comes. A guessed host may complete TLS and still answer 403
+    to the signed URL."""
+    try:
+        request = Request(url, headers={**(headers or {}), "Range": "bytes=0-0"})
+        with build_opener(ProxyHandler({})).open(request, timeout=MEDIA_PROBE_TIMEOUT_S) as response:
+            return response.status in (200, 206) and bool(response.read(1))
+    except (OSError, ValueError):
+        return False
+
+
+def answering_url(url: str, *, headers: dict | None = None, avoid_hosts: set[str] | None = None) -> str:
     """`url`, or the same file on another of the video's cache servers when its own doesn't answer. YouTube may
     send a client to a cache inside its ISP that hangs on the TLS handshake for some videos; yt-dlp has no
-    fallback and gives up after its retries."""
+    fallback and gives up after its retries. `avoid_hosts`: servers a download has just failed on — they answer
+    the probe and still don't give the file."""
+    avoid = avoid_hosts or set()
     host = urlsplit(url).hostname or ""
-    if not host.endswith(MEDIA_HOST_SUFFIX) or _media_host_answers(host):
+    if not host.endswith(MEDIA_HOST_SUFFIX) or (host not in avoid and _media_host_answers(host)):
         return url
-    return next((alt for alt in media_mirrors(url) if _media_host_answers(urlsplit(alt).hostname or "")), url)
+    return next((alt for alt in media_mirrors(url)
+                 if (h := urlsplit(alt).hostname or "") not in avoid and _media_host_answers(h)
+                 and _media_url_answers(alt, headers)), url)
 
 
 def ad_wait_s(fmt: dict, now: float) -> float:
@@ -191,16 +212,16 @@ async def _sleep(seconds: float) -> None:  # replaced in tests
 
 
 def _log_switch(old: str, new: str) -> None:
-    if old != new:
+    if urlsplit(old).hostname != urlsplit(new).hostname:
         log.info("youtube media server %s doesn't answer, using %s", urlsplit(old).hostname, urlsplit(new).hostname)
 
 
-def on_answering_servers(info: dict) -> dict:
+def on_answering_servers(info: dict, *, avoid_hosts: set[str] | None = None) -> dict:
     """An extraction whose formats on a media server that doesn't answer point to one that does."""
     switched: dict[str | None, str] = {}
     for f in info.get("formats") or []:
         if isinstance(url := f.get("url"), str):
-            f["url"] = answering_url(url)
+            f["url"] = answering_url(url, headers=info.get("http_headers"), avoid_hosts=avoid_hosts)
             switched.setdefault(urlsplit(url).hostname, f["url"])
     for host, url in switched.items():
         _log_switch(f"https://{host}/", url)
@@ -480,8 +501,9 @@ class YtdlpProvider:
         if self._youtube:
             opts.update({
                 "extractor_args": {"youtube": {"player_client": ["mweb"]}},
-                "retries": 1,
-                "fragment_retries": 1,
+                "retries": 2,
+                "fragment_retries": 2,
+                "retry_sleep_functions": {"http": lambda n: min(2 ** n, 8), "fragment": lambda n: min(2 ** n, 8)},
                 "extractor_retries": 1,
                 "concurrent_fragment_downloads": 1,
                 "sleep_interval_requests": self.cfg.sleep_requests_s,
@@ -756,8 +778,25 @@ class YtdlpProvider:
 
         def download() -> Path:
             with self._youtube_dl(opts) as ydl:
-                info = ydl.extract_info(self.media_url(c), download=False, process=False)
-                info = ydl.process_ie_result(on_answering_servers(info), download=True)
+                # a server that passed the probe may still drop the transfer (a timeout, a reset, a 5xx): once, the
+                # video is asked about anew and the file taken from another of its servers
+                avoid: set[str] = set()
+                for again in (False, True):
+                    info = ydl.extract_info(self.media_url(c), download=False, process=False)
+                    info = on_answering_servers(info, avoid_hosts=avoid)
+                    try:
+                        info = ydl.process_ie_result(info, download=True)
+                        break
+                    except DownloadError as e:
+                        said = str(e).lower()
+                        if again or cancelled.is_set() or not any(x in said for x in TRANSIENT_ERRORS):
+                            raise
+                        avoid.update(h for h in re.findall(r"host=['\"]([^'\"]+)", str(e))
+                                     if h.endswith(MEDIA_HOST_SUFFIX))
+                        if "http error 5" in said:
+                            avoid.update(h for f in info.get("formats") or []
+                                         if (h := urlsplit(f.get("url") or "").hostname or "").endswith(MEDIA_HOST_SUFFIX))
+                        log.info("%s: the transfer failed (%s), asking for the file again", self.name, str(e)[:120])
             for rd in (info or {}).get("requested_downloads") or []:
                 if (fp := rd.get("filepath")) and Path(fp).is_file():
                     return Path(fp)

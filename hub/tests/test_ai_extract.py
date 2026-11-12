@@ -397,3 +397,11 @@ async def test_parse_text_garbage_kind() -> None:
     async with LLMClient(settings()) as llm:
         intent, _ = await parse_text_request("что-то непонятное", llm)
     assert intent.kind == "unknown"
+
+
+def test_the_cap_on_an_answer_is_named_as_the_server_wants_it() -> None:
+    from app.ai.llm import completion_limit
+
+    assert completion_limit("https://api.openai.com/v1", 2500) == {"max_completion_tokens": 2500}
+    assert completion_limit("https://openrouter.ai/api/v1", 2500) == {"max_tokens": 2500}
+    assert completion_limit("http://localhost:11434/v1", 300) == {"max_tokens": 300}

@@ -776,10 +776,12 @@ export function unqueue(refs: readonly string[]): number {
 export function moveInQueue(from: number, to: number) {
   const q = [...state.queue];
   if (from === to || from < 0 || to < 0 || from >= q.length || to >= q.length) return;
-  const current = q[state.index];
   const [t] = q.splice(from, 1);
   q.splice(to, 0, t);
-  set({ queue: q, index: q.indexOf(current) });
+  // where the playing track is now — counted, not looked up: the same track may stand in the queue twice
+  const i = state.index;
+  const index = from === i ? to : from < i && to >= i ? i - 1 : from > i && to <= i ? i + 1 : i;
+  set({ queue: q, index });
   prefetchNext();
 }
 

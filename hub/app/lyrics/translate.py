@@ -218,7 +218,7 @@ async def llm(lines: list[str], target: str, *, artist: str = "", title: str = "
     answer, where the plain translation takes seconds and reads the same."""
     import openai
 
-    from app.ai.llm import LLMClient, configured, extract_json_object, is_local
+    from app.ai.llm import LLMClient, completion_limit, configured, extract_json_object, is_local
 
     if not configured():
         raise TranslateError("ИИ не настроен в Хабе (LLM_BASE_URL / LLM_API_KEY в .env)")
@@ -237,7 +237,7 @@ async def llm(lines: list[str], target: str, *, artist: str = "", title: str = "
                 got: Any = None
                 for _ in range(2):  # a miscount is usually a one-off
                     resp = await client._client.chat.completions.create(
-                        model=client.model, temperature=0, max_tokens=4000, extra_body=extra,
+                        model=client.model, temperature=0, extra_body=extra, **completion_limit(client.base_url, 4000),
                         response_format={"type": "json_object"},
                         messages=[{"role": "system", "content": SYSTEM.format(language=language)},
                                   {"role": "user", "content": user}])

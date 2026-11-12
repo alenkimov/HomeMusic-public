@@ -18,7 +18,8 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import JSON, func, literal, or_, select
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.catalog.models import CatalogTrack, split_ref
@@ -72,13 +73,16 @@ async def current_mix(s: AsyncSession, user_id: int) -> Mix | None:
 
 async def enqueue_build(s: AsyncSession, user_id: int, *, priority: int = PRIORITY_MIX) -> bool:
     """One queued or running build per user. False: one is under way."""
-    busy = (await s.execute(select(Job.id).where(
+    busy = select(Job.id).where(
         Job.kind == "mix_build", Job.status.in_(("queued", "running")),
-        func.json_extract(Job.payload_json, "$.user_id") == user_id).limit(1))).scalar_one_or_none()
-    if busy is not None:
-        return False
-    await enqueue(s, "mix_build", {"user_id": user_id}, priority=priority, max_attempts=3)
-    return True
+        func.json_extract(Job.payload_json, "$.user_id") == user_id).exists()
+    # checked and written in one statement: two requests at once (two taps, a tap and the daily schedule) cannot
+    # both find none and both queue one
+    row = select(literal("mix_build"), literal({"user_id": user_id}, type_=JSON), literal(priority), literal(3),
+                 literal(utcnow())).where(~busy)
+    made = await s.execute(insert(Job).from_select(
+        ["kind", "payload_json", "priority", "max_attempts", "run_after"], row).returning(Job.id))
+    return made.scalar_one_or_none() is not None
 
 
 async def enqueue_sync(s: AsyncSession, mix_id: int, *, delay_s: float = SYNC_DELAY_S) -> None:

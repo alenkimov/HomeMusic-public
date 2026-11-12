@@ -148,7 +148,7 @@ def test_youtube_opts_select_mweb_and_internal_provider_without_affecting_soundc
             assert ydl.params["extractor_args"]["youtubepot-bgutilhttp"]["base_url"] == ["http://youtube-pot:4416"]
             assert ydl.params["sleep_interval_requests"] == 1
             assert ydl.params["sleep_interval"] == 5
-            assert ydl.params["retries"] == 1
+            assert ydl.params["retries"] == 2  # a dropped transfer is tried once more, after a pause
             assert ydl.params["concurrent_fragment_downloads"] == 1
     sc_opts = SoundcloudProvider(cfg)._base_opts()
     assert "extractor_args" not in sc_opts and "sleep_interval" not in sc_opts
