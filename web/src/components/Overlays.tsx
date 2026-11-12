@@ -74,7 +74,7 @@ export function Overlays() {
   );
 }
 
-const DRAG_VERB: Record<DragKind, string> = { like: 'добавить в «Любимое»', queue: 'добавить в очередь', unqueue: 'убрать из очереди', share: 'поделиться' };
+const DRAG_VERB: Record<DragKind, string> = { like: 'добавить в «Любимое»', unlike: 'убрать из «Любимого»', queue: 'добавить в очередь', unqueue: 'убрать из очереди', share: 'поделиться' };
 
 /** While a row's button is dragged over other rows: what letting go will do, and how to call it off. */
 function DragActionHint() {

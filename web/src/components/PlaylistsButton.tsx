@@ -39,12 +39,19 @@ export function SaveButton({ songId, refId, pending, title, data, size = 20, cla
   return (
     <>
       <button type="button" disabled={busy} onClick={() => void click()} aria-label={label} title={liked ? 'В любимом — изменить' : listed ? 'В плейлистах — изменить' : 'В любимое'} className={cx('flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition hover:scale-110 disabled:opacity-60', kept ? 'text-accent' : 'text-muted hover:text-fg', className)}>
-        <span className={cx('flex items-center justify-center rounded-full', kept ? 'bg-accent text-on-accent' : 'border-2 border-current')} style={{ width: size + 2, height: size + 2 }}>
-          {liked ? <Icon name="heart" size={Math.round(size * 0.6)} filled /> : <Icon name={listed ? 'check' : 'plus'} size={size - 6} stroke={3} />}
-        </span>
+        <SaveMark state={liked ? 'liked' : listed ? 'listed' : 'none'} size={size} />
       </button>
       {open && <TrackPlaylists track={{ title, nd_song_id: songId, ref: refId, data }} onClose={() => setOpen(false)} />}
     </>
+  );
+}
+
+/** The mark of the button: «+» in a ring, or ♥ / ✓ in a green circle. */
+export function SaveMark({ state, size = 20 }: { state: 'liked' | 'listed' | 'none'; size?: number }) {
+  return (
+    <span className={cx('flex items-center justify-center rounded-full', state === 'none' ? 'border-2 border-current' : 'bg-accent text-on-accent')} style={{ width: size + 2, height: size + 2 }}>
+      {state === 'liked' ? <Icon name="heart" size={Math.round(size * 0.6)} filled /> : <Icon name={state === 'listed' ? 'check' : 'plus'} size={size - 6} stroke={3} />}
+    </span>
   );
 }
 
