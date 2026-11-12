@@ -172,20 +172,9 @@ export function ImportsPage({ from = null }: { from?: 'yandex' | 'spotify' | nul
             if (files.length) void startCsv(files);
           }}
         />
-        <div className="flex flex-wrap gap-2">
-          <a
-            href={EXPORTIFY_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-full bg-fg/10 px-4 text-sm font-semibold"
-          >
-            <Icon name="external" size={18} />
-            Открыть Exportify
-          </a>
-          <Button variant="primary" icon="upload" busy={busy === 'csv'} disabled={!!busy} onClick={() => csvRef.current?.click()}>
-            Выбрать файлы CSV
-          </Button>
-        </div>
+        <Button variant="primary" icon="upload" block busy={busy === 'csv'} disabled={!!busy} onClick={() => csvRef.current?.click()}>
+          Выбрать файлы CSV
+        </Button>
         <p className="text-xs text-dim">Exportify — сторонний открытый сервис: вход идёт на сайте Spotify, Хаб получает только файл со списком треков.</p>
       </div>
       {!EMBEDDED && (
