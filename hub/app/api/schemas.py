@@ -366,6 +366,7 @@ class DownloadIn(BaseModel):
     artist_ref: str | None = None  # whole discography
     record_types: list[str] = ["album", "single", "ep"]  # for artist_ref
     playlist_id: str | None = None
+    playlist_ids: list[str] = Field(default_factory=list, max_length=50)  # several playlists at once
     new_playlist_name: str | None = None
     force: bool = False  # re-download even if owned (new file next to the old one)
     star: bool = False  # ♥ on a track that isn't downloaded yet: star the songs in Navidrome once they are

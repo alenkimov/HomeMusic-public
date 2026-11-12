@@ -397,6 +397,8 @@ export interface DownloadIn {
   artist_ref?: string | null;
   record_types?: string[];
   playlist_id?: string | null;
+  /** several playlists at once: the songs go into each as they are imported */
+  playlist_ids?: string[];
   new_playlist_name?: string | null;
   force?: boolean;
   /** ♥ before download: the Hub stars the songs in Navidrome once they are imported */

@@ -1,93 +1,11 @@
 import { useState } from 'react';
 import { api, libraryCoverUrl } from '../api/client';
-import type { LibAlbumOut, PlaylistOut } from '../api/types';
+import type { LibAlbumOut } from '../api/types';
 import { useAsync, useDebounced } from '../lib/hooks';
 import { tracksWord } from '../lib/format';
 import { attempt } from '../lib/ui';
 import { Icon } from './Icon';
 import { Button, Cover, Empty, ErrorState, Field, Loading, Sheet } from './ui';
-
-export type PlaylistPick = { kind: 'existing'; playlist: PlaylistOut } | { kind: 'new'; name: string };
-
-export function PlaylistPicker({
-  open,
-  onClose,
-  onPick,
-  title = 'В плейлист',
-  defaultName = '',
-  busy,
-  onLiked,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onPick: (p: PlaylistPick) => void;
-  /** «Любимое» is offered as the first choice (they are not a playlist: the caller sets the ♥ itself) */
-  onLiked?: () => void;
-  title?: string;
-  defaultName?: string;
-  busy?: boolean;
-}) {
-  const [name, setName] = useState(defaultName);
-  const lists = useAsync((s) => api.playlists(s), [], open);
-  return (
-    <Sheet open={open} onClose={onClose} title={title}>
-      {onLiked && (
-        <button type="button" disabled={busy} onClick={onLiked} className="-mx-4 mb-3 flex min-h-14 w-[calc(100%+2rem)] items-center gap-3 px-4 text-left hover:bg-fg/5 disabled:opacity-50">
-          <span className="flex h-10 w-10 items-center justify-center rounded-md bg-accent/20 text-accent">
-            <Icon name="heart" size={20} filled />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate">Любимое</span>
-            <span className="block text-xs text-muted">Поставить ♥ всем импортируемым трекам</span>
-          </span>
-        </button>
-      )}
-      <form
-        className="flex items-end gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (name.trim()) onPick({ kind: 'new', name: name.trim() });
-        }}
-      >
-        <Field label="Новый плейлист" className="flex-1">
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Название" />
-        </Field>
-        <Button type="submit" variant="primary" icon="plus" disabled={!name.trim()} busy={busy}>
-          Создать
-        </Button>
-      </form>
-      <div className="label mt-5">Существующие</div>
-      {lists.loading ? (
-        <Loading />
-      ) : lists.error ? (
-        <ErrorState text={lists.error} onRetry={() => lists.reload()} />
-      ) : !lists.data?.length ? (
-        <p className="py-6 text-center text-sm text-muted">Плейлистов пока нет</p>
-      ) : (
-        <ul className="-mx-4">
-          {lists.data.map((p) => (
-            <li key={p.id}>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => onPick({ kind: 'existing', playlist: p })}
-                className="flex min-h-14 w-full items-center gap-3 px-4 text-left hover:bg-fg/5 disabled:opacity-50"
-              >
-                <span className="flex h-10 w-10 items-center justify-center rounded-md bg-raised text-muted">
-                  <Icon name="playlist" size={20} />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">{p.name}</span>
-                  <span className="block text-xs text-muted">{tracksWord(p.song_count)}</span>
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Sheet>
-  );
-}
 
 export function AlbumPicker({
   open,

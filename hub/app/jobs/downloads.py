@@ -838,7 +838,9 @@ async def create_items(
     star: bool = False,
     start_position: int = 0,
     favorite_events: dict[str, str] | None = None,
+    also_playlists: list[str] | None = None,
 ) -> int:
+    """`also_playlists`: playlists besides the batch's own that get the songs as well."""
     for i, (q, meta, cand) in enumerate(entries):
         query_json: dict[str, Any] = {"query": q.model_dump(), "meta": meta}
         if star:
@@ -867,8 +869,8 @@ async def create_items(
                     item.status = "cancelled"
             else:
                 await download_requested(s, item)
-        if batch.target_playlist_id:
-            s.add(PendingPlaylistAdd(playlist_id=batch.target_playlist_id, user_id=batch.user_id,
+        for pid in dict.fromkeys(x for x in (batch.target_playlist_id, *(also_playlists or [])) if x):
+            s.add(PendingPlaylistAdd(playlist_id=pid, user_id=batch.user_id,
                                      download_item_id=item.id, position=start_position + i))
         if item.status != "cancelled":
             await enqueue(s, "download_item", {"item_id": item.id})
@@ -929,6 +931,7 @@ async def handle_expand_batch(job: Job) -> None:
         if batch is None:
             return
         await create_items(s, batch, entries, force=bool(p.get("force")), star=bool(p.get("star")),
-                           start_position=int(p.get("position", 0)), favorite_events=p.get("favorite_events"))
+                           start_position=int(p.get("position", 0)), favorite_events=p.get("favorite_events"),
+                           also_playlists=p.get("also_playlists"))
     notify()
     bus.publish(batch.user_id, "batch", {"batch_id": batch.id, "queued": len(entries)})

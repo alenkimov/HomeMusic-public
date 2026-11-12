@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { TrackOut } from '../api/types';
 import { TrackRow, TrackTableHeader, listenTrack } from '../components/catalog';
-import { PlaylistPicker, type PlaylistPick } from '../components/pickers';
+import { PlaylistsPick } from '../components/PlaylistsButton';
 import { Button, Cover, ErrorState, ExplicitBadge, IconButton, Loading, OwnedBadge } from '../components/ui';
 import { startDownload } from '../lib/actions';
 import { useHubEvent } from '../lib/events';
@@ -18,7 +18,7 @@ export function AlbumPage({ refId }: { refId: string }) {
   const res = useAsync((s) => api.album(refId, s, rev > 0), [refId, rev]);
   const [dlBusy, setDlBusy] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [plBusy, setPlBusy] = useState(false);
+
   const [starBusy, setStarBusy] = useState(false);
   const [starred, setStarred] = useState(false);
   const reloadTimer = useRef<number | undefined>(undefined);
@@ -84,40 +84,30 @@ export function AlbumPage({ refId }: { refId: string }) {
     if (r) markDownloading(new Set(missing.map((t) => t.ref)));
   };
 
-  const addToPlaylist = async (pick: PlaylistPick) => {
-    setPlBusy(true);
-    try {
-      let playlistId = pick.kind === 'existing' ? pick.playlist.id : null;
-      const name = pick.kind === 'existing' ? pick.playlist.name : pick.name;
-      if (missing.length) {
-        const r = await attempt(() =>
-          api.download({ album_ref: album.ref, playlist_id: playlistId, new_playlist_name: playlistId ? null : name }),
-        );
-        if (!r) return;
-        playlistId = playlistId ?? r.playlist_id ?? null;
-        markDownloading(new Set(missing.map((t) => t.ref)));
-      }
-      if (!playlistId) {
-        const p = await attempt(() => api.createPlaylist(name));
-        if (!p) return;
-        playlistId = p.id;
-      }
-      if (owned.length) {
-        const song_ids = owned.map((t) => t.nd_song_id).filter((x): x is string => !!x);
-        const library_track_ids = owned.filter((t) => !t.nd_song_id && t.library_track_id).map((t) => t.library_track_id as number);
-        const pid = playlistId;
-        const ok = await attempt(() => api.addToPlaylist(pid, { song_ids, library_track_ids }));
+  /** The album into the chosen playlists: the tracks the library has at once, the rest as they are downloaded. */
+  const addToPlaylists = async (lists: { id: string; name: string }[]) => {
+    setPickerOpen(false);
+    if (!lists.length) return;
+    const ids = lists.map((p) => p.id);
+    const names = lists.map((p) => `«${p.name}»`).join(', ');
+    if (missing.length) {
+      const r = await attempt(() => api.download({ album_ref: album.ref, playlist_ids: ids }));
+      if (!r) return;
+      markDownloading(new Set(missing.map((t) => t.ref)));
+    }
+    if (owned.length) {
+      const song_ids = owned.map((t) => t.nd_song_id).filter((x): x is string => !!x);
+      const library_track_ids = owned.filter((t) => !t.nd_song_id && t.library_track_id).map((t) => t.library_track_id as number);
+      for (const id of ids) {
+        const ok = await attempt(() => api.addToPlaylist(id, { song_ids, library_track_ids }));
         if (!ok) return;
       }
-      setPickerOpen(false);
-      toast(
-        missing.length ? `«${name}»: ${owned.length} добавлено, ${missing.length} появятся после скачивания` : `Добавлено в «${name}»: ${tracksWord(owned.length)}`,
-        'success',
-        missing.length ? { label: 'Загрузки', to: '/downloads' } : undefined,
-      );
-    } finally {
-      setPlBusy(false);
     }
+    toast(
+      missing.length ? `${names}: ${owned.length} добавлено, ${missing.length} появятся после скачивания` : `Добавлено в ${names}: ${tracksWord(owned.length)}`,
+      'success',
+      missing.length ? { label: 'Загрузки', to: '/downloads' } : undefined,
+    );
   };
 
   const star = async () => {
@@ -194,7 +184,15 @@ export function AlbumPage({ refId }: { refId: string }) {
 
       {album.release_date && <p className="px-4 pb-2 pt-4 text-xs text-dim">Дата выхода: {new Date(album.release_date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}</p>}
 
-      <PlaylistPicker open={pickerOpen} onClose={() => setPickerOpen(false)} onPick={addToPlaylist} busy={plBusy} defaultName={album.title} />
+      {pickerOpen && (
+        <PlaylistsPick
+          title={`«${album.title}» — в плейлисты`}
+          note={missing.length ? `В библиотеке ${owned.length} из ${tracks.length}: остальные скачаются и появятся в выбранных плейлистах.` : undefined}
+          picked={[]}
+          onClose={() => setPickerOpen(false)}
+          onDone={(lists) => void addToPlaylists(lists)}
+        />
+      )}
     </div>
   );
 }

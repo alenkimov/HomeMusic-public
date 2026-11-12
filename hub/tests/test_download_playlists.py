@@ -178,3 +178,31 @@ async def test_delayed_insertion_preserves_a_large_playlist_in_one_request(playl
     await sync()
     assert state["songs"] == ["existing", *(f"song{i}" for i in ids), *tail]
     assert state["writes"] == 2
+
+
+async def test_a_download_goes_into_every_playlist_asked_for(playlist_env):
+    """«В плейлисты» of a catalog track ticks several at once; a track that is being downloaded already is not
+    downloaded again, but the playlists asked for now get it too."""
+    from app.api.downloads import create_batch
+    from app.api.schemas import DownloadIn, DownloadTrackIn
+
+    user_id, _ = playlist_env
+    async with db.session_scope() as s:
+        user = await s.get(User, user_id)
+        out = await create_batch(s, user, DownloadIn(
+            items=[DownloadTrackIn(artist="Кино", title="Пачка сигарет", catalog_ref="dz:5")],
+            playlist_id="a", playlist_ids=["b", "a"]), origin="hub")
+        assert out.playlist_id == "a" and out.queued == 1
+    async with db.session_scope() as s:
+        adds = (await s.execute(select(PendingPlaylistAdd))).scalars().all()
+        assert sorted(x.playlist_id for x in adds) == ["a", "b"]
+        assert len({x.download_item_id for x in adds}) == 1
+
+    async with db.session_scope() as s:
+        user = await s.get(User, user_id)
+        out = await create_batch(s, user, DownloadIn(track_refs=["dz:5"], playlist_ids=["b", "c"]), origin="hub")
+        assert out.queued == 1 and not out.expanding
+    async with db.session_scope() as s:
+        adds = (await s.execute(select(PendingPlaylistAdd))).scalars().all()
+        assert sorted(x.playlist_id for x in adds) == ["a", "b", "c"]
+        assert len((await s.execute(select(DownloadItem))).scalars().all()) == 1

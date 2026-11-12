@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { api } from '../api/client';
 import { setDisliked, useDisliked, type DislikeTarget } from '../lib/dislikes';
 import { STANDALONE } from '../lib/embedded';
 import { addToQueue, next, playNext, stopListening, useListen, type ListenTrack } from '../lib/listen';
@@ -8,10 +7,9 @@ import { canPlayAll } from '../lib/player';
 import { enc, navigate } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
 import { openTagsSheet } from '../lib/tags';
-import { attempt } from '../lib/ui';
 import { artistSeed, canWave, startWave, trackSeed } from '../lib/wave';
 import { Icon, type IconName } from './Icon';
-import { PlaylistPicker, type PlaylistPick } from './pickers';
+import { TrackPlaylists } from './PlaylistsButton';
 import { IconButton, Sheet, cx } from './ui';
 
 export interface MenuTrack {
@@ -51,34 +49,10 @@ export function TrackMenuButton({ track, extra, className, inPlayer, lean }: { t
   );
 }
 
-/** Library songs go into the playlist at once; a catalog track is downloaded into it (it appears once imported). */
-export async function addToPlaylist(track: MenuTrack, pick: PlaylistPick): Promise<boolean> {
-  const name = pick.kind === 'existing' ? pick.playlist.name : pick.name;
-  if (track.nd_song_id) {
-    const r = await attempt(async () => {
-      const id = pick.kind === 'existing' ? pick.playlist.id : (await api.createPlaylist(pick.name)).id;
-      return api.addToPlaylist(id, { song_ids: [track.nd_song_id as string] });
-    }, `Добавлено в «${name}»`);
-    return !!r;
-  }
-  if (!track.ref) return false;
-  const r = await attempt(
-    () =>
-      api.download({
-        track_refs: [track.ref as string],
-        playlist_id: pick.kind === 'existing' ? pick.playlist.id : null,
-        new_playlist_name: pick.kind === 'new' ? pick.name : null,
-      }),
-    `Скачиваем — трек появится в «${name}»`,
-  );
-  return !!r;
-}
-
 /** `inPlayer`: opened from a player (the mini player, `/player` and its queue): a wave started here is the player's.
  * `lean`: the playlists and the share have buttons of their own beside this menu (the player) — not repeated here. */
 function TrackMenu({ track, extra, inPlayer, lean, onClose }: { track: MenuTrack; extra?: MenuExtra[]; inPlayer?: boolean; lean?: boolean; onClose: () => void }) {
   const [picking, setPicking] = useState(false);
-  const [busy, setBusy] = useState(false);
   const trackWave = trackSeed(track);
   const artistWave = artistSeed(track);
   const target: DislikeTarget = { ref: track.ref, nd_song_id: track.nd_song_id, artist: track.artist, title: track.title };
@@ -103,20 +77,7 @@ function TrackMenu({ track, extra, inPlayer, lean, onClose }: { track: MenuTrack
     });
   };
 
-  if (picking)
-    return (
-      <PlaylistPicker
-        open
-        busy={busy}
-        onClose={onClose}
-        onPick={async (pick) => {
-          setBusy(true);
-          const ok = await addToPlaylist(track, pick);
-          setBusy(false);
-          if (ok) onClose();
-        }}
-      />
-    );
+  if (picking) return <TrackPlaylists track={track} onClose={onClose} />;
 
   return (
     <Sheet open onClose={onClose} title={`${track.artist} — ${track.title}`}>

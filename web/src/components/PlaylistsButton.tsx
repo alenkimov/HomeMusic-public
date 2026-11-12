@@ -48,6 +48,43 @@ export function PlaylistsButton({ songId, title, size = 18, className }: { songI
   );
 }
 
+/** «В плейлист» of one track, wherever it is asked for (the ⋯ menu, a swipe of a row). A library song is ticked into
+ * and out of playlists at once; a catalog track is downloaded and goes into the chosen ones as it arrives. */
+export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_song_id?: string | null; ref?: string | null }; onClose: () => void }) {
+  const songId = track.nd_song_id;
+  const [lists, setLists] = useState<PlaylistOfSongOut[] | null>(null);
+  useEffect(() => {
+    if (!songId) return;
+    let alive = true;
+    api.playlistsOfSong(songId)
+      .then((r) => alive && setLists(r))
+      .catch(() => {
+        if (alive) {
+          toast('Не удалось получить плейлисты', 'error');
+          onClose();
+        }
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [songId]);
+  if (songId) return <Picker songId={songId} title={track.title} lists={lists} onClose={onClose} onSaved={onClose} />;
+  return (
+    <PlaylistsPick
+      title={`«${track.title}» — в плейлисты`}
+      note="Трека ещё нет в библиотеке: он скачается и появится в выбранных плейлистах."
+      picked={[]}
+      onClose={onClose}
+      onDone={(list) => {
+        onClose();
+        if (!list.length || !track.ref) return;
+        void attempt(() => api.download({ track_refs: [track.ref as string], playlist_ids: list.map((p) => p.id) }), `Скачиваем — трек появится в: ${list.map((p) => `«${p.name}»`).join(', ')}`);
+      }}
+    />
+  );
+}
+
 function Picker({ songId, title, lists, onClose, onSaved }: { songId: string; title: string; lists: PlaylistOfSongOut[] | null; onClose: () => void; onSaved: (r: PlaylistOfSongOut[]) => void }) {
   // the order of the opening: a tick does not make a row jump
   const [rows, setRows] = useState<PlaylistOfSongOut[] | null>(lists);
@@ -269,9 +306,11 @@ export function BulkPlaylists({ songIds, onClose }: { songIds: string[]; onClose
   );
 }
 
-/** The same list of playlists, to choose where files will go once they are imported: nothing is changed here,
- * «Готово» gives the choice back. */
-export function PlaylistsPick({ title, picked, onClose, onDone }: { title: string; picked: { id: string; name: string }[]; onClose: () => void; onDone: (list: { id: string; name: string }[]) => void }) {
+/** The same list of playlists, to choose where tracks will go (files once they are imported, a catalog album as it
+ * is downloaded): nothing is changed here, «Готово» gives the choice back. `single`: one playlist only — a tick takes
+ * the place of the one before. `note`: a line above the list. */
+export function PlaylistsPick({ title, picked, onClose, onDone, single, note }: { title: string; picked: { id: string; name: string }[]; onClose: () => void; onDone: (list: { id: string; name: string }[]) => void; single?: boolean; note?: string }) {
+  const tick = (id: string, on: boolean) => setWant((w) => (single ? { [id]: on } : { ...w, [id]: on }));
   const [rows, setRows] = useState<{ id: string; name: string; song_count: number; cover_url?: string | null }[] | null>(null);
   const [want, setWant] = useState<Record<string, boolean>>(() => Object.fromEntries(picked.map((p) => [p.id, true])));
   const [name, setName] = useState('');
@@ -300,7 +339,7 @@ export function PlaylistsPick({ title, picked, onClose, onDone }: { title: strin
     if (!p) return;
     window.dispatchEvent(new Event('hm:playlists-changed'));
     setRows((list) => [p, ...(list ?? [])]);
-    setWant((w) => ({ ...w, [p.id]: true }));
+    tick(p.id, true);
     setName('');
   };
   const chosen = (rows ?? []).filter((p) => want[p.id]);
@@ -311,7 +350,7 @@ export function PlaylistsPick({ title, picked, onClose, onDone }: { title: strin
       title={title}
       footer={
         <div className="flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-xs text-muted">{chosen.length ? chosen.map((p) => p.name).join(', ') : 'Плейлисты не выбраны'}</span>
+          <span className="min-w-0 flex-1 truncate text-xs text-muted">{chosen.length ? chosen.map((p) => p.name).join(', ') : single ? 'Плейлист не выбран' : 'Плейлисты не выбраны'}</span>
           <Button onClick={onClose}>Отмена</Button>
           <Button variant="primary" disabled={!rows} onClick={() => onDone(chosen.map((p) => ({ id: p.id, name: p.name })))}>
             Готово
@@ -323,6 +362,7 @@ export function PlaylistsPick({ title, picked, onClose, onDone }: { title: strin
         <Loading />
       ) : (
         <div className="-mx-4 -my-3">
+          {note && <p className="px-4 pt-3 text-xs text-muted">{note}</p>}
           <form
             className="flex items-center gap-2 px-4 py-3"
             onSubmit={(e) => {
@@ -340,7 +380,7 @@ export function PlaylistsPick({ title, picked, onClose, onDone }: { title: strin
               const on = !!want[p.id];
               return (
                 <li key={p.id}>
-                  <button type="button" role="checkbox" aria-checked={on} onClick={() => setWant((w) => ({ ...w, [p.id]: !on }))} className="flex min-h-14 w-full items-center gap-3 px-4 py-1.5 text-left transition hover:bg-fg/5">
+                  <button type="button" role={single ? 'radio' : 'checkbox'} aria-checked={on} onClick={() => tick(p.id, !on)} className="flex min-h-14 w-full items-center gap-3 px-4 py-1.5 text-left transition hover:bg-fg/5">
                     <Cover src={p.cover_url ? `${p.cover_url}&size=96` : null} size={40} icon="playlist" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[15px]">{p.name}</span>

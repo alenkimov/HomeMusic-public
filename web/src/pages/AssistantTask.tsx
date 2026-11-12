@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { AssistantRowIn, AssistantRowOut, AssistantTaskOut, AssistantTargetIn, TrackOut } from '../api/types';
 import { Icon } from '../components/Icon';
-import { PlaylistPicker } from '../components/pickers';
+import { PlaylistsPick } from '../components/PlaylistsButton';
 import { Button, Checkbox, Cover, ErrorState, ExplicitBadge, Field, Loading, Notice, PageHeader, Radio, Spinner, cx } from '../components/ui';
 import { useHubEvent } from '../lib/events';
 import { fmtDuration, fmtWhen, inputKindLabel, todayRu, tracksWord } from '../lib/format';
@@ -296,21 +296,20 @@ function ConfirmCard({ task, onDone }: { task: AssistantTaskOut; onDone: (t: Ass
         </Button>
       </div>
 
-      <PlaylistPicker
-        open={picker}
-        onClose={() => setPicker(false)}
-        title="Выберите плейлист"
-        onPick={(p) => {
-          if (p.kind === 'existing') {
-            setExisting({ id: p.playlist.id, name: p.playlist.name });
+      {picker && (
+        <PlaylistsPick
+          single
+          title="Выберите плейлист"
+          picked={existing ? [existing] : []}
+          onClose={() => setPicker(false)}
+          onDone={(list) => {
+            setPicker(false);
+            if (!list.length) return;
+            setExisting(list[0]);
             setTargetKind('existing');
-          } else {
-            setName(p.name);
-            setTargetKind('new');
-          }
-          setPicker(false);
-        }}
-      />
+          }}
+        />
+      )}
     </div>
   );
 }

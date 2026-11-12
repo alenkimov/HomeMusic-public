@@ -18,9 +18,9 @@ import { LikeButton } from './LikeButton';
 import { openShare } from '../lib/shareTrack';
 import { useTags } from '../lib/tags';
 import { QueueButton } from './QueueButton';
-import { PlaylistPicker } from './pickers';
 import { SwipeRow } from './SwipeRow';
-import { TrackMenuButton, addToPlaylist, type MenuExtra, type MenuTrack } from './TrackMenu';
+import { TrackPlaylists } from './PlaylistsButton';
+import { TrackMenuButton, type MenuExtra, type MenuTrack } from './TrackMenu';
 import { Checkbox, Cover, ExplicitBadge, IconButton, OwnedBadge, Spinner, cx } from './ui';
 
 export function TrackStatus({
@@ -197,7 +197,7 @@ export function TrackRow({
   const desktop = useDesktop();
   const cols = useTrackColumns();
   const [picking, setPicking] = useState(false);
-  const [pickBusy, setPickBusy] = useState(false);
+
   const likeTarget = { targetType: 'track' as const, songId: track.owned ? track.nd_song_id : null, ref: track.ref, data: { ...track } };
   const liked = useLiked(likeTarget);
   const artistLine = track.artists?.length ? track.artists.join(', ') : track.artist;
@@ -458,19 +458,7 @@ export function TrackRow({
             </span>
           </div>
         </SwipeRow>
-        {picking && (
-          <PlaylistPicker
-            open
-            busy={pickBusy}
-            onClose={() => setPicking(false)}
-            onPick={async (pick) => {
-              setPickBusy(true);
-              const ok = await addToPlaylist(menuTrack, pick);
-              setPickBusy(false);
-              if (ok) setPicking(false);
-            }}
-          />
-        )}
+        {picking && <TrackPlaylists track={menuTrack} onClose={() => setPicking(false)} />}
       </div>
     );
   }

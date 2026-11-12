@@ -17,7 +17,7 @@ from app.events import bus
 from app.jobs.downloads import create_items, item_links, item_out, item_ref
 from app.jobs.queue import enqueue, notify
 from app.library.owned import ACTIVE_STATUSES, find_existing, quiet
-from app.models import DownloadBatch, DownloadItem, Job, User
+from app.models import DownloadBatch, DownloadItem, Job, PendingPlaylistAdd, User
 from app.providers.base import Candidate, TrackQuery
 from app.services import svc
 
@@ -38,10 +38,11 @@ async def resolve_playlist(user: User, playlist_id: str | None, new_name: str | 
 
 
 async def join_active(s: AsyncSession, user: User, refs: list[str], *, star: bool,
-                      favorite_event_id: str | None = None) -> set[str]:
+                      favorite_event_id: str | None = None, playlists: list[str] | None = None) -> set[str]:
     """Catalog tracks this user is downloading already: no second download. ♥ marks the download to star the song
     after the import; an explicit download makes a quiet one (♥ only, an import's) a visible download, and one an
-    import queued in the background goes first in the queue from then on. Returns the joined refs."""
+    import queued in the background goes first in the queue from then on. `playlists`: the song goes into them too
+    once it is in the library. Returns the joined refs."""
     if not refs:
         return set()
     items = (await s.execute(
@@ -55,6 +56,12 @@ async def join_active(s: AsyncSession, user: User, refs: list[str], *, star: boo
         if ref not in refs or ref in joined:
             continue
         joined.add(ref)
+        if playlists:
+            there = set((await s.execute(select(PendingPlaylistAdd.playlist_id).where(
+                PendingPlaylistAdd.download_item_id == item.id))).scalars())
+            for pid in playlists:
+                if pid not in there:
+                    s.add(PendingPlaylistAdd(playlist_id=pid, user_id=user.id, download_item_id=item.id))
         if star and favorite_event_id:
             qj.update(star=True, star_event_id=favorite_event_id, star_cancelled=False, star_failed=False)
         elif star and not qj.get("star"):
@@ -110,9 +117,13 @@ async def create_batch(
     # ♥ downloads stay out of playlists: the song is in «Любимое» anyway, and the app keeps a batch's playlist
     # on the phone
     playlist_id = None if body.star else await resolve_playlist(user, body.playlist_id, body.new_playlist_name)
+    # every playlist asked for: the first is the batch's own, the rest only get the songs
+    playlists = [] if body.star else list(dict.fromkeys(x for x in (playlist_id, *body.playlist_ids) if x))
+    playlist_id = playlists[0] if playlists else None
+    also = playlists[1:]
     track_refs = list(body.track_refs)
     joined = set() if body.force else await join_active(s, user, track_refs, star=body.star,
-                                                        favorite_event_id=body.favorite_event_id)
+                                                        favorite_event_id=body.favorite_event_id, playlists=playlists)
     track_refs = [r for r in track_refs if r not in joined]
     items = list(body.items)
     # a provider's file listened to in the player (Files tab of the search): the file itself, as if picked there
@@ -146,7 +157,8 @@ async def create_batch(
         if have and (it.candidate is None or have.source_url == it.candidate.page_url):
             owned += 1
         entries.append((q, meta, it.candidate))
-    queued = await create_items(s, batch, entries, force=body.force, star=body.star, favorite_events=favorite_events)
+    queued = await create_items(s, batch, entries, force=body.force, star=body.star, favorite_events=favorite_events,
+                                also_playlists=also)
 
     expanding = bool(track_refs or body.album_ref or body.artist_ref)
     if expanding:
@@ -168,6 +180,7 @@ async def create_batch(
             "star": body.star,
             "position": len(entries),
             "favorite_events": favorite_events,
+            "also_playlists": also,
         })
     return DownloadBatchOut(batch_id=batch.id, queued=queued + len(joined), already_owned=owned, playlist_id=playlist_id,
                             expanding=expanding)
