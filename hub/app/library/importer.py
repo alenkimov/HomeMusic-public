@@ -205,6 +205,11 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec) -> Track:
             known.year, known.genre = album.year or known.year, spec.genre or album.genre or known.genre
             known.duration_s = spec.duration_s or known.duration_s
             known.explicit = spec.explicit if spec.explicit is not None else known.explicit
+            if known.title == known.ref or not known.artist:
+                # met by its ref alone (a like that said nothing of the song): the file says what the song is
+                known.artist, known.title = spec.artist, spec.title
+                known.fingerprint = fingerprint(spec.artist, spec.title)
+                known.isrc = known.isrc or (spec.isrc.upper() if spec.isrc else None)
         file = TrackFile(
             uid=str(uuid.uuid4()),
             path="",

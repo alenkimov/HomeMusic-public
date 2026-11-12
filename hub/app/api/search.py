@@ -19,7 +19,8 @@ from app.catalog.models import CatalogTrack, SearchResults
 from app.config import get_settings
 from app.db import get_session
 from app.events import bus
-from app.library.owned import annotate_albums, annotate_tracks
+from app.library.owned import HAS_FILE, annotate_albums, annotate_tracks
+from app.library.tracks import current_files
 from app.matching.normalize import has_cyrillic, normalize_title
 from app.matching.select import rank_candidates
 from app.models import SearchHistory, Track, User, utcnow
@@ -78,11 +79,13 @@ async def clear_search_history(user: User = Depends(current_user),
 
 
 async def search_library(s: AsyncSession, q: str, limit: int = 20) -> list[Track]:
+    """The library's own songs that match: tracks that have a file (one the Hub only knows of — in a playlist,
+    liked, not downloaded — is found in the catalog, like any track not owned)."""
     like = f"%{q}%"
     rows = (
         await s.execute(
             select(Track)
-            .where(or_(Track.title.ilike(like), Track.artist.ilike(like), Track.album.ilike(like)))
+            .where(HAS_FILE, or_(Track.title.ilike(like), Track.artist.ilike(like), Track.album.ilike(like)))
             .limit(limit)
         )
     ).scalars().all()
@@ -93,7 +96,7 @@ async def search_library(s: AsyncSession, q: str, limit: int = 20) -> list[Track
     if not nq:
         return []
     out = []
-    for t in (await s.execute(select(Track))).scalars():
+    for t in (await s.execute(select(Track).where(HAS_FILE))).scalars():
         hay = normalize_title(f"{t.artist} {t.title} {t.album or ''}").text
         if all(w in hay for w in nq.split()):
             out.append(t)
@@ -106,7 +109,9 @@ async def search_library(s: AsyncSession, q: str, limit: int = 20) -> list[Track
 async def search(q: str = Query(min_length=1), user: User = Depends(current_user),
                  s: AsyncSession = Depends(get_session, scope="function")):
     q = q.strip()
-    out = SearchOut(library=[track_out(t) for t in await search_library(s, q)])
+    owned = await search_library(s, q)
+    files = await current_files(s, [t.id for t in owned])
+    out = SearchOut(library=[track_out(t, files.get(t.id)) for t in owned])
     res: SearchResults | None = None
     if svc.deezer is not None:
         try:

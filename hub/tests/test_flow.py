@@ -709,3 +709,21 @@ async def test_a_track_navidrome_never_finds_stops_the_scans_after_a_few_passes(
         scans = (await s.execute(select(Job.status, func.count()).where(Job.kind == "nd_scan").group_by(Job.status))).all()
     assert dict(scans) == {"done": 1 + SCAN_PASSES}
     assert env["state"]["scans"] == 1 + SCAN_PASSES
+
+
+async def test_search_finds_what_the_library_has(env):
+    """The search lists the library's own songs that match — with what their file is; a track the Hub only knows of
+    (liked, not downloaded) is not among them."""
+    c = env["client"]
+    assert (await c.get("/api/search", params={"q": "Группа крови"})).json()["library"] == []
+    await like(c, "dz:100")  # the Hub knows the track now, and has no file of it
+    r = await c.get("/api/search", params={"q": "Группа крови"})
+    assert r.status_code == 200 and r.json()["library"] == [], r.text
+
+    await download_one(c, {"artist": "Кино", "title": "Группа крови"})
+    for q in ("Группа крови", "группа КРОВИ", "кино"):  # Cyrillic of another case goes the slow way round
+        r = await c.get("/api/search", params={"q": q})
+        assert r.status_code == 200, r.text
+        (own,) = r.json()["library"]
+        assert (own["title"], own["nd_song_id"], own["source"]) == ("Группа крови", "nd0", "hitmoz")
+        assert own["path"].endswith("1-01 - Группа крови.mp3") and own["bitrate_kbps"]
