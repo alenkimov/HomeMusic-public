@@ -192,7 +192,7 @@ export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_
           <Cover src={p.cover_url ? `${p.cover_url}&size=96` : null} size={40} icon="playlist" />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[15px]">{p.name}</span>
-            <span className="block text-xs text-muted">{tracksWord(p.song_count)}</span>
+            <span className="block text-xs text-muted">{tracksWord(p.song_count + (p.pending_count ?? 0))}</span>
           </span>
           <Tick mark={on ? 'all' : 'none'} />
         </button>
@@ -335,7 +335,7 @@ export function BulkPlaylists({ tracks, onClose }: { tracks: PickedTrack[]; onCl
                     <Cover src={p.cover_url ? `${p.cover_url}&size=96` : null} size={40} icon="playlist" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[15px]">{p.name}</span>
-                      <span className={cx('block text-xs', at !== was(p) ? 'text-accent' : 'text-muted')}>{sub(at, was(p), p.count, tracksWord(p.song_count))}</span>
+                      <span className={cx('block text-xs', at !== was(p) ? 'text-accent' : 'text-muted')}>{sub(at, was(p), p.count, tracksWord(p.song_count + (p.pending_count ?? 0)))}</span>
                     </span>
                     <Tick mark={at} />
                   </button>
@@ -355,7 +355,7 @@ export function BulkPlaylists({ tracks, onClose }: { tracks: PickedTrack[]; onCl
  * row, ticked or not — its tick comes back as the second argument. `single`: one playlist only — a tick takes the
  * place of the one before. `note`: a line above the list. */
 export function PlaylistsPick({ title, picked, onClose, onDone, single, note, liked }: { title: string; picked: { id: string; name: string }[]; onClose: () => void; onDone: (list: { id: string; name: string }[], liked: boolean) => void; single?: boolean; note?: string; liked?: boolean }) {
-  const [rows, setRows] = useState<{ id: string; name: string; song_count: number; cover_url?: string | null }[] | null>(null);
+  const [rows, setRows] = useState<{ id: string; name: string; song_count: number; pending_count?: number; cover_url?: string | null }[] | null>(null);
   const [want, setWant] = useState<Record<string, boolean>>(() => Object.fromEntries(picked.map((p) => [p.id, true])));
   const [like, setLike] = useState(!!liked);
   const [busy, setBusy] = useState(false);
@@ -409,7 +409,7 @@ export function PlaylistsPick({ title, picked, onClose, onDone, single, note, li
                     <Cover src={p.cover_url ? `${p.cover_url}&size=96` : null} size={40} icon="playlist" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[15px]">{p.name}</span>
-                      <span className="block text-xs text-muted">{tracksWord(p.song_count)}</span>
+                      <span className="block text-xs text-muted">{tracksWord(p.song_count + (p.pending_count ?? 0))}</span>
                     </span>
                     <Tick mark={on ? 'all' : 'none'} />
                   </button>
