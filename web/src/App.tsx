@@ -44,6 +44,7 @@ import { PlayerPage } from './pages/Player';
 import { PlaylistsPage } from './pages/Playlists';
 import { SearchPage, searchTab } from './pages/Search';
 import { SharePage } from './pages/Share';
+import { StatsPage } from './pages/Stats';
 import { UploadPage } from './pages/Upload';
 
 type RouteDef = [pattern: string, tab: Tab | null, render: (p: Record<string, string>, r: Route) => ReactNode];
@@ -58,6 +59,7 @@ const STANDALONE_ROUTES: RouteDef[] = [
   ['/playlist/:id', 'library', (p) => <PlaylistPage key={p.id} id={p.id} />],
   ['/selection/:id', 'library', (p) => <SelectionPage key={p.id} id={p.id} />],
   ['/tags', 'library', () => <TagsPage />],
+  ['/stats', 'more', () => <StatsPage />],
   ['/lib/albums', 'library', () => <NdAlbumsPage />],
   ['/lib/album/:id', 'library', (p) => <NdAlbumPage key={p.id} id={p.id} />],
   ['/lib/artist/:id', 'library', (p) => <NdArtistPage key={p.id} id={p.id} />],

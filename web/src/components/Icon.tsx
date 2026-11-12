@@ -56,6 +56,7 @@ const PATHS = {
   tag: 'M3 11.5V5a2 2 0 0 1 2-2h6.5l9 9a1.5 1.5 0 0 1 0 2.1l-6.4 6.4a1.5 1.5 0 0 1-2.1 0l-9-9ZM7.5 7.5h.01',
   share: 'M12 15V3m0 0L8 7m4-4 4 4M8 10H6.5A1.5 1.5 0 0 0 5 11.5v8A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-8a1.5 1.5 0 0 0-1.5-1.5H16',
   transfer: 'M4 8h13m0 0-4-4m4 4-4 4M20 16H7m0 0 4-4m-4 4 4 4',
+  chart: 'M5 20v-8M12 20V4M19 20v-11',
 } as const;
 
 export type IconName = keyof typeof PATHS;

@@ -778,6 +778,29 @@ class TagSelection(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class ListenHistory(Base):
+    """A listen brought in from another service's history («Статистика», app/stats.py): Spotify's «Extended streaming
+    history». It is only counted — mixes and the taste profile never read it. `key` names the track: "sp:<id>" or
+    "t:<artist|title>"; which library track it is, is told anew every time (a track downloaded later is found)."""
+
+    __tablename__ = "listen_history"
+    __table_args__ = (
+        UniqueConstraint("user_id", "ts", "key", name="uq_listen_history"),
+        Index("ix_listen_history_user_ts", "user_id", "ts"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    ts: Mapped[datetime] = mapped_column(DateTime)  # UTC, when the listen ended
+    ms: Mapped[int] = mapped_column(Integer)  # listened
+    key: Mapped[str] = mapped_column(String(200))
+    spotify_id: Mapped[str | None] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(512))
+    artist: Mapped[str] = mapped_column(String(512))
+    album: Mapped[str | None] = mapped_column(String(512))
+    source: Mapped[str] = mapped_column(String(16), default="spotify")
+
+
 class AppSetting(Base):
     """A setting of the whole server that the admin changes in the app (the order of lyrics sources)."""
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api/client';
 import type { NdSongOut } from '../api/types';
 import { useHubEvent } from '../lib/events';
@@ -65,15 +65,23 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
     <aside className="fixed bottom-(--tabbar-h) left-0 top-0 z-30 flex w-(--side-w) flex-col border-r border-line bg-surface/60" aria-label="Разделы и медиатека">
       <nav className="space-y-0.5 p-2" aria-label="Разделы">
         {NAV.map((t) => {
-          const on = shown === t.id;
+          const on = shown === t.id && !(t.id === 'more' && at('/stats'));
           return (
-            <Link key={t.id} to={on ? t.to : (last[t.id] ?? t.to)} aria-current={on ? 'page' : undefined} className={cx(item, on ? 'bg-fg/10 font-semibold text-fg' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
+            <Fragment key={t.id}>
+            <Link to={on ? t.to : (last[t.id] ?? t.to)} aria-current={on ? 'page' : undefined} className={cx(item, on ? 'bg-fg/10 font-semibold text-fg' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
               <Icon name={t.icon} size={20} stroke={on ? 2.4 : 2} />
               <span className="flex-1">{t.label}</span>
               {t.id === 'downloads' && activeDownloads > 0 && (
                 <span className="min-w-5 rounded-full bg-accent px-1.5 text-center text-[11px] font-bold leading-5 text-on-accent">{activeDownloads > 99 ? '99+' : activeDownloads}</span>
               )}
             </Link>
+            {t.id === 'downloads' && (
+              <Link to="/stats" aria-current={at('/stats') ? 'page' : undefined} className={cx(item, at('/stats') ? 'bg-fg/10 font-semibold text-fg' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
+                <Icon name="chart" size={20} stroke={at('/stats') ? 2.4 : 2} />
+                <span className="flex-1">Статистика</span>
+              </Link>
+            )}
+            </Fragment>
           );
         })}
       </nav>

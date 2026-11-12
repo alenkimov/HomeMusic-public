@@ -9,6 +9,7 @@ import { Link, enc, navigate } from '../lib/router';
 import { beginDragAction, dragActionOver, useDragMark } from '../lib/dragAction';
 import { beginDragSelect, dragSelectMoved, dragSelectOver, selectRange, toggleSelected, useSelected, useSelectionCount, type SelTrack } from '../lib/selection';
 import { toggleLike, useLiked } from '../lib/stars';
+import { usePlayCounts } from '../lib/stats';
 import { TRACK_COLUMN_LABELS, setTrackColumn, trackGrid, useTrackColumns, type TrackColumns } from '../lib/trackColumns';
 import { toast } from '../lib/ui';
 import { Icon } from './Icon';
@@ -108,6 +109,7 @@ export function TrackRow({
   showCover = true,
   showAlbum = false,
   showAdded = false,
+  showPlays = false,
   showTags = false,
   link = true,
   onPlay,
@@ -121,6 +123,8 @@ export function TrackRow({
   showAlbum?: boolean;
   /** the «Дата добавления» column of a playlist (`added_at`) */
   showAdded?: boolean;
+  /** the «Прослушивания» column: how many times the user listened to the track */
+  showPlays?: boolean;
   /** the «Язык», «Жанр» and «Теги» columns of a library list (`lib/tags.ts`) */
   showTags?: boolean;
   link?: boolean;
@@ -207,6 +211,7 @@ export function TrackRow({
   // picking several rows to act on together (`lib/selection.ts`)
   const selected = useSelected(track.ref);
   const tagState = useTags();
+  const playCounts = usePlayCounts(showPlays);
   const dragMark = useDragMark(track.ref); // this row is among the rows a button is being dragged over
   const selecting = useSelectionCount() > 0;
   const asSel = (t: TrackOut): SelTrack => ({ ref: t.ref, title: t.title, nd_song_id: t.owned ? t.nd_song_id : null, listen: listenTrack(t) });
@@ -274,6 +279,7 @@ export function TrackRow({
     if (desktop) {
       const album = showAlbum && cols.album;
       const added = showAdded && cols.added;
+      const plays = showPlays && cols.plays;
       const tagCols = showTags ? { lang: cols.tagLang, genre: cols.tagGenre, own: cols.tagOwn } : null;
       const myTags = showTags && track.nd_song_id ? (tagState.map[track.nd_song_id] ?? []).map((id) => tagState.byId.get(id)).filter((t) => !!t) : [];
       const tagCell = (group: 'lang' | 'genre' | 'own', max: number) => {
@@ -308,7 +314,7 @@ export function TrackRow({
           data-track-row
           aria-selected={selected}
           className={cx('group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors', selected ? 'bg-accent/15 hover:bg-accent/20' : dragMark ? 'bg-accent/10' : 'hover:bg-fg/5 focus-within:bg-fg/5')}
-          style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration, added, tagCols) }}
+          style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration, added, tagCols, plays) }}
         >
           {/* the number picks the row; held and dragged over other rows, it picks them all. ▶ is on the cover */}
           {rowNumber !== undefined && (
@@ -394,6 +400,7 @@ export function TrackRow({
           {tagCols?.genre && tagCell('genre', 1)}
           {tagCols?.own && tagCell('own', 2)}
           {added && <span className="truncate text-sm text-muted" title={track.added_at ? parseTime(track.added_at).toLocaleString('ru-RU') : undefined}>{fmtAdded(track.added_at)}</span>}
+          {plays && <span className="truncate text-sm tabular-nums text-muted">{(track.nd_song_id && playCounts[track.nd_song_id]) || <span className="text-dim">—</span>}</span>}
           <div data-row-actions className="flex h-11 items-center justify-end">
             {track.owned || dl === 'done' ? null : downloading ? (
               <span className="flex h-11 w-9 items-center justify-center text-info" title="Скачивается"><Spinner size={14} /></span>
@@ -554,11 +561,12 @@ export function ReleaseCard({ album, showArtist = false, onDownload, busy }: { a
 /** The head of a track list on a computer: the names of the columns over `TrackRow`s (the same grid), and the menu
  * that switches the optional ones (a click on ⋯ or a right click on the head). `numbered`, `album` — as the rows
  * of this list are drawn (`number`, `showAlbum`). On a phone and inside the app there is no table and no head. */
-export type AddedSort = 'new' | 'old' | null;
+export type ListSort = 'new' | 'old' | 'most' | 'least' | null;
 
 /** `added`: the list has «Дата добавления»; a click on that column sorts by it — the newest first, then the oldest
- * first, then the list's own order again (`sort`, `onSort`). */
-export function TrackTableHeader({ numbered = false, album = false, added = false, tags = false, sort = null, onSort }: { numbered?: boolean; album?: boolean; added?: boolean; tags?: boolean; sort?: AddedSort; onSort?: (next: AddedSort) => void }) {
+ * first, then the list's own order again (`sort`, `onSort`). `plays`: the «Прослушивания» column, sorted the same
+ * way — the most listened to first, then the least, then the list's own order. */
+export function TrackTableHeader({ numbered = false, album = false, added = false, tags = false, plays = false, sort = null, onSort }: { numbered?: boolean; album?: boolean; added?: boolean; tags?: boolean; plays?: boolean; sort?: ListSort; onSort?: (next: ListSort) => void }) {
   const desktop = useDesktop();
   const cols = useTrackColumns();
   const [open, setOpen] = useState(false);
@@ -576,7 +584,7 @@ export function TrackTableHeader({ numbered = false, album = false, added = fals
     };
   }, [open]);
   if (!desktop) return null;
-  const offered = (Object.keys(TRACK_COLUMN_LABELS) as (keyof TrackColumns)[]).filter((c) => (c !== 'album' || album) && (c !== 'added' || added) && (!c.startsWith('tag') || tags));
+  const offered = (Object.keys(TRACK_COLUMN_LABELS) as (keyof TrackColumns)[]).filter((c) => (c !== 'album' || album) && (c !== 'added' || added) && (c !== 'plays' || plays) && (!c.startsWith('tag') || tags));
   return (
     <div
       ref={ref}
@@ -585,7 +593,7 @@ export function TrackTableHeader({ numbered = false, album = false, added = fals
         setOpen(true);
       }}
       className="group/head relative mx-2 mb-1 grid h-9 items-center gap-3 border-b border-line/60 px-2 text-xs text-dim"
-      style={{ gridTemplateColumns: trackGrid(numbered, album && cols.album, cols.duration, added && cols.added, tags ? { lang: cols.tagLang, genre: cols.tagGenre, own: cols.tagOwn } : null) }}
+      style={{ gridTemplateColumns: trackGrid(numbered, album && cols.album, cols.duration, added && cols.added, tags ? { lang: cols.tagLang, genre: cols.tagGenre, own: cols.tagOwn } : null, plays && cols.plays) }}
     >
       {numbered && <span className="text-center">#</span>}
       <span>Название</span>
@@ -596,12 +604,23 @@ export function TrackTableHeader({ numbered = false, album = false, added = fals
       {added && cols.added && (
         <button
           type="button"
-          onClick={() => onSort?.(sort === null ? 'new' : sort === 'new' ? 'old' : null)}
+          onClick={() => onSort?.(sort === 'new' ? 'old' : sort === 'old' ? null : 'new')}
           title={sort === 'new' ? 'Сначала новые — нажмите: сначала старые' : sort === 'old' ? 'Сначала старые — нажмите: порядок плейлиста' : 'Сортировать: сначала новые'}
-          className={cx('flex items-center gap-1.5 text-left transition hover:text-fg', sort && 'text-fg')}
+          className={cx('flex items-center gap-1.5 text-left transition hover:text-fg', (sort === 'new' || sort === 'old') && 'text-fg')}
         >
           Дата добавления
-          {sort && <span className="text-[10px] text-accent" aria-hidden="true">{sort === 'new' ? '▼' : '▲'}</span>}
+          {(sort === 'new' || sort === 'old') && <span className="text-[10px] text-accent" aria-hidden="true">{sort === 'new' ? '▼' : '▲'}</span>}
+        </button>
+      )}
+      {plays && cols.plays && (
+        <button
+          type="button"
+          onClick={() => onSort?.(sort === 'most' ? 'least' : sort === 'least' ? null : 'most')}
+          title={sort === 'most' ? 'Сначала самые слушаемые — нажмите: сначала редкие' : sort === 'least' ? 'Сначала редкие — нажмите: обычный порядок' : 'Сколько раз вы слушали трек (от 30 секунд). Нажмите, чтобы отсортировать'}
+          className={cx('flex items-center gap-1.5 text-left transition hover:text-fg', (sort === 'most' || sort === 'least') && 'text-fg')}
+        >
+          Прослушивания
+          {(sort === 'most' || sort === 'least') && <span className="text-[10px] text-accent" aria-hidden="true">{sort === 'most' ? '▼' : '▲'}</span>}
         </button>
       )}
       <span />

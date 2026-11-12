@@ -1,4 +1,6 @@
 import type { LyricsCandidate, LyricsOut, LyricsSettings, LyricsTranslation, LyricsTranslators } from '../lib/lyrics';
+import type { StatsBy, StatsImportOut, StatsOut, StatsPeriod } from '../lib/stats';
+import { timeZone } from '../lib/stats';
 import type { Tag, TagSelection, TagsData } from '../lib/tags';
 import type { TelegramChat, TelegramStatus } from '../lib/telegram';
 import type {
@@ -401,6 +403,15 @@ export const api = {
   tagSelectionSave: (id: number, body: Omit<TagSelection, 'id'>) => request<TagSelection>('PUT', `/api/tags/selections/${id}`, { json: body }),
   tagSelectionDelete: (id: number) => request<OkOut>('DELETE', `/api/tags/selections/${id}`),
   ndSongs: (signal?: AbortSignal) => request<NdSongOut[]>('GET', '/api/nd/songs', { signal }),
+  // «Статистика» (lib/stats.ts)
+  stats: (q: { period: StatsPeriod; by: StatsBy; limit: number }, signal?: AbortSignal) => request<StatsOut>('GET', withQuery('/api/stats', { ...q, tz: timeZone() }), { signal }),
+  statsCounts: () => request<Record<string, number>>('GET', '/api/stats/counts'),
+  statsImport: (files: File[], onProgress?: (f: number) => void) => {
+    const form = new FormData();
+    for (const f of files) form.append('files', f, f.name);
+    return uploadWithProgress<StatsImportOut>('/api/stats/import', form, onProgress);
+  },
+  statsForget: () => request<OkOut>('DELETE', '/api/stats/import'),
   // a track on music services («Поделиться ссылкой»)
   links: (q: { nd_song_id?: string | null; ref?: string | null }) =>
     request<{ links: { service: string; title: string; url: string }[]; universal?: string | null }>(

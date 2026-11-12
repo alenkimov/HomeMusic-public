@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { NdAlbumOut, NdArtistOut, NdSongOut, PlaylistOut } from '../api/types';
-import { playAll, TrackRow, TrackTableHeader, type AddedSort } from '../components/catalog';
+import { playAll, TrackRow, TrackTableHeader, type ListSort } from '../components/catalog';
 import { Icon } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
 import { useListSearch, type Found } from '../components/ListSearch';
 import { SaveSelection, TagFilterBar } from '../components/Tags';
 import { Button, Cover, Empty, ErrorState, Field, IconButton, PageHeader, SectionTitle, SkeletonRows, Sheet, Spinner, cx } from '../components/ui';
 import { fmtLength, tracksWord } from '../lib/format';
+import { playCount, usePlayCounts } from '../lib/stats';
 import { useDesktop } from '../lib/desktop';
 import { useHubEvent } from '../lib/events';
 import { setShuffle, useListen } from '../lib/listen';
@@ -136,8 +137,9 @@ export function ListActions({ tracks, context, children }: { tracks: readonly Nd
  * number shown, and what `extra` gets (a playlist removes a track by its place). */
 /** The rows of a list by «Дата добавления» (`sort`: null — the list's own order); each keeps its place in the list.
  * Tracks of one moment (an import) keep the list's order, undated ones go last. */
-function byAdded<T extends { t: NdSongOut; i: number }>(list: T[], sort: AddedSort): T[] {
+function byAdded<T extends { t: NdSongOut; i: number }>(list: T[], sort: ListSort): T[] {
   if (!sort) return list;
+  if (sort === 'most' || sort === 'least') return [...list].sort((a, b) => (playCount(b.t.nd_song_id) - playCount(a.t.nd_song_id)) * (sort === 'most' ? 1 : -1) || a.i - b.i);
   const at = (t: NdSongOut) => (t.added_at ? Date.parse(/T[\d:.]+$/.test(t.added_at) ? t.added_at + 'Z' : t.added_at) : NaN);
   return [...list].sort((a, b) => {
     const x = at(a.t);
@@ -161,23 +163,24 @@ function useShown(tracks: readonly NdSongOut[], found: Found[] | null, filter: T
 }
 
 /** The tracks as the page shows them: what ▶ of the page plays. */
-const inOrder = (tracks: readonly NdSongOut[], sort: AddedSort): readonly NdSongOut[] => (sort ? byAdded(tracks.map((t, i) => ({ t, i })), sort).map((r) => r.t) : tracks);
+const inOrder = (tracks: readonly NdSongOut[], sort: ListSort): readonly NdSongOut[] => (sort ? byAdded(tracks.map((t, i) => ({ t, i })), sort).map((r) => r.t) : tracks);
 
-function SongList({ tracks, extra, found, sort, onSort }: { tracks: readonly NdSongOut[]; extra?: (t: NdSongOut, i: number) => Parameters<typeof TrackRow>[0]['menuExtra']; found?: Found[] | null; sort: AddedSort; onSort: (next: AddedSort) => void }) {
+function SongList({ tracks, extra, found, sort, onSort }: { tracks: readonly NdSongOut[]; extra?: (t: NdSongOut, i: number) => Parameters<typeof TrackRow>[0]['menuExtra']; found?: Found[] | null; sort: ListSort; onSort: (next: ListSort) => void }) {
   const setSort = onSort;
   const dated = useMemo(() => tracks.some((t) => t.added_at), [tracks]);
+  const counts = usePlayCounts();
   const rows = useMemo(() => {
     const list = found ? found.map((f) => ({ t: tracks[f.index], i: f.index, line: f.line })) : tracks.map((t, i) => ({ t, i, line: undefined as string | undefined }));
     return byAdded(list, sort);
-  }, [tracks, found, sort]);
+  }, [tracks, found, sort, counts]);
   const queue = found || sort ? rows.map((r) => r.t) : tracks;
   if (found && !rows.length) return <p className="px-4 py-10 text-center text-sm text-muted">Ничего не подходит — ни под поиск, ни под выбранные теги.</p>;
   return (
     <ul>
-      {rows.length > 0 && <li><TrackTableHeader numbered album tags added={dated} sort={sort} onSort={setSort} /></li>}
+      {rows.length > 0 && <li><TrackTableHeader numbered album tags plays added={dated} sort={sort} onSort={setSort} /></li>}
       {rows.map(({ t, i, line }, at) => (
         <li key={`${t.ref}:${i}`}>
-          <TrackRow track={t} queue={queue} link={false} showAlbum showTags showAdded={dated} menuExtra={extra?.(t, i)} index={sort ? at + 1 : i + 1} />
+          <TrackRow track={t} queue={queue} link={false} showAlbum showTags showPlays showAdded={dated} menuExtra={extra?.(t, i)} index={sort ? at + 1 : i + 1} />
           {line !== undefined && (
             <div className="-mt-1 flex items-center gap-1.5 truncate pb-2 pl-16 pr-4 text-xs text-muted">
               <Icon name="lyrics" size={13} className="shrink-0 text-accent" />
@@ -325,7 +328,7 @@ export function LikedPage() {
   const songs = useMemo(() => res.data?.songs ?? [], [res.data]);
   const length = useMemo(() => songs.reduce((sum, t) => sum + (t.duration_s ?? 0), 0), [songs]);
   const search = useListSearch(songs);
-  const [sort, setSort] = useState<AddedSort>(null);
+  const [sort, setSort] = useState<ListSort>(null);
   const [filter, setFilter] = useState<TagFilter>({});
   const [saving, setSaving] = useState(false);
   const shown = useShown(songs, search.found, filter);
@@ -386,7 +389,7 @@ export function SelectionPage({ id }: { id: string }) {
     [scope],
   );
   const [filter, setFilter] = useState<TagFilter>({});
-  const [sort, setSort] = useState<AddedSort>(null);
+  const [sort, setSort] = useState<ListSort>(null);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
   const saved = sel.data?.filter;
@@ -469,7 +472,7 @@ export function PlaylistPage({ id }: { id: string }) {
   useSmartPage(`playlist:${id}`, p?.name ?? null);
   const all = useMemo(() => p?.tracks ?? [], [p]);
   const search = useListSearch(all);
-  const [sort, setSort] = useState<AddedSort>(null);
+  const [sort, setSort] = useState<ListSort>(null);
   const [editing, setEditing] = useState(false);
   const [filter, setFilter] = useState<TagFilter>({});
   const [saving, setSaving] = useState(false);
