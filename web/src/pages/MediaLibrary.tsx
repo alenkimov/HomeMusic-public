@@ -336,7 +336,7 @@ export function LikedPage() {
   return (
     <div>
       {saving && <SaveSelection scope="liked" filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`)} />}
-      <PageHeader hero title="Любимое" back="/library" right={<IconButton icon="refresh" label="Обновить" onClick={() => res.reload(true)} />} />
+      <PageHeader hero title="Любимое" back="/library" />
       {res.data && (
         <Hero
           kicker="Плейлист"
