@@ -60,7 +60,7 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
 
   return (
     <div>
-      <header className="pt-safe sticky top-0 z-20 bg-bg/95 px-4 pb-3 backdrop-blur">
+      <header className="pt-safe sticky top-(--page-top) z-20 bg-bg/95 px-4 pb-3 backdrop-blur">
         <h1 className="sr-only">Поиск</h1>
         <div className="relative pt-3">
           <Icon name="search" size={20} className="pointer-events-none absolute left-3.5 top-[calc(50%+6px)] -translate-y-1/2 text-dim" />

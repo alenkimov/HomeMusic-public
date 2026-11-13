@@ -202,12 +202,23 @@
 :root {
   --app-w: 42rem;
   --side-w: 0px; /* the left panel of a computer (`Sidebar`); a phone has none */
+  --page-top: 0px; /* where the page starts, and its bars stick: a computer's page is a panel with room around it */
 }
 @media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
   html:not(.hm-embedded) {
     --app-w: 72rem;
     --side-w: 16rem;
-    --tabbar-h: 92px; /* a computer has the player (`DesktopPlayer`: a card with 8px around it) where a phone has the tab bar */
+    --tabbar-h: 84px; /* a computer has the player bar (`DesktopPlayer`) where a phone has the tab bar */
+    --page-top: 8px;
+  }
+  /* A computer's page is a panel a shade lighter than the window, as the side panel's cards are (`App.tsx`); what
+   * lies on it is a shade lighter still. */
+  .hm-page {
+    --color-bg: #121212;
+    --color-surface: #1c1c1c;
+    --color-raised: #272727;
+    --color-hover: #303030;
+    background: var(--color-bg);
   }
 }
 

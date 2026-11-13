@@ -241,14 +241,22 @@ export function App() {
   const fullPlayer = route.path === '/player';
   // the admin's analytics are wide (tables, two columns on a desktop)
   const wide = route.path.startsWith('/admin/');
+  const panel = desktop && !fullPlayer;
+  // a list of tracks takes the whole panel
+  const whole = /^\/(playlist|liked|auto|mix|discoveries|selection|lib\/album|lib\/artist)(\/|$)/.test(route.path);
   return (
     <SessionContext.Provider value={{ me, logout }}>
-      <div className={cx(!fullPlayer && 'pl-(--side-w)')}>
-        <main className={cx('mx-auto min-h-dvh', wide ? 'max-w-6xl' : 'max-w-(--app-w)', !fullPlayer && 'pb-[calc(var(--tabbar-h)+16px+env(safe-area-inset-bottom))]')}>
-          {resolved?.node}
-          {!fullPlayer && <PlayerSpacer />}
-        </main>
+      {/* a computer's page is a panel beside the side panel: it takes all the room there is, and a list of tracks all
+          of the panel (`whole`); the frame over it keeps its corners round while the window scrolls under them */}
+      <div className={cx(panel && 'pl-[calc(var(--side-w)+8px)] pr-2 pt-(--page-top)')}>
+        <div className={cx('min-h-dvh', panel && 'hm-page')}>
+          <main className={cx('mx-auto', panel && whole ? '' : wide ? 'max-w-6xl' : 'max-w-(--app-w)', !fullPlayer && 'pb-[calc(var(--tabbar-h)+16px+env(safe-area-inset-bottom))]')}>
+            {resolved?.node}
+            {!fullPlayer && <PlayerSpacer />}
+          </main>
+        </div>
       </div>
+      {panel && <div aria-hidden="true" className="pointer-events-none fixed bottom-(--tabbar-h) left-[calc(var(--side-w)+8px)] right-2 top-(--page-top) z-[25] rounded-2xl shadow-[0_0_0_100vmax_var(--color-bg)]" />}
       {!fullPlayer &&
         (desktop ? (
           <>

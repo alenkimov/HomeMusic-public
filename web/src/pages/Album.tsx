@@ -206,7 +206,7 @@ export function AlbumPage({ refId }: { refId: string }) {
 
 function Bar({ overlay }: { overlay?: boolean }) {
   return (
-    <div className={`pt-safe ${overlay ? 'relative' : 'sticky top-0 z-20 bg-bg/90'} flex h-14 items-center px-2`}>
+    <div className={`pt-safe ${overlay ? 'relative' : 'sticky top-(--page-top) z-20 bg-bg/90'} flex h-14 items-center px-2`}>
       <IconButton icon="back" label="Назад" onClick={() => goBack('/search')} className="bg-black/30 !text-white" />
     </div>
   );

@@ -136,7 +136,7 @@ export function SkeletonRows({ n = 6 }: { n?: number }) {
  * only «back» and its buttons over that light — the name is not said twice, and the bar leaves with the page. */
 export function PageHeader({ title, back, right, sub, hero }: { title: ReactNode; back?: string; right?: ReactNode; sub?: ReactNode; hero?: boolean }) {
   return (
-    <header className={cx('pt-safe z-20', hero ? 'relative' : 'sticky top-0 bg-bg/90 backdrop-blur')}>
+    <header className={cx('pt-safe z-20', hero ? 'relative' : 'sticky top-(--page-top) bg-bg/90 backdrop-blur')}>
       <div className="flex min-h-14 items-center gap-1 px-2">
         {back !== undefined ? (
           <IconButton icon="back" label="Назад" onClick={() => goBack(back)} className={hero ? 'ml-1 !h-10 !w-10 bg-bg/40' : undefined} />

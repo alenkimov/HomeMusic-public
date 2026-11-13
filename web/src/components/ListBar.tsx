@@ -16,7 +16,7 @@ function useHeadGone(): boolean {
   useEffect(() => {
     const look = () => {
       const name = document.querySelector('[data-list-title]');
-      setGone(!!name && name.getBoundingClientRect().bottom < 56);
+      setGone(!!name && name.getBoundingClientRect().bottom < 64);
     };
     look();
     window.addEventListener('scroll', look, { passive: true });
@@ -117,7 +117,7 @@ export function ListBar({ title, back, tracks, context, search, tags, extra }: {
   // the windows are beside the bar, not in it: the bar is a layer of its own, under the player and the tabs
   return (
     <>
-    <header className={cx('pt-safe sticky top-0 z-20 transition-colors', solid ? 'bg-bg' : 'bg-transparent')}>
+    <header className={cx('pt-safe sticky top-(--page-top) z-20 transition-colors', solid ? 'bg-bg' : 'bg-transparent')}>
       <div className="relative flex min-h-14 items-center gap-1 px-2">
         {search?.alone ? (
           <>

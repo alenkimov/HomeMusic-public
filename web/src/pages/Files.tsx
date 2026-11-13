@@ -45,7 +45,7 @@ export function FilesPage({ initialQuery }: { initialQuery: string }) {
 
   return (
     <div>
-      <header className="pt-safe sticky top-0 z-20 bg-bg/95 px-4 pb-3 backdrop-blur">
+      <header className="pt-safe sticky top-(--page-top) z-20 bg-bg/95 px-4 pb-3 backdrop-blur">
         <div className="flex items-center gap-1 pb-3 pt-4">
           <IconButton icon="back" label="Назад" onClick={() => goBack('/more')} className="-ml-3" />
           <h1 className="min-w-0 flex-1 truncate text-2xl font-bold">Мои файлы</h1>

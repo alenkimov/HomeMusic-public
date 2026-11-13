@@ -257,7 +257,7 @@ export function TagFilterChips({ filter, onChange, count }: { filter: TagFilter;
   const keys = Object.keys(filter);
   if (!keys.length) return null;
   return (
-    <div className="sticky top-[calc(env(safe-area-inset-top)+56px)] z-10 flex items-center gap-2 bg-bg px-4 py-2 lg:px-6">
+    <div className="sticky top-[calc(env(safe-area-inset-top)+56px+var(--page-top))] z-10 flex items-center gap-2 bg-bg px-4 py-2 lg:px-6">
       <div className="no-scrollbar flex min-w-0 flex-1 gap-1.5 overflow-x-auto">
         {keys.map((k) => {
           const name = k === UNTAGGED ? 'без своих тегов' : (tags.byId.get(Number(k))?.name ?? '?');
