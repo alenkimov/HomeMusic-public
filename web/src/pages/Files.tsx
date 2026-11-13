@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSession } from '../lib/session';
 import { api, libraryCoverUrl, withQuery } from '../api/client';
 import type { LibAlbumOut, ReleaseType } from '../api/types';
 import { Icon } from '../components/Icon';
@@ -11,9 +12,11 @@ import { attempt } from '../lib/ui';
 
 const PAGE = 50;
 
-/** «Мои файлы» (from «Меню»): the albums the Hub keeps the files of — found by a search, opened to be edited, and
+/** «Мои файлы» (from «Меню»; «Все файлы» of an admin): the albums the listener brought — an import, an upload, a
+ * download (an admin: everybody's; the Hub tells them apart) — of the albums the Hub keeps the files of — found by a search, opened to be edited, and
  * «+» makes an empty one to move tracks into. */
 export function FilesPage({ initialQuery }: { initialQuery: string }) {
+  const { me } = useSession();
   const [q, setQ] = useState(initialQuery);
   const dq = useDebounced(q.trim(), 350);
   const [extra, setExtra] = useState<LibAlbumOut[]>([]);
@@ -48,7 +51,7 @@ export function FilesPage({ initialQuery }: { initialQuery: string }) {
       <header className="pt-safe sticky top-(--page-top) z-20 bg-bg/95 px-4 pb-3 backdrop-blur">
         <div className="flex items-center gap-1 pb-3 pt-4">
           <IconButton icon="back" label="Назад" onClick={() => goBack('/more')} className="-ml-3" />
-          <h1 className="min-w-0 flex-1 truncate text-2xl font-bold">Мои файлы</h1>
+          <h1 className="min-w-0 flex-1 truncate text-2xl font-bold">{me.is_admin ? 'Все файлы' : 'Мои файлы'}</h1>
           <div className="flex gap-1">
             <IconButton icon="upload" label="Загрузить файлы" onClick={() => navigate('/upload')} />
             <IconButton icon="plus" label="Создать свой альбом" onClick={() => setCreateOpen(true)} />

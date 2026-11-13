@@ -235,6 +235,8 @@ class LibAlbumOut(BaseModel):
     deezer_album_id: str | None
     track_count: int = 0
     has_cover: bool = False
+    # the album itself (its name, its picture, merging) can be changed by who asks: all of its tracks are theirs
+    can_edit: bool = True
     nd_album_id: str | None = None
     tracks: list[LibTrackOut] | None = None
 

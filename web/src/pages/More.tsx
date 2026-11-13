@@ -86,7 +86,7 @@ export function MorePage() {
             {STANDALONE && <Item icon="sparkle" tint="bg-[#8b6cf6]" to="/assistant" title="Ассистент" sub="Скриншот, список или просьба — найдёт и скачает" />}
             {STANDALONE && <Item icon="download" tint="bg-[#3d8ef0]" to="/downloads" title="Загрузки" sub="Что скачивается и что скачано" right={downloads > 0 ? <span className="min-w-5 rounded-full bg-accent px-1.5 text-center text-[11px] font-bold leading-5 text-on-accent">{downloads > 99 ? '99+' : downloads}</span> : undefined} />}
             <Item icon="upload" tint="bg-[#30b85c]" to="/upload" title="Загрузить файлы" sub="Свои аудиофайлы с телефона" />
-            {STANDALONE && <Item icon="folder" tint="bg-[#ef8b3a]" to="/files" title="Мои файлы" sub="Альбомы, чьи файлы хранит хаб: правка, свой альбом" />}
+            {STANDALONE && <Item icon="folder" tint="bg-[#ef8b3a]" to="/files" title={me.is_admin ? 'Все файлы' : 'Мои файлы'} sub={me.is_admin ? 'Музыка всех слушателей: правка, свой альбом' : 'То, что вы импортировали и загрузили: правка, свой альбом'} />}
           </Group>
           {STANDALONE && (
             <Group>

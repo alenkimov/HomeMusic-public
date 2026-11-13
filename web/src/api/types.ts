@@ -244,8 +244,11 @@ export interface LibAlbumOut {
   release_type: string | null;
   genre: string | null;
   deezer_album_id: string | null;
+  /** the tracks of it the listener sees: their own (an admin: all) */
   track_count: number;
   has_cover: boolean;
+  /** the album itself can be changed by the listener: all of its tracks are theirs */
+  can_edit: boolean;
   nd_album_id?: string | null;
   tracks?: LibTrackOut[] | null;
 }

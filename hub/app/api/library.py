@@ -1,4 +1,6 @@
-"""Own library: albums, tracks, covers, stars (FR-4 «В коллекцию», FR-5 editor)."""
+"""Own library: albums, tracks, covers, stars (FR-4 «В коллекцию», FR-5 editor).
+
+The files are looked after by who brought them and by the admins (`app/library/access.py`)."""
 
 from __future__ import annotations
 
@@ -30,7 +32,7 @@ from app.db import get_session
 from app.events import bus
 from app.jobs.downloads import enqueue_scan
 from app.jobs.queue import notify
-from app.library import editor, tagger
+from app.library import access, editor, tagger
 from app.library.importer import album_reldir, library_abs
 from app.library.tracks import current_file, current_files
 from app.matching.normalize import normalize_title
@@ -55,23 +57,19 @@ def _has_cover(a: Album) -> bool:
     return (library_abs(album_reldir(a)) / "cover.jpg").is_file()
 
 
-async def album_out(s: AsyncSession, a: Album, *, with_tracks: bool = False) -> LibAlbumOut:
+async def album_out(s: AsyncSession, a: Album, user: User, *, with_tracks: bool = False) -> LibAlbumOut:
+    """The album as `user` sees it among their files: their own tracks of it (an admin: all)."""
     tracks = (
-        await s.execute(select(Track).where(Track.album_id == a.id).order_by(Track.disc_no, Track.track_no, Track.id))
+        await s.execute(select(Track).where(Track.album_id == a.id, access.tracks_of(user))
+                        .order_by(Track.disc_no, Track.track_no, Track.id))
     ).scalars().all()
     files = await current_files(s, [t.id for t in tracks]) if with_tracks else {}
     return LibAlbumOut(
         id=a.id, uid=a.uid, title=a.title, album_artist=a.album_artist, year=a.year, release_type=a.release_type,
         genre=a.genre, deezer_album_id=a.deezer_album_id, track_count=len(tracks), has_cover=_has_cover(a),
+        can_edit=await access.owns_album(s, user, a),
         tracks=[track_out(t, files.get(t.id)) for t in tracks] if with_tracks else None,
     )
-
-
-async def _album(s: AsyncSession, album_id: int) -> Album:
-    a = await s.get(Album, album_id)
-    if a is None:
-        raise HTTPException(404, "Альбом не найден")
-    return a
 
 
 async def _after_edit(s: AsyncSession, user: User, album_id: int | None) -> None:
@@ -84,19 +82,20 @@ async def _after_edit(s: AsyncSession, user: User, album_id: int | None) -> None
 @router.get("/api/library/albums", response_model=list[LibAlbumOut])
 async def list_albums(q: str | None = None, offset: int = 0, limit: int = Query(50, le=200),
                       user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    rows = (await s.execute(select(Album).order_by(Album.updated_at.desc()))).scalars().all()
+    rows = (await s.execute(select(Album).where(access.albums_of(user)).order_by(Album.updated_at.desc()))).scalars().all()
     if q:
         nq = normalize_title(q).text
         rows = [a for a in rows if all(w in normalize_title(f"{a.album_artist} {a.title}").text for w in nq.split())]
     rows = rows[offset: offset + limit]
     counts = dict((await s.execute(
-        select(Track.album_id, func.count(Track.id)).where(Track.album_id.in_([a.id for a in rows]))
+        select(Track.album_id, func.count(Track.id)).where(Track.album_id.in_([a.id for a in rows]), access.tracks_of(user))
         .group_by(Track.album_id)
     )).all())
     return [
         LibAlbumOut(id=a.id, uid=a.uid, title=a.title, album_artist=a.album_artist, year=a.year,
                     release_type=a.release_type, genre=a.genre, deezer_album_id=a.deezer_album_id,
-                    track_count=counts.get(a.id, 0), has_cover=_has_cover(a))
+                    track_count=counts.get(a.id, 0), has_cover=_has_cover(a),
+                    can_edit=await access.owns_album(s, user, a))
         for a in rows
     ]
 
@@ -107,7 +106,7 @@ async def create_album(body: AlbumCreateIn, user: User = Depends(current_user), 
               genre=body.genre, release_type=body.release_type, created_by=user.id)
     s.add(a)
     await s.flush()
-    return await album_out(s, a, with_tracks=True)
+    return await album_out(s, a, user, with_tracks=True)
 
 
 @router.get("/api/library/track-source", response_model=TrackSourceOut)
@@ -121,22 +120,22 @@ async def track_source(nd_song_id: str, user: User = Depends(current_user),
 
 @router.get("/api/library/albums/{album_id}", response_model=LibAlbumOut)
 async def get_album(album_id: int, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    return await album_out(s, await _album(s, album_id), with_tracks=True)
+    return await album_out(s, await access.need_album(s, user, album_id), user, with_tracks=True)
 
 
 @router.patch("/api/library/albums/{album_id}", response_model=LibAlbumOut)
 async def patch_album(album_id: int, body: AlbumPatchIn, user: User = Depends(current_user),
                       s: AsyncSession = Depends(get_session, scope="function")):
-    a = await _album(s, album_id)
+    a = await access.need_own_album(s, user, album_id)
     await editor.update_album(s, a, **body.model_dump(exclude_unset=True))
     await _after_edit(s, user, a.id)
-    return await album_out(s, a, with_tracks=True)
+    return await album_out(s, a, user, with_tracks=True)
 
 
 @router.put("/api/library/albums/{album_id}/cover", response_model=LibAlbumOut)
 async def put_cover(album_id: int, file: UploadFile = File(...), user: User = Depends(current_user),
                     s: AsyncSession = Depends(get_session, scope="function")):
-    a = await _album(s, album_id)
+    a = await access.need_own_album(s, user, album_id)
     data = await file.read()
     if len(data) > 20 * 1024 * 1024:
         raise HTTPException(413, "Картинка слишком большая")
@@ -145,13 +144,15 @@ async def put_cover(album_id: int, file: UploadFile = File(...), user: User = De
     except Exception as e:
         raise HTTPException(400, f"Не удалось прочитать картинку: {e}") from e
     await _after_edit(s, user, a.id)
-    return await album_out(s, a, with_tracks=True)
+    return await album_out(s, a, user, with_tracks=True)
 
 
 @router.get("/api/library/albums/{album_id}/cover")
 async def get_cover(album_id: int, size: int | None = Query(None, ge=32, le=1000), user: User = Depends(current_user),
                     s: AsyncSession = Depends(get_session, scope="function")):
-    a = await _album(s, album_id)
+    a = await s.get(Album, album_id)  # a picture is shown wherever the album is, to anybody
+    if a is None:
+        raise HTTPException(404, "Альбом не найден")
     p = library_abs(album_reldir(a)) / "cover.jpg"
     data: bytes | None = await asyncio.to_thread(p.read_bytes) if p.is_file() else None
     if data is None:
@@ -177,26 +178,28 @@ def _resize(data: bytes, size: int) -> bytes:
 
 @router.post("/api/library/albums/merge", response_model=LibAlbumOut)
 async def merge(body: AlbumMergeIn, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    target = await _album(s, body.target_id)
+    target = await access.need_own_album(s, user, body.target_id)
+    for source_id in body.source_ids:
+        await access.need_own_album(s, user, source_id)
     await editor.merge_albums(s, body.source_ids, target)
     await _after_edit(s, user, target.id)
-    return await album_out(s, target, with_tracks=True)
+    return await album_out(s, target, user, with_tracks=True)
 
 
 @router.post("/api/library/tracks/move", response_model=LibAlbumOut)
 async def move(body: TracksMoveIn, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    target = await _album(s, body.album_id)
+    target = await access.need_album(s, user, body.album_id)
+    for track_id in body.track_ids:
+        await access.need_own_track(s, user, track_id)
     await editor.move_tracks(s, body.track_ids, target)
     await _after_edit(s, user, target.id)
-    return await album_out(s, target, with_tracks=True)
+    return await album_out(s, target, user, with_tracks=True)
 
 
 @router.patch("/api/library/tracks/{track_id}", response_model=LibTrackOut)
 async def patch_track(track_id: int, body: TrackPatchIn, user: User = Depends(current_user),
                       s: AsyncSession = Depends(get_session, scope="function")):
-    t = await s.get(Track, track_id)
-    if t is None:
-        raise HTTPException(404, "Трек не найден")
+    t = await access.need_own_track(s, user, track_id)
     await editor.update_track(s, t, **body.model_dump(exclude_unset=True))
     await _after_edit(s, user, t.album_id)
     await s.refresh(t)
@@ -205,9 +208,7 @@ async def patch_track(track_id: int, body: TrackPatchIn, user: User = Depends(cu
 
 @router.delete("/api/library/tracks/{track_id}")
 async def delete_track(track_id: int, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    t = await s.get(Track, track_id)
-    if t is None:
-        raise HTTPException(404, "Трек не найден")
+    t = await access.need_own_track(s, user, track_id)
     album_id = t.album_id
     await editor.trash_track(s, t)
     await _after_edit(s, user, album_id)

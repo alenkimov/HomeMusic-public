@@ -3,7 +3,7 @@ import { api, libraryCoverUrl } from '../api/client';
 import type { LibAlbumOut, LibTrackOut, ReleaseType } from '../api/types';
 import { Icon } from '../components/Icon';
 import { AlbumPicker } from '../components/pickers';
-import { Button, Checkbox, Cover, ErrorState, ExplicitBadge, Field, IconButton, Loading, PageHeader, SectionTitle, Sheet, cx } from '../components/ui';
+import { Button, Checkbox, Cover, ErrorState, ExplicitBadge, Field, IconButton, Loading, Notice, PageHeader, SectionTitle, Sheet, cx } from '../components/ui';
 import { fmtDuration, fmtLength, providerLabel, toIntOrNull, tracksWord, warningText } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { SaveButton } from '../components/PlaylistsButton';
@@ -115,11 +115,18 @@ export function LibraryAlbumPage({ id }: { id: number }) {
         sub={album.album_artist}
         back="/files"
         right={
-          <IconButton icon="merge" label="Объединить с другим альбомом" onClick={() => setPicker('merge')} />
+          album.can_edit ? <IconButton icon="merge" label="Объединить с другим альбомом" onClick={() => setPicker('merge')} /> : undefined
         }
       />
 
-      <AlbumForm
+      {/* an album with tracks of other listeners: its name and picture are an admin's to change; one's own tracks of
+          it are below, as ever */}
+      {!album.can_edit && (
+        <div className="px-4 pb-2">
+          <Notice kind="info">В этом альбоме есть треки других слушателей, поэтому его название и обложку меняет администратор. Свои треки ниже вы можете править и удалять.</Notice>
+        </div>
+      )}
+      {album.can_edit && <AlbumForm
         album={album}
         coverSrc={album.has_cover ? libraryCoverUrl(album.id, 600, coverRev) : null}
         onSaved={(a) => res.setData((prev) => ({ ...a, tracks: a.tracks ?? prev?.tracks }))}
@@ -127,7 +134,7 @@ export function LibraryAlbumPage({ id }: { id: number }) {
           res.setData((prev) => ({ ...a, tracks: a.tracks ?? prev?.tracks }));
           setCoverRev(Date.now());
         }}
-      />
+      />}
 
       <SectionTitle
         right={

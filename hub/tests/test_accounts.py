@@ -630,3 +630,50 @@ async def test_chat_turn_records_spending(env, monkeypatch):
     assert json.loads(route.calls[0].request.content)["usage"] == {"include": True}
     me = next(u for u in (await env["admin"].get("/api/admin/users")).json()["users"] if u["username"] == "admin")
     assert me["ai_requests"] == 1 and me["ai_cost_usd"] == pytest.approx(0.00042)
+
+async def test_files_are_looked_after_by_who_brought_them(env):
+    """«Мои файлы»: a listener sees and changes what they brought, an admin everything; an album with tracks of
+    several listeners is changed only by an admin."""
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Album, User
+
+    inv = await make_invite(env["admin"], "Анна")
+    async with env["client"]() as anna:
+        await anna.post("/api/auth/register", json={"code": inv["code"], "username": "anna", "password": "secret1"})
+        async with session_scope() as s:
+            admin_id = (await s.execute(select(User.id).where(User.nd_username == "admin"))).scalar_one()
+            anna_id = (await s.execute(select(User.id).where(User.nd_username == "anna"))).scalar_one()
+            hers = Album(uid="a-hers", title="Её", album_artist="Анна", created_by=anna_id)
+            his = Album(uid="a-his", title="Его", album_artist="Админ", created_by=admin_id)
+            both = Album(uid="a-both", title="Общий", album_artist="Оба", created_by=admin_id)
+            s.add_all([hers, his, both])
+            await s.flush()
+            tracks = [
+                filed_track(uid="f1", artist="Анна", title="Раз", fingerprint="анна|раз", album_id=hers.id, added_by=anna_id),
+                filed_track(uid="f2", artist="Админ", title="Два", fingerprint="админ|два", album_id=his.id, added_by=admin_id),
+                filed_track(uid="f3", artist="Оба", title="Три", fingerprint="оба|три", album_id=both.id, added_by=admin_id),
+                filed_track(uid="f4", artist="Оба", title="Четыре", fingerprint="оба|четыре", album_id=both.id, added_by=anna_id),
+            ]
+            s.add_all(tracks)
+            await s.flush()
+            ids = {"hers": hers.id, "his": his.id, "both": both.id, "t_hers": tracks[0].id, "t_his": tracks[1].id}
+
+        mine = {a["title"]: a for a in (await anna.get("/api/library/albums")).json()}
+        assert set(mine) == {"Её", "Общий"}
+        assert mine["Её"]["can_edit"] and mine["Её"]["track_count"] == 1
+        assert not mine["Общий"]["can_edit"] and mine["Общий"]["track_count"] == 1  # her track of it only
+        assert [t["title"] for t in (await anna.get(f"/api/library/albums/{ids['both']}")).json()["tracks"]] == ["Четыре"]
+        assert (await anna.get(f"/api/library/albums/{ids['his']}")).status_code == 404
+        assert (await anna.patch(f"/api/library/albums/{ids['both']}", json={"title": "Моё"})).status_code == 403
+        assert (await anna.patch(f"/api/library/tracks/{ids['t_his']}", json={"title": "Моё"})).status_code == 404
+        assert (await anna.delete(f"/api/library/tracks/{ids['t_his']}")).status_code == 404
+        assert (await anna.post("/api/library/albums/merge", json={"target_id": ids["hers"], "source_ids": [ids["his"]]})).status_code == 404
+        assert (await anna.delete(f"/api/library/tracks/{ids['t_hers']}")).status_code == 200
+
+    everything = {a["title"]: a for a in (await env["admin"].get("/api/library/albums")).json()}
+    assert {"Его", "Общий"} <= set(everything) and everything["Общий"]["track_count"] == 2
+    assert all(a["can_edit"] for a in everything.values())
+    # what she could not delete is still there
+    assert len((await env["admin"].get(f"/api/library/albums/{ids['his']}")).json()["tracks"]) == 1

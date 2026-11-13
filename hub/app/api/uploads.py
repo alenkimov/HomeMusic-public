@@ -22,7 +22,7 @@ from app.db import get_session
 from app.events import bus
 from app.jobs.downloads import enqueue_scan
 from app.jobs.queue import notify
-from app.library import probe, tagger
+from app.library import access, probe, tagger
 from app.library.importer import ImportSpec, import_file
 from app.models import Album, Upload, User
 
@@ -138,9 +138,7 @@ async def commit(payload: str = Form(...), cover: UploadFile | None = File(None)
         raise HTTPException(400, "Не выбраны файлы")
 
     if body.album.mode == "existing":
-        album = await s.get(Album, body.album.album_id or 0)
-        if album is None:
-            raise HTTPException(404, "Альбом не найден")
+        album = await access.need_album(s, user, body.album.album_id or 0)  # one of the listener's own files
     else:
         if not body.album.title or not body.album.album_artist:
             raise HTTPException(400, "Укажите название и исполнителя альбома")
