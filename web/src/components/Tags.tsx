@@ -250,13 +250,14 @@ export function TagFilterBody({ songIds, filter, onChange, onSave, wrap }: ListT
   );
 }
 
-/** The tags a list is narrowed by now, in a line under its bar: × takes one off. */
+/** The tags a list is narrowed by now, in a line above its tracks: × takes one off. Scrolled up, the line stays
+ * under the list's bar (`ListBar`: 56px and the screen's own top). */
 export function TagFilterChips({ filter, onChange, count }: { filter: TagFilter; onChange: (next: TagFilter) => void; count: number }) {
   const tags = useTags();
   const keys = Object.keys(filter);
   if (!keys.length) return null;
   return (
-    <div className="flex items-center gap-2 px-4 pb-2 lg:px-6">
+    <div className="sticky top-[calc(env(safe-area-inset-top)+56px)] z-10 flex items-center gap-2 bg-bg px-4 py-2 lg:px-6">
       <div className="no-scrollbar flex min-w-0 flex-1 gap-1.5 overflow-x-auto">
         {keys.map((k) => {
           const name = k === UNTAGGED ? 'без своих тегов' : (tags.byId.get(Number(k))?.name ?? '?');

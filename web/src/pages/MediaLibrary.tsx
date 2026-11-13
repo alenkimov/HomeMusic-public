@@ -7,7 +7,7 @@ import { LikeButton } from '../components/LikeButton';
 import { ListBar } from '../components/ListBar';
 import { useListSearch, type Found } from '../components/ListSearch';
 import { CoverView, ownCover } from '../components/PlaylistMenu';
-import { SaveSelection } from '../components/Tags';
+import { SaveSelection, TagFilterChips } from '../components/Tags';
 import { Button, Cover, Empty, ErrorState, IconButton, PageHeader, SectionTitle, SkeletonRows, Spinner, cx } from '../components/ui';
 import { fmtLength, plural, tracksWord } from '../lib/format';
 import { AUTO_PLAYLISTS, playCount, usePlayCounts } from '../lib/stats';
@@ -287,6 +287,7 @@ export function LikedPage() {
         <Empty icon="heart" title="Пока ничего" text="Нажмите «+» у трека — он окажется здесь." />
       ) : (
         <>
+          <TagFilterChips filter={filter} onChange={setFilter} count={shown ? shown.length : songs.length} />
           <SongList tracks={songs} found={shown} sort={sort} onSort={setSort} />
         </>
       )}
@@ -423,6 +424,7 @@ export function SelectionPage({ id }: { id: string }) {
         )}
         {!unsaved && <IconButton icon="trash" size={24} label="Удалить подборку" onClick={() => void drop()} className="text-muted hover:text-danger" />}
       </ListActions>
+      <TagFilterChips filter={filter} onChange={setFilter} count={list.length} />
       <SongList tracks={tracks} found={shown ?? (filterActive(filter) ? [] : null)} sort={sort} onSort={setSort} />
     </div>
   );
@@ -482,6 +484,7 @@ export function PlaylistPage({ id }: { id: string }) {
       {all.length ? (
         <>
           {saving && <SaveSelection scope={`playlist:${id}`} filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`)} />}
+          <TagFilterChips filter={filter} onChange={setFilter} count={shown ? shown.length : all.length} />
           <SongList tracks={all} found={shown} sort={sort} onSort={setSort} extra={(t, i) => [{ icon: 'x', label: 'Убрать из плейлиста', onClick: () => void remove(i, t) }]} />
         </>
       ) : (

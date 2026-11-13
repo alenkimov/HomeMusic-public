@@ -6,7 +6,7 @@ import { filterActive } from '../lib/tags';
 import { playAll } from './catalog';
 import { Icon } from './Icon';
 import type { ListSearch } from './ListSearch';
-import { TagFilterBody, TagFilterChips, type ListTags } from './Tags';
+import { TagFilterBody, type ListTags } from './Tags';
 import { Button, IconButton, Sheet, cx } from './ui';
 
 /** The list's head has gone up under the bar: its name (`data-list-title` of `Hero`) is not seen any more. */
@@ -65,8 +65,8 @@ function SearchDown({ onClose }: { onClose: () => void }) {
 
 /** The bar of a list of tracks (a playlist, «Любимое», a selection): it stays at the top of the screen. Over the
  * list's head it is only «back» and, at the right, the tags and the search; once the head has gone up it gets the
- * list's name and ▶. The search opens in the bar itself; the tags — in a window (`TagFilterBody`), and the ones
- * chosen stay in a line under the bar. */
+ * list's name and ▶. The search opens in the bar itself; the tags — in a window (`TagFilterBody`); the ones chosen
+ * are a line above the tracks (`TagFilterChips`, the page's own). */
 export function ListBar({ title, back, tracks, context, search, tags }: { title: string; back: string; tracks?: readonly NdSongOut[]; context?: string; search?: ListSearch; tags?: ListTags }) {
   const desktop = useDesktop();
   const gone = useHeadGone();
@@ -122,7 +122,6 @@ export function ListBar({ title, back, tracks, context, search, tags }: { title:
           </>
         )}
       </div>
-      {tags && narrowed && <TagFilterChips filter={tags.filter} onChange={tags.onChange} count={tags.count} />}
     </header>
       {tags && !desktop && (
         <Sheet
