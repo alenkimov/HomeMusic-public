@@ -55,63 +55,22 @@ export function MixCover({ tracks, className, large }: { tracks: readonly MixTra
   );
 }
 
-/** Top of the catalog: today's mix, the build under way, or «Что вы слушаете?». */
-export function MixCard() {
+/** «Что вы слушаете?» on «Главная» of an account the Hub knows nothing about yet: without a few artists picked there
+ * is nothing to make «Микс дня» and «Моя волна» of. Nothing for everybody else. */
+export function TastePrompt() {
   const res = useAsync((s) => api.mixToday(s), []);
-  const today = res.data;
-  useInterval(() => res.reload(true), today && (today.building || (today.mix && today.mix.ready < today.mix.total)) ? POLL_MS : null);
-  if (!today) return null;
-  const { mix, building, onboarding, settings } = today;
-
-  if (mix)
-    return (
-      <Link to={`/mix/${mix.id}`} className="mx-4 mt-3 flex items-center gap-3 rounded-xl bg-raised p-3 transition hover:bg-hover" aria-label={`Микс дня: ${mix.title}`}>
-        <MixCover tracks={mix.tracks} className="h-20 w-20" />
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-semibold uppercase tracking-wide text-accent">Микс дня</div>
-          <div className="line-clamp-2 font-bold leading-tight">{mix.title}</div>
-          <div className="mt-0.5 line-clamp-2 text-[13px] leading-snug text-muted">{mix.description}</div>
-          <div className="mt-1 text-xs text-dim">
-            {songsWord(mix.total)}
-            {mix.ready < mix.total && ` · качается ${mix.total - mix.ready}`}
-          </div>
-        </div>
-        <Icon name="chevron" size={20} className="shrink-0 text-dim" />
-      </Link>
-    );
-
-  if (building)
-    return (
-      <div className="mx-4 mt-3 flex items-center gap-3 rounded-xl bg-raised p-4" role="status">
-        <Spinner className="text-accent" />
-        <div className="min-w-0">
-          <div className="font-bold">Собираем «Микс дня»</div>
-          <div className="text-[13px] text-muted">Подбираем 50 песен по вашему вкусу — это займёт пару минут</div>
-        </div>
-      </div>
-    );
-
-  if (onboarding)
-    return (
-      <Link to="/taste" className="mx-4 mt-3 flex items-center gap-3 rounded-xl bg-accent/15 p-4 transition hover:bg-accent/20">
-        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent">
-          <Icon name="sparkle" size={24} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="font-bold">Что вы слушаете?</div>
-          <div className="text-[13px] text-muted">Выберите 3–5 исполнителей — соберём для вас «Микс дня»</div>
-        </div>
-        <Icon name="chevron" size={20} className="shrink-0 text-dim" />
-      </Link>
-    );
-
+  if (!res.data?.onboarding || res.data.mix || res.data.building) return null;
   return (
-    <div className="mx-4 mt-3 flex items-center gap-3 rounded-xl bg-raised p-4">
-      <Icon name="sparkle" size={24} className="shrink-0 text-accent" />
-      <div className="min-w-0 text-[13px] text-muted">
-        <span className="font-semibold text-fg">«Микс дня»</span> появится в {settings.mix_hour}:00
+    <Link to="/taste" className="mx-4 mt-3 flex items-center gap-3 rounded-xl bg-accent/15 p-4 transition hover:bg-accent/20">
+      <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent">
+        <Icon name="sparkle" size={24} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="font-bold">Что вы слушаете?</div>
+        <div className="text-[13px] text-muted">Выберите 3–5 исполнителей — соберём для вас «Микс дня»</div>
       </div>
-    </div>
+      <Icon name="chevron" size={20} className="shrink-0 text-dim" />
+    </Link>
   );
 }
 

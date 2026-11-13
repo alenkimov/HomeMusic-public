@@ -342,8 +342,23 @@ export interface StarIn {
 
 // --- search -----------------------------------------------------------------------------------
 
+/** A line of «Недавнее» of the search: a result that was opened, or a query asked for with Enter. */
+export interface SearchRecent {
+  /** what the line is known by (to take it out) */
+  key: string;
+  kind: 'query' | 'track' | 'album' | 'artist';
+  /** the query itself, or the name of what was opened */
+  title: string;
+  /** whose it is: the artist of a track or an album */
+  subtitle?: string | null;
+  ref?: string | null;
+  cover_url?: string | null;
+  /** the page a tap opens; none: the title is searched for */
+  link?: string | null;
+}
+
 export interface SearchHistoryOut {
-  queries: string[];
+  items: SearchRecent[];
 }
 
 export interface SearchOut {

@@ -125,25 +125,31 @@ async def test_search_history_is_shared_between_sessions_and_isolated_between_ac
         own_events = bus.subscribe(me["id"])
         other_events = bus.subscribe(other_me["id"])
         try:
-            r = await env["admin"].post("/api/search/history", json={"query": "  Кино  "})
+            r = await env["admin"].post("/api/search/history", json={"title": "  Кино  "})
             assert r.status_code == 200, r.text
             assert json.loads(own_events.get_nowait()) == {"event": "search_history", "data": {}}
             assert other_events.empty()
             r = await device.get("/api/search/history")
             assert r.status_code == 200, r.text
             assert r.headers["cache-control"] == "no-store"
-            assert r.json() == {"queries": ["Кино"]}
-            assert (await other.get("/api/search/history")).json() == {"queries": []}
-            r = await other.post("/api/search/history", json={"query": "Земфира"})
+            assert r.json() == {"items": [{"key": "q:кино", "kind": "query", "title": "Кино", "subtitle": None, "ref": None,
+                                           "cover_url": None, "link": None}]}
+            assert (await other.get("/api/search/history")).json() == {"items": []}
+            r = await other.post("/api/search/history", json={"title": "Земфира"})
             assert r.status_code == 200, r.text
             r = await device.delete("/api/search/history")
             assert r.status_code == 200, r.text
-            assert (await env["admin"].get("/api/search/history")).json() == {"queries": []}
-            assert (await other.get("/api/search/history")).json() == {"queries": ["Земфира"]}
+            assert (await env["admin"].get("/api/search/history")).json() == {"items": []}
+            assert recent(await other.get("/api/search/history")) == ["Земфира"]
             assert json.loads(own_events.get_nowait()) == {"event": "search_history", "data": {}}
         finally:
             bus.unsubscribe(me["id"], own_events)
             bus.unsubscribe(other_me["id"], other_events)
+
+
+def recent(r) -> list[str]:
+    """«Недавнее» as the Hub gave it: the titles, the newest first."""
+    return [x["title"] for x in r.json()["items"]]
 
 
 async def test_search_history_keeps_thirty_recent_queries_and_moves_repeats_to_top(env):
@@ -154,15 +160,15 @@ async def test_search_history_keeps_thirty_recent_queries_and_moves_repeats_to_t
     user_id = (await admin.get("/api/auth/me")).json()["id"]
     now = utcnow()
     async with session_scope() as s:
-        s.add_all(SearchHistory(user_id=user_id, query_key=f"запрос {i}", query=f"Запрос {i}",
+        s.add_all(SearchHistory(user_id=user_id, key=f"q:запрос {i}", kind="query", title=f"Запрос {i}",
                                 searched_at=now - timedelta(seconds=30 - i)) for i in range(30))
-    r = await admin.post("/api/search/history", json={"query": "Новый запрос"})
+    r = await admin.post("/api/search/history", json={"title": "Новый запрос"})
     assert r.status_code == 200, r.text
-    queries = (await admin.get("/api/search/history")).json()["queries"]
+    queries = recent(await admin.get("/api/search/history"))
     assert queries == ["Новый запрос", *[f"Запрос {i}" for i in range(29, 0, -1)]]
-    r = await admin.post("/api/search/history", json={"query": "  ЗАПРОС 15  "})
+    r = await admin.post("/api/search/history", json={"title": "  ЗАПРОС 15  "})
     assert r.status_code == 200, r.text
-    assert (await admin.get("/api/search/history")).json()["queries"] == [
+    assert recent(await admin.get("/api/search/history")) == [
         "ЗАПРОС 15", *[q for q in queries if q != "Запрос 15"]
     ]
 
@@ -172,26 +178,46 @@ async def test_concurrent_search_history_writes_do_not_lose_queries(env):
         r = await device.post("/api/auth/login", json={"username": "admin", "password": "adminpw"})
         assert r.status_code == 200, r.text
         results = await asyncio.gather(
-            env["admin"].post("/api/search/history", json={"query": "Кино"}),
-            device.post("/api/search/history", json={"query": "Земфира"}),
+            env["admin"].post("/api/search/history", json={"title": "Кино"}),
+            device.post("/api/search/history", json={"title": "Земфира"}),
         )
         for r in results:
             assert r.status_code == 200, r.text
-        queries = (await device.get("/api/search/history")).json()["queries"]
+        queries = recent(await device.get("/api/search/history"))
         assert len(queries) == 2 and set(queries) == {"Кино", "Земфира"}
 
 
 @pytest.mark.parametrize("query", ["", " ", "я", " a ", "a" * 513])
 async def test_search_history_rejects_invalid_queries(env, query):
-    r = await env["admin"].post("/api/search/history", json={"query": query})
+    r = await env["admin"].post("/api/search/history", json={"title": query})
     assert r.status_code == 422, r.text
-    assert (await env["admin"].get("/api/search/history")).json() == {"queries": []}
+    assert (await env["admin"].get("/api/search/history")).json() == {"items": []}
+
+
+async def test_what_was_opened_from_the_results_is_kept_once_and_can_be_taken_out(env):
+    """A result that was opened is a line of its own, with its picture and the page it leads to; opened again, it
+    only moves up. A line is taken out by its key."""
+    admin = env["admin"]
+    track = {"kind": "track", "ref": "dz:100", "title": "Still Loving You", "subtitle": "Scorpions",
+             "cover_url": "https://covers.test/1.jpg", "link": "/album/dz%3A9"}
+    assert (await admin.post("/api/search/history", json=track)).status_code == 200
+    assert (await admin.post("/api/search/history", json={"kind": "artist", "ref": "dz:7", "title": "Scorpions"})).status_code == 200
+    assert (await admin.post("/api/search/history", json={"title": "still loving you"})).status_code == 200
+    assert (await admin.post("/api/search/history", json=track)).status_code == 200
+    items = (await admin.get("/api/search/history")).json()["items"]
+    assert [(x["kind"], x["title"]) for x in items] == [("track", "Still Loving You"), ("query", "still loving you"), ("artist", "Scorpions")]
+    assert items[0] == {"key": "track:dz:100", **track}
+    # what is opened is known by its ref; a link is a page of the app
+    assert (await admin.post("/api/search/history", json={"kind": "album", "title": "x"})).status_code == 422
+    assert (await admin.post("/api/search/history", json={**track, "link": "https://elsewhere.test/"})).status_code == 422
+    assert (await admin.delete("/api/search/history", params={"key": "track:dz:100"})).status_code == 200
+    assert recent(await admin.get("/api/search/history")) == ["still loving you", "Scorpions"]
 
 
 @pytest.mark.parametrize("method", ["GET", "POST", "DELETE"])
 async def test_search_history_requires_authentication(env, method):
     async with env["client"]() as anonymous:
-        r = await anonymous.request(method, "/api/search/history", json={"query": "Кино"})
+        r = await anonymous.request(method, "/api/search/history", json={"title": "Кино"})
         assert r.status_code == 401, r.text
 
 

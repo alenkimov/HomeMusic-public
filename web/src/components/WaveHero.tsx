@@ -31,7 +31,7 @@ export function WaveHero() {
   const label = busy ? 'Моя волна: запускаем' : running ? 'Моя волна: пауза' : on ? 'Моя волна: продолжить' : 'Моя волна: слушать';
 
   return (
-    <div className="relative mt-1 flex h-[360px] items-center justify-center">
+    <div className="relative mt-1 h-[360px]">
       <WaveGlow
         playing={playing}
         cover={cover}
@@ -40,7 +40,8 @@ export function WaveHero() {
         className="pointer-events-none absolute inset-y-0 left-1/2 w-[min(1100px,calc(100vw-32px))] -translate-x-1/2"
         style={{ maskImage: fade, WebkitMaskImage: fade }}
       />
-      <div className="relative flex flex-col items-center text-center text-white" style={{ textShadow: '0 1px 14px rgba(0,0,0,.6)' }}>
+      {/* the button is the very middle of the glow; the name and the caption stand over it */}
+      <div className="absolute inset-x-0 bottom-[calc(50%+36px)] flex flex-col items-center text-center text-white" style={{ textShadow: '0 1px 14px rgba(0,0,0,.6)' }}>
         <h2 className="text-2xl font-bold">Моя волна</h2>
         {/* A fixed-size slot: the captions cross-fade in place, so neither the title nor the button ever moves. */}
         <div className="relative mt-1 h-10 w-80 max-w-full text-sm leading-snug text-white/80">
@@ -50,17 +51,16 @@ export function WaveHero() {
             </p>
           ))}
         </div>
-        <button
+      </div>
+      <button
           type="button"
           onClick={() => (on ? toggle() : void startWave(null, 'home_card'))}
           disabled={starting !== null}
           aria-label={label}
-          className="mt-3 inline-flex h-14 w-14 items-center justify-center rounded-full bg-fg text-bg shadow-lg transition hover:scale-105 active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white disabled:opacity-90"
-          style={{ textShadow: 'none' }}
+          className="absolute left-1/2 top-1/2 inline-flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-fg text-bg shadow-lg transition hover:scale-105 active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white disabled:opacity-90"
         >
           {busy ? <Spinner size={24} /> : running ? <Icon name="pause" size={24} stroke={3} /> : <Icon name="play" size={24} stroke={2.4} className="translate-x-px" />}
         </button>
-      </div>
     </div>
   );
 }

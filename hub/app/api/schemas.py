@@ -13,12 +13,39 @@ from app.providers.base import Candidate
 # --- auth ------------------------------------------------------------------------------
 
 
-class SearchHistoryIn(BaseModel):
-    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=512)]
+class SearchRecentIn(BaseModel):
+    """A line of «Недавнее»: a query asked for (`kind` "query", `title` is the query), or a result that was opened."""
+
+    kind: Literal["query", "track", "album", "artist"] = "query"
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=512)]
+    subtitle: Annotated[str, StringConstraints(strip_whitespace=True, max_length=512)] | None = None
+    ref: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)] | None = None
+    cover_url: Annotated[str, StringConstraints(max_length=1024)] | None = None
+    link: Annotated[str, StringConstraints(max_length=512, pattern=r"^/")] | None = None
+
+    @model_validator(mode="after")
+    def _whole(self) -> "SearchRecentIn":
+        if self.kind == "query":
+            if len(self.title) < 2:
+                raise ValueError("a query is two characters at least")
+            self.subtitle = self.ref = self.cover_url = self.link = None
+        elif not self.ref:
+            raise ValueError("what was opened is known by its ref")
+        return self
+
+
+class SearchRecentOut(BaseModel):
+    key: str
+    kind: str
+    title: str
+    subtitle: str | None = None
+    ref: str | None = None
+    cover_url: str | None = None
+    link: str | None = None
 
 
 class SearchHistoryOut(BaseModel):
-    queries: list[str]
+    items: list[SearchRecentOut]
 
 
 class LoginIn(BaseModel):

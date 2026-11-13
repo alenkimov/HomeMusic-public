@@ -13,7 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import listen
 from app.api.library import track_out
-from app.api.schemas import ProviderSearchOut, SearchHistoryIn, SearchHistoryOut, SearchOut, SearchTracksOut
+from app.api.schemas import (
+    ProviderSearchOut,
+    SearchHistoryOut,
+    SearchOut,
+    SearchRecentIn,
+    SearchRecentOut,
+    SearchTracksOut,
+)
 from app.auth import current_user
 from app.catalog.models import CatalogTrack, SearchResults
 from app.config import get_settings
@@ -37,7 +44,7 @@ HISTORY_LIMIT = 30
 
 def _recent_queries(user_id: int):
     return select(SearchHistory).where(SearchHistory.user_id == user_id).order_by(
-        SearchHistory.searched_at.desc(), SearchHistory.query_key
+        SearchHistory.searched_at.desc(), SearchHistory.key
     ).limit(HISTORY_LIMIT)
 
 
@@ -46,23 +53,28 @@ async def search_history(response: Response, user: User = Depends(current_user),
                          s: AsyncSession = Depends(get_session, scope="function")):
     response.headers["Cache-Control"] = "no-store"
     rows = (await s.execute(_recent_queries(user.id))).scalars()
-    return SearchHistoryOut(queries=[row.query for row in rows])
+    return SearchHistoryOut(items=[SearchRecentOut(key=r.key, kind=r.kind, title=r.title, subtitle=r.subtitle, ref=r.ref,
+                                                   cover_url=r.cover_url, link=r.link) for r in rows])
 
 
 @router.post("/history", response_model=dict[str, bool])
-async def remember_search(body: SearchHistoryIn, user: User = Depends(current_user),
+async def remember_search(body: SearchRecentIn, user: User = Depends(current_user),
                           s: AsyncSession = Depends(get_session, scope="function")):
+    """A result was opened, or a query asked for with Enter: it goes to the top of «Недавнее» (once — the same
+    thing again only moves up)."""
+    key = f"q:{body.title.casefold()}" if body.kind == "query" else f"{body.kind}:{body.ref}"
     # Start with a write: concurrent devices serialize their upsert and pruning in SQLite.
     stmt = insert(SearchHistory).values(
-        user_id=user.id, query_key=body.query.casefold(), query=body.query, searched_at=utcnow()
+        user_id=user.id, key=key, kind=body.kind, title=body.title, subtitle=body.subtitle or None, ref=body.ref,
+        cover_url=body.cover_url, link=body.link, searched_at=utcnow()
     )
     await s.execute(stmt.on_conflict_do_update(
-        index_elements=[SearchHistory.user_id, SearchHistory.query_key],
-        set_={"query": stmt.excluded.query, "searched_at": stmt.excluded.searched_at},
+        index_elements=[SearchHistory.user_id, SearchHistory.key],
+        set_={c: getattr(stmt.excluded, c) for c in ("kind", "title", "subtitle", "ref", "cover_url", "link", "searched_at")},
     ))
-    keep = _recent_queries(user.id).with_only_columns(SearchHistory.query_key)
+    keep = _recent_queries(user.id).with_only_columns(SearchHistory.key)
     await s.execute(delete(SearchHistory).where(
-        SearchHistory.user_id == user.id, SearchHistory.query_key.not_in(keep)
+        SearchHistory.user_id == user.id, SearchHistory.key.not_in(keep)
     ))
     await s.commit()
     bus.publish(user.id, "search_history", {})
@@ -70,9 +82,11 @@ async def remember_search(body: SearchHistoryIn, user: User = Depends(current_us
 
 
 @router.delete("/history", response_model=dict[str, bool])
-async def clear_search_history(user: User = Depends(current_user),
+async def clear_search_history(key: str | None = Query(None, max_length=1024), user: User = Depends(current_user),
                                s: AsyncSession = Depends(get_session, scope="function")):
-    await s.execute(delete(SearchHistory).where(SearchHistory.user_id == user.id))
+    """All of «Недавнее», or the one line `key`."""
+    gone = delete(SearchHistory).where(SearchHistory.user_id == user.id)
+    await s.execute(gone if key is None else gone.where(SearchHistory.key == key))
     await s.commit()
     bus.publish(user.id, "search_history", {})
     return {"ok": True}

@@ -1,21 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, errorMessage, isAbort, peekCache, withQuery } from '../api/client';
-import type { Candidate, LibTrackOut, ProviderSearchOut, SearchOut, SearchTracksOut, TrackOut } from '../api/types';
+import type { Candidate, LibTrackOut, ProviderSearchOut, SearchOut, SearchRecent, SearchTracksOut, TrackOut } from '../api/types';
 import { ArtistBubble, ReleaseCard, TrackRow, TrackTableHeader, listenTrack } from '../components/catalog';
 import { TrackMenuButton } from '../components/TrackMenu';
 import { CandidateRow, fileRef } from '../components/candidate';
 import { Icon } from '../components/Icon';
 import { SaveButton } from '../components/PlaylistsButton';
-import { WaveCard } from '../components/Wave';
-import { Button, Empty, ErrorState, IconButton, Notice, SectionTitle, Segmented, SkeletonRows, Spinner, cx } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, IconButton, Notice, SectionTitle, Segmented, SkeletonRows, Spinner, cx } from '../components/ui';
 import { startDownload } from '../lib/actions';
 import { useHubEvent } from '../lib/events';
 import { fmtDuration } from '../lib/format';
 import { useAsync, useDebounced, useRememberScrollX, type AsyncState } from '../lib/hooks';
 import { extendQueue, markQueued, useListen } from '../lib/listen';
 import { canPlay, canPlayAll, playList } from '../lib/player';
-import { Link, navigate } from '../lib/router';
-import { MixCard } from './Mix';
+import { Link, enc, navigate } from '../lib/router';
 
 export type SearchTab = 'catalog' | 'files' | 'reuploads';
 
@@ -26,24 +24,12 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
   const [tab, setTab] = useState<SearchTab>(initialTab);
   const dq = useDebounced(q.trim(), 400);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [historyError, setHistoryError] = useState<string>();
 
   // Keep the query in the URL so "back" from an artist/album restores the results.
   useEffect(() => {
     const target = withQuery('/search', { q: dq, tab: tab === 'catalog' ? undefined : tab });
     if (window.location.hash !== '#' + target) navigate(target, { replace: true });
   }, [dq, tab]);
-
-  // Record the query even if its search results are already cached. Tabs share one history.
-  useEffect(() => {
-    if (dq.length < 2) return;
-    let active = true;
-    api.rememberSearch(dq).then(
-      () => { if (active) setHistoryError(undefined); },
-      (e) => { if (active) setHistoryError(`Не удалось сохранить запрос в истории. ${errorMessage(e)}`); },
-    );
-    return () => { active = false; };
-  }, [dq]);
 
   // External navigation to /search?q=… (links, tab bar) replaces the query.
   useEffect(() => {
@@ -72,7 +58,12 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
             aria-label="Поиск"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              (e.target as HTMLInputElement).blur();
+              // Enter is asking for it: the query is kept. What is merely typed is not («still lovi» on the way to a song)
+              if (q.trim().length >= 2) remember({ kind: 'query', title: q.trim() });
+            }}
           />
           {q && (
             <IconButton
@@ -100,14 +91,8 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
         </div>
       </header>
 
-      {historyError && <div className="px-4 pb-3"><Notice>{historyError}</Notice></div>}
-
       {!dq ? (
-        <>
-          <MixCard />
-          <WaveCard />
-          <RecentSearches onPick={setQ} />
-        </>
+        <RecentSearches onPick={setQ} />
       ) : tab === 'catalog' ? (
         <CatalogResults q={dq} />
       ) : tab === 'files' ? (
@@ -119,6 +104,16 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
   );
 }
 
+/** «Недавнее» gets a line: a result was opened, or a query asked for. It is a convenience — a line that could not
+ * be written is not worth a word to the listener. */
+function remember(item: Omit<SearchRecent, 'key'>) {
+  void api.rememberSearch(item).catch(() => undefined);
+}
+
+const RECENT_KIND: Record<SearchRecent['kind'], string> = { query: 'Запрос', track: 'Трек', album: 'Альбом', artist: 'Исполнитель' };
+
+/** «Недавнее»: what was opened from the results (with its picture; a tap opens it again) and the queries asked for
+ * (a tap searches again). × takes a line out. */
 function RecentSearches({ onPick }: { onPick: (q: string) => void }) {
   const res = useAsync((s) => api.searchHistory(s), []);
   const [expanded, setExpanded] = useState(false);
@@ -153,7 +148,15 @@ function RecentSearches({ onPick }: { onPick: (q: string) => void }) {
     }
   };
 
-  const recent = res.data?.queries ?? [];
+  const forget = (key: string) => {
+    res.setData((prev) => (prev ? { items: prev.items.filter((x) => x.key !== key) } : prev));
+    api.forgetSearch(key).catch((e) => {
+      setClearError(`Не удалось убрать из недавнего. ${errorMessage(e)}`);
+      res.reload(true);
+    });
+  };
+
+  const recent = res.data?.items ?? [];
   if (!res.data && res.loading) return <SkeletonRows n={3} />;
   if (res.error && !recent.length) return <ErrorState text={res.error} onRetry={() => res.reload()} />;
   if (!recent.length) {
@@ -173,16 +176,26 @@ function RecentSearches({ onPick }: { onPick: (q: string) => void }) {
           </Button>
         }
       >
-        Недавние запросы
+        Недавнее
       </SectionTitle>
       {(clearError || res.error) && <div className="px-4 pb-3"><Notice>{clearError || res.error}</Notice></div>}
       <ul id="recent-searches-list">
         {(expanded ? recent : recent.slice(0, 8)).map((r) => (
-          <li key={r}>
-            <button type="button" className="flex min-h-12 w-full items-center gap-3 px-4 text-left hover:bg-fg/5" onClick={() => onPick(r)}>
-              <Icon name="search" size={18} className="text-dim" />
-              <span className="truncate">{r}</span>
+          <li key={r.key} className="flex items-center pr-1 hover:bg-fg/5">
+            <button type="button" className="flex min-h-14 min-w-0 flex-1 items-center gap-3 py-1.5 pl-4 text-left" onClick={() => (r.link ? navigate(r.link) : onPick(r.title))}>
+              {r.kind === 'query' ? (
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center text-dim">
+                  <Icon name="search" size={18} />
+                </span>
+              ) : (
+                <Cover src={r.cover_url} size={40} round={r.kind === 'artist'} icon={r.kind === 'artist' ? 'user' : r.kind === 'album' ? 'disc' : 'note'} alt="" />
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[15px]">{r.title}</span>
+                <span className="block truncate text-[13px] text-muted">{[RECENT_KIND[r.kind], r.subtitle].filter(Boolean).join(' · ')}</span>
+              </span>
             </button>
+            <IconButton icon="x" size={16} label={`Убрать из недавнего: ${r.title}`} onClick={() => forget(r.key)} className="w-10 text-dim hover:text-fg" />
           </li>
         ))}
       </ul>
@@ -305,7 +318,9 @@ function CatalogResults({ q }: { q: string }) {
         <section aria-label="В библиотеке">
           <SectionTitle>В библиотеке</SectionTitle>
           {data.library.slice(0, 5).map((t, _, shown) => (
-            <LibraryTrackRow key={t.id} t={t} onPlay={canPlay() && t.nd_song_id ? () => playList(shown, (x) => x.nd_song_id, t) : undefined} />
+            <Opened key={t.id} item={{ kind: 'track', ref: `lib:${t.id}`, title: t.title, subtitle: t.artist, link: t.album_id ? `/library/album/${t.album_id}` : null }}>
+              <LibraryTrackRow t={t} onPlay={canPlay() && t.nd_song_id ? () => playList(shown, (x) => x.nd_song_id, t) : undefined} />
+            </Opened>
           ))}
         </section>
       )}
@@ -315,7 +330,9 @@ function CatalogResults({ q }: { q: string }) {
           <SectionTitle>Исполнители</SectionTitle>
           <div ref={artistsRow} className="no-scrollbar flex gap-3 overflow-x-auto px-4 pb-1">
             {data.artists.map((a) => (
-              <ArtistBubble key={a.ref} artist={a} />
+              <Opened key={a.ref} item={{ kind: 'artist', ref: a.ref, title: a.name, cover_url: a.picture_small_url ?? a.picture_url, link: `/artist/${enc(a.ref)}` }}>
+                <ArtistBubble artist={a} />
+              </Opened>
             ))}
           </div>
         </section>
@@ -326,9 +343,9 @@ function CatalogResults({ q }: { q: string }) {
           <SectionTitle>Альбомы</SectionTitle>
           <div ref={albumsRow} className="no-scrollbar flex gap-4 overflow-x-auto px-4 pb-1">
             {data.albums.map((a) => (
-              <div key={a.ref} className="w-36 shrink-0">
+              <Opened key={a.ref} className="w-36 shrink-0" item={{ kind: 'album', ref: a.ref, title: a.title, subtitle: a.artist, cover_url: a.cover_small_url ?? a.cover_url, link: `/album/${enc(a.ref)}` }}>
                 <ReleaseCard album={a} showArtist />
-              </div>
+              </Opened>
             ))}
           </div>
         </section>
@@ -339,10 +356,10 @@ function CatalogResults({ q }: { q: string }) {
           <SectionTitle>Треки</SectionTitle>
           <TrackTableHeader numbered album />
           {more.tracks.map((t, i) => (
-            <div key={t.ref}>
+            <Opened key={t.ref} item={{ kind: 'track', ref: t.ref, title: t.title, subtitle: t.artists?.length ? t.artists.join(', ') : t.artist, cover_url: t.cover_small_url ?? t.cover_url, link: t.album_ref ? `/album/${enc(t.album_ref)}` : null }}>
               {i === more.trigger && <div ref={more.sentinel} aria-hidden />}
               <TrackRow track={t} showAlbum queue={more.tracks} index={i + 1} />
-            </div>
+            </Opened>
           ))}
           {more.loading && (
             <div className="flex justify-center py-4 text-muted" role="status" aria-label="Загружаю ещё">
@@ -359,6 +376,15 @@ function CatalogResults({ q }: { q: string }) {
           )}
         </section>
       )}
+    </div>
+  );
+}
+
+/** A result of the search: whatever is done with it — opened, played, ♥ — it was found, and goes to «Недавнее». */
+function Opened({ item, className, children }: { item: Omit<SearchRecent, 'key'>; className?: string; children: ReactNode }) {
+  return (
+    <div className={className} onClickCapture={() => remember(item)}>
+      {children}
     </div>
   );
 }

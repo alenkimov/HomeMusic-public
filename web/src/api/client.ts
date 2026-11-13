@@ -65,6 +65,7 @@ import type {
   RetryIn,
   SearchOut,
   SearchHistoryOut,
+  SearchRecent,
   SearchTracksOut,
   StarIn,
   StarOut,
@@ -262,7 +263,8 @@ export const api = {
   // search / catalog
   search: (q: string, signal?: AbortSignal) => cachedGet<SearchOut>(withQuery('/api/search', { q }), signal),
   searchHistory: (signal?: AbortSignal) => request<SearchHistoryOut>('GET', '/api/search/history', { signal }),
-  rememberSearch: (query: string) => request<OkOut>('POST', '/api/search/history', { json: { query } }),
+  rememberSearch: (item: Omit<SearchRecent, 'key'>) => request<OkOut>('POST', '/api/search/history', { json: item }),
+  forgetSearch: (key: string) => request<OkOut>('DELETE', withQuery('/api/search/history', { key })),
   clearSearchHistory: () => request<OkOut>('DELETE', '/api/search/history'),
   // more tracks of the same search, from `offset` (`SearchOut.tracks_next`, then `next_offset`)
   searchTracks: (q: string, offset: number, signal?: AbortSignal) =>

@@ -90,7 +90,7 @@ export function ReleasesPage() {
   );
 }
 
-function ReleaseTile({ r }: { r: ReleaseOut }) {
+export function ReleaseTile({ r }: { r: ReleaseOut }) {
   return (
     <Link to={`/album/${enc(r.album_ref)}`} className="block min-w-0">
       <span className="relative block">

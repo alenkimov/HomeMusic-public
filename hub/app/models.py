@@ -67,13 +67,20 @@ class User(Base):
 
 
 class SearchHistory(Base):
-    """The account's recent queries, shared by browsers and the embedded app."""
+    """«Недавнее» of the search, shared by the account's browsers and the embedded app: what was opened from the
+    results — a track, an album, an artist — and the queries asked for with Enter. What is merely typed is not kept."""
 
     __tablename__ = "search_history"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    query_key: Mapped[str] = mapped_column(String(1024), primary_key=True)
-    query: Mapped[str] = mapped_column(String(512))
+    # one line per thing: "q:<the query, casefolded>" or "<kind>:<ref>"
+    key: Mapped[str] = mapped_column(String(1024), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16))  # query | track | album | artist
+    title: Mapped[str] = mapped_column(String(512))  # the query itself, or the name of what was opened
+    subtitle: Mapped[str | None] = mapped_column(String(512), nullable=True)  # whose it is
+    ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cover_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    link: Mapped[str | None] = mapped_column(String(512), nullable=True)  # the page of the app a tap opens
     searched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
