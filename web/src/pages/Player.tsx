@@ -42,8 +42,8 @@ const useWide = () => useSyncExternalStore(watchWide, () => !!WIDE?.matches, () 
 /** The full player of the PWA in a plain browser (`/player`, from a tap on the mini player): the big cover (or the
  * text in its place), ♥, seek, the controls; under them ⋯ on the left, «Поделиться» and the queue's button on the
  * right; below — «Участники»: who plays it, a tap away from their pages and their ♥. The queue is shown when asked
- * for: a sheet from below on a phone, the right column on a wide screen (where the text or «Участники» otherwise
- * are). Inside the app the player is the app's own. */
+ * for: a sheet from below on a phone, the right column on a wide screen — the column of the text too: an open queue stands over
+ * the text, which is back when the queue is closed; with neither, the player is one column in the middle. Inside the app the player is the app's own. */
 export function PlayerPage() {
   const track = useListen((s) => s.track);
   const phase = useListen((s) => s.phase);
@@ -94,15 +94,19 @@ export function PlayerPage() {
     setLyricsLook({ fullscreen: false });
   }, []);
   const full = look.fullscreen && lyrics;
-  const toggleLyrics = () =>
-    setLyrics((v) => {
-      try {
-        localStorage.setItem('hm-player-lyrics', v ? '0' : '1');
-      } catch {
-        /* the choice lives until the page is closed */
-      }
-      return !v;
-    });
+  // a wide screen has one column for the text and the queue: the queue, while open, stands over the text
+  const textHidden = wide && queueOpen;
+  const textShown = lyrics && !textHidden;
+  const toggleLyrics = () => {
+    const on = !textShown; // under the queue the text is not seen: its button then asks for it, and the queue closes
+    if (textHidden) setQueueOpen(false);
+    setLyrics(on);
+    try {
+      localStorage.setItem('hm-player-lyrics', on ? '1' : '0');
+    } catch {
+      /* the choice lives until the page is closed */
+    }
+  };
 
   if (!track)
     return (
@@ -133,12 +137,11 @@ export function PlayerPage() {
   };
   const firstArtist = track.artists?.find((a) => a.ref);
   // what the right column of a wide screen holds; a narrow one has the text in the cover's place and the queue in a sheet
-  const side = !wide ? null : queueOpen ? 'queue' : lyrics ? 'lyrics' : 'credits';
-  const credits = <Credits track={track} />;
+  const side = !wide ? null : queueOpen ? 'queue' : lyrics ? 'lyrics' : null;
   const text = <Lyrics refId={track.ref} songId={info?.nd_song_id ?? track.nd_song_id} />;
 
   return (
-    <div className="pt-safe relative isolate mx-auto flex min-h-dvh max-w-2xl flex-col pb-[calc(24px+env(safe-area-inset-bottom))] lg:max-w-6xl">
+    <div className={cx('pt-safe relative isolate mx-auto flex min-h-dvh max-w-2xl flex-col pb-[calc(24px+env(safe-area-inset-bottom))]', side && 'lg:max-w-6xl')}>
       {(track.cover_small_url || track.cover_url) && (
         // the cover, blurred, as the page's own light
         <div aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
@@ -159,12 +162,12 @@ export function PlayerPage() {
       <div className="flex min-h-14 items-center gap-1 px-2">
         <IconButton icon="down" label="Свернуть" onClick={() => goBack('/home')} />
         <PlayingFrom context={context} page={page} />
-        <IconButton icon="lyrics" label={lyrics ? 'Скрыть текст' : 'Показать текст'} aria-pressed={lyrics} onClick={toggleLyrics} className={lyrics ? '!text-accent' : 'text-muted'} />
+        <IconButton icon="lyrics" label={textShown ? 'Скрыть текст' : 'Показать текст'} aria-pressed={textShown} onClick={toggleLyrics} className={textShown ? '!text-accent' : 'text-muted'} />
       </div>
 
-      <div className="lg:grid lg:grid-cols-[minmax(0,24rem)_minmax(0,1fr)] lg:items-start lg:gap-x-8 lg:px-4">
+      <div className={cx(side && 'lg:grid lg:grid-cols-[minmax(0,24rem)_minmax(0,1fr)] lg:items-start lg:gap-x-8 lg:px-4')}>
         {side ? (
-          <div className={cx('order-2 min-w-0', side !== 'credits' && 'sticky top-2 h-[calc(100dvh-5.5rem)]')}>
+          <div className="sticky top-2 order-2 h-[calc(100dvh-5.5rem)] min-w-0">
             {side === 'queue' ? (
               <section aria-label="Очередь" className="flex h-full flex-col overflow-hidden rounded-2xl bg-surface">
                 <div className="flex items-center gap-2 pl-4 pr-1 pt-1">
@@ -175,7 +178,7 @@ export function PlayerPage() {
                   <QueueList queue={queue} index={index} onWave={onWave} shuffle={shuffle} />
                 </div>
               </section>
-            ) : side === 'lyrics' ? text : credits}
+            ) : text}
           </div>
         ) : (
           lyrics && <div className={cx('min-h-72 px-3 pt-2', full ? 'h-[calc(100dvh-13rem)]' : 'h-[58dvh]')}>{text}</div>
@@ -298,7 +301,7 @@ export function PlayerPage() {
           <IconButton icon="queue" label={queueOpen ? 'Скрыть очередь' : 'Очередь'} aria-pressed={queueOpen} onClick={() => setQueueOpen((v) => !v)} className={queueOpen ? '!text-accent' : 'text-muted'} />
         </div>
       </div>
-      {side !== 'credits' && credits}
+      <Credits track={track} />
         </div>
       </div>
 
@@ -313,7 +316,7 @@ export function PlayerPage() {
 function Credits({ track }: { track: ListenTrack }) {
   const people = track.artists?.length ? track.artists : [{ name: track.artist, ref: track.artist_ref ?? undefined }];
   return (
-    <section aria-label="Участники" className="mx-4 mt-5 rounded-2xl bg-surface px-4 pb-2 pt-3 lg:mx-0">
+    <section aria-label="Участники" className="mx-4 mt-5 rounded-2xl bg-surface px-4 pb-2 pt-3">
       <h2 className="pb-1 text-base font-bold">Участники</h2>
       <ul>
         {people.map((a, i) => {
