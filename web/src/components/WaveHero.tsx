@@ -4,10 +4,11 @@ import { Icon } from './Icon';
 import { Spinner } from './ui';
 import { WaveGlow } from './WaveGlow';
 
-/** «Моя волна» as the hero of «Главная» on a computer (`useDesktop()`): no card, a living soft blob glows right on the
- * page background (a canvas wider than the column, its edges fade out); the title, the state line and the round play
- * button sit on top of it. The blob's colors come from the current track's cover; it is bigger while the wave plays and
- * shrinks (slowly) on pause. Everywhere else `WaveCard` is used instead. */
+/** «Моя волна» as the hero of «Главная», on a phone and on a computer alike: no card, a living soft blob glows right
+ * on the page background (a canvas wider than the column, its edges fade out); the title and the state line stand
+ * over the round play button, which is the middle of the glow. The blob's colors come from the current track's cover;
+ * it is bigger while the wave plays and shrinks (slowly) on pause. Only a computer has it move with the loudness of
+ * the sound (`lib/waveAudio.ts`): a phone's player is not to be touched for it. */
 export function WaveHero() {
   const { title, starting } = useWave();
   const wave = useListen((s) => !!s.track && s.context.startsWith('wave:'));
@@ -31,7 +32,7 @@ export function WaveHero() {
   const label = busy ? 'Моя волна: запускаем' : running ? 'Моя волна: пауза' : on ? 'Моя волна: продолжить' : 'Моя волна: слушать';
 
   return (
-    <div className="relative mt-1 h-[360px]">
+    <div className="relative mt-1 h-[300px] lg:h-[360px]">
       <WaveGlow
         playing={playing}
         cover={cover}

@@ -24,7 +24,7 @@ const reducedMotion = () => !!window.matchMedia?.('(prefers-reduced-motion: redu
 const css = (c: RGB, a: number) =>
   `rgba(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)},${a})`;
 
-/** The living soft blob of «Моя волна» (`WaveHero`, desktop only): a fragment shader drawn at half resolution and stretched, stopped while the
+/** The living soft blob of «Моя волна» (`WaveHero`): a fragment shader drawn at half resolution and stretched, stopped while the
  * card is off screen or the page is hidden. Without WebGL (or after a lost context) a still soft radial gradient. */
 export function WaveGlow({ playing, cover, center = [0.5, 0.5], zoom = 0.9, className, style }: Props) {
   const wrap = useRef<HTMLDivElement>(null);

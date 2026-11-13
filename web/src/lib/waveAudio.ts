@@ -1,6 +1,6 @@
 import { isDesktop } from './desktop';
 
-/** Smoothed-loudness source for the «Моя волна» glow (`components/WaveGlow.tsx`, mounted only by the desktop hero): an
+/** Smoothed-loudness source for the «Моя волна» glow (`components/WaveGlow.tsx`): an
  * `AnalyserNode` on the page player's `<audio>` (`createMediaElementSource`). Once connected, the sound of that element
  * goes only through the AudioContext, so this is careful:
  *  - only on a computer in a plain browser (`isDesktop()`): nothing else ever touches the `<audio>`, and inside the app

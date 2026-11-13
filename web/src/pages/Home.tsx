@@ -1,10 +1,8 @@
 import { api } from '../api/client';
 import { Icon, type IconName } from '../components/Icon';
 import { ReleaseTile } from './Releases';
-import { WaveCard } from '../components/Wave';
 import { WaveHero } from '../components/WaveHero';
 import { ErrorState, SectionTitle, Spinner } from '../components/ui';
-import { useDesktop } from '../lib/desktop';
 import { useHubEvent } from '../lib/events';
 import { useAsync, useRememberScrollX } from '../lib/hooks';
 import { Link } from '../lib/router';
@@ -18,11 +16,10 @@ export function HomePage() {
   const res = useAsync((s) => api.ndHome(s), []);
   useHubEvent('library', () => res.reload(true));
   const d = res.data;
-  const desktop = useDesktop();
 
   return (
     <div className="pt-safe pb-4">
-      {desktop ? <WaveHero /> : <WaveCard />}
+      <WaveHero />
       <TastePrompt />
       <NewReleases />
       <div className="grid grid-cols-2 gap-2 px-4 pt-3">
