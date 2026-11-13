@@ -167,7 +167,7 @@ export function TrackRow({
   const play = all ? listenHere : songId ? (onPlay ?? (() => playSongs([songId]))) : track.owned && !canPlay() ? listenHere : undefined;
   const rowPlays = STANDALONE && (!track.owned || (!(link && track.album_ref) && !!play));
   const playLabel = playing ? `Пауза «${track.title}»` : `Слушать «${track.title}»`;
-  const sub = [track.artists?.length ? track.artists.join(', ') : track.artist, showAlbum ? track.album_title : null].filter(Boolean).join(' · ');
+  const sub = track.artists?.length ? track.artists.join(', ') : track.artist; // the album is a column of its own, or nowhere
   const body = (
     <>
       {number !== undefined || showCover ? (
@@ -375,7 +375,6 @@ export function TrackRow({
                       )}
                     </span>
                   ))}
-                  {showAlbum && !cols.album && track.album_title ? ` · ${track.album_title}` : ''}
                 </span>
               </span>
             </span>
@@ -455,7 +454,7 @@ export function TrackRow({
             {tap('flex min-w-0 flex-1 items-center gap-3 py-2 text-left', (
               <>
                 {lead(false)}
-                {names([artistLine, showAlbum ? track.album_title : null].filter(Boolean).join(' · '))}
+                {names(artistLine)}
               </>
             ))}
             {downloading && <span className="flex w-6 justify-center text-info" title="Скачивается"><Spinner size={14} /></span>}
