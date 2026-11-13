@@ -9,7 +9,7 @@ import { Link, enc, navigate } from '../lib/router';
 import { AUTO_PLAYLISTS } from '../lib/stats';
 
 /** «Библиотека» of a phone: the lists themselves, at once — «Любимое» and the playlists one keeps (a group of rows),
- * the lists that make themselves («Для вас», tiles) and the saved filters by tags. A computer has the same in its
+ * the lists that make themselves («Для вас», tiles) and, last, the tags: the saved filters by them and «Все теги». A computer has the same in its
  * side panel (`components/Sidebar.tsx`). The files the Hub keeps are «Мои файлы» of «Меню» (`pages/Files.tsx`). */
 export function LibraryPage() {
   const lists = useAsync((s) => api.playlists(s), []);
@@ -55,19 +55,20 @@ export function LibraryPage() {
         ))}
       </div>
 
-      {!!sels.data?.length && (
-        <>
-          <Title>Подборки по тегам</Title>
-          <div className="flex flex-wrap gap-2">
-            {sels.data.map((x) => (
-              <Link key={x.id} to={`/selection/${x.id}`} className="flex h-11 items-center gap-2 rounded-full bg-surface pl-3 pr-4 text-[15px] font-medium hover:bg-raised">
-                <Icon name="tag" size={18} className="text-accent" />
-                <span className="max-w-56 truncate">{x.name}</span>
-              </Link>
-            ))}
-          </div>
-        </>
-      )}
+      {/* the tags, last: the saved filters by them, and the way to the tags themselves */}
+      <Title>Подборки по тегам</Title>
+      <div className="flex flex-wrap gap-2">
+        {(sels.data ?? []).map((x) => (
+          <Link key={x.id} to={`/selection/${x.id}`} className="flex h-11 items-center gap-2 rounded-full bg-surface pl-3 pr-4 text-[15px] font-medium hover:bg-raised">
+            <Icon name="filter" size={18} className="text-accent" />
+            <span className="max-w-56 truncate">{x.name}</span>
+          </Link>
+        ))}
+        <Link to="/tags" className="flex h-11 items-center gap-2 rounded-full bg-surface pl-3 pr-4 text-[15px] font-medium text-muted hover:bg-raised hover:text-fg">
+          <Icon name="tag" size={18} />
+          Все теги
+        </Link>
+      </div>
     </div>
   );
 }

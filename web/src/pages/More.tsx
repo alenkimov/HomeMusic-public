@@ -90,7 +90,6 @@ export function MorePage() {
           </Group>
           {STANDALONE && (
             <Group>
-              <Item icon="tag" tint="bg-[#e15a97]" to="/tags" title="Теги" sub="Язык, жанр и свои; подборки по тегам" />
               <Item icon="chart" tint="bg-[#2ba6bc]" to="/stats" title="Статистика" sub="Что вы слушали: треки, исполнители, жанры; история из Spotify" />
             </Group>
           )}
