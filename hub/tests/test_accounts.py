@@ -133,13 +133,13 @@ async def test_search_history_is_shared_between_sessions_and_isolated_between_ac
             assert r.status_code == 200, r.text
             assert r.headers["cache-control"] == "no-store"
             assert r.json() == {"items": [{"key": "q:кино", "kind": "query", "title": "Кино", "subtitle": None, "ref": None,
-                                           "cover_url": None, "link": None}]}
-            assert (await other.get("/api/search/history")).json() == {"items": []}
+                                           "cover_url": None, "link": None}], "frequent": []}
+            assert (await other.get("/api/search/history")).json()["items"] == []
             r = await other.post("/api/search/history", json={"title": "Земфира"})
             assert r.status_code == 200, r.text
             r = await device.delete("/api/search/history")
             assert r.status_code == 200, r.text
-            assert (await env["admin"].get("/api/search/history")).json() == {"items": []}
+            assert (await env["admin"].get("/api/search/history")).json()["items"] == []
             assert recent(await other.get("/api/search/history")) == ["Земфира"]
             assert json.loads(own_events.get_nowait()) == {"event": "search_history", "data": {}}
         finally:
@@ -191,7 +191,7 @@ async def test_concurrent_search_history_writes_do_not_lose_queries(env):
 async def test_search_history_rejects_invalid_queries(env, query):
     r = await env["admin"].post("/api/search/history", json={"title": query})
     assert r.status_code == 422, r.text
-    assert (await env["admin"].get("/api/search/history")).json() == {"items": []}
+    assert (await env["admin"].get("/api/search/history")).json()["items"] == []
 
 
 async def test_what_was_opened_from_the_results_is_kept_once_and_can_be_taken_out(env):
@@ -212,6 +212,19 @@ async def test_what_was_opened_from_the_results_is_kept_once_and_can_be_taken_ou
     assert (await admin.post("/api/search/history", json={**track, "link": "https://elsewhere.test/"})).status_code == 422
     assert (await admin.delete("/api/search/history", params={"key": "track:dz:100"})).status_code == 200
     assert recent(await admin.get("/api/search/history")) == ["still loving you", "Scorpions"]
+
+
+async def test_what_is_come_back_to_is_searched_often(env):
+    """«Вы часто ищете»: what was opened or asked for more than once, the most often first; once is not often."""
+    admin = env["admin"]
+    for title, times in (("Vaundy", 3), ("wowaka", 2), ("раз", 1)):
+        for _ in range(times):
+            assert (await admin.post("/api/search/history", json={"kind": "artist", "ref": f"a:{title}", "title": title})).status_code == 200
+    out = (await admin.get("/api/search/history")).json()
+    assert [x["title"] for x in out["frequent"]] == ["Vaundy", "wowaka"]
+    assert [x["title"] for x in out["items"]] == ["раз", "wowaka", "Vaundy"]
+    assert (await admin.delete("/api/search/history", params={"key": "artist:a:Vaundy"})).status_code == 200
+    assert [x["title"] for x in (await admin.get("/api/search/history")).json()["frequent"]] == ["wowaka"]
 
 
 @pytest.mark.parametrize("method", ["GET", "POST", "DELETE"])

@@ -8,12 +8,14 @@ import { Icon } from '../components/Icon';
 import { SaveButton } from '../components/PlaylistsButton';
 import { Button, Cover, Empty, ErrorState, IconButton, Notice, SectionTitle, Segmented, SkeletonRows, Spinner, cx } from '../components/ui';
 import { startDownload } from '../lib/actions';
+import { STANDALONE } from '../lib/embedded';
 import { useHubEvent } from '../lib/events';
 import { fmtDuration } from '../lib/format';
 import { useAsync, useDebounced, useRememberScrollX, type AsyncState } from '../lib/hooks';
 import { extendQueue, markQueued, useListen } from '../lib/listen';
 import { canPlay, canPlayAll, playList } from '../lib/player';
 import { Link, enc, navigate } from '../lib/router';
+import { startChatWith } from './AssistantChat';
 
 export type SearchTab = 'catalog' | 'files' | 'reuploads';
 
@@ -24,6 +26,9 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
   const [tab, setTab] = useState<SearchTab>(initialTab);
   const dq = useDebounced(q.trim(), 400);
   const inputRef = useRef<HTMLInputElement>(null);
+  const shots = useRef<HTMLInputElement>(null);
+  // the assistant is the same search, asked in one's own words (or with a screenshot): one button away, never guessed
+  const ask = (images: File[] = []) => startChatWith(q.trim() || (images.length ? 'Найди и скачай треки с этих скриншотов' : ''), images, false);
 
   // Keep the query in the URL so "back" from an artist/album restores the results.
   useEffect(() => {
@@ -45,16 +50,16 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
   return (
     <div>
       <header className="pt-safe sticky top-0 z-20 bg-bg/95 px-4 pb-3 backdrop-blur">
-        <h1 className="pb-3 pt-4 text-2xl font-bold">Поиск</h1>
-        <div className="relative">
-          <Icon name="search" size={20} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-dim" />
+        <h1 className="sr-only">Поиск</h1>
+        <div className="relative pt-3">
+          <Icon name="search" size={20} className="pointer-events-none absolute left-3.5 top-[calc(50%+6px)] -translate-y-1/2 text-dim" />
           <input
             ref={inputRef}
             type="search"
             maxLength={512}
             enterKeyHint="search"
-            className="input h-12 rounded-full pl-11 pr-11"
-            placeholder="Исполнитель, альбом или трек"
+            className={cx('input h-12 rounded-2xl border-transparent bg-surface pl-11', STANDALONE ? 'pr-20' : 'pr-11')}
+            placeholder={STANDALONE ? 'Трек, исполнитель или просьба' : 'Исполнитель, альбом или трек'}
             aria-label="Поиск"
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -65,30 +70,47 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
               if (q.trim().length >= 2) remember({ kind: 'query', title: q.trim() });
             }}
           />
-          {q && (
-            <IconButton
-              icon="x"
-              label="Очистить"
-              className="absolute right-0.5 top-1/2 -translate-y-1/2 text-muted"
-              onClick={() => {
-                setQ('');
-                inputRef.current?.focus();
-              }}
+          <div className="absolute right-0.5 top-[calc(50%+6px)] flex -translate-y-1/2 items-center">
+            {q && (
+              <IconButton
+                icon="x"
+                label="Очистить"
+                className="!w-9 text-muted"
+                onClick={() => {
+                  setQ('');
+                  inputRef.current?.focus();
+                }}
+              />
+            )}
+            {STANDALONE && (
+              <>
+                <IconButton icon="image" label="Скриншот или список — ассистенту" className="!w-10 text-muted" onClick={() => shots.current?.click()} />
+                <input ref={shots} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length) ask(files); }} />
+              </>
+            )}
+          </div>
+        </div>
+        {/* where to search is asked only once there is something to search for */}
+        {q.trim() && (
+          <div className="no-scrollbar mt-3 flex items-center gap-2 overflow-x-auto">
+            <Segmented<SearchTab>
+              label="Где искать"
+              value={tab}
+              onChange={setTab}
+              options={[
+                { value: 'catalog', label: 'Каталог' },
+                { value: 'files', label: 'Файлы' },
+                { value: 'reuploads', label: 'Без цензуры' },
+              ]}
             />
-          )}
-        </div>
-        <div className="mt-3">
-          <Segmented<SearchTab>
-            label="Где искать"
-            value={tab}
-            onChange={setTab}
-            options={[
-              { value: 'catalog', label: 'Каталог' },
-              { value: 'files', label: 'Файлы' },
-              { value: 'reuploads', label: 'Без цензуры' },
-            ]}
-          />
-        </div>
+            {STANDALONE && (
+              <button type="button" onClick={() => ask()} className="ml-auto flex min-h-9 shrink-0 items-center gap-1.5 rounded-full bg-raised px-4 text-sm hover:bg-hover">
+                <Icon name="sparkle" size={16} className="text-accent" />
+                Спросить ассистента
+              </button>
+            )}
+          </div>
+        )}
       </header>
 
       {!dq ? (
@@ -149,7 +171,7 @@ function RecentSearches({ onPick }: { onPick: (q: string) => void }) {
   };
 
   const forget = (key: string) => {
-    res.setData((prev) => (prev ? { items: prev.items.filter((x) => x.key !== key) } : prev));
+    res.setData((prev) => (prev ? { items: prev.items.filter((x) => x.key !== key), frequent: prev.frequent.filter((x) => x.key !== key) } : prev));
     api.forgetSearch(key).catch((e) => {
       setClearError(`Не удалось убрать из недавнего. ${errorMessage(e)}`);
       res.reload(true);
@@ -205,6 +227,19 @@ function RecentSearches({ onPick }: { onPick: (q: string) => void }) {
             {expanded ? 'Свернуть' : 'Показать ещё'}
           </Button>
         </div>
+      )}
+      {!!res.data?.frequent.length && (
+        <section aria-label="Вы часто ищете">
+          <SectionTitle>Вы часто ищете</SectionTitle>
+          <div className="flex flex-wrap gap-2 px-4">
+            {res.data.frequent.map((r) => (
+              <button key={r.key} type="button" onClick={() => (r.link ? navigate(r.link) : onPick(r.title))} className="flex min-h-10 max-w-full items-center gap-2 rounded-full bg-surface px-4 text-[15px] hover:bg-raised">
+                {r.kind === 'query' && <Icon name="search" size={15} className="shrink-0 text-dim" />}
+                <span className="truncate">{r.title}</span>
+              </button>
+            ))}
+          </div>
+        </section>
       )}
     </div>
   );

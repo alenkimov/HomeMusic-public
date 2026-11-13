@@ -359,6 +359,8 @@ export interface SearchRecent {
 
 export interface SearchHistoryOut {
   items: SearchRecent[];
+  /** «Вы часто ищете»: what was come back to more than once, the most often first */
+  frequent: SearchRecent[];
 }
 
 export interface SearchOut {

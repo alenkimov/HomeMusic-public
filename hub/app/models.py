@@ -81,6 +81,7 @@ class SearchHistory(Base):
     ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     cover_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     link: Mapped[str | None] = mapped_column(String(512), nullable=True)  # the page of the app a tap opens
+    times: Mapped[int] = mapped_column(Integer, default=1, server_default="1")  # how often it was come back to
     searched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

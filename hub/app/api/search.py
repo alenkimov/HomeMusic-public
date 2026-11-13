@@ -39,22 +39,32 @@ router = APIRouter(prefix="/api/search", tags=["search"])
 
 ROW_LIMIT = 12  # artists and albums: one horizontal row each
 TRACK_PAGE = 25  # tracks: the first page, then more as the list is scrolled (GET /api/search/tracks)
-HISTORY_LIMIT = 30
+HISTORY_LIMIT = 30  # the lines of «Недавнее» that are shown
+HISTORY_KEPT = 300  # the lines that are kept: «Вы часто ищете» counts further back than «Недавнее» shows
+FREQUENT_LIMIT = 8
 
 
 def _recent_queries(user_id: int):
     return select(SearchHistory).where(SearchHistory.user_id == user_id).order_by(
         SearchHistory.searched_at.desc(), SearchHistory.key
-    ).limit(HISTORY_LIMIT)
+    )
+
+
+def _recent_out(r: SearchHistory) -> SearchRecentOut:
+    return SearchRecentOut(key=r.key, kind=r.kind, title=r.title, subtitle=r.subtitle, ref=r.ref, cover_url=r.cover_url,
+                           link=r.link)
 
 
 @router.get("/history", response_model=SearchHistoryOut)
 async def search_history(response: Response, user: User = Depends(current_user),
                          s: AsyncSession = Depends(get_session, scope="function")):
     response.headers["Cache-Control"] = "no-store"
-    rows = (await s.execute(_recent_queries(user.id))).scalars()
-    return SearchHistoryOut(items=[SearchRecentOut(key=r.key, kind=r.kind, title=r.title, subtitle=r.subtitle, ref=r.ref,
-                                                   cover_url=r.cover_url, link=r.link) for r in rows])
+    rows = (await s.execute(_recent_queries(user.id).limit(HISTORY_LIMIT))).scalars()
+    often = (await s.execute(
+        select(SearchHistory).where(SearchHistory.user_id == user.id, SearchHistory.times > 1)
+        .order_by(SearchHistory.times.desc(), SearchHistory.searched_at.desc(), SearchHistory.key).limit(FREQUENT_LIMIT)
+    )).scalars()
+    return SearchHistoryOut(items=[_recent_out(r) for r in rows], frequent=[_recent_out(r) for r in often])
 
 
 @router.post("/history", response_model=dict[str, bool])
@@ -70,9 +80,10 @@ async def remember_search(body: SearchRecentIn, user: User = Depends(current_use
     )
     await s.execute(stmt.on_conflict_do_update(
         index_elements=[SearchHistory.user_id, SearchHistory.key],
-        set_={c: getattr(stmt.excluded, c) for c in ("kind", "title", "subtitle", "ref", "cover_url", "link", "searched_at")},
+        set_={**{c: getattr(stmt.excluded, c) for c in ("kind", "title", "subtitle", "ref", "cover_url", "link", "searched_at")},
+              "times": SearchHistory.times + 1},
     ))
-    keep = _recent_queries(user.id).with_only_columns(SearchHistory.key)
+    keep = _recent_queries(user.id).limit(HISTORY_KEPT).with_only_columns(SearchHistory.key)
     await s.execute(delete(SearchHistory).where(
         SearchHistory.user_id == user.id, SearchHistory.key.not_in(keep)
     ))

@@ -139,12 +139,13 @@ export function forgetChat(id: number) {
 
 let draft: { text: string; images: File[] } | null = null;
 
-/** Opens a new chat with a message ready to send (Android "Share" → HomeMusic). */
-export function startChatWith(text: string, images: File[] = []) {
+/** Opens a new chat with a message ready to send (Android "Share" → HomeMusic; «Спросить ассистента» of the
+ * search). `replace`: the page it is opened from is not one to come back to. */
+export function startChatWith(text: string, images: File[] = [], replace = true) {
   newChat();
   draft = { text, images: images.slice(0, MAX_IMAGES) };
   if (images.length > MAX_IMAGES) imageLimitWarning();
-  navigate('/assistant', { replace: true });
+  navigate('/assistant', { replace });
 }
 
 // --------------------------------------------------------------------------------------------------
