@@ -183,9 +183,11 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
       {data.kind !== 'none' && (
         <IconButton icon="sliders" size={16} label="Вид текста" onClick={() => setLookOpen(true)} className="!h-8 !w-8 text-muted hover:text-fg" />
       )}
-      <button type="button" onClick={() => setPicking(true)} className="rounded-full px-3 py-1.5 hover:bg-fg/10 hover:text-fg">
-        Другой вариант
-      </button>
+      {data.kind !== 'none' && (
+        <button type="button" onClick={() => setPicking(true)} className="rounded-full px-3 py-1.5 hover:bg-fg/10 hover:text-fg">
+          Другой вариант
+        </button>
+      )}
     </div>
   );
   const far = (i: number) => (look.blur && !holding && at >= 0 && i !== at ? { filter: `blur(${Math.min(3, Math.abs(i - at)) * 1.1}px)` } : undefined);
@@ -194,9 +196,16 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
     <div className="flex h-full flex-col">
       {data.kind === 'none' ? (
         <Blank text={data.pinned ? 'Вы отметили, что у этого трека нет текста.' : 'Текст не нашёлся ни в одном источнике.'}>
-          <Button small busy={restoring} onClick={() => void restore()}>
-            {data.pinned ? 'Вернуть текст' : 'Поискать ещё раз'}
-          </Button>
+          {/* no text was found: the search is run again where its progress is seen — every source on its own line */}
+          {data.pinned ? (
+            <Button small busy={restoring} onClick={() => void restore()}>
+              Вернуть текст
+            </Button>
+          ) : (
+            <Button small onClick={() => setPicking(true)}>
+              Поискать ещё раз
+            </Button>
+          )}
         </Blank>
       ) : (
         <div
