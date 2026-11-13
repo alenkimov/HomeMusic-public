@@ -59,13 +59,13 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
   const at = (to: string) => route.path === to;
 
   return (
-    <aside className="fixed bottom-(--tabbar-h) left-0 top-0 z-30 flex w-(--side-w) flex-col border-r border-line bg-surface/60" aria-label="Разделы и медиатека">
-      <nav className="space-y-0.5 p-2" aria-label="Разделы">
+    <aside className="fixed bottom-(--tabbar-h) left-2 top-2 z-30 flex w-[calc(var(--side-w)-8px)] flex-col gap-2" aria-label="Разделы и медиатека">
+      <nav className="space-y-0.5 rounded-2xl bg-surface p-2" aria-label="Разделы">
         {NAV.map((t) => {
           const on = shown === t.id;
           return (
             <Fragment key={t.id}>
-            <Link to={on ? t.to : (last[t.id] ?? t.to)} aria-current={on ? 'page' : undefined} className={cx(item, on ? 'bg-fg/10 font-semibold text-fg' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
+            <Link to={on ? t.to : (last[t.id] ?? t.to)} aria-current={on ? 'page' : undefined} className={cx(item, on ? 'bg-accent/15 font-semibold text-accent' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
               <Icon name={t.icon} size={20} stroke={on ? 2.4 : 2} />
               <span className="flex-1">{t.label}</span>
               {t.id === 'more' && activeDownloads > 0 && (
@@ -76,6 +76,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
           );
         })}
       </nav>
+      <div className="flex min-h-0 flex-1 flex-col rounded-2xl bg-surface">
       <div className="flex items-center gap-1 px-3 pb-1 pt-3 text-xs text-dim">
         <span className="flex-1 font-semibold uppercase tracking-wide">Моя медиатека</span>
         <Link to="/playlists" title="Создать плейлист" aria-label="Создать плейлист" className="flex h-7 w-7 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg">
@@ -171,6 +172,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
             </Link>
           );
         })}
+      </div>
       </div>
     </aside>
   );

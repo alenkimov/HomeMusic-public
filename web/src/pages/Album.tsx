@@ -1,3 +1,4 @@
+import { Icon } from '../components/Icon';
 import { useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { TrackOut } from '../api/types';
@@ -124,39 +125,46 @@ export function AlbumPage({ refId }: { refId: string }) {
           <div className="absolute inset-0 bg-gradient-to-b from-transparent via-bg/50 to-bg" />
         </div>
         <Bar overlay />
-        <div className="relative flex flex-col items-center px-6 pb-4 text-center">
-          <Cover src={album.cover_url} alt={album.title} className="aspect-square w-[min(64vw,260px)] shadow-2xl" icon="disc" />
-          <h1 className="mt-4 text-2xl font-extrabold leading-tight">{album.title}</h1>
+        <div className="relative px-4 pb-4">
+          <div className="flex justify-center pb-4">
+            <Cover src={album.cover_url} alt={album.title} className="aspect-square w-[min(56vw,240px)] shadow-2xl" icon="disc" />
+          </div>
+          <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+          <h1 className="line-clamp-2 text-2xl font-bold leading-tight">{album.title}</h1>
           {album.artist_ref ? (
-            <Link to={`/artist/${enc(album.artist_ref)}`} className="mt-1 font-semibold hover:underline">
+            <Link to={`/artist/${enc(album.artist_ref)}`} className="mt-1 block truncate font-semibold hover:underline">
               {album.artist}
             </Link>
           ) : (
-            <div className="mt-1 font-semibold">{album.artist}</div>
+            <div className="mt-1 truncate font-semibold">{album.artist}</div>
           )}
-          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-1.5 text-sm text-muted">
+          <div className="mt-1 flex flex-wrap items-center gap-x-1.5 text-sm text-muted">
             {album.explicit && <ExplicitBadge />}
             <span>{[recordTypeLabel(album.record_type), year, tracks.length ? tracksWord(tracks.length) : null, total ? fmtLength(total) : null].filter(Boolean).join(' · ')}</span>
           </div>
           <div className="mt-2">
             <OwnedBadge status={album.owned_status} count={album.owned_count} total={tracks.length || album.nb_tracks} />
           </div>
+          </div>
+          {(playable.length > 0 || listenAll) && (
+            <button
+              type="button"
+              aria-label="Слушать"
+              title={playable.length > 0 && playable.length < tracks.length ? `Слушать ${playable.length} из ${tracks.length}` : 'Слушать'}
+              onClick={() => (playable.length > 0 ? play() : listenAll?.())}
+              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition hover:scale-105 active:scale-95"
+            >
+              <Icon name="play" size={26} filled className="translate-x-0.5" />
+            </button>
+          )}
+          </div>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2 px-4 pb-2">
-        {playable.length > 0 && (
-          <Button variant="primary" icon="play" className="col-span-2" onClick={() => play()}>
-            {playable.length === tracks.length ? 'Слушать' : `Слушать ${playable.length} из ${tracks.length}`}
-          </Button>
-        )}
-        {listenAll && (
-          <Button variant="primary" icon="play" className="col-span-2" onClick={listenAll}>
-            Слушать
-          </Button>
-        )}
         {!(playable.length > 0 && missing.length === 0) && (
-          <Button variant={playable.length > 0 || listenAll ? 'secondary' : 'primary'} icon="download" className="col-span-2" busy={dlBusy} disabled={missing.length === 0} onClick={downloadAlbum}>
+          <Button icon="download" className="col-span-2" busy={dlBusy} disabled={missing.length === 0} onClick={downloadAlbum}>
             {missing.length === 0 ? 'Всё скачано' : owned.length ? `Скачать недостающие ${missing.length} из ${tracks.length}` : 'Скачать альбом'}
           </Button>
         )}

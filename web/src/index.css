@@ -207,7 +207,7 @@
   html:not(.hm-embedded) {
     --app-w: 72rem;
     --side-w: 16rem;
-    --tabbar-h: 84px; /* a computer has the player bar (`DesktopPlayer`) where a phone has the tab bar */
+    --tabbar-h: 92px; /* a computer has the player (`DesktopPlayer`: a card with 8px around it) where a phone has the tab bar */
   }
 }
 

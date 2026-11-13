@@ -38,9 +38,9 @@ export function DesktopPlayer() {
   const source = info?.kind === 'full' ? providerLabel(info.provider) : null;
 
   return (
-    <div className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-line bg-bg" role="region" aria-label="Плеер">
+    <div className="pb-safe fixed inset-x-0 bottom-0 z-40 bg-bg pt-2" role="region" aria-label="Плеер">
       <SeekLine aim={aim} refId={track?.ref} songId={info?.nd_song_id ?? track?.nd_song_id} className="absolute bottom-full left-1/2 mb-3 w-[min(90vw,40rem)] -translate-x-1/2" />
-      <div className="grid h-(--tabbar-h) grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] items-center gap-4 px-4">
+      <div className="mx-2 mb-2 grid h-[calc(var(--tabbar-h)-16px)] grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] items-center gap-4 rounded-2xl bg-surface px-4">
         <div className="flex min-w-0 items-center gap-1">
           {track ? (
             <>

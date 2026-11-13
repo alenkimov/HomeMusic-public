@@ -73,7 +73,7 @@ function NewReleases() {
 
 function Shortcut({ to, icon, title }: { to: string; icon: IconName; title: string }) {
   return (
-    <Link to={to} className="flex min-h-14 items-center gap-2.5 rounded-lg bg-raised px-3 py-2 text-sm font-semibold transition hover:bg-hover">
+    <Link to={to} className="flex min-h-14 items-center gap-2.5 rounded-2xl bg-surface px-3.5 py-2 text-sm font-semibold transition hover:bg-raised">
       <Icon name={icon} size={20} className="shrink-0 text-accent" />
       <span className="truncate">{title}</span>
     </Link>
