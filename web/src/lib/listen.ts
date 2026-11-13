@@ -685,6 +685,17 @@ export function cycleShuffle() {
   setShuffle(false);
 }
 
+/** The shuffle button of a list's page (beside its ▶): the same round — off → shuffle → smart shuffle (`canSmart`:
+ * the page is a playlist's or «Любимое») → off. It is the choice for what ▶ starts; a list of this page that plays
+ * already takes it at once. */
+export function cyclePageShuffle(canSmart: boolean) {
+  if (!state.shuffle) return setShuffle(true);
+  if (smartChosen || !canSmart) return setShuffle(false);
+  if (state.track && !onWave() && smartHooks?.canStart()) return cycleShuffle();
+  smartChosen = true;
+  setModes({});
+}
+
 /** The smart shuffle's own calls (`lib/smartShuffle.ts` registers them). */
 export interface SmartHooks {
   /** a new list was started: its screen's smart context (a playlist, «Любимое») is noted, an old session ends */

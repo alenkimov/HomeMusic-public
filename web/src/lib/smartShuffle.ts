@@ -61,6 +61,11 @@ export function useSmartPage(context: string | null, title: string | null) {
   }, [context, title]);
 }
 
+/** The screen is a playlist's or «Любимое»: its shuffle button has the smart shuffle in its round. */
+export function useSmartPossible(): boolean {
+  return useSyncExternalStore(subscribe, () => STANDALONE && page !== null);
+}
+
 /** The list at the top of the screen can be played in the smart shuffle: the button of «Перемешать» shows it. */
 export function useSmartForPage(): boolean {
   const chosen = useSmartChosen();

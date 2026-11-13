@@ -13,12 +13,12 @@ import { fmtLength, plural, tracksWord } from '../lib/format';
 import { AUTO_PLAYLISTS, playCount, usePlayCounts } from '../lib/stats';
 import { useDesktop } from '../lib/desktop';
 import { useHubEvent } from '../lib/events';
-import { setShuffle, useListen } from '../lib/listen';
+import { cyclePageShuffle, useListen } from '../lib/listen';
 import { useAsync, useRememberScrollX } from '../lib/hooks';
 import { Link, enc, navigate, useRoute } from '../lib/router';
 import { filterActive, filterOfQuery, filterWords, passes, selectionsChanged, tagKey, useTags, type TagFilter } from '../lib/tags';
 import { attempt, confirmDialog } from '../lib/ui';
-import { useSmartForPage, useSmartPage } from '../lib/smartShuffle';
+import { useSmartForPage, useSmartPage, useSmartPossible } from '../lib/smartShuffle';
 import { canWave, seedKey, startWave, useWave } from '../lib/wave';
 
 /** The Navidrome library as a player shows it, for the PWA in a plain browser (`STANDALONE`): inside the app these
@@ -84,10 +84,11 @@ export function NdArtistBubble({ artist, radio = false }: { artist: NdArtistOut;
   );
 }
 
-/** ▶ and the shuffle of a whole list, at the right of its name. The shuffle is a switch, as the player's: ▶ starts
- * the list shuffled while it is on, in the order shown while it is off. */
+/** ▶ and the shuffle of a whole list, at the right of its name. The shuffle goes round as the player's — off, on,
+ * and for a playlist or «Любимое» the smart one; ▶ starts the list as the button says. */
 function PlayPair({ tracks, context }: { tracks: readonly TrackOut[]; context?: string }) {
-  const smart = useSmartForPage() && (context === 'playlist' || context === 'liked'); // the shuffle is the smart one
+  const canSmart = useSmartPossible() && (context === 'playlist' || context === 'liked');
+  const smart = useSmartForPage() && canSmart; // the shuffle is the smart one
   const shuffleOn = useListen((s) => s.shuffle);
   return (
     <div className="flex shrink-0 items-center gap-1">
@@ -95,8 +96,8 @@ function PlayPair({ tracks, context }: { tracks: readonly TrackOut[]; context?: 
         icon={smart ? 'shuffleSmart' : 'shuffle'}
         size={26}
         aria-pressed={shuffleOn}
-        label={shuffleOn ? 'Перемешивание включено — выключить' : 'Включить перемешивание'}
-        onClick={() => setShuffle(!shuffleOn)}
+        label={!shuffleOn ? 'Включить перемешивание' : smart ? 'Умное перемешивание включено — выключить' : canSmart ? 'Перемешивание включено — включить умное' : 'Перемешивание включено — выключить'}
+        onClick={() => cyclePageShuffle(canSmart)}
         className={shuffleOn ? '!text-accent' : 'text-muted hover:text-fg'}
       />
       <button
