@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Children, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { NdAlbumOut, NdArtistOut, NdSongOut, PlaylistOut } from '../api/types';
 import { playAll, TrackRow, TrackTableHeader, type ListSort } from '../components/catalog';
@@ -82,55 +82,38 @@ export function NdArtistBubble({ artist, radio = false }: { artist: NdArtistOut;
   );
 }
 
-/** «Слушать» and «Перемешать» for a whole list. */
-export function ListActions({ tracks, context, children }: { tracks: readonly NdSongOut[]; context?: string; children?: ReactNode }) {
-  const smart = useSmartForPage() && (context === 'playlist' || context === 'liked'); // «Перемешать» is the smart shuffle
-  const desktop = useDesktop();
+/** ▶ and the shuffle of a whole list, at the right of its name. The shuffle is a switch, as the player's: ▶ starts
+ * the list shuffled while it is on, in the order shown while it is off. */
+function PlayPair({ tracks, context }: { tracks: readonly NdSongOut[]; context?: string }) {
+  const smart = useSmartForPage() && (context === 'playlist' || context === 'liked'); // the shuffle is the smart one
   const shuffleOn = useListen((s) => s.shuffle);
-  if (!tracks.length && !children) return null;
-  if (desktop)
-    return (
-      <div className="flex items-center gap-3 px-6 pb-4">
-        {tracks.length > 0 && (
-          <>
-            <button
-              type="button"
-              aria-label="Слушать"
-              title="Слушать"
-              onClick={() => playAll(tracks, { context })}
-              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition hover:scale-105 active:scale-95"
-            >
-              <Icon name="play" size={26} filled className="translate-x-0.5" />
-            </button>
-            {/* a switch, as the player's: ▶ starts the list shuffled while it is on, in the order shown while it is off */}
-            <IconButton
-              icon={smart ? 'shuffleSmart' : 'shuffle'}
-              size={28}
-              aria-pressed={shuffleOn}
-              label={shuffleOn ? 'Перемешивание включено — выключить' : 'Включить перемешивание'}
-              onClick={() => setShuffle(!shuffleOn)}
-              className={shuffleOn ? '!text-accent' : 'text-muted hover:text-fg'}
-            />
-          </>
-        )}
-        {children}
-      </div>
-    );
   return (
-    <div className="flex gap-2 px-4 pb-3 pt-1">
-      {tracks.length > 0 && (
-        <>
-          <Button variant="primary" icon="play" className="flex-1" onClick={() => playAll(tracks, { shuffle: false, context })}>
-            Слушать
-          </Button>
-          <Button icon={smart ? 'shuffleSmart' : 'shuffle'} className="flex-1" onClick={() => playAll(tracks, { shuffle: true, context })}>
-            Перемешать
-          </Button>
-        </>
-      )}
-      {children}
+    <div className="flex shrink-0 items-center gap-1">
+      <IconButton
+        icon={smart ? 'shuffleSmart' : 'shuffle'}
+        size={26}
+        aria-pressed={shuffleOn}
+        label={shuffleOn ? 'Перемешивание включено — выключить' : 'Включить перемешивание'}
+        onClick={() => setShuffle(!shuffleOn)}
+        className={shuffleOn ? '!text-accent' : 'text-muted hover:text-fg'}
+      />
+      <button
+        type="button"
+        aria-label="Слушать"
+        title="Слушать"
+        onClick={() => playAll(tracks, { context })}
+        className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition hover:scale-105 active:scale-95"
+      >
+        <Icon name="play" size={26} filled className="translate-x-0.5" />
+      </button>
     </div>
   );
+}
+
+/** What else can be done with a list, in a row under its head (nothing: no row). */
+export function ListActions({ children }: { children?: ReactNode }) {
+  if (!Children.toArray(children).length) return null;
+  return <div className="flex flex-wrap items-center gap-2 px-4 pb-3 lg:px-6">{children}</div>;
 }
 
 /** `found`: the rows a search of the list left (`useListSearch`) — they keep their places in the whole list: the
@@ -277,29 +260,50 @@ function PlaylistEdit({ playlist, onClose, onSaved }: { playlist: PlaylistOut; o
   );
 }
 
-/** `art`: a picture of the page's own in place of the cover («Любимое»: the heart). */
-export function Hero({ cover, round, title, sub, right, kicker, art }: { cover?: string | null; round?: boolean; title: string; sub?: ReactNode; right?: ReactNode; kicker?: string; art?: ReactNode }) {
+/** The head of a list: its picture in its own light (the cover, blurred, fading into the page; the accent's for a
+ * list with no cover), then its name with ▶ and the shuffle of `tracks` at the right. `art`: a picture of the page's
+ * own in place of the cover («Любимое»: the heart). */
+export function Hero({ cover, round, title, sub, right, kicker, art, tracks, context }: { cover?: string | null; round?: boolean; title: string; sub?: ReactNode; right?: ReactNode; kicker?: string; art?: ReactNode; tracks?: readonly NdSongOut[]; context?: string }) {
   const desktop = useDesktop();
+  const play = tracks?.length ? <PlayPair tracks={tracks} context={context} /> : null;
+  const picture = (size: string) =>
+    art ? (
+      <div className={cx('aspect-square shrink-0 overflow-hidden rounded-md shadow-2xl', size)}>{art}</div>
+    ) : (
+      <Cover src={cover} round={round} icon={round ? 'user' : 'disc'} alt={title} className={cx('aspect-square shrink-0 shadow-2xl', size)} />
+    );
+  // it reaches up under the bar with «back»
+  const light = (
+    <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 -top-20 bottom-0 -z-10 overflow-hidden [mask-image:linear-gradient(black_35%,transparent)]">
+      {cover ? <img src={cover} alt="" referrerPolicy="no-referrer" className="h-full w-full scale-150 object-cover opacity-50 blur-3xl" /> : <div className="h-full w-full bg-accent/25" />}
+    </div>
+  );
   if (desktop)
     return (
-      <div className="flex items-end gap-6 px-6 pb-5 pt-3">
-        {art ? <div className="aspect-square w-48 shrink-0 overflow-hidden rounded-md shadow-2xl">{art}</div> : <Cover src={cover} round={round} icon={round ? 'user' : 'disc'} alt={title} className="aspect-square w-48 shrink-0 shadow-2xl" />}
+      <div className="relative isolate flex items-end gap-6 px-6 pb-5 pt-3">
+        {light}
+        {picture('w-48')}
         <div className="min-w-0 flex-1">
           {kicker && <div className="text-sm text-muted">{kicker}</div>}
           <h2 className="line-clamp-2 break-words text-6xl font-black leading-[1.05] tracking-tight">{title}</h2>
           {sub && <div className="mt-3 text-sm text-muted">{sub}</div>}
         </div>
         {right}
+        {play}
       </div>
     );
   return (
-    <div className="flex flex-col items-center gap-3 px-4 pb-4 pt-2 text-center">
-      {art ? <div className="aspect-square w-52 overflow-hidden rounded-md shadow-2xl">{art}</div> : <Cover src={cover} round={round} icon={round ? 'user' : 'disc'} alt={title} className="aspect-square w-52 shadow-2xl" />}
-      <div className="min-w-0">
-        <h2 className="line-clamp-2 text-2xl font-bold leading-tight">{title}</h2>
-        {sub && <div className="mt-1 text-sm text-muted">{sub}</div>}
+    <div className="relative isolate px-4 pb-3">
+      {light}
+      <div className="flex justify-center pb-4">{picture('w-52')}</div>
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <h2 className="line-clamp-2 text-2xl font-bold leading-tight">{title}</h2>
+          {sub && <div className="mt-1 text-sm text-muted">{sub}</div>}
+        </div>
+        {play}
       </div>
-      {right}
+      {right && <div className="pt-3">{right}</div>}
     </div>
   );
 }
@@ -347,6 +351,8 @@ export function LikedPage() {
             </div>
           }
           sub={[tracksWord(songs.length), length ? fmtLength(length) : null].filter(Boolean).join(' · ')}
+          tracks={inOrder(shown ? shown.map((f) => songs[f.index]) : songs, sort)}
+          context="liked"
         />
       )}
       {res.loading ? (
@@ -357,7 +363,6 @@ export function LikedPage() {
         <Empty icon="heart" title="Пока ничего" text="Нажмите «+» у трека — он окажется здесь." />
       ) : (
         <>
-          <ListActions tracks={inOrder(shown ? shown.map((f) => songs[f.index]) : songs, sort)} context="liked" />
           <TagFilterBar songIds={songs.map(tagKey)} filter={filter} onChange={setFilter} onSave={() => setSaving(true)} />
           <SongList tracks={songs} found={shown} sort={sort} onSort={setSort} />
           {songs.length > 0 && search.control}
@@ -398,6 +403,8 @@ export function AutoPlaylistPage({ kind }: { kind: string }) {
           </div>
         }
         sub={res.data ? [tracksWord(tracks.length), length ? fmtLength(length) : null, 'обновляется сам'].filter(Boolean).join(' · ') : (def?.sub ?? '')}
+        tracks={tracks}
+        context="auto"
       />
       {res.loading ? (
         <SkeletonRows />
@@ -407,7 +414,6 @@ export function AutoPlaylistPage({ kind }: { kind: string }) {
         <Empty icon="history" title="Пока пусто" text={kind === 'forgotten' ? 'Здесь появятся треки, которые вы слушали хотя бы три раза и не включали три месяца.' : 'Здесь появятся треки, которые вы слушали за этот период.'} />
       ) : (
         <>
-          <ListActions tracks={tracks} context="auto" />
           <SongList tracks={tracks} sort={null} onSort={() => undefined} period={{ label: def?.column ?? 'Прослушивания', of: res.data!.plays }} />
         </>
       )}
@@ -483,8 +489,10 @@ export function SelectionPage({ id }: { id: string }) {
           </div>
         }
         sub={[unsaved ? null : src.data.title, filterActive(filter) ? filterWords(filter, tags.byId) : 'теги не выбраны', `${tracksWord(list.length)}${list.length ? ` · ${fmtLength(list.reduce((n, t) => n + (t.duration_s ?? 0), 0))}` : ''}`].filter(Boolean).join(' · ')}
+        tracks={inOrder(list, sort)}
+        context="selection"
       />
-      <ListActions tracks={inOrder(list, sort)} context="selection">
+      <ListActions>
         {!unsaved && changed && filterActive(filter) && (
           <Button small variant="primary" busy={busy} onClick={() => void save()}>
             Сохранить изменения
@@ -511,7 +519,6 @@ export function ArtistRow({ artists, rowKey, radio }: { artists: NdArtistOut[]; 
 }
 
 export function PlaylistPage({ id }: { id: string }) {
-  const desktop = useDesktop();
   const res = useAsync((s) => api.playlist(id, s), [id]);
   const p = res.data;
   useSmartPage(`playlist:${id}`, p?.name ?? null);
@@ -538,26 +545,22 @@ export function PlaylistPage({ id }: { id: string }) {
   if (!p) return (<><PageHeader hero title="Плейлист" back="/library" /><ErrorState text={res.error ?? 'Плейлист не найден'} onRetry={() => res.reload()} /></>);
   return (
     <div>
-      <PageHeader hero title={p.name} back="/library" right={desktop ? undefined : (
-          <>
-            <IconButton icon="edit" label="Изменить плейлист" onClick={() => setEditing(true)} />
-            <IconButton icon="trash" label="Удалить плейлист" onClick={drop} />
-          </>
-        )}
-      />
+      <PageHeader hero title={p.name} back="/library" />
       <Hero
         kicker="Плейлист"
         cover={p.cover_url ? `${p.cover_url}&size=600` : p.tracks[0]?.cover_url}
         title={p.name}
         sub={[tracksWord(all.length), p.duration_s ? fmtLength(p.duration_s) : null, waits ? `${waits} ещё не ${plural(waits, ['скачан', 'скачаны', 'скачаны'])} — скачаются, когда послушаете` : null].filter(Boolean).join(' · ')}
+        tracks={inOrder(shown ? shown.map((f) => all[f.index]) : all, sort)}
+        context="playlist"
       />
-      <ListActions tracks={inOrder(shown ? shown.map((f) => all[f.index]) : all, sort)} context="playlist">
-        {desktop && (
-          <>
-            <IconButton icon="edit" size={24} label="Изменить название и обложку" onClick={() => setEditing(true)} className="text-muted hover:text-fg" />
-            <IconButton icon="trash" size={24} label="Удалить плейлист" onClick={() => void drop()} className="text-muted hover:text-danger" />
-          </>
-        )}
+      <ListActions>
+        <Button small icon="edit" onClick={() => setEditing(true)}>
+          Изменить
+        </Button>
+        <Button small icon="trash" onClick={() => void drop()}>
+          Удалить
+        </Button>
       </ListActions>
       {editing && (
         <PlaylistEdit
@@ -697,8 +700,9 @@ export function NdAlbumPage({ id }: { id: string }) {
             {[a.year, tracksWord(a.song_count), a.duration_s ? fmtLength(a.duration_s) : null].filter(Boolean).map((x) => ` · ${x}`)}
           </>
         }
+        tracks={tracks}
+        context="album"
       />
-      <ListActions tracks={tracks} context="album" />
       <ul>
         {tracks.length > 0 && <li><TrackTableHeader numbered /></li>}
         {tracks.map((t, i) => (

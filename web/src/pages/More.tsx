@@ -79,48 +79,66 @@ export function MorePage() {
         </div>
       </div>
 
-      <ul className="mx-4 overflow-hidden rounded-xl bg-surface lg:grid lg:grid-cols-2">
-        {STANDALONE && <Item icon="sparkle" to="/assistant" title="Ассистент" sub="Скриншот, список или просьба — найдёт и скачает" />}
-        {STANDALONE && (
-          <Item
-            icon="download"
-            to="/downloads"
-            title="Загрузки"
-            sub="Что скачивается и что скачано"
-            right={downloads > 0 ? <span className="min-w-5 rounded-full bg-accent px-1.5 text-center text-[11px] font-bold leading-5 text-on-accent">{downloads > 99 ? '99+' : downloads}</span> : undefined}
-          />
-        )}
-        <Item icon="upload" to="/upload" title="Загрузить файлы" sub="Свои аудиофайлы с телефона" />
-        {STANDALONE && <Item icon="folder" to="/files" title="Мои файлы" sub="Альбомы, чьи файлы хранит хаб: правка, свой альбом" />}
-        {STANDALONE && <Item icon="tag" to="/tags" title="Теги" sub="Язык, жанр и свои; подборки по тегам" />}
-        {STANDALONE && <Item icon="chart" to="/stats" title="Статистика" sub="Что вы слушали: треки, исполнители, жанры; история из Spotify" />}
-        <Item icon="transfer" brand="yandex" to="/import?from=yandex" title="Перенести из Яндекс Музыки" sub="«Мне нравится», плейлисты, альбомы и исполнители" />
-        <Item icon="transfer" brand="spotify" to="/import?from=spotify" title="Перенести из Spotify" sub="Плейлисты и «Любимые треки» из файлов CSV" />
-        {STANDALONE && <Item icon="wave" brand="listenbrainz" to="/listenbrainz" title="ListenBrainz" sub="Необязательно: ещё один источник «Открытий недели»" />}
-        <Item icon="send" title="Telegram" sub="Свой бот: отправка треков себе, в группы и каналы" onClick={() => openTelegramSetup()} />
-        {me.is_admin && <Item icon="lyrics" to="/lyrics-sources" title="Тексты песен" sub="Источники текстов и их порядок, поиск для библиотеки" />}
-        {me.is_admin && <Item icon="user" to="/admin" title="Пользователи и приглашения" sub="Расходы на ИИ, песни, коды для новых людей" />}
-        {/* the player is here: in the browser, and the app's own on Android */}
-        <Item icon="install" href="/app/latest.apk" title="Приложение для Android" sub="HomeMusic: офлайн, плеер в шторке, тот же аккаунт" />
-        {me.public_music_url && <Item icon="external" href={me.public_music_url} title="Navidrome" sub="Веб-интерфейс библиотеки" />}
-        <Item
-          icon="bell"
-          title="Уведомления"
-          sub={permText[perm]}
-          onClick={perm === 'default' ? enableNotifications : undefined}
-          right={perm === 'granted' ? <Icon name="check" size={20} className="text-accent" /> : undefined}
-        />
-        {canInstall && !standalone && <Item icon="install" title="Установить приложение" sub="На домашний экран, с «Поделиться» → HomeMusic" onClick={install} />}
-        <Item icon="logout" title="Выйти" onClick={doLogout} danger />
-      </ul>
+      {/* what a line does is said by its group; a computer has the groups in two columns */}
+      <div className="grid items-start gap-4 px-4 lg:grid-cols-2">
+        <div className="space-y-4">
+          <Group>
+            {STANDALONE && <Item icon="sparkle" tint="bg-[#8b6cf6]" to="/assistant" title="Ассистент" sub="Скриншот, список или просьба — найдёт и скачает" />}
+            {STANDALONE && <Item icon="download" tint="bg-[#3d8ef0]" to="/downloads" title="Загрузки" sub="Что скачивается и что скачано" right={downloads > 0 ? <span className="min-w-5 rounded-full bg-accent px-1.5 text-center text-[11px] font-bold leading-5 text-on-accent">{downloads > 99 ? '99+' : downloads}</span> : undefined} />}
+            <Item icon="upload" tint="bg-[#30b85c]" to="/upload" title="Загрузить файлы" sub="Свои аудиофайлы с телефона" />
+            {STANDALONE && <Item icon="folder" tint="bg-[#ef8b3a]" to="/files" title="Мои файлы" sub="Альбомы, чьи файлы хранит хаб: правка, свой альбом" />}
+          </Group>
+          {STANDALONE && (
+            <Group>
+              <Item icon="tag" tint="bg-[#e15a97]" to="/tags" title="Теги" sub="Язык, жанр и свои; подборки по тегам" />
+              <Item icon="chart" tint="bg-[#2ba6bc]" to="/stats" title="Статистика" sub="Что вы слушали: треки, исполнители, жанры; история из Spotify" />
+            </Group>
+          )}
+        </div>
+        <div className="space-y-4">
+          <Group title="Импорт и интеграции">
+            <Item icon="transfer" brand="yandex" to="/import?from=yandex" title="Перенести из Яндекс Музыки" sub="«Мне нравится», плейлисты, альбомы и исполнители" />
+            <Item icon="transfer" brand="spotify" to="/import?from=spotify" title="Перенести из Spotify" sub="Плейлисты и «Любимые треки» из файлов CSV" />
+            {STANDALONE && <Item icon="wave" brand="listenbrainz" to="/listenbrainz" title="ListenBrainz" sub="Необязательно: ещё один источник «Открытий недели»" />}
+            <Item icon="send" tint="bg-[#2aabee]" title="Telegram" sub="Свой бот: отправка треков себе, в группы и каналы" onClick={() => openTelegramSetup()} />
+          </Group>
+          <Group>
+            {me.is_admin && <Item icon="lyrics" to="/lyrics-sources" title="Тексты песен" sub="Источники текстов и их порядок, поиск для библиотеки" />}
+            {me.is_admin && <Item icon="user" to="/admin" title="Пользователи и приглашения" sub="Расходы на ИИ, песни, коды для новых людей" />}
+            {/* the player is here: in the browser, and the app's own on Android */}
+            <Item icon="install" href="/app/latest.apk" title="Приложение для Android" sub="HomeMusic: офлайн, плеер в шторке, тот же аккаунт" />
+            {me.public_music_url && <Item icon="external" href={me.public_music_url} title="Navidrome" sub="Веб-интерфейс библиотеки" />}
+            <Item
+              icon="bell"
+              title="Уведомления"
+              sub={permText[perm]}
+              onClick={perm === 'default' ? enableNotifications : undefined}
+              right={perm === 'granted' ? <Icon name="check" size={20} className="text-accent" /> : undefined}
+            />
+            {canInstall && !standalone && <Item icon="install" title="Установить приложение" sub="На домашний экран, с «Поделиться» → HomeMusic" onClick={install} />}
+            <Item icon="logout" title="Выйти" onClick={doLogout} danger />
+          </Group>
+        </div>
+      </div>
 
       <p className="px-6 py-6 text-center text-xs text-dim">HomeMusic · личный музыкальный сервис</p>
     </div>
   );
 }
 
+/** Lines that belong together: one card, a thin rule between two lines. */
+function Group({ title, children }: { title?: string; children: ReactNode }) {
+  return (
+    <section>
+      {title && <h2 className="px-1 pb-2 text-[13px] font-semibold uppercase tracking-wide text-muted">{title}</h2>}
+      <ul className="overflow-hidden rounded-2xl bg-surface">{children}</ul>
+    </section>
+  );
+}
+
 function Item({
   icon,
+  tint,
   title,
   sub,
   to,
@@ -132,6 +150,8 @@ function Item({
 }: {
   /** the mark of a music service instead of the icon (components/BrandIcon) */
   brand?: string;
+  /** the colour of the line's mark (a class of the background; grey without one) */
+  tint?: string;
   icon: IconName;
   title: string;
   sub?: string;
@@ -143,7 +163,9 @@ function Item({
 }) {
   const inner = (
     <>
-      {brand ? <BrandIcon service={brand} size={22} className="shrink-0" /> : <Icon name={icon} size={22} className={danger ? 'text-danger' : 'text-muted'} />}
+      <span className={cx('flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] text-white', brand ? 'bg-fg/10' : danger ? 'bg-danger' : (tint ?? 'bg-[#6b7684]'))}>
+        {brand ? <BrandIcon service={brand} size={20} /> : <Icon name={icon} size={18} />}
+      </span>
       <span className="min-w-0 flex-1">
         <span className={cx('block', danger && 'text-danger')}>{title}</span>
         {sub && <span className="block truncate text-xs text-muted">{sub}</span>}
@@ -151,9 +173,9 @@ function Item({
       {right ?? ((to || href || onClick) && <Icon name={href ? 'external' : 'chevron'} size={18} className="text-dim" />)}
     </>
   );
-  const cls = 'flex min-h-16 w-full items-center gap-4 px-4 py-2 text-left hover:bg-fg/5';
+  const cls = 'flex min-h-14 w-full items-center gap-3.5 px-3.5 py-2 text-left hover:bg-fg/5';
   return (
-    <li className="border-b border-line/60 last:border-0">
+    <li className="border-b border-fg/5 last:border-0">
       {to ? (
         <Link to={to} className={cls}>
           {inner}

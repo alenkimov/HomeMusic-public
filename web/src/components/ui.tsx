@@ -1,4 +1,3 @@
-import { useDesktop } from '../lib/desktop';
 import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { goBack } from '../lib/router';
 import { downloadStatusLabel, percent } from '../lib/format';
@@ -133,21 +132,20 @@ export function SkeletonRows({ n = 6 }: { n?: number }) {
 
 // --- layout -----------------------------------------------------------------------------------
 
-/** `hero`: the page has its own big head below (a cover, the name in large letters): on a computer the bar keeps
- * only «back» and its buttons — the name is not said twice, nor does a placeholder flash while the page loads. */
+/** `hero`: the page has its own big head below (a cover in its own light, the name in large letters): the bar is
+ * only «back» and its buttons over that light — the name is not said twice, and the bar leaves with the page. */
 export function PageHeader({ title, back, right, sub, hero }: { title: ReactNode; back?: string; right?: ReactNode; sub?: ReactNode; hero?: boolean }) {
-  const bare = useDesktop() && hero;
   return (
-    <header className="pt-safe sticky top-0 z-20 bg-bg/90 backdrop-blur">
+    <header className={cx('pt-safe z-20', hero ? 'relative' : 'sticky top-0 bg-bg/90 backdrop-blur')}>
       <div className="flex min-h-14 items-center gap-1 px-2">
         {back !== undefined ? (
-          <IconButton icon="back" label="Назад" onClick={() => goBack(back)} />
+          <IconButton icon="back" label="Назад" onClick={() => goBack(back)} className={hero ? 'ml-1 !h-10 !w-10 bg-bg/40' : undefined} />
         ) : (
           <span className="w-2" />
         )}
         <div className="min-w-0 flex-1">
-          {!bare && <h1 className="truncate text-lg font-bold">{title}</h1>}
-          {!bare && sub && <div className="truncate text-xs text-muted">{sub}</div>}
+          {!hero && <h1 className="truncate text-lg font-bold">{title}</h1>}
+          {!hero && sub && <div className="truncate text-xs text-muted">{sub}</div>}
         </div>
         {right}
       </div>

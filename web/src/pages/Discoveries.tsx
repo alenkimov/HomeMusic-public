@@ -8,7 +8,7 @@ import { useHubEvent } from '../lib/events';
 import { fmtLength, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { attempt } from '../lib/ui';
-import { Hero, ListActions } from './MediaLibrary';
+import { Hero } from './MediaLibrary';
 
 /** The week an issue is of: «9–15 ноября». */
 function weekTitle(iso: string): string {
@@ -75,6 +75,7 @@ export function DiscoveriesPage() {
         sub={d?.issue
           ? [tracksWord(tracks.length), length ? fmtLength(length) : null, weekTitle(d.issue.week)].filter(Boolean).join(' · ')
           : 'Исполнители, которых вы ещё не слышали'}
+        tracks={tracks}
       />
       {res.error ? (
         <ErrorState text={res.error} onRetry={() => res.reload()} />
@@ -95,7 +96,6 @@ export function DiscoveriesPage() {
         )
       ) : (
         <>
-          <ListActions tracks={tracks} />
           <div className="flex flex-wrap items-center gap-2 px-4 pb-3 lg:px-6">
             {d.issues.length > 1 && (
               <select aria-label="Выпуск" className="input !w-auto" value={d.issue.id} onChange={(e) => setIssueId(Number(e.target.value))}>

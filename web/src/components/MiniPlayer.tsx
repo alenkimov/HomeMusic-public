@@ -1,22 +1,17 @@
-import { useSeek } from '../lib/seek';
-import { SeekLine } from './SeekLine';
 import { tagKey } from '../lib/tags';
-import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import { fmtDuration, providerLabel } from '../lib/format';
-import { downloadRef, hasNext, hasPrev, next, prev, setVolume, stopListening, toggle, useListen } from '../lib/listen';
+import { useLayoutEffect, useRef, type TouchEvent } from 'react';
+import { providerLabel } from '../lib/format';
+import { stopListening, toggle, useListen } from '../lib/listen';
 import { STANDALONE } from '../lib/embedded';
-import { addRec, hideRec } from '../lib/smartShuffle';
 import { Link, enc } from '../lib/router';
 import { Icon } from './Icon';
 import { SaveButton } from './PlaylistsButton';
-import { TrackMenuButton } from './TrackMenu';
-import { Cover, IconButton, Spinner, cx } from './ui';
+import { Cover, Spinner, cx } from './ui';
 
-/** Listening to a catalog track before downloading it: sits above the tab bar (inside the app: at the bottom of
- * the Hub page, which the app keeps above its own player). Publishes its height as `--player-h`.
- * ♥ stars the song (a track that isn't downloaded is downloaded first); ⏮/⏭ move through the list it was
- * started from («Моя волна» — 〜 before the artist: the list goes on by itself, `lib/wave.ts`). In a plain browser
- * a tap on the track opens the full player with the queue (`/player`); inside the app — the album. */
+/** What plays, above the tabs of a phone (inside the app: at the bottom of the Hub page, which the app keeps above
+ * its own player): the cover, the name, the artist — and two buttons, ♥ (a track that isn't downloaded is downloaded
+ * first) and play. A line along its bottom is how far the track is. Everything else is one tap away, in the full
+ * player (`/player`; inside the app — the album); swept down, it goes. Publishes its height as `--player-h`. */
 export function MiniPlayer() {
   const track = useListen((s) => s.track);
   const phase = useListen((s) => s.phase);
@@ -24,13 +19,8 @@ export function MiniPlayer() {
   const error = useListen((s) => s.error);
   const position = useListen((s) => s.position);
   const duration = useListen((s) => s.duration);
-  const volume = useListen((s) => s.volume);
-  const dl = useListen((s) => (s.track ? s.downloads.get(s.track.ref) : undefined));
-  const canNext = useListen((s) => hasNext(s) || (s.repeat === 'all' && !s.context.startsWith('wave:')));
-  const canPrev = useListen(hasPrev);
   const onWave = useListen((s) => s.context.startsWith('wave:'));
-  const [busy, setBusy] = useState(false);
-  const { shownPos, aim, range } = useSeek(position, duration);
+  const touchY = useRef<number | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const shown = !!track;
 
@@ -63,15 +53,9 @@ export function MiniPlayer() {
           : null;
   const source = info?.kind === 'full' ? providerLabel(info.provider) : owned ? 'из библиотеки' : null;
 
-  const download = async () => {
-    setBusy(true);
-    await downloadRef(track.ref);
-    setBusy(false);
-  };
-
   const head = (
     <>
-      <Cover src={track.cover_small_url || track.cover_url} size={44} alt="" />
+      <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[15px] font-medium leading-tight">{track.title}</div>
         {status ? (
@@ -97,11 +81,20 @@ export function MiniPlayer() {
     </>
   );
 
+  const pct = duration ? Math.min(100, (Math.min(position, duration) / duration) * 100) : 0;
+  // swept down, it goes (and the sound stops): it has no button for that
+  const swipe = {
+    onTouchStart: (e: TouchEvent) => (touchY.current = e.touches[0].clientY),
+    onTouchEnd: (e: TouchEvent) => {
+      if (touchY.current !== null && e.changedTouches[0].clientY - touchY.current > 48) stopListening();
+      touchY.current = null;
+    },
+  };
+
   return (
-    <div ref={box} className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-40 mx-auto max-w-(--app-w) px-2 pb-2" role="region" aria-label="Прослушивание">
-      <SeekLine aim={aim} refId={track.ref} songId={info?.nd_song_id ?? track.nd_song_id} time className="absolute inset-x-2 bottom-full mb-1" />
-      <div className="anim-up overflow-hidden rounded-xl border border-line bg-raised/95 shadow-2xl backdrop-blur">
-        <div className="flex items-center gap-2 py-1.5 pl-2 pr-1">
+    <div ref={box} className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-40 mx-auto max-w-(--app-w) px-2 pb-1" role="region" aria-label="Прослушивание">
+      <div {...swipe} className="anim-up relative overflow-hidden rounded-xl bg-raised shadow-2xl">
+        <div className="flex items-center gap-1 py-1.5 pl-2 pr-1">
           {STANDALONE ? (
             <Link to="/player" className="flex min-w-0 flex-1 items-center gap-3" title="Открыть плеер">
               {head}
@@ -113,57 +106,27 @@ export function MiniPlayer() {
           ) : (
             <div className="flex min-w-0 flex-1 items-center gap-3">{head}</div>
           )}
-          {STANDALONE && (
-            <div className="hidden w-36 shrink-0 items-center gap-1.5 text-muted md:flex">
-              <Icon name="volume" size={18} className="shrink-0" />
-              <input type="range" className="hm-range min-w-0 flex-1" aria-label="Громкость"
-                aria-valuetext={`${Math.round(volume * 100)}%`}
-                min={0} max={100} step={1} value={Math.round(volume * 100)}
-                style={{ '--p': `${volume * 100}%` } as CSSProperties}
-                onChange={(e) => setVolume(Number(e.target.value) / 100)} />
-            </div>
-          )}
-          <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id, library_track_id: info?.track_id ?? track.library_track_id }} className="w-9" inPlayer />
-          <SaveButton songId={info?.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} className="-mr-1" />
+          <SaveButton songId={info?.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} size={22} />
           <button
             type="button"
             onClick={toggle}
             aria-label={phase === 'error' ? 'Повторить' : playing ? 'Пауза' : 'Слушать'}
-            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-fg text-bg transition active:scale-95"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-fg transition active:scale-90"
           >
             {phase === 'error' ? (
-              <Icon name="refresh" size={20} stroke={2.4} />
+              <Icon name="refresh" size={24} stroke={2.4} />
             ) : waiting ? (
-              <Spinner size={20} />
+              <Spinner size={22} />
             ) : playing ? (
-              <Icon name="pause" size={20} stroke={3} />
+              <Icon name="pause" size={24} stroke={3} />
             ) : (
-              <Icon name="play" size={20} stroke={2.4} className="translate-x-px" />
+              <Icon name="play" size={24} filled />
             )}
           </button>
-          {STANDALONE ? null : owned || dl ? (
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center text-accent" title={owned || dl === 'done' ? 'Есть в библиотеке' : 'В загрузках'}>
-              <Icon name="check" size={20} stroke={2.6} />
-            </span>
-          ) : (
-            <IconButton icon="download" label="Скачать" onClick={download} busy={busy} />
-          )}
-          <IconButton icon="x" label="Закрыть плеер" onClick={stopListening} size={18} className="w-9 text-muted" />
         </div>
-        {track.rec && (
-          <div className="flex items-center gap-1 border-t border-line/60 py-0.5 pl-3 pr-1" role="group" aria-label="Рекомендация">
-            <Icon name="sparkle" size={14} className="shrink-0 text-accent" />
-            <span className="min-w-0 flex-1 truncate text-xs text-muted">{track.rec.label}</span>
-            <IconButton icon="plus" label={track.rec.label.includes('любим') ? 'В любимое' : 'Добавить в плейлист'} onClick={() => void addRec(track)} size={18} className="h-8 w-9 !text-accent" />
-            <IconButton icon="minus" label="Не рекомендовать здесь" onClick={() => void hideRec(track)} size={18} className="h-8 w-9 text-muted" />
-          </div>
-        )}
-        <div className="flex items-center gap-2 pb-1 pl-1 pr-1 text-[11px] tabular-nums text-muted">
-          <IconButton icon="prev" label={canPrev ? 'Предыдущий трек' : 'Сначала'} onClick={prev} size={16} className="h-8 w-8 text-muted" />
-          <span className="w-9 shrink-0 text-right">{fmtDuration(shownPos) || '0:00'}</span>
-          <input {...range} className="hm-range min-w-0 flex-1" disabled={!duration || phase === 'resolving' || phase === 'error'} />
-          <span className="w-9 shrink-0">{fmtDuration(duration) || '–:––'}</span>
-          <IconButton icon="next" label="Следующий трек" onClick={() => void next()} disabled={!canNext} size={16} className="h-8 w-8 text-muted" />
+        {/* how far the track is: a line along the bottom (it is sought through in the full player) */}
+        <div aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 overflow-hidden rounded-full bg-fg/15">
+          <div className="h-full bg-fg" style={{ width: `${pct}%` }} />
         </div>
       </div>
     </div>

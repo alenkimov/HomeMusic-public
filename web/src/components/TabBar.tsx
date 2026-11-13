@@ -25,7 +25,9 @@ export function TabBar({ active: routeTab, last }: { active: Tab | null; last: P
   const active = shownTab(routeTab);
 
   return (
-    <nav className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-line bg-[#0b0b0b]/95 backdrop-blur" aria-label="Разделы">
+    <nav className="pb-safe fixed inset-x-0 bottom-0 z-30" aria-label="Разделы">
+      {/* no plate under the tabs: the page fades into the background behind them and the small player */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-[calc(var(--tabbar-h)+var(--player-h,0px)+env(safe-area-inset-bottom)+56px)] bg-gradient-to-t from-bg from-55% to-transparent" />
       <ul className="mx-auto flex max-w-(--app-w)">
         {TABS.map((t) => {
           const on = active === t.id;
@@ -34,7 +36,7 @@ export function TabBar({ active: routeTab, last }: { active: Tab | null; last: P
               <Link
                 to={on ? t.to : (last[t.id] ?? t.to)}
                 aria-current={on ? 'page' : undefined}
-                className={cx('relative flex h-16 flex-col items-center justify-center gap-1 text-[11px] transition-colors', on ? 'text-fg' : 'text-dim hover:text-muted')}
+                className={cx('relative flex h-16 flex-col items-center justify-center gap-1 text-[11px] transition-colors', on ? 'text-fg' : 'text-muted/70 hover:text-muted')}
               >
                 <span className="relative">
                   <Icon name={t.icon} size={24} stroke={on ? 2.4 : 2} />
