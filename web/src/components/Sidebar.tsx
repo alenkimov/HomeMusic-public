@@ -28,15 +28,11 @@ const NAV: Array<{ id: Tab; to: string; label: string; icon: IconName }> = [
 export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Record<Tab, string>> }) {
   const route = useRoute();
   const activeDownloads = useActiveDownloads();
+  // the Hub says when a playlist is made, changed or deleted (the «library» event): no page has to tell this one
   const lists = useAsync((s) => api.playlists(s), []);
   useHubEvent('library', () => lists.reload(true));
   useHubEvent('import', () => lists.reload(true));
   useHubEvent('reconnect', () => lists.reload(true));
-  useEffect(() => {
-    const changed = () => lists.reload(true); // a playlist was renamed or given a picture
-    window.addEventListener('hm:playlists-changed', changed);
-    return () => window.removeEventListener('hm:playlists-changed', changed);
-  }, [lists.reload]);
   // the saved filters by tags (lib/tags.ts)
   const sels = useAsync((s) => api.tagSelections(s), []);
   useEffect(() => {

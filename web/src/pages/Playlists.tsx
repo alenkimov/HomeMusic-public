@@ -1,7 +1,8 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
-import { Button, Empty, ErrorState, PageHeader, SkeletonRows } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, PageHeader, SkeletonRows } from '../components/ui';
+import { useHubEvent } from '../lib/events';
 import { fmtLength, tracksWord } from '../lib/format';
 import { STANDALONE } from '../lib/embedded';
 import { useAsync } from '../lib/hooks';
@@ -10,6 +11,9 @@ import { attempt } from '../lib/ui';
 
 export function PlaylistsPage() {
   const res = useAsync((s) => api.playlists(s), []);
+  // made, changed or deleted anywhere: the Hub says so
+  useHubEvent('library', () => res.reload(true));
+  useHubEvent('reconnect', () => res.reload(true));
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -50,9 +54,8 @@ export function PlaylistsPage() {
           {res.data.map((p) => (
             <li key={p.id}>
               <PlaylistRow to={STANDALONE ? `/playlist/${enc(p.id)}` : undefined}>
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-[#1f6f43] to-[#1a1a1a] text-fg">
-                <Icon name="playlist" size={22} />
-              </span>
+              {/* the playlist's own picture, as everywhere else: the user's, or the one made of its albums' covers */}
+              <Cover src={p.cover_url ? `${p.cover_url}&size=160` : null} size={48} icon="playlist" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{p.name}</span>
                 <span className="block text-xs text-muted">{[tracksWord(p.song_count + (p.pending_count ?? 0)), p.duration_s ? fmtLength(p.duration_s) : null].filter(Boolean).join(' · ')}</span>

@@ -158,7 +158,6 @@ export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_
     const p = await attempt(() => api.createPlaylist(name));
     setBusy(false);
     if (!p) return false;
-    window.dispatchEvent(new Event('hm:playlists-changed'));
     setRows((list) => [{ ...p, has: false }, ...(list ?? [])]);
     setWant((w) => ({ ...w, [p.id]: true }));
     return true;
@@ -284,7 +283,6 @@ export function BulkPlaylists({ tracks, onClose }: { tracks: PickedTrack[]; onCl
     const p = await attempt(() => api.createPlaylist(name));
     setBusy(false);
     if (!p) return false;
-    window.dispatchEvent(new Event('hm:playlists-changed'));
     setRows((list) => [{ ...p, count: 0 }, ...(list ?? [])]);
     setWant((w) => ({ ...w, [p.id]: 'all' }));
     return true;
@@ -378,7 +376,6 @@ export function PlaylistsPick({ title, picked, onClose, onDone, single, note, li
     const p = await attempt(() => api.createPlaylist(name));
     setBusy(false);
     if (!p) return false;
-    window.dispatchEvent(new Event('hm:playlists-changed'));
     setRows((list) => [p, ...(list ?? [])]);
     tick(p.id, true);
     return true;

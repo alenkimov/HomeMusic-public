@@ -29,6 +29,7 @@ from app.api.schemas import (
 )
 from app.auth import current_user
 from app.db import get_session
+from app.events import bus
 from app.jobs.queue import notify
 from app.library import songs as library_songs
 from app.models import Playlist, PlaylistCover, Track, User
@@ -80,13 +81,22 @@ async def _out(s: AsyncSession, p: Playlist) -> PlaylistOut:
     return (await _outs(s, [p]))[0]
 
 
+def _say(user_id: int, playlist_id: int) -> None:
+    """A playlist was made, changed or deleted: every open page of the user's hears it (the list of playlists in
+    the side panel, the «+ / ✓» of the track rows) — whichever page, tab or device the change was made on."""
+    bus.publish(user_id, "library", {"kind": "playlist", "playlist_id": str(playlist_id)})
+
+
 async def _changed(s: AsyncSession, *rows: Playlist) -> None:
-    """Commit, and have the mirrors of these playlists follow."""
+    """Commit, have the mirrors of these playlists follow, and say that they changed."""
+    said = [(p.user_id, p.id) for p in rows]
     for p in rows:
         if p.kind == playlists.USER:
             await enqueue_mirror(s, p.id)
     await s.commit()
     notify()
+    for user_id, playlist_id in said:
+        _say(user_id, playlist_id)
 
 
 def track_without_file(t: Track, *, downloading: bool = False) -> NdSongOut:
@@ -248,9 +258,10 @@ async def remove(playlist_id: str, body: PlaylistRemoveIn, user: User = Depends(
 async def delete(playlist_id: str, user: User = Depends(current_user),
                  s: AsyncSession = Depends(get_session, scope="function")):
     p = await _own(s, user, playlist_id, change=True)
-    nd_id = p.nd_playlist_id
+    nd_id, gone = p.nd_playlist_id, p.id
     await s.delete(p)  # its places and its picture go with it
     await s.commit()
+    _say(user.id, gone)
     await drop_mirror(user, nd_id)
     return {"ok": True}
 
@@ -299,6 +310,7 @@ async def put_cover(playlist_id: str, file: UploadFile = File(...), user: User =
         s.add(row)
     row.image, row.key = image, uuid.uuid4().hex[:12]
     await s.commit()
+    _say(user.id, p.id)
     return await _out(s, p)
 
 
@@ -311,6 +323,7 @@ async def drop_cover(playlist_id: str, user: User = Depends(current_user),
     if row is not None:
         await s.delete(row)
         await s.commit()
+        _say(user.id, p.id)
     return await _out(s, p)
 
 

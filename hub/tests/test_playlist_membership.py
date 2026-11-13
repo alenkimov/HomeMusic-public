@@ -136,9 +136,26 @@ async def test_a_playlist_is_renamed_given_a_picture_and_deleted(env):
 
     from PIL import Image
 
+    from app.db import session_scope
+    from app.events import bus
+    from app.models import User
+
     c = env["client"]
+    async with session_scope() as s:
+        uid = (await s.execute(select(User.id).where(User.nd_username == "admin"))).scalar_one()
+    heard = bus.subscribe(uid)
+
+    def said() -> bool:
+        """The Hub said that this playlist changed (the open pages show it without being asked again)."""
+        got = []
+        while not heard.empty():
+            got.append(heard.get_nowait())
+        return any('"event": "library"' in x and '"kind": "playlist"' in x and f'"playlist_id": "{pid}"' in x for x in got)
+
     pid = await new_playlist(c, "Дорога")
+    assert said()
     r = (await c.put(f"/api/playlists/{pid}", json={"name": "  Любимые  дороги "})).json()
+    assert said()
     assert r["name"] == "Любимые дороги" and r["cover_url"] is None
     assert (await c.put(f"/api/playlists/{pid}", json={"name": "   "})).status_code in (400, 422)
     assert (await c.put("/api/playlists/99999", json={"name": "x"})).status_code == 404
@@ -147,14 +164,15 @@ async def test_a_playlist_is_renamed_given_a_picture_and_deleted(env):
     png = io.BytesIO()
     Image.new("RGB", (900, 500), "red").save(png, "PNG")
     r = (await c.put(f"/api/playlists/{pid}/cover", files={"file": ("x.png", png.getvalue(), "image/png")})).json()
-    assert r["cover_url"].startswith(f"/api/playlists/{pid}/cover?v=")
+    assert r["cover_url"].startswith(f"/api/playlists/{pid}/cover?v=") and said()
     got = await c.get(r["cover_url"])
     assert got.headers["content-type"] == "image/jpeg" and Image.open(io.BytesIO(got.content)).size == (500, 500)
     assert (await c.put(f"/api/playlists/{pid}/cover", files={"file": ("x.txt", b"not a picture", "text/plain")})).status_code == 400
-    assert (await c.delete(f"/api/playlists/{pid}/cover")).json()["cover_url"] is None
+    assert (await c.delete(f"/api/playlists/{pid}/cover")).json()["cover_url"] is None and said()
     assert (await c.get(f"/api/playlists/{pid}/cover")).status_code == 404
 
-    assert (await c.delete(f"/api/playlists/{pid}")).json() == {"ok": True}
+    assert (await c.delete(f"/api/playlists/{pid}")).json() == {"ok": True} and said()
+    bus.unsubscribe(uid, heard)
     assert (await c.get(f"/api/playlists/{pid}")).status_code == 404
     assert (await c.get("/api/playlists")).json() == []
 

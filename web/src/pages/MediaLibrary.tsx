@@ -563,10 +563,7 @@ export function PlaylistPage({ id }: { id: string }) {
         <PlaylistEdit
           playlist={p}
           onClose={() => setEditing(false)}
-          onSaved={(next) => {
-            res.setData((prev) => (prev ? { ...prev, name: next.name, cover_url: next.cover_url } : prev));
-            window.dispatchEvent(new Event('hm:playlists-changed'));
-          }}
+          onSaved={(next) => res.setData((prev) => (prev ? { ...prev, name: next.name, cover_url: next.cover_url } : prev))}
         />
       )}
       {all.length ? (

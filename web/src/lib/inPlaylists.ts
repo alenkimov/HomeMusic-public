@@ -68,7 +68,6 @@ export function useInPlaylists(songId?: string | null): boolean {
 
 hubEvents.on('library', () => void refreshInPlaylists(true));
 hubEvents.on('reconnect', () => void refreshInPlaylists(true));
-if (typeof window !== 'undefined') window.addEventListener('hm:playlists-changed', () => void refreshInPlaylists(true));
 
 export function resetInPlaylists() {
   ids = new Set();
