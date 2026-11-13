@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState } from 'react';
+import { useForYouCounts } from '../lib/forYou';
 import { playlistMenuProps } from '../lib/playlistMenu';
 import { api } from '../api/client';
 import type { NdSongOut } from '../api/types';
@@ -30,6 +31,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
   const activeDownloads = useActiveDownloads();
   // the Hub says when a playlist is made, changed or deleted (the «library» event): no page has to tell this one
   const lists = useAsync((s) => api.playlists(s), []);
+  const counts = useForYouCounts();
   useHubEvent('library', () => lists.reload(true));
   useHubEvent('import', () => lists.reload(true));
   useHubEvent('reconnect', () => lists.reload(true));
@@ -115,7 +117,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
           );
         })}
         {lists.data && !lists.data.length && <p className="px-3 py-2 text-xs text-dim">Плейлистов пока нет</p>}
-        <div className="px-1 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-dim">Автоплейлисты</div>
+        <div className="px-1 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-dim">Для вас</div>
         {/* «Микс дня» makes itself, like the rest of these: it is here, not among the playlists one keeps */}
         <Link to="/mix" aria-current={route.path.startsWith('/mix') ? 'page' : undefined} className={cx(item, 'py-1.5', route.path.startsWith('/mix') ? 'bg-fg/10' : 'hover:bg-fg/5')}>
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/20 text-accent">
@@ -123,7 +125,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
           </span>
           <span className="min-w-0">
             <span className={cx('block truncate', route.path.startsWith('/mix') ? 'font-semibold text-accent' : 'text-fg')}>Микс дня</span>
-            <span className="block truncate text-xs text-dim">Знакомое и новое, каждый день</span>
+            {counts.mix !== undefined && <span className="block truncate text-xs text-dim">{tracksWord(counts.mix)}</span>}
           </span>
         </Link>
         <Link to="/discoveries" aria-current={at('/discoveries') ? 'page' : undefined} className={cx(item, 'py-1.5', at('/discoveries') ? 'bg-fg/10' : 'hover:bg-fg/5')}>
@@ -132,7 +134,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
           </span>
           <span className="min-w-0">
             <span className={cx('block truncate', at('/discoveries') ? 'font-semibold text-accent' : 'text-fg')}>Открытия недели</span>
-            <span className="block truncate text-xs text-dim">Новые имена, по понедельникам</span>
+            {counts.discoveries !== undefined && <span className="block truncate text-xs text-dim">{tracksWord(counts.discoveries)}</span>}
           </span>
         </Link>
         {AUTO_PLAYLISTS.map((a) => {
@@ -145,7 +147,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
               </span>
               <span className="min-w-0">
                 <span className={cx('block truncate', on ? 'font-semibold text-accent' : 'text-fg')}>{a.title}</span>
-                <span className="block truncate text-xs text-dim">{a.sub}</span>
+                {counts[a.kind] !== undefined && <span className="block truncate text-xs text-dim">{tracksWord(counts[a.kind]!)}</span>}
               </span>
             </Link>
           );

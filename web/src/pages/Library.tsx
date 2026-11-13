@@ -4,6 +4,7 @@ import { Icon, type IconName } from '../components/Icon';
 import { Cover, ErrorState, IconButton, SkeletonRows } from '../components/ui';
 import { useHubEvent } from '../lib/events';
 import { tracksWord } from '../lib/format';
+import { useForYouCounts } from '../lib/forYou';
 import { useAsync } from '../lib/hooks';
 import { playlistMenuProps } from '../lib/playlistMenu';
 import { Link, enc, navigate } from '../lib/router';
@@ -16,6 +17,8 @@ export function LibraryPage() {
   const lists = useAsync((s) => api.playlists(s), []);
   const liked = useAsync((s) => api.ndLiked(s), []);
   const sels = useAsync((s) => api.tagSelections(s), []);
+  const counts = useForYouCounts();
+  const count = (n: number | undefined) => (n === undefined ? ' ' : tracksWord(n));
   const again = () => {
     lists.reload(true);
     liked.reload(true);
@@ -50,10 +53,10 @@ export function LibraryPage() {
 
       <Title>Для вас</Title>
       <div className="grid grid-cols-2 gap-2">
-        <Tile to="/mix" icon="sparkle" tint="bg-[#a78bfa]/15 text-[#b9a3fb]" title="Микс дня" sub="Знакомое и новое" />
-        <Tile to="/discoveries" icon="wave" tint="bg-[#4da3ff]/15 text-[#7dbbff]" title="Открытия недели" sub="Каждый понедельник" />
+        <Tile to="/mix" icon="sparkle" tint="bg-[#a78bfa]/15 text-[#b9a3fb]" title="Микс дня" sub={count(counts.mix)} />
+        <Tile to="/discoveries" icon="wave" tint="bg-[#4da3ff]/15 text-[#7dbbff]" title="Открытия недели" sub={count(counts.discoveries)} />
         {AUTO_PLAYLISTS.map((a, i) => (
-          <Tile key={a.kind} to={`/auto/${a.kind}`} icon={a.icon} tint={TINTS[i % TINTS.length]} title={a.title} sub={a.sub} />
+          <Tile key={a.kind} to={`/auto/${a.kind}`} icon={a.icon} tint={TINTS[i % TINTS.length]} title={a.title} sub={count(counts[a.kind])} />
         ))}
       </div>
 

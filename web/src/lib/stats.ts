@@ -31,12 +31,12 @@ export interface StatsTrackOut {
   last_at?: string | null;
 }
 
-/** «Автоплейлисты»: lists the Hub makes by a rule every time they are opened. */
+/** The lists of «Для вас» the Hub makes by a rule every time they are opened. */
 export const AUTO_PLAYLISTS = [
-  { kind: 'top-month', title: 'Топ месяца', sub: 'За 30 дней', column: 'За месяц', icon: 'chart' },
-  { kind: 'top-year', title: 'Топ года', sub: 'За 365 дней', column: 'За год', icon: 'chart' },
-  { kind: 'top-all', title: 'Топ за всё время', sub: 'Самые слушаемые', column: 'Прослушивания', icon: 'chart' },
-  { kind: 'forgotten', title: 'Давно не слушал', sub: 'Любимое, забытое на 3 месяца', column: 'Прослушивания', icon: 'history' },
+  { kind: 'top-month', title: 'Топ месяца', column: 'За месяц', icon: 'chart' },
+  { kind: 'top-year', title: 'Топ года', column: 'За год', icon: 'chart' },
+  { kind: 'top-all', title: 'Топ за всё время', column: 'Прослушивания', icon: 'chart' },
+  { kind: 'forgotten', title: 'Давно не слушал', column: 'Прослушивания', icon: 'history' },
 ] as const;
 
 export interface StatsAutoOut {

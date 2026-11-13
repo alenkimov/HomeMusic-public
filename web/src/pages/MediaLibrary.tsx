@@ -325,7 +325,7 @@ export function AutoPlaylistPage({ kind }: { kind: string }) {
             <Icon name={def?.icon ?? 'chart'} size={84} />
           </div>
         }
-        sub={res.data ? [tracksWord(tracks.length), length ? fmtLength(length) : null, 'обновляется сам'].filter(Boolean).join(' · ') : (def?.sub ?? '')}
+        sub={res.data ? [tracksWord(tracks.length), length ? fmtLength(length) : null, 'обновляется сам'].filter(Boolean).join(' · ') : ''}
         tracks={tracks}
         context="auto"
       />
