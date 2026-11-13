@@ -93,20 +93,15 @@ export interface LyricsLook {
   furigana: boolean;
   /** the lines away from the one that is sung are blurred */
   blur: boolean;
-  /** the page's light: the cover blurred and still ("cover"), or its colours drifting ("drift") */
-  background: 'cover' | 'drift';
-  /** the text takes the whole screen, which stays awake */
-  fullscreen: boolean;
 }
 
 const LOOK_KEY = 'hm-lyrics-look';
-const LOOK_DEFAULT: LyricsLook = { reading: false, furigana: false, blur: false, background: 'cover', fullscreen: false };
+const LOOK_DEFAULT: LyricsLook = { reading: false, furigana: false, blur: false };
 
 function loadLook(): LyricsLook {
   try {
     const v = JSON.parse(localStorage.getItem(LOOK_KEY) ?? '{}') as Partial<LyricsLook>;
-    return { reading: v.reading === true, furigana: v.furigana === true, blur: v.blur === true,
-      background: v.background === 'drift' ? 'drift' : 'cover', fullscreen: false };
+    return { reading: v.reading === true, furigana: v.furigana === true, blur: v.blur === true };
   } catch {
     return LOOK_DEFAULT;
   }
@@ -118,8 +113,7 @@ const lookSubs = new Set<() => void>();
 export function setLyricsLook(next: Partial<LyricsLook>) {
   look = { ...look, ...next };
   try {
-    // the whole screen is asked for by a tap, each time: a page cannot take it by itself when it opens
-    localStorage.setItem(LOOK_KEY, JSON.stringify({ ...look, fullscreen: false }));
+    localStorage.setItem(LOOK_KEY, JSON.stringify(look));
   } catch {
     /* storage unavailable: the choice lives until the page is closed */
   }

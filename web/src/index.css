@@ -211,7 +211,7 @@
   }
 }
 
-/* the player's light in motion (`pages/Player.tsx`, «Вид текста» → «Фон»): three soft copies of the cover drift */
+/* the player's light in motion (`pages/Player.tsx`): three soft copies of the cover drift */
 @keyframes hm-drift-a {
   from {
     transform: translate(0, 0) scale(1) rotate(0deg);

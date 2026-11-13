@@ -59,6 +59,8 @@ const PATHS = {
   transfer: 'M4 8h13m0 0-4-4m4 4-4 4M20 16H7m0 0 4-4m-4 4 4 4',
   chart: 'M5 20v-8M12 20V4M19 20v-11',
   grip: 'M5 9h14M5 15h14',
+  expand: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
+  shrink: 'M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5',
 } as const;
 
 export type IconName = keyof typeof PATHS;

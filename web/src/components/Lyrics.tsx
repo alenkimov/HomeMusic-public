@@ -352,7 +352,6 @@ const READING_NAME: Record<string, string> = { ja: 'японский', zh: 'ки
 function LookSheet({ look, reading, timed, onClose }: { look: LyricsLook; reading: LyricsReading | null; timed: boolean; onClose: () => void }) {
   const row = 'flex items-center justify-between gap-3 py-2 text-sm';
   const hint = 'block text-xs text-muted';
-  const canFull = typeof document !== 'undefined' && !!document.documentElement.requestFullscreen;
   return (
     <Sheet open onClose={onClose} title="Вид текста">
       <div className="space-y-1">
@@ -376,26 +375,6 @@ function LookSheet({ look, reading, timed, onClose }: { look: LyricsLook; readin
             <span className={hint}>{timed ? 'Чем дальше строка от той, что звучит, тем сильнее; пока листаете — резко' : 'Работает в текстах с таймингами'}</span>
           </span>
           <Checkbox checked={look.blur} label="Размытие соседних строк" onChange={(blur) => setLyricsLook({ blur })} />
-        </label>
-        <div className={row}>
-          <span>
-            Фон
-            <span className={hint}>Обложка, размытая и неподвижная, или её цвета в движении</span>
-          </span>
-          <span className="flex shrink-0 rounded-full bg-fg/10 p-0.5 text-xs">
-            {(['cover', 'drift'] as const).map((m) => (
-              <button key={m} type="button" onClick={() => setLyricsLook({ background: m })} aria-pressed={look.background === m} className={cx('rounded-full px-3 py-1.5', look.background === m ? 'bg-fg text-bg' : 'text-muted')}>
-                {m === 'cover' ? 'Как было' : 'В движении'}
-              </button>
-            ))}
-          </span>
-        </div>
-        <label className={cx(row, canFull && 'cursor-pointer')}>
-          <span>
-            Во весь экран
-            <span className={hint}>{canFull ? 'Текст на весь экран, экран не гаснет. Выйти — Esc или этот же переключатель' : 'Этот браузер не умеет открывать страницу во весь экран'}</span>
-          </span>
-          <Checkbox checked={look.fullscreen} disabled={!canFull} label="Во весь экран" onChange={(fullscreen) => setLyricsLook({ fullscreen })} />
         </label>
       </div>
     </Sheet>

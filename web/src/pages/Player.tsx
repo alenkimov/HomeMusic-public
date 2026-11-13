@@ -4,7 +4,6 @@ import { api } from '../api/client';
 import { Icon } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
 import { Lyrics } from '../components/Lyrics';
-import { setLyricsLook, useLyricsLook } from '../lib/lyrics';
 import { SaveButton } from '../components/PlaylistsButton';
 import { TrackMenuButton } from '../components/TrackMenu';
 import { Cover, Empty, IconButton, Sheet, Spinner, cx } from '../components/ui';
@@ -70,30 +69,33 @@ export function PlayerPage() {
       return false;
     }
   });
-  const look = useLyricsLook();
   const wide = useWide();
   const [queueOpen, setQueueOpen] = useState(queueAsked);
-  // «Во весь экран» (the text's «Вид»): the page takes the whole screen and keeps it awake; leaving the whole screen
-  // any way (Esc, the system's gesture) switches it off
+  // «Во весь экран» (a wide screen): the page takes the whole screen and keeps it awake. What is so is read from the
+  // browser: the whole screen is also left by Esc
+  const [full, setFull] = useState(() => !!document.fullscreenElement);
   useEffect(() => {
-    const el = document.documentElement;
-    if (look.fullscreen && !document.fullscreenElement) void el.requestFullscreen?.().catch(() => setLyricsLook({ fullscreen: false }));
-    if (!look.fullscreen && document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
-    const left = () => !document.fullscreenElement && setLyricsLook({ fullscreen: false });
-    document.addEventListener('fullscreenchange', left);
-    let lock: { release: () => Promise<void> } | null = null;
-    const wake = (navigator as Navigator & { wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock;
-    if (look.fullscreen) void wake?.request('screen').then((l) => (lock = l), () => undefined);
+    const changed = () => setFull(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', changed);
     return () => {
-      document.removeEventListener('fullscreenchange', left);
+      document.removeEventListener('fullscreenchange', changed);
+      if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
+    };
+  }, []);
+  useEffect(() => {
+    if (!full) return;
+    let lock: { release: () => Promise<void> } | null = null;
+    let over = false;
+    const wake = (navigator as Navigator & { wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock;
+    void wake?.request('screen').then((l) => (over ? void l.release().catch(() => undefined) : (lock = l)), () => undefined);
+    return () => {
+      over = true;
       void lock?.release().catch(() => undefined);
     };
-  }, [look.fullscreen]);
-  useEffect(() => () => {
-    if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
-    setLyricsLook({ fullscreen: false });
-  }, []);
-  const full = look.fullscreen && lyrics;
+  }, [full]);
+  const canFull = !!document.documentElement.requestFullscreen;
+  const toggleFull = () =>
+    void (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => undefined);
   // a wide screen has one column for the text and the queue: the queue, while open, stands over the text
   const textHidden = wide && queueOpen;
   const textShown = lyrics && !textHidden;
@@ -143,25 +145,25 @@ export function PlayerPage() {
   return (
     <div className={cx('pt-safe relative isolate mx-auto flex min-h-dvh max-w-2xl flex-col pb-[calc(24px+env(safe-area-inset-bottom))]', side && 'lg:max-w-6xl')}>
       {(track.cover_small_url || track.cover_url) && (
-        // the cover, blurred, as the page's own light
+        // the page's own light — the cover's colours in slow motion: three soft copies of it, each drifting its own way
         <div aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-          {look.background === 'drift' ? (
-            // the cover's colours in slow motion: three soft copies of it, each drifting its own way
-            <div className="absolute inset-0 saturate-150">
-              {(['hm-drift-a', 'hm-drift-b', 'hm-drift-c'] as const).map((name, i) => (
-                <img key={name} src={track.cover_small_url || track.cover_url || ''} alt="" className="absolute h-[85%] w-[85%] rounded-full object-cover opacity-45 blur-3xl motion-reduce:!animate-none"
-                  style={{ left: ['-20%', '35%', '10%'][i], top: ['-15%', '5%', '40%'][i], animation: `${name} ${[34, 41, 47][i]}s ease-in-out infinite alternate` }} />
-              ))}
-            </div>
-          ) : (
-            <img src={track.cover_small_url || track.cover_url || ''} alt="" className="h-full w-full scale-125 object-cover opacity-35 blur-3xl" />
-          )}
+          <div className="absolute inset-0 saturate-150">
+            {(['hm-drift-a', 'hm-drift-b', 'hm-drift-c'] as const).map((name, i) => (
+              <img key={name} src={track.cover_small_url || track.cover_url || ''} alt="" className="absolute h-[85%] w-[85%] rounded-full object-cover opacity-45 blur-3xl motion-reduce:!animate-none"
+                style={{ left: ['-20%', '35%', '10%'][i], top: ['-15%', '5%', '40%'][i], animation: `${name} ${[34, 41, 47][i]}s ease-in-out infinite alternate` }} />
+            ))}
+          </div>
           <div className="absolute inset-0 bg-bg/40" />
         </div>
       )}
       <div className="flex min-h-14 items-center gap-1 px-2">
         <IconButton icon="down" label="Свернуть" onClick={() => goBack('/home')} />
+        {wide && canFull && (
+          <IconButton icon={full ? 'shrink' : 'expand'} label={full ? 'Выйти из полноэкранного режима' : 'Во весь экран'} aria-pressed={full} onClick={toggleFull} className={full ? '!text-accent' : 'text-muted'} />
+        )}
         <PlayingFrom context={context} page={page} />
+        {/* as much on the right as on the left: the name stays in the middle */}
+        {wide && canFull && <span className="w-11 shrink-0" />}
         <IconButton icon="lyrics" label={textShown ? 'Скрыть текст' : 'Показать текст'} aria-pressed={textShown} onClick={toggleLyrics} className={textShown ? '!text-accent' : 'text-muted'} />
       </div>
 
@@ -181,7 +183,7 @@ export function PlayerPage() {
             ) : text}
           </div>
         ) : (
-          lyrics && <div className={cx('min-h-72 px-3 pt-2', full ? 'h-[calc(100dvh-13rem)]' : 'h-[58dvh]')}>{text}</div>
+          lyrics && <div className="h-[58dvh] min-h-72 px-3 pt-2">{text}</div>
         )}
         <div className="min-w-0">
       <div className={cx('px-6 pt-2', lyrics && !wide && 'hidden')}>
