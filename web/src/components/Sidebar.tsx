@@ -151,10 +151,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
           );
         })}
         <div className="flex items-center gap-1 px-1 pb-1 pt-4 text-xs text-dim">
-          <Link to="/tags" className="flex-1 font-semibold uppercase tracking-wide hover:text-fg">Подборки по тегам</Link>
-          <Link to="/tags" title="Теги" aria-label="Теги" className="flex h-7 w-7 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg">
-            <Icon name="tag" size={16} />
-          </Link>
+          <Link to="/tags" className="flex h-7 flex-1 items-center font-semibold uppercase tracking-wide hover:text-fg">Подборки по тегам</Link>
         </div>
         {(sels.data ?? []).map((x) => {
           const to = `/selection/${x.id}`;
