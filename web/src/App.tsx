@@ -85,9 +85,9 @@ const ROUTES: RouteDef[] = [
   ['/search', 'search', (_, r) => <SearchPage initialQuery={r.query.get('q') ?? ''} initialTab={searchTab(r.query.get('tab'))} />],
   ['/artist/:ref', 'search', (p) => <ArtistPage key={p.ref} refId={p.ref} />],
   ['/album/:ref', 'search', (p) => <AlbumPage key={p.ref} refId={p.ref} />],
-  ['/mix/:id', 'search', (p) => <MixPage key={p.id} id={Number(p.id)} />],
+  ['/mix/:id', 'library', (p) => <MixPage key={p.id} id={Number(p.id)} />],
   // «Микс дня» by its name: no mix has the number 0, so the page opens today's
-  ['/mix', 'search', () => <MixPage key="today" id={0} />],
+  ['/mix', 'library', () => <MixPage key="today" id={0} />],
   ['/taste', 'search', () => <TastePage />],
   ['/downloads', 'downloads', () => <DownloadsPage />],
   ['/downloads/:id', 'downloads', (p) => <DownloadDetailPage key={p.id} id={Number(p.id)} />],
