@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import type { NdSongOut } from '../api/types';
+import { useEffect, useState, type ReactNode } from 'react';
+import type { TrackOut } from '../api/types';
 import { useDesktop } from '../lib/desktop';
 import { goBack } from '../lib/router';
 import { filterActive } from '../lib/tags';
@@ -67,7 +67,7 @@ function SearchDown({ onClose }: { onClose: () => void }) {
  * list's head it is only «back» and, at the right, the tags and the search; once the head has gone up it gets the
  * list's name and ▶. The search opens in the bar itself; the tags — in a window (`TagFilterBody`); the ones chosen
  * are a line above the tracks (`TagFilterChips`, the page's own). */
-export function ListBar({ title, back, tracks, context, search, tags }: { title: string; back: string; tracks?: readonly NdSongOut[]; context?: string; search?: ListSearch; tags?: ListTags }) {
+export function ListBar({ title, back, tracks, context, search, tags, extra }: { title: string; back: string; tracks?: readonly TrackOut[]; context?: string; search?: ListSearch; tags?: ListTags; /** a mark of the list's own, before the tags («Режим микса») */ extra?: ReactNode }) {
   const desktop = useDesktop();
   const gone = useHeadGone();
   const [tagsOpen, setTagsOpen] = useState(false);
@@ -100,6 +100,7 @@ export function ListBar({ title, back, tracks, context, search, tags }: { title:
             <h1 className={cx('min-w-0 flex-1 truncate px-1 text-lg font-bold transition-opacity', gone ? 'opacity-100' : 'opacity-0')} aria-hidden={!gone}>
               {title}
             </h1>
+            {extra}
             {tags && <IconButton icon="tag" label={narrowed ? 'Теги: отбор включён' : 'Теги'} aria-pressed={tagsOpen} onClick={() => setTagsOpen((v) => !v)} className={narrowed ? '!text-accent' : undefined} />}
             {search && (search.open ? <div className="flex w-80 pl-1">{search.field}</div> : <IconButton icon="search" label="Поиск по списку (Ctrl+F)" onClick={search.show} />)}
             {play}

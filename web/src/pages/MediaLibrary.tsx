@@ -1,6 +1,6 @@
 import { Children, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
-import type { NdAlbumOut, NdArtistOut, NdSongOut } from '../api/types';
+import type { NdAlbumOut, NdArtistOut, NdSongOut, TrackOut } from '../api/types';
 import { playAll, TrackRow, TrackTableHeader, type ListSort } from '../components/catalog';
 import { Icon } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
@@ -86,7 +86,7 @@ export function NdArtistBubble({ artist, radio = false }: { artist: NdArtistOut;
 
 /** ▶ and the shuffle of a whole list, at the right of its name. The shuffle is a switch, as the player's: ▶ starts
  * the list shuffled while it is on, in the order shown while it is off. */
-function PlayPair({ tracks, context }: { tracks: readonly NdSongOut[]; context?: string }) {
+function PlayPair({ tracks, context }: { tracks: readonly TrackOut[]; context?: string }) {
   const smart = useSmartForPage() && (context === 'playlist' || context === 'liked'); // the shuffle is the smart one
   const shuffleOn = useListen((s) => s.shuffle);
   return (
@@ -135,7 +135,7 @@ function byAdded<T extends { t: NdSongOut; i: number }>(list: T[], sort: ListSor
 }
 
 /** The rows of a list that the search and the tag filter leave (null: neither is on — the whole list). */
-function useShown(tracks: readonly NdSongOut[], found: Found[] | null, filter: TagFilter): Found[] | null {
+export function useShown(tracks: readonly TrackOut[], found: Found[] | null, filter: TagFilter): Found[] | null {
   const tags = useTags();
   return useMemo(() => {
     if (!filterActive(filter)) return found;
@@ -181,7 +181,7 @@ function SongList({ tracks, extra, found, sort, onSort, period }: { period?: { l
 /** The head of a list: its picture in its own light (the cover, blurred, fading into the page; the accent's for a
  * list with no cover), then its name with ▶ and the shuffle of `tracks` at the right. `art`: a picture of the page's
  * own in place of the cover («Любимое»: the heart). `onCover`: a tap on the picture (it opens large). */
-export function Hero({ cover, round, title, sub, right, kicker, art, tracks, context, onCover }: { cover?: string | null; round?: boolean; title: string; sub?: ReactNode; right?: ReactNode; kicker?: string; art?: ReactNode; tracks?: readonly NdSongOut[]; context?: string; onCover?: () => void }) {
+export function Hero({ cover, round, title, sub, right, kicker, art, tracks, context, onCover }: { cover?: string | null; round?: boolean; title: string; sub?: ReactNode; right?: ReactNode; kicker?: string; art?: ReactNode; tracks?: readonly TrackOut[]; context?: string; onCover?: () => void }) {
   const desktop = useDesktop();
   const play = tracks?.length ? <PlayPair tracks={tracks} context={context} /> : null;
   const picture = (size: string) =>

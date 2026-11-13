@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
-import type { NdSongOut } from '../api/types';
+import type { TrackOut } from '../api/types';
 import { useDesktop } from '../lib/desktop';
 import { Icon } from './Icon';
 
@@ -28,7 +28,7 @@ export interface ListSearch {
  * lyrics the Hub keeps (`/api/lyrics/search`). The magnifier of the list's bar or Ctrl+F (instead of the browser's
  * own find, which sees only the rows on the page, not their texts) opens the field in the bar. Esc closes it and
  * brings the whole list back. */
-export function useListSearch(tracks: readonly NdSongOut[], placeholder = 'Название, исполнитель или строчка'): ListSearch {
+export function useListSearch(tracks: readonly TrackOut[], placeholder = 'Название, исполнитель или строчка'): ListSearch {
   const desktop = useDesktop();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');

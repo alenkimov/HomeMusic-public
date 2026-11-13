@@ -1,14 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ApiError, api } from '../api/client';
 import type { CatalogArtist, MixMode, MixOut, MixSettingsOut, MixTodayOut, MixTrackOut } from '../api/types';
-import { TrackRow, TrackTableHeader, listenTrack } from '../components/catalog';
+import { TrackRow, TrackTableHeader } from '../components/catalog';
 import { Icon } from '../components/Icon';
-import { Button, Cover, ErrorState, IconButton, PageHeader, ProgressBar, Segmented, SkeletonRows, Spinner, cx } from '../components/ui';
-import { fmtLength, plural } from '../lib/format';
+import { ListBar } from '../components/ListBar';
+import { useListSearch } from '../components/ListSearch';
+import { TagFilterChips } from '../components/Tags';
+import { Button, Cover, ErrorState, IconButton, PageHeader, Segmented, Sheet, SkeletonRows, Spinner, cx } from '../components/ui';
+import { useDesktop } from '../lib/desktop';
+import { fmtLength, tracksWord } from '../lib/format';
+import { tagKey, type TagFilter } from '../lib/tags';
+import { Hero, useShown } from './MediaLibrary';
 import { useAsync, useDebounced, useInterval } from '../lib/hooks';
-import { listen } from '../lib/listen';
-import { canPlay, canPlayAll, playList, playTracks } from '../lib/player';
-import { Link, goBack, navigate } from '../lib/router';
+import { Link, navigate } from '../lib/router';
 import { useSession } from '../lib/session';
 import { attempt, toast } from '../lib/ui';
 
@@ -27,7 +32,6 @@ const BUILD_POLL_MS = 4000;
 const PICK_MIN = 3;
 const PICK_MAX = 5;
 
-const songsWord = (n: number) => `${n} ${plural(n, ['песня', 'песни', 'песен'])}`;
 const mixContext = (id: number) => `mix:${id}`;
 
 /** Up to four different covers of the mix, 2×2; a single cover when there are fewer. Small covers (250 px) unless
@@ -74,6 +78,9 @@ export function TastePrompt() {
   );
 }
 
+/** The page of a mix: a list like a playlist's (`ListBar`, `Hero`) — its picture, «Микс дня», how many tracks, ▶;
+ * the tags and the search at the right of its bar. What is the mix's own — its mode and «Собрать заново» — is behind
+ * one more mark there (`MixSettings`). */
 export function MixPage({ id }: { id: number }) {
   const { me } = useSession();
   // an unknown mix (an old link) is null: the page goes to today's
@@ -85,6 +92,11 @@ export function MixPage({ id }: { id: number }) {
   const settings = today?.settings;
   const building = rebuilding || !!today?.building;
   const current = !!today?.mix && today.mix.id === id;
+  const tracks = useMemo(() => mix?.tracks ?? [], [mix]);
+  const search = useListSearch(tracks);
+  const [filter, setFilter] = useState<TagFilter>({});
+  const shown = useShown(tracks, search.found, filter);
+  const songIds = useMemo(() => tracks.map(tagKey), [tracks]);
 
   useInterval(() => res.reload(true), mix && (building || mix.ready < mix.total) ? (building ? BUILD_POLL_MS : POLL_MS) : null);
   useEffect(() => {
@@ -98,32 +110,14 @@ export function MixPage({ id }: { id: number }) {
     navigate(`/mix/${today.mix.id}`, { replace: true });
   }, [rebuilding, today, id]);
 
-  if (res.loading && !res.data) return <SkeletonRows n={8} />;
-  if (res.error && !res.data) return <ErrorState text={res.error} onRetry={() => res.reload()} />;
-  if (res.data && !mix && !today?.mix) return <ErrorState text="Микс не найден" />;
+  if (res.loading && !res.data) return (<><PageHeader hero title="Микс дня" back="/library" /><SkeletonRows n={8} /></>);
+  if (res.error && !res.data) return (<><PageHeader hero title="Микс дня" back="/library" /><ErrorState text={res.error} onRetry={() => res.reload()} /></>);
+  if (res.data && !mix && !today?.mix) return (<><PageHeader hero title="Микс дня" back="/library" /><ErrorState text="Микс не найден" /></>);
   if (!mix || !settings) return null;
 
-  const tracks = mix.tracks;
+  const list = shown ? shown.map((f) => tracks[f.index]) : tracks;
   const length = tracks.reduce((s, t) => s + (t.duration_s ?? 0), 0);
   const context = mixContext(mix.id);
-  // Older apps: the library songs of the mix play in the app's player, in mix order.
-  const oldApp = canPlay() && !canPlayAll();
-  const playOld = (from?: MixTrackOut) =>
-    playList(
-      tracks.filter((t) => t.owned),
-      (t) => t.nd_song_id,
-      from,
-    );
-  const playAll =
-    tracks.length === 0
-      ? null
-      : canPlayAll()
-        ? () => playTracks(tracks, undefined, context, 'mix_page')
-        : oldApp
-          ? tracks.some((t) => t.owned && t.nd_song_id)
-            ? () => playOld()
-            : null
-          : () => listen(listenTrack(tracks[0]), tracks.map(listenTrack), context, 'mix_page');
 
   const setMode = async (mode: MixMode) => {
     if (mode === settings.mode) return;
@@ -145,80 +139,81 @@ export function MixPage({ id }: { id: number }) {
 
   return (
     <div>
-      <div className="relative">
-        <div className="absolute inset-0 overflow-hidden" aria-hidden>
-          <MixCover tracks={tracks} className="h-full w-full scale-125 rounded-none opacity-40 blur-3xl" />
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-bg/50 to-bg" />
-        </div>
-        <div className="pt-safe relative flex h-14 items-center px-2">
-          <IconButton icon="back" label="Назад" onClick={() => goBack('/search')} className="bg-black/30 !text-white" />
-        </div>
-        <div className="relative flex flex-col items-center px-6 pb-4 text-center">
-          <MixCover tracks={tracks} large className="aspect-square w-[min(56vw,220px)] shadow-2xl" />
-          <div className="mt-4 text-xs font-semibold uppercase tracking-wide text-accent">Микс дня · {mix.mode_title}</div>
-          <h1 className="mt-1 text-2xl font-extrabold leading-tight">{mix.title}</h1>
-          <p className="mt-2 text-sm text-muted">{mix.description}</p>
-          <div className="mt-2 text-sm text-dim">{[songsWord(mix.total), length ? fmtLength(length) : null].filter(Boolean).join(' · ')}</div>
-          {mix.ready < mix.total && (
-            <div className="mt-3 w-full max-w-xs" role="status">
-              <div className="mb-1 flex items-center justify-center gap-1.5 text-xs text-info">
-                <Spinner size={12} />
-                Скачано {mix.ready} из {mix.total}, остальные качаются
-              </div>
-              <ProgressBar value={mix.total ? mix.ready / mix.total : 0} />
-            </div>
-          )}
-          {!current && <div className="mt-2 text-xs text-dim">Это прежний микс: сегодня уже собран новый</div>}
-        </div>
-      </div>
-
-      <div className="px-4 pb-2">{playAll && <Button variant="primary" icon="play" block onClick={playAll}>Слушать всё</Button>}</div>
-
-      {current && <MixModes settings={settings} busy={modeBusy} building={building} isAdmin={me.is_admin} onMode={setMode} onRebuild={rebuild} />}
-
-      <section aria-label="Песни микса" className="pt-2">
-        {tracks.length > 0 && <TrackTableHeader numbered />}
-        {tracks.map((t, i) => (
-          <TrackRow key={`${t.position}:${t.ref}`} track={t} link={false} onPlay={oldApp ? () => playOld(t) : undefined} queue={tracks} index={i + 1} />
+      <ListBar
+        title="Микс дня"
+        back="/library"
+        tracks={list}
+        context={context}
+        search={tracks.length ? search : undefined}
+        tags={tracks.length ? { songIds, filter, onChange: setFilter, count: list.length } : undefined}
+        extra={current && <MixSettings settings={settings} busy={modeBusy} building={building} isAdmin={me.is_admin} onMode={setMode} onRebuild={rebuild} />}
+      />
+      {!search.alone && (
+        <Hero
+          kicker="Для вас"
+          title="Микс дня"
+          cover={tracks[0]?.cover_url}
+          art={<MixCover tracks={tracks} large className="h-full w-full !rounded-none" />}
+          sub={[tracksWord(mix.total), length ? fmtLength(length) : null, mix.ready < mix.total ? `скачано ${mix.ready}` : null, current ? null : 'прежний микс'].filter(Boolean).join(' · ')}
+          tracks={list}
+          context={context}
+        />
+      )}
+      <TagFilterChips filter={filter} onChange={setFilter} count={list.length} />
+      <section aria-label="Песни микса">
+        {list.length > 0 && <TrackTableHeader numbered />}
+        {list.map((t, i) => (
+          <TrackRow key={`${t.position}:${t.ref}`} track={t} link={false} queue={list} index={i + 1} />
         ))}
-        {!tracks.length && <p className="px-4 py-6 text-center text-muted">В миксе пока нет песен</p>}
+        {!tracks.length ? <p className="px-4 py-6 text-center text-muted">В миксе пока нет песен</p> : !list.length && <p className="px-4 py-10 text-center text-sm text-muted">Ничего не подходит — ни под поиск, ни под выбранные теги.</p>}
       </section>
     </div>
   );
 }
 
-function MixModes({
-  settings,
-  busy,
-  building,
-  isAdmin,
-  onMode,
-  onRebuild,
-}: {
-  settings: MixSettingsOut;
-  busy: boolean;
-  building: boolean;
-  isAdmin: boolean;
-  onMode: (m: MixMode) => void;
-  onRebuild: () => void;
-}) {
+/** What is a mix's own, behind a mark of its bar: the mode of the next mixes and, for an admin, «Собрать заново». A
+ * sheet on a phone, a small window by the mark on a computer. */
+function MixSettings({ settings, busy, building, isAdmin, onMode, onRebuild }: { settings: MixSettingsOut; busy: boolean; building: boolean; isAdmin: boolean; onMode: (m: MixMode) => void; onRebuild: () => void }) {
+  const desktop = useDesktop();
+  const [open, setOpen] = useState(false);
   const hint = MODES.find((m) => m.value === settings.mode)?.hint;
-  return (
-    <section aria-label="Режим микса" className="px-4 pb-2 pt-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <h2 className="font-bold">Режим микса</h2>
-        {busy && <Spinner size={16} className="text-muted" />}
-      </div>
+  const body = (
+    <>
       <Segmented<MixMode> label="Режим микса" value={settings.mode} onChange={onMode} options={MODES} />
-      <p className="mt-2 text-[13px] text-muted">
-        {hint}. Новый микс — каждый день в {settings.mix_hour}:00.
+      <p className="mt-2 flex items-center gap-2 text-[13px] text-muted">
+        <span>
+          {hint}. Новый микс — каждый день в {settings.mix_hour}:00.
+        </span>
+        {busy && <Spinner size={14} />}
       </p>
       {isAdmin && (
         <Button small icon="refresh" className="mt-3" busy={building} onClick={onRebuild}>
           {building ? 'Собирается…' : 'Собрать заново'}
         </Button>
       )}
-    </section>
+    </>
+  );
+  return (
+    <>
+      <IconButton icon="sliders" label="Режим микса" aria-pressed={open} onClick={() => setOpen((v) => !v)} />
+      {open && desktop && (
+        <>
+          <button type="button" aria-label="Закрыть" className="fixed inset-0 z-10 cursor-default" onClick={() => setOpen(false)} />
+          <div className="anim-up absolute right-4 top-full z-20 w-96 rounded-2xl bg-raised p-4 shadow-2xl" role="dialog" aria-label="Режим микса">
+            <div className="pb-2 font-bold">Режим микса</div>
+            {body}
+          </div>
+        </>
+      )}
+      {/* beside the page, not in the bar: the bar is a layer of its own, under the player and the tabs */}
+      {!desktop &&
+        createPortal(
+          <Sheet open={open} onClose={() => setOpen(false)} title="Режим микса">
+            {body}
+          </Sheet>,
+          document.body,
+        )}
+    </>
   );
 }
 
