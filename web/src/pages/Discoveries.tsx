@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { TrackRow, TrackTableHeader } from '../components/catalog';
 import { Icon } from '../components/Icon';
-import { Button, Empty, ErrorState, Loading, PageHeader } from '../components/ui';
-import { STANDALONE } from '../lib/embedded';
+import { BarWindow, ListBar } from '../components/ListBar';
+import { useListSearch } from '../components/ListSearch';
+import { Button, Empty, ErrorState, Loading } from '../components/ui';
 import { useHubEvent } from '../lib/events';
 import { fmtLength, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
@@ -21,8 +22,9 @@ function weekTitle(iso: string): string {
 
 /** «Открытия недели»: tracks of artists the user has never heard, little-known ones first — a new issue every Monday
  * (app/mixes/discover.py). The tracks are the catalog's: they play at once and reach the library only when kept
- * («+»). Earlier issues stay and are opened from the list of weeks. The page is a list like any other: its picture
- * (the covers of its first tracks), how many tracks and how long, ▶ and the shuffle. */
+ * («+»). The page is a list like any other: its picture (the covers of its first tracks), how many tracks and how
+ * long, ▶ and the shuffle, the search in its bar. Earlier issues stay: the list of weeks and «Собрать заново» are
+ * behind a mark of the bar. */
 export function DiscoveriesPage() {
   const [issueId, setIssueId] = useState<number | null>(null);
   const res = useAsync((s) => api.discoveries(issueId, s), [issueId]);
@@ -41,7 +43,9 @@ export function DiscoveriesPage() {
     const timer = window.setInterval(() => res.reload(), 20_000);
     return () => window.clearInterval(timer);
   }, [building, res.reload]);
-  const tracks = d?.issue?.tracks ?? [];
+  const tracks = useMemo(() => d?.issue?.tracks ?? [], [d]);
+  const search = useListSearch(tracks);
+  const list = search.found ? search.found.map((f) => tracks[f.index]) : tracks;
   const length = tracks.reduce((sum, t) => sum + (t.duration_s ?? 0), 0);
   const covers = [...new Set(tracks.map((t) => t.cover_url || t.cover_small_url).filter((c): c is string => !!c))].slice(0, 4);
   const build = async () => {
@@ -53,9 +57,36 @@ export function DiscoveriesPage() {
 
   return (
     <div>
-      <PageHeader hero title="Открытия недели" back={STANDALONE ? '/home' : '/more'} />
-      <Hero
-        kicker="Автоплейлист"
+      <ListBar
+        title="Открытия недели"
+        back="/library"
+        tracks={list}
+        search={tracks.length ? search : undefined}
+        extra={
+          d?.issue && (
+            <BarWindow icon="sliders" label="Выпуск">
+              {d.issues.length > 1 && (
+                <select aria-label="Выпуск" className="input" value={d.issue.id} onChange={(e) => setIssueId(Number(e.target.value))}>
+                  {d.issues.map((x, i) => (
+                    <option key={x.id} value={x.id}>
+                      {i === 0 ? 'Эта неделя: ' : ''}
+                      {weekTitle(x.week)}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <p className="mt-2 text-[13px] text-muted">Новый выпуск — каждый понедельник. Треки играют из каталога и не занимают места; понравился — нажмите «+», он скачается и попадёт в «Любимое».</p>
+              {!old && (
+                <Button small icon="refresh" className="mt-3" busy={building} onClick={() => void build()}>
+                  {building ? 'Собираю…' : 'Собрать заново'}
+                </Button>
+              )}
+            </BarWindow>
+          )
+        }
+      />
+      {!search.alone && <Hero
+        kicker="Для вас"
         title="Открытия недели"
         art={
           covers.length >= 4 ? (
@@ -75,8 +106,8 @@ export function DiscoveriesPage() {
         sub={d?.issue
           ? [tracksWord(tracks.length), length ? fmtLength(length) : null, weekTitle(d.issue.week)].filter(Boolean).join(' · ')
           : 'Исполнители, которых вы ещё не слышали'}
-        tracks={tracks}
-      />
+        tracks={list}
+      />}
       {res.error ? (
         <ErrorState text={res.error} onRetry={() => res.reload()} />
       ) : !d ? (
@@ -96,28 +127,11 @@ export function DiscoveriesPage() {
         )
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-2 px-4 pb-3 lg:px-6">
-            {d.issues.length > 1 && (
-              <select aria-label="Выпуск" className="input !w-auto" value={d.issue.id} onChange={(e) => setIssueId(Number(e.target.value))}>
-                {d.issues.map((x, i) => (
-                  <option key={x.id} value={x.id}>
-                    {i === 0 ? 'Эта неделя: ' : ''}
-                    {weekTitle(x.week)}
-                  </option>
-                ))}
-              </select>
-            )}
-            {!old && (
-              <Button variant="ghost" small busy={building} onClick={() => void build()}>
-                {building ? 'Собираю…' : 'Собрать заново'}
-              </Button>
-            )}
-          </div>
-          <p className="px-4 pb-2 text-xs text-dim">Треки играют из каталога и не занимают места. Понравился — нажмите «+»: трек скачается и попадёт в «Любимое».</p>
           <TrackTableHeader album />
-          {tracks.map((t, i) => (
-            <TrackRow key={t.ref} track={t} showAlbum queue={tracks} index={i + 1} />
+          {list.map((t, i) => (
+            <TrackRow key={t.ref} track={t} showAlbum queue={list} index={i + 1} />
           ))}
+          {!list.length && <p className="px-4 py-10 text-center text-sm text-muted">Ничего не нашлось.</p>}
         </>
       )}
     </div>

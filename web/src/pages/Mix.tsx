@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { ApiError, api } from '../api/client';
 import type { CatalogArtist, MixMode, MixOut, MixSettingsOut, MixTodayOut, MixTrackOut } from '../api/types';
 import { TrackRow, TrackTableHeader } from '../components/catalog';
 import { Icon } from '../components/Icon';
-import { ListBar } from '../components/ListBar';
+import { BarWindow, ListBar } from '../components/ListBar';
 import { useListSearch } from '../components/ListSearch';
 import { TagFilterChips } from '../components/Tags';
-import { Button, Cover, ErrorState, IconButton, PageHeader, Segmented, Sheet, SkeletonRows, Spinner, cx } from '../components/ui';
-import { useDesktop } from '../lib/desktop';
+import { Button, Cover, ErrorState, PageHeader, Segmented, SkeletonRows, Spinner, cx } from '../components/ui';
 import { fmtLength, tracksWord } from '../lib/format';
 import { tagKey, type TagFilter } from '../lib/tags';
 import { Hero, useShown } from './MediaLibrary';
@@ -172,13 +170,11 @@ export function MixPage({ id }: { id: number }) {
 }
 
 /** What is a mix's own, behind a mark of its bar: the mode of the next mixes and, for an admin, «Собрать заново». A
- * sheet on a phone, a small window by the mark on a computer. */
+ * (`BarWindow`). */
 function MixSettings({ settings, busy, building, isAdmin, onMode, onRebuild }: { settings: MixSettingsOut; busy: boolean; building: boolean; isAdmin: boolean; onMode: (m: MixMode) => void; onRebuild: () => void }) {
-  const desktop = useDesktop();
-  const [open, setOpen] = useState(false);
   const hint = MODES.find((m) => m.value === settings.mode)?.hint;
-  const body = (
-    <>
+  return (
+    <BarWindow icon="sliders" label="Режим микса">
       <Segmented<MixMode> label="Режим микса" value={settings.mode} onChange={onMode} options={MODES} />
       <p className="mt-2 flex items-center gap-2 text-[13px] text-muted">
         <span>
@@ -191,29 +187,7 @@ function MixSettings({ settings, busy, building, isAdmin, onMode, onRebuild }: {
           {building ? 'Собирается…' : 'Собрать заново'}
         </Button>
       )}
-    </>
-  );
-  return (
-    <>
-      <IconButton icon="sliders" label="Режим микса" aria-pressed={open} onClick={() => setOpen((v) => !v)} />
-      {open && desktop && (
-        <>
-          <button type="button" aria-label="Закрыть" className="fixed inset-0 z-10 cursor-default" onClick={() => setOpen(false)} />
-          <div className="anim-up absolute right-4 top-full z-20 w-96 rounded-2xl bg-raised p-4 shadow-2xl" role="dialog" aria-label="Режим микса">
-            <div className="pb-2 font-bold">Режим микса</div>
-            {body}
-          </div>
-        </>
-      )}
-      {/* beside the page, not in the bar: the bar is a layer of its own, under the player and the tabs */}
-      {!desktop &&
-        createPortal(
-          <Sheet open={open} onClose={() => setOpen(false)} title="Режим микса">
-            {body}
-          </Sheet>,
-          document.body,
-        )}
-    </>
+    </BarWindow>
   );
 }
 

@@ -1,10 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { TrackOut } from '../api/types';
 import { useDesktop } from '../lib/desktop';
 import { goBack } from '../lib/router';
 import { filterActive } from '../lib/tags';
 import { playAll } from './catalog';
-import { Icon } from './Icon';
+import { Icon, type IconName } from './Icon';
 import type { ListSearch } from './ListSearch';
 import { TagFilterBody, type ListTags } from './Tags';
 import { Button, IconButton, Sheet, cx } from './ui';
@@ -60,6 +61,35 @@ function SearchDown({ onClose }: { onClose: () => void }) {
     >
       <Icon name="down" size={24} />
     </button>
+  );
+}
+
+/** A mark of the bar with a window of the list's own behind it (`extra` of `ListBar`: «Режим микса», the issues of
+ * «Открытия недели»): a sheet on a phone, a small window by the mark on a computer. */
+export function BarWindow({ icon, label, children }: { icon: IconName; label: string; children: ReactNode }) {
+  const desktop = useDesktop();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <IconButton icon={icon} label={label} aria-pressed={open} onClick={() => setOpen((v) => !v)} />
+      {open && desktop && (
+        <>
+          <button type="button" aria-label="Закрыть" className="fixed inset-0 z-10 cursor-default" onClick={() => setOpen(false)} />
+          <div className="anim-up absolute right-4 top-full z-20 w-96 rounded-2xl bg-raised p-4 shadow-2xl" role="dialog" aria-label={label}>
+            <div className="pb-2 font-bold">{label}</div>
+            {children}
+          </div>
+        </>
+      )}
+      {/* beside the page, not in the bar: the bar is a layer of its own, under the player and the tabs */}
+      {!desktop &&
+        createPortal(
+          <Sheet open={open} onClose={() => setOpen(false)} title={label}>
+            {children}
+          </Sheet>,
+          document.body,
+        )}
+    </>
   );
 }
 
