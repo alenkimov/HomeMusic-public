@@ -97,6 +97,7 @@ export function MorePage() {
         <div className="space-y-4">
           <Group title="Импорт и интеграции">
             <Item icon="transfer" brand="yandex" to="/import?from=yandex" title="Перенести из Яндекс Музыки" sub="«Мне нравится», плейлисты, альбомы и исполнители" />
+            <Item icon="transfer" brand="vk" to="/import?from=vk" title="Перенести из ВКонтакте" sub="«Моя музыка» и плейлисты" />
             <Item icon="transfer" brand="spotify" to="/import?from=spotify" title="Перенести из Spotify" sub="Плейлисты и «Любимые треки» из файлов CSV" />
             {STANDALONE && <Item icon="wave" brand="listenbrainz" to="/listenbrainz" title="ListenBrainz" sub="Необязательно: ещё один источник «Открытий недели»" />}
             <Item icon="send" brand="telegram" title="Telegram" sub="Свой бот: отправка треков себе, в группы и каналы" onClick={() => openTelegramSetup()} />

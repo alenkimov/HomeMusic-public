@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
-import type { ImportCollectionOut, ImportItemOut, ImportMode, ImportOut } from '../api/types';
+import type { ImportCollectionOut, ImportItemOut, ImportMode, ImportOut, ImportSource } from '../api/types';
 import { BrandIcon } from '../components/BrandIcon';
 import { PlaylistsPick } from '../components/PlaylistsButton';
 import { AfterImport } from './Upload';
@@ -18,7 +18,8 @@ import { Link, navigate } from '../lib/router';
 import { copyText } from '../lib/share';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 
-/** «Перенести музыку»: a user's collection from Yandex Music (Spotify and YouTube Music later) — ♥, playlists in
+/** «Перенести музыку»: a user's collection from Yandex Music, VK («Моя музыка» and the playlists: a sign-in with the
+ * login and the password, the code VK sends is typed here) or Spotify (files) — ♥, playlists in
  * their order, liked albums and artists. The Hub reads the lists only (no audio): sign-in by a code on ya.ru/device,
  * a token, or an open profile link. Economy (the default): playlists and ♥ at once from what the library has, the
  * rest plays from the sources and is downloaded once listened to; «Скачать всё» downloads everything in the
@@ -38,7 +39,7 @@ function statusLine(imp: ImportOut): string {
   const st = imp.stats;
   switch (imp.status) {
     case 'auth':
-      return 'Ждём входа в Яндекс';
+      return imp.source === 'vk' ? 'Ждём код для входа в ВК' : 'Ждём входа в Яндекс';
     case 'fetching':
       return 'Читаем коллекцию…';
     case 'preview':
@@ -56,18 +57,23 @@ function statusLine(imp: ImportOut): string {
 
 const EXPORTIFY_URL = 'https://exportify.app/';
 
+const SOURCE_NAME: Record<ImportSource, string> = { yandex: 'Яндекс Музыка', spotify: 'Spotify', vk: 'ВКонтакте' };
+
 function sourceTitle(imp: ImportOut): string {
-  return `${imp.source === 'spotify' ? 'Spotify' : 'Яндекс Музыка'}${imp.account ? ` · ${imp.account}` : ''}`;
+  return `${SOURCE_NAME[imp.source] ?? imp.source}${imp.account ? ` · ${imp.account}` : ''}`;
 }
 
 // --- the list of imports + a new one ---------------------------------------------------------------
 
 /** `from`: the page of one service — its past transfers and its way in («Ещё» has an entry for each); none: both. */
-export function ImportsPage({ from = null }: { from?: 'yandex' | 'spotify' | null }) {
+export function ImportsPage({ from = null }: { from?: ImportSource | null }) {
   const res = useAsync((s) => api.imports(s), []);
-  const past = (res.data ?? []).filter((imp) => !from || (imp.source === 'spotify' ? 'spotify' : 'yandex') === from);
+  const past = (res.data ?? []).filter((imp) => !from || imp.source === from);
   useHubEvent('import', () => res.reload(true));
-  const [busy, setBusy] = useState<'device' | 'profile' | 'token' | 'csv' | null>(null);
+  const [busy, setBusy] = useState<'device' | 'profile' | 'token' | 'csv' | 'vk' | 'vk-token' | null>(null);
+  const [vkLogin, setVkLogin] = useState('');
+  const [vkPassword, setVkPassword] = useState('');
+  const [vkToken, setVkToken] = useState('');
   const csvRef = useRef<HTMLInputElement>(null);
   const [profile, setProfile] = useState('');
   const [token, setToken] = useState('');
@@ -81,6 +87,15 @@ export function ImportsPage({ from = null }: { from?: 'yandex' | 'spotify' | nul
     if (r) navigate(`/import/${r.id}`);
   };
 
+  const startVk = async (how: 'vk' | 'vk-token') => {
+    setBusy(how);
+    const r = await attempt(() => api.createImport(how === 'vk' ? { source: 'vk', method: 'password', login: vkLogin.trim(), password: vkPassword } : { source: 'vk', method: 'token', token: vkToken.trim() }));
+    setBusy(null);
+    if (!r) return;
+    setVkPassword('');
+    navigate(`/import/${r.id}`);
+  };
+
   const startCsv = async (files: File[]) => {
     setBusy('csv');
     const r = await attempt(() => api.createImportCsv(files));
@@ -90,7 +105,7 @@ export function ImportsPage({ from = null }: { from?: 'yandex' | 'spotify' | nul
 
   return (
     <div>
-      <PageHeader title={from === 'spotify' ? 'Перенос из Spotify' : from === 'yandex' ? 'Перенос из Яндекс Музыки' : 'Перенести музыку'} back={EMBEDDED ? '/library' : '/more'} />
+      <PageHeader title={from === 'spotify' ? 'Перенос из Spotify' : from === 'yandex' ? 'Перенос из Яндекс Музыки' : from === 'vk' ? 'Перенос из ВКонтакте' : 'Перенести музыку'} back={EMBEDDED ? '/library' : '/more'} />
       {res.loading ? (
         <SkeletonRows n={2} />
       ) : res.error ? (
@@ -100,7 +115,7 @@ export function ImportsPage({ from = null }: { from?: 'yandex' | 'spotify' | nul
           {past.map((imp) => (
             <li key={imp.id} className="border-b border-line/60 last:border-0">
               <Link to={`/import/${imp.id}`} className="flex min-h-16 items-center gap-3 px-4 py-2 hover:bg-fg/5">
-                <BrandIcon service={imp.source === 'spotify' ? 'spotify' : 'yandex'} size={22} className="shrink-0" />
+                <BrandIcon service={imp.source} size={22} className="shrink-0" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{sourceTitle(imp)}</span>
                   <span className={cx('block truncate text-xs', imp.status === 'failed' ? 'text-danger' : 'text-muted')}>{statusLine(imp)}</span>
@@ -112,7 +127,7 @@ export function ImportsPage({ from = null }: { from?: 'yandex' | 'spotify' | nul
         </ul>
       ) : null}
 
-      {from !== 'spotify' && (
+      {(!from || from === 'yandex') && (
       <>
       {!from && <SectionTitle>Из Яндекс Музыки</SectionTitle>}
       <div className={cx('card mx-4 space-y-3 p-4', from && 'mt-3')}>
@@ -144,7 +159,42 @@ export function ImportsPage({ from = null }: { from?: 'yandex' | 'spotify' | nul
       </>
       )}
 
-      {from !== 'yandex' && (
+      {(!from || from === 'vk') && (
+      <>
+      {!from && <SectionTitle>Из ВКонтакте</SectionTitle>}
+      <form
+        className={cx('card mx-4 space-y-3 p-4', from && 'mt-3')}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!busy && vkLogin.trim() && vkPassword) void startVk('vk');
+        }}
+      >
+        <p className="text-sm text-muted">«Моя музыка» станет плейлистом «ВКонтакте», ваши плейлисты — плейлистами. Перед переносом вы выберете, что брать.</p>
+        <input className="input" value={vkLogin} onChange={(e) => setVkLogin(e.target.value)} placeholder="Телефон или почта" aria-label="Логин ВКонтакте" autoComplete="username" autoCapitalize="off" autoCorrect="off" />
+        <input className="input" type="password" value={vkPassword} onChange={(e) => setVkPassword(e.target.value)} placeholder="Пароль" aria-label="Пароль ВКонтакте" autoComplete="current-password" />
+        <Button type="submit" variant="primary" block icon="lock" busy={busy === 'vk'} disabled={!!busy || !vkLogin.trim() || !vkPassword}>
+          Войти во ВКонтакте
+        </Button>
+        <p className="text-xs text-dim">
+          У ВК нет открытого доступа к музыке, поэтому Хаб входит как приложение ВК для Android: пароль уходит во ВК один раз и не сохраняется. Если ВК попросит код из SMS, Хаб спросит его у вас.
+          Придёт уведомление о новом входе — это он. Хаб читает только списки треков.
+        </p>
+      </form>
+
+      <details className="card mx-4 mt-3 p-4">
+        <summary className="cursor-pointer text-sm text-muted">Вставить токен ВКонтакте вручную</summary>
+        <div className="mt-3 space-y-2">
+          <p className="text-xs text-dim">Подойдёт токен приложения ВК для Android с доступом к аудио (его выдаёт, например, vkpymusic).</p>
+          <input className="input" type="password" value={vkToken} onChange={(e) => setVkToken(e.target.value)} placeholder="Токен" autoComplete="off" />
+          <Button block busy={busy === 'vk-token'} disabled={!!busy || !vkToken.trim()} onClick={() => startVk('vk-token')}>
+            Продолжить с токеном
+          </Button>
+        </div>
+      </details>
+      </>
+      )}
+
+      {(!from || from === 'spotify') && (
       <>
       {!from && <SectionTitle>Из Spotify</SectionTitle>}
       <div className={cx('card mx-4 space-y-3 p-4', from && 'mt-3')}>
@@ -213,9 +263,9 @@ export function ImportPage({ id }: { id: number }) {
       ) : res.error || !imp ? (
         <ErrorState text={res.error ?? 'Не найдено'} onRetry={() => res.reload()} />
       ) : imp.status === 'auth' ? (
-        <AuthStep imp={imp} />
+        imp.auth && imp.auth.kind !== 'device' ? <VkAuthStep imp={imp} onChange={(r) => res.setData(r)} /> : <AuthStep imp={imp} />
       ) : imp.status === 'fetching' ? (
-        <Loading text="Читаем коллекцию из Яндекс Музыки…" />
+        <Loading text={`Читаем коллекцию: ${SOURCE_NAME[imp.source] ?? imp.source}…`} />
       ) : imp.status === 'preview' ? (
         <Preview imp={imp} onStarted={(r) => res.setData(r)} />
       ) : imp.status === 'failed' && !imp.started_at ? (
@@ -271,6 +321,58 @@ function AuthStep({ imp }: { imp: ImportOut }) {
         {left > 0 ? `Ждём подтверждения · код действует ${fmtDuration(left)}` : 'Код устарел — начните заново'}
       </div>
     </div>
+  );
+}
+
+/** VK asked for more at the sign-in: the code it sent (an SMS, a call, the authenticator), or its captcha — a page
+ * of VK's to pass, whose answer (`success_token`) is given here. The Hub signs in again with what is typed. */
+function VkAuthStep({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) => void }) {
+  const auth = imp.auth!;
+  const captcha = auth.kind === 'captcha';
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const send = async () => {
+    if (!value.trim() || busy) return;
+    setBusy(true);
+    const r = await attempt(() => api.importAuth(imp.id, captcha ? { captcha: value.trim() } : { code: value.trim() }));
+    setBusy(false);
+    if (!r) return;
+    setValue('');
+    onChange(r);
+  };
+  return (
+    <form
+      className="space-y-4 px-4 pt-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void send();
+      }}
+    >
+      <Notice kind={auth.wrong ? 'error' : 'info'}>{auth.hint || (captcha ? 'ВК просит подтвердить, что вы не робот' : 'ВК ждёт код подтверждения')}</Notice>
+      {captcha ? (
+        <div className="card space-y-3 p-4">
+          <ol className="list-decimal space-y-1 pl-5 text-sm text-muted">
+            <li>Откройте страницу проверки ВК и пройдите её.</li>
+            <li>
+              Проверка отвечает ключом <span className="font-mono text-fg">success_token</span>: он виден в инструментах разработчика браузера (вкладка «Сеть», ответ запроса <span className="font-mono text-fg">captchaNotRobot.check</span>).
+            </li>
+            <li>Вставьте ключ сюда.</li>
+          </ol>
+          <a href={auth.verification_url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-9 items-center gap-2 rounded-full bg-accent px-3.5 text-sm font-semibold text-on-accent">
+            <Icon name="external" size={18} />
+            Открыть проверку ВК
+          </a>
+          <input className="input" value={value} onChange={(e) => setValue(e.target.value)} placeholder="success_token" aria-label="Ключ проверки" autoComplete="off" autoCapitalize="off" autoCorrect="off" />
+          <p className="text-xs text-dim">Это неудобно, и проще подождать: капчу ВК обычно показывает после нескольких входов подряд. Через час-другой её может не быть — тогда начните перенос заново.</p>
+        </div>
+      ) : (
+        <input className="input text-center font-mono text-2xl tracking-[0.3em]" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Код" aria-label="Код подтверждения" inputMode="numeric" autoComplete="one-time-code" autoFocus />
+      )}
+      <Button type="submit" variant="primary" block busy={busy} disabled={!value.trim()}>
+        Продолжить
+      </Button>
+      <p className="text-center text-xs text-dim">Вход ждёт 15 минут. Пароль хранится в Хабе зашифрованным только на это время и стирается, как только вход завершён.</p>
+    </form>
   );
 }
 
@@ -490,13 +592,13 @@ function Progress({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) 
           </Button>
         )}
         {imp.status !== 'running' && (imp.has_token || imp.method === 'profile') && (
-          <Button block icon="refresh" busy={busy === 'sync'} onClick={() => run('sync', () => api.importSync(imp.id), 'Подтягиваем новое из Яндекса')}>
-            Подтянуть новое из Яндекса
+          <Button block icon="refresh" busy={busy === 'sync'} onClick={() => run('sync', () => api.importSync(imp.id), `Подтягиваем новое: ${SOURCE_NAME[imp.source] ?? imp.source}`)}>
+            Подтянуть новое{imp.source === 'vk' ? ' из ВК' : ' из Яндекса'}
           </Button>
         )}
         {imp.has_token && (
-          <Button block variant="ghost" icon="lock" busy={busy === 'token'} onClick={() => run('token', () => api.importForgetToken(imp.id), 'Вход в Яндекс удалён')}>
-            Удалить вход в Яндекс
+          <Button block variant="ghost" icon="lock" busy={busy === 'token'} onClick={() => run('token', () => api.importForgetToken(imp.id), 'Вход удалён')}>
+            Удалить вход{imp.source === 'vk' ? ' в ВК' : ' в Яндекс'}
           </Button>
         )}
         {imp.status === 'running' ? (

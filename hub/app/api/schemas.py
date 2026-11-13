@@ -700,8 +700,8 @@ class AssistantTextIn(BaseModel):
 
 # --- imports from music services ----------------------------------------------------------
 
-ImportSource = Literal["yandex", "spotify"]
-ImportMethod = Literal["device", "token", "profile", "csv"]
+ImportSource = Literal["yandex", "spotify", "vk"]
+ImportMethod = Literal["device", "token", "profile", "csv", "password"]
 ImportMode = Literal["economy", "full"]
 
 
@@ -710,13 +710,28 @@ class ImportIn(BaseModel):
     method: ImportMethod = "device"
     token: str | None = None  # method "token"
     url: str | None = None  # method "profile": a link to the profile or the login
+    # method "password" (VK): used for the sign-in only, never kept beyond it
+    login: str | None = None
+    password: str | None = None
+
+
+class ImportAuthIn(BaseModel):
+    """What VK asked for at the sign-in: the code, or what its captcha page answered with (`success_token`)."""
+
+    code: str | None = None
+    captcha: str | None = None
 
 
 class ImportAuthOut(BaseModel):
-    """Sign-in by code in progress: the user enters `user_code` at `verification_url`."""
+    """Sign-in in progress. `device` (Yandex): the user enters `user_code` at `verification_url`. `code` (VK): the
+    service sent the user a code, they type it here (`hint`: where it was sent; `wrong`: the last one did not fit).
+    `captcha` (VK): the page at `verification_url` has to be passed, what it answers with is given here."""
 
-    user_code: str
-    verification_url: str
+    kind: Literal["device", "code", "captcha"] = "device"
+    user_code: str = ""
+    verification_url: str = ""
+    hint: str | None = None
+    wrong: bool = False
     expires_at: datetime
 
 

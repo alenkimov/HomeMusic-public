@@ -480,6 +480,8 @@ export const api = {
     for (const f of files) form.append('files', f);
     return request<ImportOut>('POST', '/api/imports/csv', { form });
   },
+  /** What VK asked for at the sign-in: the code it sent, or what its captcha page answered with. */
+  importAuth: (id: number, body: { code?: string; captcha?: string }) => request<ImportOut>('POST', `/api/imports/${id}/auth`, { json: body }),
   importGet: (id: number, signal?: AbortSignal) => request<ImportOut>('GET', `/api/imports/${id}`, { signal }),
   importItems: (id: number, q: { collection_id?: number; status?: string; match?: string; offset?: number; limit?: number }, signal?: AbortSignal) =>
     request<ImportItemsOut>('GET', withQuery(`/api/imports/${id}/items`, q), { signal }),

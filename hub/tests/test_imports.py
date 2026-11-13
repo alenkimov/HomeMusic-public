@@ -427,7 +427,7 @@ async def test_sign_in_by_code(env):
     assert r.status_code == 200, r.text
     imp = r.json()
     assert imp["status"] == "auth" and imp["auth"]["user_code"] == "abcd1234"
-    assert set(imp["auth"]) == {"user_code", "verification_url", "expires_at"}  # the device code stays in the Hub
+    assert imp["auth"]["kind"] == "device" and "device_code" not in imp["auth"]  # the device code stays in the Hub
     await run_imports()
     assert (await c.get(f"/api/imports/{imp['id']}")).json()["status"] == "auth"
 
@@ -594,3 +594,83 @@ async def test_isrc_of_another_edit_falls_back_to_the_names(env):
     r = await catalog_track({"artist": "Кино", "artists": ["Кино"], "title": "Группа крови", "duration_s": 245,
                              "isrc": "XX0000000000"})
     assert (r.match, r.ref) == ("exact", "dz:100")
+
+
+async def test_vk_sign_in_waits_for_the_code_typed_in_the_hub(env, monkeypatch):
+    """VK: the login and the password start the sign-in, the code VK sends is typed in the Hub; the password is kept
+    (encrypted) only while the code is awaited, and never shown."""
+    from app.db import session_scope
+    from app.imports.sources import vk
+    from app.imports.sources.base import SnapCollection, SnapItem, Snapshot
+    from app.models import Import
+
+    c = env["client"]
+    asked: list[dict] = []
+    answers = [vk.NeedCode("ВК отправил код в SMS на +7 *** 12"), vk.NeedCode("Код не подошёл", wrong=True), "tok"]
+
+    async def sign_in(login, password, *, code=None, captcha=None):
+        asked.append({"login": login, "password": password, "code": code, "captcha": captcha})
+        got = answers.pop(0)
+        if isinstance(got, Exception):
+            raise got
+        return got
+
+    async def fetch(token):
+        assert token == "tok"
+        return Snapshot(account="Алён К", collections=[SnapCollection(
+            kind="playlist", external_id="audios", title="ВКонтакте", items=[SnapItem(external_id="7_1", raw=GOROD)])])
+
+    monkeypatch.setattr(vk, "sign_in", sign_in)
+    monkeypatch.setattr(vk, "fetch", fetch)
+
+    assert (await c.post("/api/imports", json={"source": "vk", "method": "password", "login": "me"})).status_code == 400
+    r = await c.post("/api/imports", json={"source": "vk", "method": "password", "login": " me ", "password": "pw"})
+    assert r.status_code == 200, r.text
+    imp = r.json()
+    assert imp["status"] == "auth" and imp["auth"]["kind"] == "code" and "+7 *** 12" in imp["auth"]["hint"]
+    assert "pw" not in r.text and "login" not in imp["auth"]
+    async with session_scope() as s:
+        kept = (await s.get(Import, imp["id"])).auth_json
+        assert kept["password"] != "pw" and kept["login"] != "me"  # encrypted
+    await run_imports()  # the job only watches the time
+    assert (await c.get(f"/api/imports/{imp['id']}")).json()["status"] == "auth"
+
+    imp = (await c.post(f"/api/imports/{imp['id']}/auth", json={"code": "000000"})).json()
+    assert imp["status"] == "auth" and imp["auth"]["wrong"]
+    imp = (await c.post(f"/api/imports/{imp['id']}/auth", json={"code": " 123456 "})).json()
+    assert imp["status"] == "fetching" and imp["auth"] is None and imp["has_token"]
+    assert asked == [{"login": "me", "password": "pw", "code": None, "captcha": None},
+                     {"login": "me", "password": "pw", "code": "000000", "captcha": None},
+                     {"login": "me", "password": "pw", "code": "123456", "captcha": None}]
+    async with session_scope() as s:
+        assert (await s.get(Import, imp["id"])).auth_json == {}  # the password is gone with the sign-in
+    assert (await c.post(f"/api/imports/{imp['id']}/auth", json={"code": "1"})).status_code == 409
+
+    await run_imports()
+    imp = (await c.get(f"/api/imports/{imp['id']}")).json()
+    assert imp["status"] == "preview" and imp["account"] == "Алён К"
+    assert [(x["kind"], x["title"], x["count"]) for x in imp["collections"]] == [("playlist", "ВКонтакте", 1)]
+
+
+async def test_vk_refusal_ends_the_import_and_a_captcha_is_passed_on(env, monkeypatch):
+    from app.imports.sources import vk
+    from app.imports.sources.base import SourceError
+
+    c = env["client"]
+    answers: list = [SourceError("ВК не принял логин или пароль")]
+
+    async def sign_in(login, password, *, code=None, captcha=None):
+        got = answers.pop(0)
+        if isinstance(got, Exception):
+            raise got
+        return got
+
+    monkeypatch.setattr(vk, "sign_in", sign_in)
+    r = await c.post("/api/imports", json={"source": "vk", "method": "password", "login": "me", "password": "no"})
+    assert r.status_code == 400 and "логин или пароль" in r.json()["detail"]
+
+    answers += [vk.NeedCaptcha("https://id.vk.com/captcha?x=1"), SourceError("ВК временно закрыл вход")]
+    imp = (await c.post("/api/imports", json={"source": "vk", "method": "password", "login": "me", "password": "pw"})).json()
+    assert imp["auth"]["kind"] == "captcha" and imp["auth"]["verification_url"] == "https://id.vk.com/captcha?x=1"
+    imp = (await c.post(f"/api/imports/{imp['id']}/auth", json={"captcha": "passed"})).json()
+    assert imp["status"] == "failed" and "закрыл вход" in imp["error"] and imp["auth"] is None

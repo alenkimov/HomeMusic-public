@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import ImportIn, ImportItemsOut, ImportOut, ImportPickOut, ImportStartIn
+from app.api.schemas import ImportAuthIn, ImportIn, ImportItemsOut, ImportOut, ImportPickOut, ImportStartIn
 from app.auth import current_user
 from app.db import get_session
 from app.imports import apply, core
@@ -35,7 +35,8 @@ async def list_imports(user: User = Depends(current_user), s: AsyncSession = Dep
 async def create(body: ImportIn, user: User = Depends(current_user),
                  s: AsyncSession = Depends(get_session, scope="function")):
     try:
-        imp = await core.create(s, user.id, source=body.source, method=body.method, token=body.token, url=body.url)
+        imp = await core.create(s, user.id, source=body.source, method=body.method, token=body.token, url=body.url,
+                                login=body.login, password=body.password)
     except SourceError as e:
         raise HTTPException(400, str(e)) from e
     await s.flush()
@@ -71,6 +72,23 @@ async def create_from_csv(request: Request, user: User = Depends(current_user),
 async def get(import_id: int, user: User = Depends(current_user),
               s: AsyncSession = Depends(get_session, scope="function")):
     return await core.import_out(s, await _own(s, user, import_id))
+
+
+@router.post("/{import_id}/auth", response_model=ImportOut)
+async def answer_auth(import_id: int, body: ImportAuthIn, user: User = Depends(current_user),
+                      s: AsyncSession = Depends(get_session, scope="function")):
+    """The code VK sent, or what its captcha answered: the sign-in goes on with it."""
+    imp = await _own(s, user, import_id)
+    try:
+        await core.answer_auth(s, imp, code=body.code, captcha=body.captcha)
+    except SourceError as e:
+        raise HTTPException(409, str(e)) from e
+    await s.flush()
+    out = await core.import_out(s, imp)
+    await s.commit()
+    notify()
+    core.publish(imp)
+    return out
 
 
 @router.get("/{import_id}/items", response_model=ImportItemsOut)

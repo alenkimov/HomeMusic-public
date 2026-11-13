@@ -798,16 +798,32 @@ export interface ChatConfirmOut {
 
 // --- imports from music services ------------------------------------------------------------
 
-export type ImportMethod = 'device' | 'token' | 'profile' | 'csv';
+export type ImportSource = 'yandex' | 'spotify' | 'vk';
+export type ImportMethod = 'device' | 'token' | 'profile' | 'csv' | 'password';
 export type ImportMode = 'economy' | 'full';
 export type ImportStatus = 'auth' | 'fetching' | 'preview' | 'running' | 'done' | 'failed' | 'cancelled';
 export type ImportCollectionKind = 'likes' | 'playlist' | 'albums' | 'artists' | 'dislikes';
 
 export interface ImportIn {
-  source?: 'yandex';
+  source?: 'yandex' | 'vk';
   method: ImportMethod;
   token?: string;
   url?: string;
+  /** method `password` (VK): used for the sign-in only */
+  login?: string;
+  password?: string;
+}
+
+/** A sign-in in progress. `device` (Yandex): `user_code` is entered at `verification_url`. `code` (VK): the service
+ * sent the user a code, it is typed in the Hub (`hint`: where it went; `wrong`: the last one did not fit). `captcha`
+ * (VK): the page at `verification_url` has to be passed, what it answers with is given to the Hub. */
+export interface ImportAuthOut {
+  kind: 'device' | 'code' | 'captcha';
+  user_code: string;
+  verification_url: string;
+  hint?: string | null;
+  wrong: boolean;
+  expires_at: ISODateTime;
 }
 
 export interface ImportStatsOut {
@@ -839,7 +855,7 @@ export interface ImportCollectionOut {
 
 export interface ImportOut {
   id: number;
-  source: 'yandex' | 'spotify';
+  source: ImportSource;
   method: ImportMethod;
   status: ImportStatus | string;
   mode: ImportMode;
@@ -847,8 +863,8 @@ export interface ImportOut {
   has_token: boolean;
   keep_token: boolean;
   download_albums: boolean;
-  /** sign-in by code in progress */
-  auth?: { user_code: string; verification_url: string; expires_at: ISODateTime } | null;
+  /** sign-in in progress */
+  auth?: ImportAuthOut | null;
   error?: string | null;
   stats: ImportStatsOut;
   collections: ImportCollectionOut[];

@@ -1,7 +1,8 @@
 """An import's life: sign-in → fetch (a snapshot of the collection) → preview → matching in batches → apply.
 
 Job kinds (all below the user's work in the queue: `PRIORITY_IMPORT`):
-- `import_auth`      — waits for the user to confirm the sign-in code, then fetches
+- `import_auth`      — waits for the user to confirm the sign-in code, then fetches (Yandex); for VK, whose code the
+                       user types here (`answer_auth`), only ends a sign-in nobody finished
 - `import_fetch`     — reads the collection from the service into collections and items, checks the library
 - `import_resolve`   — matches a batch of rows (`resolve.py`) and acts on them (`apply.py`), queues the next batch
 - `import_playlists` — writes the Navidrome playlists and the ♥ in the service's order (coalesced: one per import)
@@ -36,7 +37,7 @@ from app.db import session_scope
 from app.events import bus
 from app.imports import apply
 from app.imports.resolve import CatalogDown, resolve_album, resolve_artist, resolve_track
-from app.imports.sources import yandex
+from app.imports.sources import vk, yandex
 from app.imports.sources.base import ITEM_KIND, AuthPending, Snapshot, SourceError
 from app.jobs.queue import PRIORITY_IMPORT, PermanentError, RetryLater, enqueue, handler, notify, on_final_failure
 from app.library.owned import find_owned
@@ -131,6 +132,9 @@ async def import_out(s: AsyncSession, imp: Import) -> ImportOut:
     if imp.status == "auth" and a.get("user_code"):
         auth = ImportAuthOut(user_code=a["user_code"], verification_url=a["verification_url"],
                              expires_at=a["expires_at"])
+    elif imp.status == "auth" and a.get("kind"):
+        auth = ImportAuthOut(kind=a["kind"], hint=a.get("hint"), wrong=bool(a.get("wrong")),
+                             verification_url=a.get("verification_url") or "", expires_at=a["expires_at"])
     return ImportOut(
         id=imp.id, source=imp.source, method=imp.method, status=imp.status, mode=imp.mode, account=imp.account,
         has_token=bool(imp.token_enc), keep_token=imp.keep_token,
@@ -184,8 +188,77 @@ async def enqueue_once(s: AsyncSession, kind: str, import_id: int, *, delay_s: f
 # --- creating an import ------------------------------------------------------------------------------------
 
 
+VK_AUTH_S = 15 * 60  # how long a sign-in to VK waits for its code; the password is kept (encrypted) only so long
+
+
+def _vk_asks(imp: Import, e: Exception, *, login: str, password: str) -> None:
+    """VK wants a code or its captcha passed: the import waits for the user's answer (`answer_auth`)."""
+    was = imp.auth_json or {}
+    captcha = isinstance(e, vk.NeedCaptcha)
+    imp.status = "auth"
+    imp.auth_json = {
+        "kind": "captcha" if captcha else "code",
+        "hint": "ВК просит подтвердить, что вы не робот" if captcha else e.hint,
+        "verification_url": e.url if captcha else "",
+        "wrong": bool(getattr(e, "wrong", False)),
+        "login": encrypt(login), "password": encrypt(password),
+        "expires_at": was.get("expires_at") or (utcnow() + timedelta(seconds=VK_AUTH_S)).isoformat(),
+    }
+
+
+async def _create_vk(s: AsyncSession, user_id: int, *, method: str, token: str | None, login: str | None,
+                     password: str | None) -> Import:
+    imp = Import(user_id=user_id, source="vk", method=method, status="fetching", auth_json={}, options_json={})
+    if method == "token":
+        if not (token or "").strip():
+            raise SourceError("Вставьте токен")
+        imp.token_enc = encrypt(token.strip())
+    elif method == "password":
+        login, password = (login or "").strip(), password or ""
+        if not login or not password:
+            raise SourceError("Введите логин и пароль от ВК")
+        try:
+            imp.token_enc = encrypt(await vk.sign_in(login, password))
+        except (vk.NeedCode, vk.NeedCaptcha) as e:
+            _vk_asks(imp, e, login=login, password=password)
+    else:
+        raise SourceError("Неизвестный способ")
+    s.add(imp)
+    await s.flush()
+    if imp.status == "auth":  # ends the sign-in if its code never comes
+        await enqueue(s, "import_auth", {"import_id": imp.id}, delay_s=VK_AUTH_S, priority=PRIORITY_IMPORT)
+    else:
+        await enqueue(s, "import_fetch", {"import_id": imp.id}, priority=PRIORITY_IMPORT)
+    return imp
+
+
+async def answer_auth(s: AsyncSession, imp: Import, *, code: str | None, captcha: str | None) -> None:
+    """The user's answer to what VK asked at the sign-in: the code, or what its captcha page gave. The sign-in is made
+    again with it; VK may ask once more (a wrong code, a captcha after the code)."""
+    auth = dict(imp.auth_json or {})
+    if imp.source != "vk" or imp.status != "auth" or not auth.get("login"):
+        raise SourceError("Этот вход ничего не ждёт")
+    if utcnow().isoformat() > auth["expires_at"]:
+        imp.status, imp.error, imp.auth_json = "failed", "Вход не завершён вовремя — начните заново", {}
+        return
+    login, password = decrypt(auth["login"]), decrypt(auth["password"])
+    try:
+        token = await vk.sign_in(login, password, code=(code or "").strip() or None,
+                                 captcha=(captcha or "").strip() or None)
+    except (vk.NeedCode, vk.NeedCaptcha) as e:
+        _vk_asks(imp, e, login=login, password=password)
+        return
+    except SourceError as e:
+        imp.status, imp.error, imp.auth_json = "failed", str(e), {}
+        return
+    imp.token_enc, imp.auth_json, imp.status = encrypt(token), {}, "fetching"
+    await enqueue(s, "import_fetch", {"import_id": imp.id}, priority=PRIORITY_IMPORT)
+
+
 async def create(s: AsyncSession, user_id: int, *, source: str, method: str, token: str | None = None,
-                 url: str | None = None) -> Import:
+                 url: str | None = None, login: str | None = None, password: str | None = None) -> Import:
+    if source == "vk":
+        return await _create_vk(s, user_id, method=method, token=token, login=login, password=password)
     if source != "yandex":
         raise SourceError("Этот сервис пока не поддерживается")
     imp = Import(user_id=user_id, source=source, method=method, status="fetching", auth_json={}, options_json={})
@@ -233,6 +306,12 @@ async def handle_auth(job: Job) -> None:
         if imp is None or imp.status != "auth":
             return
         auth = dict(imp.auth_json or {})
+        source = imp.source
+    if source == "vk":  # its code is typed in the Hub: nothing to ask VK about, only the time to watch
+        if utcnow().isoformat() > auth.get("expires_at", ""):
+            await set_status(import_id, "failed", error="Вход не завершён вовремя — начните заново", auth_json={})
+            return
+        raise RetryLater(60, "vk sign-in waits for the user")
     try:
         token = await yandex.device_poll(decrypt(auth["device_code"]))
     except AuthPending as e:
@@ -260,6 +339,10 @@ async def handle_auth(job: Job) -> None:
 
 async def fetch_snapshot(imp: Import) -> Snapshot:
     token = decrypt(imp.token_enc) if imp.token_enc else None
+    if imp.source == "vk":
+        if not token:
+            raise SourceError("Вход в ВК не сохранён — войдите заново")
+        return await vk.fetch(token)
     login = imp.account if imp.method == "profile" else None
     return await asyncio.to_thread(yandex.fetch, token, login)
 
