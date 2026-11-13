@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { NdSongOut } from '../api/types';
+import { useDesktop } from '../lib/desktop';
 import { Icon } from './Icon';
-import { IconButton } from './ui';
 
 /** A row the search of a list found: its place in the whole list and, when the words were found in its lyrics,
  * the line they are in. */
@@ -11,35 +11,55 @@ export interface Found {
   line?: string;
 }
 
+/** The search of a list, as its bar (`ListBar`) shows it. */
+export interface ListSearch {
+  /** the rows to show (null: no search — the whole list) */
+  found: Found[] | null;
+  open: boolean;
+  /** a phone's search takes the whole top of the page: the head of the list steps aside for what is found */
+  alone: boolean;
+  show: () => void;
+  close: () => void;
+  /** the field itself, for the bar */
+  field: ReactNode;
+}
+
 /** The search inside a list of tracks (a playlist, «Любимое»): by title, artist and album, and inside the
- * lyrics the Hub keeps (`/api/lyrics/search`). A round button floats at the bottom right of the page; a click on it
- * or Ctrl+F (instead of the browser's own find, which sees only the rows on the page, not their texts) opens the
- * field. Esc closes it and brings the whole list back.
- * Returns the rows to show (null: no search — the whole list) and the floating control to render. */
-export function useListSearch(tracks: readonly NdSongOut[], placeholder = 'Название, исполнитель или строчка из текста'): { found: Found[] | null; control: ReactNode; q: string } {
+ * lyrics the Hub keeps (`/api/lyrics/search`). The magnifier of the list's bar or Ctrl+F (instead of the browser's
+ * own find, which sees only the rows on the page, not their texts) opens the field in the bar. Esc closes it and
+ * brings the whole list back. */
+export function useListSearch(tracks: readonly NdSongOut[], placeholder = 'Название, исполнитель или строчка'): ListSearch {
+  const desktop = useDesktop();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [inLyrics, setInLyrics] = useState<Map<string, string>>(new Map());
   const input = useRef<HTMLInputElement>(null);
   const needle = q.trim().toLocaleLowerCase('ru');
 
+  const show = () => {
+    if (!desktop) window.scrollTo(0, 0); // what is found starts right under the field
+    setOpen(true);
+    window.setTimeout(() => {
+      input.current?.focus();
+      input.current?.select();
+    }, 0);
+  };
+  const close = () => {
+    setOpen(false);
+    setQ('');
+  };
+
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === 'KeyF') {
         e.preventDefault();
-        setOpen(true);
-        window.setTimeout(() => {
-          input.current?.focus();
-          input.current?.select();
-        }, 0);
-      } else if (e.key === 'Escape' && open) {
-        setOpen(false);
-        setQ('');
-      }
+        show();
+      } else if (e.key === 'Escape' && open) close();
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [open]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, desktop]);
 
   // inside the lyrics: asked of the Hub, a moment after the typing stops
   useEffect(() => {
@@ -82,40 +102,36 @@ export function useListSearch(tracks: readonly NdSongOut[], placeholder = 'На�
     return out;
   }, [tracks, needle, inLyrics]);
 
-  const close = () => {
-    setOpen(false);
-    setQ('');
-  };
-  const control = (
-    <div className="pointer-events-none fixed bottom-[calc(var(--tabbar-h)+var(--player-h,0px)+16px+env(safe-area-inset-bottom))] right-4 z-40 flex justify-end [body[data-cols-menu]_&]:hidden">
-      {open ? (
-        <div className="anim-up pointer-events-auto flex h-14 w-[26rem] max-w-[calc(100vw-2rem)] items-center gap-1 rounded-full border border-line bg-raised pl-4 pr-1 shadow-2xl" role="search">
-          <Icon name="search" size={20} className="shrink-0 text-muted" />
-          <input
-            ref={input}
-            autoFocus
-            type="search"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder={placeholder}
-            aria-label="Поиск по списку"
-            className="min-w-0 flex-1 bg-transparent px-2 text-[15px] outline-none placeholder:text-dim"
-          />
-          {found && <span className="shrink-0 px-1 text-xs tabular-nums text-muted">{found.length}</span>}
-          <IconButton icon="x" size={18} label="Закрыть поиск" onClick={close} className="text-muted hover:text-fg" />
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          aria-label="Поиск по списку (Ctrl+F)"
-          title="Поиск по списку (Ctrl+F)"
-          className="pointer-events-auto flex h-14 w-14 items-center justify-center rounded-full bg-accent text-on-accent shadow-2xl transition hover:scale-105 active:scale-95"
-        >
-          <Icon name="search" size={24} stroke={2.4} />
-        </button>
-      )}
+  const field = (
+    <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-xl bg-fg/10 pl-3 pr-1" role="search">
+      <Icon name="search" size={18} className="shrink-0 text-muted" />
+      <input
+        ref={input}
+        autoFocus
+        type="search"
+        enterKeyHint="search"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+        placeholder={placeholder}
+        aria-label="Поиск по списку"
+        className="min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-dim [&::-webkit-search-cancel-button]:hidden"
+      />
+      {found && <span className="shrink-0 text-xs tabular-nums text-muted">{found.length}</span>}
+      <button
+        type="button"
+        aria-label={q ? 'Стереть' : 'Закрыть поиск'}
+        title={q ? 'Стереть' : 'Закрыть поиск'}
+        onClick={() => {
+          if (!q) return close();
+          setQ('');
+          input.current?.focus();
+        }}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted hover:text-fg"
+      >
+        <Icon name="x" size={16} />
+      </button>
     </div>
   );
-  return { found, control, q: needle };
+  return { found, open, alone: open && !desktop, show, close, field };
 }

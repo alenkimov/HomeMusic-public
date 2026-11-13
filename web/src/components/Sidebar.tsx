@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState } from 'react';
+import { playlistMenuProps } from '../lib/playlistMenu';
 import { api } from '../api/client';
 import type { NdSongOut } from '../api/types';
 import { useHubEvent } from '../lib/events';
@@ -100,7 +101,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
           const to = `/playlist/${enc(p.id)}`;
           const on = at(`/playlist/${p.id}`) || at(to);
           return (
-            <div key={p.id} className="group relative">
+            <div key={p.id} className="group relative" {...playlistMenuProps(p)}>
               <Link to={to} aria-current={on ? 'page' : undefined} className={cx(item, 'py-1.5', on ? 'bg-fg/10' : 'hover:bg-fg/5')}>
                 {/* the playlist's own picture (Navidrome makes one of its albums' covers); it changes with the tracks */}
                 <Cover src={p.cover_url ? `${p.cover_url}&size=96` : null} size={36} icon="playlist" />

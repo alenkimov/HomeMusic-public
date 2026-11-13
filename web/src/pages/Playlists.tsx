@@ -6,6 +6,7 @@ import { useHubEvent } from '../lib/events';
 import { fmtLength, tracksWord } from '../lib/format';
 import { STANDALONE } from '../lib/embedded';
 import { useAsync } from '../lib/hooks';
+import { playlistMenuProps } from '../lib/playlistMenu';
 import { Link, enc } from '../lib/router';
 import { attempt } from '../lib/ui';
 
@@ -52,7 +53,7 @@ export function PlaylistsPage() {
       ) : (
         <ul>
           {res.data.map((p) => (
-            <li key={p.id}>
+            <li key={p.id} className="select-none [-webkit-touch-callout:none]" {...playlistMenuProps(p)}>
               <PlaylistRow to={STANDALONE ? `/playlist/${enc(p.id)}` : undefined}>
               {/* the playlist's own picture, as everywhere else: the user's, or the one made of its albums' covers */}
               <Cover src={p.cover_url ? `${p.cover_url}&size=160` : null} size={48} icon="playlist" />

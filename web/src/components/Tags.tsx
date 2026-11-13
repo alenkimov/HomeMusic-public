@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { selectedTracks, useSelectionCount } from '../lib/selection';
 import { api } from '../api/client';
 import { tracksWord } from '../lib/format';
-import { UNTAGGED, closeTagsSheet, filterWords, selectionsChanged, setTagsData, useTags, useTagsSheet, type Tag, type TagFilter, type TagSelection } from '../lib/tags';
+import { UNTAGGED, closeTagsSheet, filterActive, filterWords, selectionsChanged, setTagsData, useTags, useTagsSheet, type Tag, type TagFilter, type TagSelection } from '../lib/tags';
 import { attempt, toast } from '../lib/ui';
 import { Icon } from './Icon';
 import { Button, Field, Loading, Sheet, cx } from './ui';
@@ -143,9 +143,25 @@ function Body({ songIds, title, pick }: { songIds: string[]; title: string; pick
   );
 }
 
-/** The tags a list is narrowed by, above it: only the tags its tracks have. A tap on a tag: wanted → left out →
- * off. Of every group with wanted tags a track needs one of them; a tag left out removes the track. */
-export function TagFilterBar({ songIds, filter, onChange, onSave, saveLabel = 'Сохранить как подборку' }: { songIds: readonly (string | null | undefined)[]; filter: TagFilter; onChange: (next: TagFilter) => void; onSave?: () => void; saveLabel?: string }) {
+/** What the tags' window of a list needs to know of it. */
+export interface ListTags {
+  songIds: readonly (string | null | undefined)[];
+  filter: TagFilter;
+  onChange: (next: TagFilter) => void;
+  /** «Сохранить как подборку» */
+  onSave?: () => void;
+  /** tracks the list shows now */
+  count: number;
+}
+
+const FIRST = 8; // tags of a group a computer shows before «ещё»
+
+/** The tags a list is narrowed by, in a window of their own (a sheet of a phone, a small window by the tag mark of a
+ * computer): only the tags its tracks have, the ones chosen first, then by how many tracks have them. A tap on a tag:
+ * wanted → left out → off. Of every group with wanted tags a track needs one of them; a tag left out removes the
+ * track. However many tags there are the window stays its size: a group is one line a phone scrolls sideways
+ * (`wrap` off), or its first tags and «ещё» (a computer). The list changes as the tags are tapped. */
+export function TagFilterBody({ songIds, filter, onChange, onSave, wrap }: ListTags & { wrap: boolean }) {
   const tags = useTags();
   const present = useMemo(() => {
     const out = new Map<number, number>();
@@ -158,9 +174,19 @@ export function TagFilterBar({ songIds, filter, onChange, onSave, saveLabel = '�
     return { counts: out, untagged };
   }, [songIds, tags.map, tags.byId]);
   const [fresh, setFresh] = useState<number[]>([]); // tags made here just now: shown though no track of the list has them yet
-  if (!tags.loaded) return null;
-  const groups = tags.groups.map((g) => ({ ...g, tags: g.tags.filter((t) => present.counts.has(t.id) || filter[t.id] || fresh.includes(t.id)) })).filter((g) => g.tags.length || g.id === 'own');
-  if (!groups.some((g) => g.tags.length)) return null;
+  const [q, setQ] = useState('');
+  const [whole, setWhole] = useState<string[]>([]); // groups opened by «ещё»
+  if (!tags.loaded) return <Loading />;
+  const needle = q.trim().toLocaleLowerCase('ru');
+  const count = (t: Tag) => present.counts.get(t.id) ?? 0;
+  const groups = tags.groups
+    .map((g) => ({
+      ...g,
+      tags: g.tags
+        .filter((t) => (present.counts.has(t.id) || filter[t.id] || fresh.includes(t.id)) && (!needle || t.name.toLocaleLowerCase('ru').includes(needle)))
+        .sort((a, b) => Number(!!filter[b.id]) - Number(!!filter[a.id]) || count(b) - count(a) || a.name.localeCompare(b.name, 'ru')),
+    }))
+    .filter((g) => g.tags.length || (g.id === 'own' && !needle));
   const tap = (key: string) => {
     const next = { ...filter };
     if (!next[key]) next[key] = 'yes';
@@ -168,7 +194,7 @@ export function TagFilterBar({ songIds, filter, onChange, onSave, saveLabel = '�
     else delete next[key];
     onChange(next);
   };
-  const chip = (key: string, name: string, count: number) => {
+  const chip = (key: string, name: string, n: number) => {
     const mode = filter[key];
     return (
       <button
@@ -176,40 +202,83 @@ export function TagFilterBar({ songIds, filter, onChange, onSave, saveLabel = '�
         type="button"
         onClick={() => tap(key)}
         aria-pressed={!!mode}
-        title={mode === 'yes' ? `Нужен «${name}» — нажмите, чтобы исключить` : mode === 'no' ? `Без «${name}» — нажмите, чтобы сбросить` : `${name}: ${tracksWord(count)}`}
-        className={cx('flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs transition', mode === 'yes' ? 'bg-accent text-on-accent' : mode === 'no' ? 'bg-danger/20 text-danger line-through' : 'bg-fg/10 text-muted hover:text-fg')}
+        title={mode === 'yes' ? `Нужен «${name}» — нажмите, чтобы исключить` : mode === 'no' ? `Без «${name}» — нажмите, чтобы сбросить` : `${name}: ${tracksWord(n)}`}
+        className={cx('flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-sm transition', mode === 'yes' ? 'bg-accent text-on-accent' : mode === 'no' ? 'bg-danger/20 text-danger line-through' : 'bg-fg/10 text-fg hover:bg-fg/15')}
       >
-        {mode && <Icon name={mode === 'yes' ? 'check' : 'minus'} size={11} stroke={3} />}
+        {mode && <Icon name={mode === 'yes' ? 'check' : 'minus'} size={12} stroke={3} />}
         {name}
+        {n > 0 && <span className={cx('text-xs tabular-nums', mode ? 'opacity-70' : 'text-dim')}>{n}</span>}
       </button>
     );
   };
-  const active = Object.keys(filter).length > 0;
   return (
-    <div className="space-y-1.5 px-6 pb-3" role="group" aria-label="Фильтр по тегам">
-      {groups.map((g) => (
-        <div key={g.id} className="flex items-start gap-2">
-          <span className="w-12 shrink-0 pt-0.5 text-xs text-dim">{g.title}</span>
-          <div className="flex flex-wrap gap-1.5">
-            {g.tags.map((t) => chip(String(t.id), t.name, present.counts.get(t.id) ?? 0))}
-            {g.id === 'own' && present.untagged > 0 && chip(UNTAGGED, 'без своих тегов', present.untagged)}
-            {g.id === 'own' && <NewTag onMade={(id) => setFresh((list) => [...list, id])} />}
+    <div className="space-y-3" role="group" aria-label="Фильтр по тегам">
+      <div className="flex h-10 items-center gap-2 rounded-xl bg-fg/10 px-3">
+        <Icon name="search" size={16} className="shrink-0 text-muted" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Найти тег" aria-label="Найти тег" maxLength={64} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-dim" />
+      </div>
+      {!groups.some((g) => g.tags.length) && <p className="text-sm text-muted">{needle ? 'Такого тега у треков этого списка нет.' : 'У треков этого списка пока нет тегов.'}</p>}
+      {groups.map((g) => {
+        const all = wrap && (needle || whole.includes(g.id) || g.tags.length <= FIRST + 1) ? g.tags : wrap ? g.tags.slice(0, Math.max(FIRST, g.tags.filter((t) => filter[t.id]).length)) : g.tags;
+        const rest = g.tags.length - all.length;
+        return (
+          <div key={g.id}>
+            <div className="pb-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
+              {g.title}
+              {g.tags.length > 5 && <span className="font-normal"> · {g.tags.length}</span>}
+            </div>
+            <div className={wrap ? 'flex flex-wrap gap-1.5' : 'no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4'}>
+              {all.map((t) => chip(String(t.id), t.name, count(t)))}
+              {rest > 0 && (
+                <button type="button" onClick={() => setWhole((w) => [...w, g.id])} className="flex h-8 shrink-0 items-center rounded-full px-3 text-sm text-muted hover:text-fg">
+                  ещё {rest}
+                </button>
+              )}
+              {g.id === 'own' && !needle && present.untagged > 0 && chip(UNTAGGED, 'без своих тегов', present.untagged)}
+              {g.id === 'own' && !needle && <NewTag onMade={(id) => setFresh((list) => [...list, id])} />}
+            </div>
           </div>
-        </div>
-      ))}
-      {active && (
-        <div className="ml-14 flex items-center gap-4 text-xs">
-          {onSave && (
-            <button type="button" onClick={onSave} className="flex items-center gap-1 text-accent hover:underline">
-              <Icon name="filter" size={13} />
-              {saveLabel}
-            </button>
-          )}
-          <button type="button" onClick={() => onChange({})} className="text-muted underline hover:text-fg">
-            Сбросить фильтр
-          </button>
-        </div>
+        );
+      })}
+      {filterActive(filter) && onSave && (
+        <button type="button" onClick={onSave} className="flex items-center gap-1.5 text-sm text-accent hover:underline">
+          <Icon name="filter" size={15} />
+          Сохранить как подборку
+        </button>
       )}
+    </div>
+  );
+}
+
+/** The tags a list is narrowed by now, in a line under its bar: × takes one off. */
+export function TagFilterChips({ filter, onChange, count }: { filter: TagFilter; onChange: (next: TagFilter) => void; count: number }) {
+  const tags = useTags();
+  const keys = Object.keys(filter);
+  if (!keys.length) return null;
+  return (
+    <div className="flex items-center gap-2 px-4 pb-2 lg:px-6">
+      <div className="no-scrollbar flex min-w-0 flex-1 gap-1.5 overflow-x-auto">
+        {keys.map((k) => {
+          const name = k === UNTAGGED ? 'без своих тегов' : (tags.byId.get(Number(k))?.name ?? '?');
+          return (
+            <button
+              key={k}
+              type="button"
+              title={`Убрать «${name}» из отбора`}
+              onClick={() => {
+                const next = { ...filter };
+                delete next[k];
+                onChange(next);
+              }}
+              className={cx('flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full pl-2.5 pr-1.5 text-xs', filter[k] === 'no' ? 'bg-danger/20 text-danger line-through' : 'bg-fg/10 text-fg')}
+            >
+              {name}
+              <Icon name="x" size={12} className="opacity-60" />
+            </button>
+          );
+        })}
+      </div>
+      <span className="shrink-0 text-xs tabular-nums text-muted">{tracksWord(count)}</span>
     </div>
   );
 }
@@ -247,14 +316,14 @@ function NewTag({ onMade }: { onMade: (id: number) => void }) {
         onClick={() => setOpen(true)}
         title={picked ? `Новый тег — сразу на выделенные: ${tracksWord(picked)}` : 'Новый тег'}
         aria-label="Новый тег"
-        className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-fg/10 text-muted transition hover:bg-accent hover:text-on-accent"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-fg/10 text-muted transition hover:bg-accent hover:text-on-accent"
       >
         <Icon name="plus" size={13} stroke={2.6} />
       </button>
     );
   return (
     <form
-      className="flex items-center gap-1"
+      className="flex shrink-0 items-center gap-1"
       onSubmit={(e) => {
         e.preventDefault();
         void make();
@@ -270,9 +339,9 @@ function NewTag({ onMade }: { onMade: (id: number) => void }) {
         aria-label="Название нового тега"
         maxLength={64}
         disabled={busy}
-        className="h-[22px] w-36 rounded-full bg-fg/10 px-2.5 text-xs text-fg outline-none ring-1 ring-accent placeholder:text-dim"
+        className="h-8 w-40 shrink-0 rounded-full bg-fg/10 px-3 text-sm text-fg outline-none ring-1 ring-accent placeholder:text-dim"
       />
-      <button type="submit" disabled={!name.trim() || busy} aria-label="Создать тег" title="Создать (Enter)" className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-accent text-on-accent disabled:opacity-40">
+      <button type="submit" disabled={!name.trim() || busy} aria-label="Создать тег" title="Создать (Enter)" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent disabled:opacity-40">
         <Icon name="check" size={13} stroke={3} />
       </button>
     </form>

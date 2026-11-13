@@ -5,11 +5,12 @@ import { Cover, ErrorState, IconButton, SkeletonRows } from '../components/ui';
 import { useHubEvent } from '../lib/events';
 import { tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
+import { playlistMenuProps } from '../lib/playlistMenu';
 import { Link, enc, navigate } from '../lib/router';
 import { AUTO_PLAYLISTS } from '../lib/stats';
 
 /** «Библиотека» of a phone: the lists themselves, at once — «Любимое» and the playlists one keeps (a group of rows),
- * the lists that make themselves («Для вас», tiles) and, last, the tags: the saved filters by them and «Все теги». A computer has the same in its
+ * (a finger held on one of them: its menu — the name, the picture, deleting it), the lists that make themselves («Для вас», tiles) and, last, the tags: the saved filters by them and «Все теги». A computer has the same in its
  * side panel (`components/Sidebar.tsx`). The files the Hub keeps are «Мои файлы» of «Меню» (`pages/Files.tsx`). */
 export function LibraryPage() {
   const lists = useAsync((s) => api.playlists(s), []);
@@ -28,7 +29,7 @@ export function LibraryPage() {
     <div className="px-4 pb-4">
       <header className="pt-safe flex items-center justify-between pb-1 pt-4">
         <h1 className="text-3xl font-bold tracking-tight">Библиотека</h1>
-        <IconButton icon="plus" label="Создать плейлист" onClick={() => navigate('/playlists')} className="bg-accent !text-on-accent" />
+        <IconButton icon="plus" size={28} label="Создать плейлист" onClick={() => navigate('/playlists')} />
       </header>
 
       <Title>Плейлисты</Title>
@@ -37,6 +38,7 @@ export function LibraryPage() {
         {(lists.data ?? []).map((p) => (
           <Row
             key={p.id}
+            menu={playlistMenuProps(p)}
             to={`/playlist/${enc(p.id)}`}
             title={p.name}
             sub={tracksWord(p.song_count + (p.pending_count ?? 0))}
@@ -80,9 +82,9 @@ function Title({ children }: { children: ReactNode }) {
 }
 
 /** A row of the group of playlists: the rule between two rows starts after the picture. */
-function Row({ to, title, sub, art }: { to: string; title: string; sub?: string; art: ReactNode }) {
+function Row({ to, title, sub, art, menu }: { to: string; title: string; sub?: string; art: ReactNode; menu?: ReturnType<typeof playlistMenuProps> }) {
   return (
-    <li className="group">
+    <li className="group select-none [-webkit-touch-callout:none]" {...menu}>
       <Link to={to} className="flex h-[68px] items-center gap-3.5 pl-3.5 hover:bg-fg/5">
         {art}
         <span className="flex min-w-0 flex-1 flex-col justify-center self-stretch border-b border-fg/5 pr-3.5 group-last:border-0">

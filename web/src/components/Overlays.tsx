@@ -7,6 +7,7 @@ import { tracksWord } from '../lib/format';
 import { closePlaylistsSheet, usePlaylistsSheet } from '../lib/playlistsSheet';
 import { BulkPlaylists } from './PlaylistsButton';
 import { ShareSheet } from './ShareSheet';
+import { PlaylistMenu } from './PlaylistMenu';
 import { TagsSheet } from './Tags';
 import { TelegramSetup } from './TelegramSetup';
 
@@ -50,6 +51,7 @@ export function Overlays() {
 
       <DragActionHint />
       <TagsSheet />
+      <PlaylistMenu />
       <TelegramSetup />
       <ShareSheet />
       <PlaylistsSheet />
