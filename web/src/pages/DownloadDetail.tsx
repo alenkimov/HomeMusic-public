@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { api, withQuery } from '../api/client';
-import type { DownloadItemOut } from '../api/types';
+import type { DownloadItemOut, DownloadStep } from '../api/types';
 import { CandidateRow } from '../components/candidate';
 import { Icon } from '../components/Icon';
 import { Button, ErrorState, Field, Loading, Notice, PageHeader, ProgressBar, SectionTitle, StatusChip } from '../components/ui';
@@ -19,8 +19,10 @@ export function DownloadDetailPage({ id }: { id: number }) {
   useHubEvent('download', (d) => {
     if (d.id !== id) return;
     // Status changed → candidates may have changed too; refetch the full detail.
-    res.setData((prev) => (prev ? { ...prev, ...d, candidates: prev.candidates } : prev));
-    if (d.status === 'needs_review' || d.status === 'failed' || d.status === 'done') res.reload(true);
+    // an event carries neither the candidates nor the journal: the detail is asked for again when the status moves
+    const moved = d.status !== res.data?.status;
+    res.setData((prev) => (prev ? { ...prev, ...d, candidates: prev.candidates, log: prev.log } : prev));
+    if (moved || d.status === 'needs_review' || d.status === 'failed' || d.status === 'done') res.reload(true);
   });
   useHubEvent('reconnect', () => res.reload(true));
 
@@ -41,7 +43,7 @@ export function DownloadDetailPage({ id }: { id: number }) {
 
   const item = res.data;
   const active = DOWNLOAD_ACTIVE.includes(item.status);
-  const apply = (r: DownloadItemOut | undefined) => r && res.setData((prev) => ({ ...prev, ...r, candidates: r.candidates ?? prev?.candidates }));
+  const apply = (r: DownloadItemOut | undefined) => r && res.setData((prev) => ({ ...prev, ...r, candidates: r.candidates ?? prev?.candidates, log: r.log ?? prev?.log }));
 
   const run = async (key: string, fn: () => Promise<DownloadItemOut>) => {
     setBusy(key);
@@ -131,6 +133,8 @@ export function DownloadDetailPage({ id }: { id: number }) {
         )}
       </div>
 
+      <Journal steps={item.log ?? []} />
+
       {candidates.length > 0 && (
         <section aria-label="Кандидаты">
           <SectionTitle>Найденные файлы</SectionTitle>
@@ -159,5 +163,51 @@ export function DownloadDetailPage({ id }: { id: number }) {
         </section>
       )}
     </div>
+  );
+}
+
+const STEP_DOT: Record<DownloadStep['kind'], string> = { info: 'bg-fg/25', ok: 'bg-accent', warn: 'bg-warn', bad: 'bg-danger' };
+
+/** «Журнал»: the steps of the download in order — where the file was looked for, which ones were tried and why each
+ * was dropped or taken. The first word of a verdict («Выбран:», «Не подошёл:») is in its colour. */
+function Journal({ steps }: { steps: DownloadStep[] }) {
+  if (!steps.length) return null;
+  const clock = (iso: string) => new Date(iso + (/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? '' : 'Z')).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return (
+    <section aria-label="Журнал загрузки">
+      <SectionTitle>Журнал</SectionTitle>
+      <ol className="px-4 pb-2">
+        {steps.map((s, i) => {
+          const cut = s.kind === 'info' ? -1 : s.text.indexOf(':');
+          return (
+            <li key={i} className="relative flex gap-3 pb-3.5 text-sm last:pb-1">
+              {i < steps.length - 1 && <span aria-hidden="true" className="absolute bottom-0 left-[5px] top-4 w-px bg-line" />}
+              <span aria-hidden="true" className={`mt-1 h-[11px] w-[11px] shrink-0 rounded-full ${STEP_DOT[s.kind] ?? STEP_DOT.info}`} />
+              <div className="min-w-0 flex-1">
+                <p className="break-words">
+                  {cut > 0 ? (
+                    <>
+                      <span className={s.kind === 'ok' ? 'text-accent' : s.kind === 'warn' ? 'text-warn' : 'text-danger'}>{s.text.slice(0, cut + 1)}</span>
+                      {s.text.slice(cut + 1)}
+                    </>
+                  ) : (
+                    s.text
+                  )}
+                </p>
+                {s.cand && (
+                  <a href={s.cand.page_url} target="_blank" rel="noopener noreferrer" className="mt-1.5 flex items-center gap-2 rounded-xl bg-surface px-3 py-2 text-[13px] hover:bg-raised">
+                    <span className="min-w-0 flex-1 truncate">
+                      {s.cand.artist} — {s.cand.title}
+                    </span>
+                    <span className="shrink-0 rounded-full bg-fg/10 px-2 py-0.5 text-[11px] text-muted">{providerLabel(s.cand.provider)}</span>
+                  </a>
+                )}
+              </div>
+              <time className="shrink-0 pt-0.5 text-[11px] tabular-nums text-dim">{clock(s.t)}</time>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }

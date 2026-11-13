@@ -268,6 +268,8 @@ class DownloadItem(Base):
     provider: Mapped[str | None] = mapped_column(String(32))
     chosen_candidate_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     candidates_json: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    # the journal: its steps in order ({t, kind: info/ok/warn/bad, text, cand?}) — `jobs.downloads.step`
+    log_json: Mapped[list[Any]] = mapped_column(JSON, default=list, server_default="[]")
     error: Mapped[str | None] = mapped_column(Text)
     warnings: Mapped[list[Any]] = mapped_column(JSON, default=list)
     track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id", ondelete="SET NULL"))

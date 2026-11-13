@@ -40,7 +40,7 @@ from app.matching.select import (
     trusted_original,
     uploaded_in_time,
 )
-from app.models import DownloadBatch, DownloadItem, Job, PlayEvent, PlaylistItem, Track, TrackFile, User
+from app.models import DownloadBatch, DownloadItem, Job, PlayEvent, PlaylistItem, Track, TrackFile, User, utcnow
 from app.net import make_client
 from app.providers.base import Candidate, ProviderError, TrackQuery, file_ref
 from app.services import svc
@@ -92,6 +92,7 @@ def item_out(item: DownloadItem, *, detail: bool = False,
         quiet=quiet(item.query_json),
         import_id=((item.query_json or {}).get("import") or {}).get("id"),
         candidates=[Candidate(**c) for c in item.candidates_json or []] if detail else None,
+        log=list(item.log_json or []) if detail else None,
         chosen=Candidate(**item.chosen_candidate_json) if item.chosen_candidate_json else None,
         hidden=bool(item.hidden),
         created_at=item.created_at,
@@ -105,6 +106,31 @@ def item_ref(item: DownloadItem) -> str | None:
         return ref
     c = item.chosen_candidate_json
     return file_ref(c["provider"], c["provider_id"]) if c else None
+
+
+LOG_MAX = 120  # steps a download keeps (a retried one starts no new journal: the old steps say why)
+ORIGINS = {"import": " из импорта", "mix": " из микса", "wave": " из волны", "assistant": " от ассистента"}
+
+
+async def step(item_id: int, kind: str, text: str, cand: Candidate | None = None) -> None:
+    """One more line of the download's journal. `kind`: info, ok, warn or bad; `cand`: the file the line is about."""
+    line: dict[str, Any] = {"t": utcnow().isoformat(), "kind": kind, "text": text}
+    if cand is not None:
+        line["cand"] = {"artist": cand.artist, "title": cand.title, "provider": cand.provider,
+                        "bitrate_kbps": cand.bitrate_kbps, "duration_s": cand.duration_s, "page_url": cand.page_url}
+    async with session_scope() as s:
+        item = await s.get(DownloadItem, item_id)
+        if item is not None:
+            item.log_json = [*(item.log_json or []), line][-LOG_MAX:]
+
+
+def files_word(n: int) -> str:
+    form = "файл" if n % 10 == 1 and n % 100 != 11 else "файла" if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else "файлов"
+    return f"{n} {form}" if n else "ничего"
+
+
+def _mmss(seconds: int | None) -> str:
+    return f", {seconds // 60}:{seconds % 60:02d}" if seconds else ""
 
 
 async def update_item(item_id: int, **fields: Any) -> DownloadItem | None:
@@ -262,8 +288,12 @@ async def handle_download_item(job: Job) -> None:
         chosen = item.chosen_candidate_json
         force = item.force
         user_id = item.user_id
+        again = bool(item.log_json)
+        batch = await s.get(DownloadBatch, item.batch_id)
+        origin = ORIGINS.get(batch.origin if batch else "", "")
     q = TrackQuery(**qj["query"])
     meta: dict[str, Any] = dict(qj.get("meta") or {})
+    await step(item_id, "info", "Ещё одна попытка" if again else f"Запрос{origin}: {q.artist} — {q.title}{_mmss(q.duration_s)}")
 
     await update_item(item_id, status="searching", progress=0, error=None)
 
@@ -285,6 +315,8 @@ async def handle_download_item(job: Job) -> None:
         qj["meta"] = meta
         qj["query"] = q.model_dump()
         await update_item(item_id, query_json=qj)
+    elif not chosen:
+        await step(item_id, "warn", "Записи в каталоге нет: без неё файл можно взять только по вашему выбору")
 
     # 2. already in the library?
     if not force:
@@ -305,7 +337,9 @@ async def handle_download_item(job: Job) -> None:
             force = True
             qj["replaces_song"] = old_song
             await update_item(item_id, query_json=qj)
+            await step(item_id, "info", "Трек уже есть в библиотеке, но выбран другой файл: он ляжет рядом со старым")
         elif existing_id:
+            await step(item_id, "ok", "Уже есть в библиотеке — скачивать не нужно")
             item = await update_item(item_id, status="done" if linked else "importing", progress=1,
                                      track_id=existing_id, warnings=["Уже есть в библиотеке"])
             if linked and item is not None:
@@ -321,6 +355,7 @@ async def handle_download_item(job: Job) -> None:
         if pq is not q:
             qj["query"], qj["provider_query"] = q.model_dump(), pq.model_dump()
             await update_item(item_id, query_json=qj)
+            await step(item_id, "info", f"Название в латинице — ищу по русскому оригиналу: {pq.artist} — {pq.title}")
 
     # 4. providers in order: search → rank → try the best files; the next provider is asked only if needed.
     # An explicit Russian track takes only copies known to be uncensored first (from the sources, then re-uploads
@@ -335,6 +370,7 @@ async def handle_download_item(job: Job) -> None:
     held: list[Candidate] = []
     try:
         if chosen:
+            await step(item_id, "info", "Файл выбран вручную", Candidate(**chosen))
             ok, last_reason = await try_candidates(item_id, user_id, q, meta, [Candidate(**chosen)], stage, force)
             if ok:
                 return
@@ -343,7 +379,10 @@ async def handle_download_item(job: Job) -> None:
 
             # the file the user has just listened to (GET /api/listen) goes first: they get what they heard
             heard = await listened_candidate(meta.get("track_ref"))
+            if heard and meta and guard and not trusted_original(heard, mcfg):
+                await step(item_id, "warn", "Файл, который вы слушали, отложен: возможно, это цензурная версия", heard)
             if heard and meta and (not guard or trusted_original(heard, mcfg)):
+                await step(item_id, "info", "Сначала файл, который вы слушали", heard)
                 ok, last_reason = await try_candidates(item_id, user_id, q, meta, [heard], stage, force)
                 if ok:
                     return
@@ -351,15 +390,20 @@ async def handle_download_item(job: Job) -> None:
                 cands, err = await search_provider(p, pq, item_id)
                 if err:
                     errors.append(err)
+                    await step(item_id, "bad", f"Источник не ответил — {err}")
                     continue
+                await step(item_id, "info", f"Поиск в {p.name}: {files_word(len(cands))}")
                 all_cands.extend(cands)
                 await update_item(item_id, candidates_json=[c.model_dump(mode="json") for c in all_cands[:MAX_SHOWN]])
                 if not meta or not cands:
                     continue  # without a catalog record we only collect candidates for the user (PLAN 8.5.3)
                 tries = cands[:MAX_TRIES_PER_PROVIDER]
                 if guard:
-                    held += [c for c in tries if not trusted_original(c, mcfg)]
+                    doubtful = [c for c in tries if not trusted_original(c, mcfg)]
+                    held += doubtful
                     tries = [c for c in tries if trusted_original(c, mcfg)]
+                    if doubtful:
+                        await step(item_id, "warn", f"Отложено как возможно цензурное: {files_word(len(doubtful))} из {p.name}")
                     if not tries:
                         continue
                 ok, reason = await try_candidates(item_id, user_id, q, meta, tries, stage, force)
@@ -371,12 +415,14 @@ async def handle_download_item(job: Job) -> None:
                     shown = all_cands[:MAX_SHOWN - min(MAX_SHOWN_REUPLOADS, len(reups))] + reups[:MAX_SHOWN_REUPLOADS]
                     all_cands.extend(reups)
                     await update_item(item_id, candidates_json=[c.model_dump(mode="json") for c in shown])
+                    await step(item_id, "info", f"Перезаливы без цензуры: {files_word(len(reups))}")
                     ok, reason = await try_candidates(item_id, user_id, q, meta, reups[:MAX_TRIES_PER_PROVIDER],
                                                       stage, force)
                     if ok:
                         return
                     last_reason = reason or last_reason
                 if held:
+                    await step(item_id, "warn", "Ничего надёжного не нашлось — беру отложенные файлы")
                     ok, reason = await try_candidates(item_id, user_id, q, meta, held, stage, force,
                                                       warning=MAYBE_CENSORED)
                     if ok:
@@ -386,17 +432,18 @@ async def handle_download_item(job: Job) -> None:
         cleanup_dir(stage)
 
     if chosen:
-        await update_item(item_id, status="needs_review", error=f"Файл не подошёл ({last_reason})")
+        verdict = f"Файл не подошёл ({last_reason})"
     elif not all_cands:
         if errors and len(errors) >= len(providers):
             raise RuntimeError("все источники недоступны: " + "; ".join(errors))
-        await update_item(item_id, status="needs_review", error="Не найдено ни в одном источнике")
+        verdict = "Не найдено ни в одном источнике"
     elif not meta:
         sure = classify(all_cands, get_settings().cfg.matching) == "auto"
-        await update_item(item_id, status="needs_review",
-                          error="Нет записи в каталоге — " + ("подтвердите файл" if sure else "выберите файл"))
+        verdict = "Нет записи в каталоге — " + ("подтвердите файл" if sure else "выберите файл")
     else:
-        await update_item(item_id, status="needs_review", error=f"Ни один кандидат не подошёл ({last_reason})")
+        verdict = f"Ни один кандидат не подошёл ({last_reason})"
+    await update_item(item_id, status="needs_review", error=verdict)
+    await step(item_id, "bad", f"Итог: {verdict[0].lower()}{verdict[1:]}. Нужен ваш выбор")
 
 
 async def search_provider(p, q: TrackQuery, item_id: int, *, limit: int = 15,
@@ -464,13 +511,17 @@ async def try_candidates(item_id: int, user_id: int, q: TrackQuery, meta: dict[s
         except Exception as e:
             last_reason = f"{cand.provider}: {e}"
             log.warning("fetch failed %s: %r", cand.page_url, e, extra={"item_id": item_id})
+            await step(item_id, "bad", f"Не скачался: {e}"[:300], cand)
             continue
         check = await probe.postcheck(path, q.duration_s or cand.duration_s, pcfg.matching.duration_tolerance_s,
                                       pcfg.postcheck.silence_warn_s)
         if not check.ok:
             last_reason = f"{cand.provider}: {check.reason}"
             path.unlink(missing_ok=True)
+            await step(item_id, "bad", f"Не подошёл: {check.reason}", cand)
             continue
+        bitrate = f", {cand.bitrate_kbps} кбит/с" if cand.bitrate_kbps else ""
+        await step(item_id, "ok", f"Выбран: совпадение {cand.score:.2f}{bitrate}; проверка после скачивания пройдена", cand)
         await import_downloaded(item_id, user_id, q, meta, cand, path, check, force, warning=warning)
         return True, ""
     return False, last_reason
@@ -518,6 +569,8 @@ async def import_downloaded(item_id: int, user_id: int, q: TrackQuery, meta: dic
         track = await import_file(s, path, spec)
         track_id = track.id
     await update_item(item_id, track_id=track_id, warnings=spec.warnings, error=None)
+    await step(item_id, "ok", "Теги и обложка записаны, файл в библиотеке"
+               + (f". Замечания: {'; '.join(str(w) for w in spec.warnings)}" if spec.warnings else ""))
     bus.publish(user_id, "library", {"kind": "imported", "track_id": track_id})
     if meta.get("track_ref"):
         from app.listen import forget
@@ -536,6 +589,7 @@ async def after_import(user_id: int, linked: bool) -> None:
 @on_final_failure("download_item")
 async def _download_failed(job: Job, exc: Exception) -> None:
     await update_item(int(job.payload_json["item_id"]), status="failed", error=f"{exc}"[:500])
+    await step(int(job.payload_json["item_id"]), "bad", f"Итог: загрузка не удалась — {exc}"[:500])
 
 
 # --- scan + link + playlists ---------------------------------------------------------------------

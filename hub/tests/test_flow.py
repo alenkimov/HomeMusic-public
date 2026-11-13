@@ -184,6 +184,14 @@ async def test_download_import_scan_playlist_dedupe(env):
     assert items[0]["provider"] == "hitmoz"
     assert items[0]["nd_song_id"] == "nd0" and items[0]["playlist_id"] == playlist_id
     assert env["fake"].fetched == 1
+    # the journal of the download: what was asked, where it was looked for, the file taken (only in the detail view)
+    assert items[0].get("log") is None
+    log = (await c.get(f"/api/downloads/{items[0]['id']}")).json()["log"]
+    texts = [x["text"] for x in log]
+    assert texts[0] == "Запрос: Кино — Группа крови" and any(x.startswith("Поиск в hitmoz: ") for x in texts)
+    took = next(x for x in log if x["text"].startswith("Выбран: совпадение "))
+    assert took["kind"] == "ok" and took["cand"]["provider"] == "hitmoz" and took["cand"]["page_url"]
+    assert texts[-1] == "Теги и обложка записаны, файл в библиотеке" and all(x["t"] for x in log)
 
     files = list((env["music"] / "library").rglob("*.mp3"))
     assert len(files) == 1
@@ -228,6 +236,8 @@ async def test_review_does_not_block_playlist_and_a_file_picked_later_joins_it(e
     items = (await c.get("/api/downloads")).json()
     review = next(i for i in items if i["status"] == "needs_review")
     assert state["playlists"]["pl1"]["songs"] == ["nd0"]
+    last = (await c.get(f"/api/downloads/{review['id']}")).json()["log"][-1]
+    assert last["kind"] == "bad" and last["text"].startswith("Итог: ") and last["text"].endswith("Нужен ваш выбор")
     # the finished one leaves the list at once; its row stays, so the order below still holds
     r = await c.post("/api/downloads/clear")
     assert r.status_code == 200 and r.json()["removed"] == 1, r.text
@@ -317,6 +327,9 @@ async def test_explicit_russian_track_without_reuploads_takes_the_new_copy_with_
     assert item["status"] == "done", item
     assert item["provider"] == "hitmoz" and reups.searched == 1
     assert MAYBE_CENSORED in item["warnings"]
+    texts = [x["text"] for x in (await env["client"].get(f"/api/downloads/{item['id']}")).json()["log"]]
+    assert "Отложено как возможно цензурное: 1 файл из hitmoz" in texts
+    assert "Ничего надёжного не нашлось — беру отложенные файлы" in texts
 
 
 async def test_reuploads_in_the_russian_source_order_are_not_searched_twice(env):

@@ -460,6 +460,9 @@ class DownloadItemOut(BaseModel):
     quiet: bool = False
     import_id: int | None = None  # queued by this import (`/api/imports`)
     candidates: list[Candidate] | None = None  # only in detail view
+    # the journal, only in detail view: the steps in order — {t, kind: info/ok/warn/bad, text, cand?: the file
+    # the step is about ({artist, title, provider, bitrate_kbps, duration_s, page_url})}
+    log: list[dict[str, Any]] | None = None
     chosen: Candidate | None = None
     hidden: bool = False  # taken off the list by the user (comes with an event: other open pages drop it too)
     created_at: datetime

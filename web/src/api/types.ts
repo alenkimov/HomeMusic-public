@@ -452,6 +452,14 @@ export interface DownloadBatchOut {
   expanding?: boolean;
 }
 
+/** A line of a download's journal: what happened, and the file it is about. */
+export interface DownloadStep {
+  t: ISODateTime;
+  kind: 'info' | 'ok' | 'warn' | 'bad';
+  text: string;
+  cand?: { artist: string; title: string; provider: string; bitrate_kbps?: number | null; duration_s?: number | null; page_url: string } | null;
+}
+
 export interface DownloadItemOut {
   id: number;
   batch_id: number;
@@ -475,6 +483,8 @@ export interface DownloadItemOut {
   /** queued by this import (`/api/imports`) */
   import_id?: number | null;
   candidates?: Candidate[] | null;
+  /** the journal (the detail view only): the steps of the download in order */
+  log?: DownloadStep[] | null;
   chosen?: Candidate | null;
   /** taken off the list by the user (comes with an event: every open page drops it) */
   hidden?: boolean;
