@@ -6,17 +6,17 @@ import { cx } from './ui';
 
 export type Tab = 'home' | 'search' | 'downloads' | 'library' | 'assistant' | 'more';
 
-/** Only a plain browser draws it (inside the app the app's tabs open the routes): the whole service, «Главная»
- * first, the assistant under «Ещё». */
+/** Only a plain browser draws it (inside the app the app's tabs open the routes): what is listened to — «Главная»,
+ * «Поиск», «Библиотека» — and «Меню» with everything else (the downloads and the assistant among it: the number of
+ * downloads under way stands on «Меню»). */
 const TABS: Array<{ id: Tab; to: string; label: string; icon: IconName }> = [
   { id: 'home', to: '/home', label: 'Главная', icon: 'home' },
   { id: 'search', to: '/search', label: 'Поиск', icon: 'search' },
   { id: 'library', to: '/library', label: 'Библиотека', icon: 'library' },
-  { id: 'downloads', to: '/downloads', label: 'Загрузки', icon: 'download' },
-  { id: 'more', to: '/more', label: 'Ещё', icon: 'more' },
+  { id: 'more', to: '/more', label: 'Меню', icon: 'menu' },
 ];
 
-/** The tab a route's own tab shows under: the assistant lives in «Ещё» of a browser. */
+/** The tab a route's own tab shows under: the downloads and the assistant live in «Меню». */
 const shownTab = (t: Tab | null): Tab | null => (t && !TABS.some((x) => x.id === t) ? 'more' : t);
 
 export function TabBar({ active: routeTab, last }: { active: Tab | null; last: Partial<Record<Tab, string>> }) {
@@ -38,7 +38,7 @@ export function TabBar({ active: routeTab, last }: { active: Tab | null; last: P
               >
                 <span className="relative">
                   <Icon name={t.icon} size={24} stroke={on ? 2.4 : 2} />
-                  {t.id === 'downloads' && activeDownloads > 0 && (
+                  {t.id === 'more' && activeDownloads > 0 && (
                     <span className="absolute -right-2.5 -top-1.5 min-w-4 rounded-full bg-accent px-1 text-center text-[10px] font-bold leading-4 text-on-accent">
                       {activeDownloads > 99 ? '99+' : activeDownloads}
                     </span>

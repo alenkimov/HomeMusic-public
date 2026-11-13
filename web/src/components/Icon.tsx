@@ -59,6 +59,8 @@ const PATHS = {
   transfer: 'M4 8h13m0 0-4-4m4 4-4 4M20 16H7m0 0 4-4m-4 4 4 4',
   chart: 'M5 20v-8M12 20V4M19 20v-11',
   grip: 'M5 9h14M5 15h14',
+  menu: 'M4 6h16M4 12h16M4 18h16',
+  folder: 'M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z',
   expand: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
   shrink: 'M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5',
 } as const;

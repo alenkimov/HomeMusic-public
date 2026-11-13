@@ -35,6 +35,7 @@ import { DownloadDetailPage } from './pages/DownloadDetail';
 import { DownloadsPage } from './pages/Downloads';
 import { HomePage } from './pages/Home';
 import { ImportItemsPage, ImportPage, ImportsPage } from './pages/Import';
+import { FilesPage } from './pages/Files';
 import { LibraryPage } from './pages/Library';
 import { LibraryAlbumPage } from './pages/LibraryAlbum';
 import { LoginPage } from './pages/Login';
@@ -90,8 +91,9 @@ const ROUTES: RouteDef[] = [
   ['/taste', 'search', () => <TastePage />],
   ['/downloads', 'downloads', () => <DownloadsPage />],
   ['/downloads/:id', 'downloads', (p) => <DownloadDetailPage key={p.id} id={Number(p.id)} />],
-  ['/library', 'library', (_, r) => <LibraryPage initialQuery={r.query.get('q') ?? ''} />],
-  ['/library/album/:id', 'library', (p) => <LibraryAlbumPage key={p.id} id={Number(p.id)} />],
+  ['/library', 'library', () => <LibraryPage />],
+  ['/files', 'more', (_, r) => <FilesPage initialQuery={r.query.get('q') ?? ''} />],
+  ['/library/album/:id', 'more', (p) => <LibraryAlbumPage key={p.id} id={Number(p.id)} />],
   ['/assistant', 'assistant', (_, r) => <AssistantPage chatId={Number(r.query.get('chat')) || null} />],
   ['/assistant/chats', 'assistant', () => <AssistantChatsPage />],
   ['/assistant/:id', 'assistant', (p) => <AssistantTaskPage key={p.id} id={Number(p.id)} />],

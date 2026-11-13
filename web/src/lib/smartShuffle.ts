@@ -25,12 +25,10 @@ import { toast, toastError } from './ui';
  * the player, and puts what it answers in the page player's queue (`lib/listen.ts`).
  *
  * The shuffle button goes off → shuffle → smart → off; smart is offered only for a list started from a playlist's or
- * «Любимое» page (`useSmartPage`) and only with the setting «Умное перемешивание в режимах» on (More). The first
+ * «Любимое» page (`useSmartPage`): the shuffle button goes round — off, shuffle, smart shuffle. The first
  * track starts at once in the plain shuffle; the Hub's order replaces what is after it a moment later. The playlist
  * itself is never changed. A recommendation is told by `ListenTrack.rec` (✨ and the line «Рекомендация на основе …»);
  * «+» puts it in the list (in «Любимое» — ♥), «−» skips it and the Hub never recommends it in this list again. */
-
-const SETTING_KEY = 'hm-smart-shuffle';
 
 const subscribers = new Set<() => void>();
 const emit = () => subscribers.forEach((fn) => fn());
@@ -40,28 +38,6 @@ const subscribe = (fn: () => void) => {
     subscribers.delete(fn);
   };
 };
-
-/** «Умное перемешивание в режимах»: on by default (off — the button goes between shuffle and off only). */
-export function smartEnabled(): boolean {
-  try {
-    return localStorage.getItem(SETTING_KEY) !== '0';
-  } catch {
-    return true;
-  }
-}
-
-export function setSmartEnabled(on: boolean) {
-  try {
-    localStorage.setItem(SETTING_KEY, on ? '1' : '0');
-  } catch {
-    /* the choice is just not remembered */
-  }
-  emit();
-}
-
-export function useSmartEnabled(): boolean {
-  return useSyncExternalStore(subscribe, smartEnabled);
-}
 
 // --- the screen's context ------------------------------------------------------------------------------------------
 
@@ -85,12 +61,10 @@ export function useSmartPage(context: string | null, title: string | null) {
   }, [context, title]);
 }
 
-/** The list at the top of the screen can be played in the smart shuffle (and the setting is on): the button of
- * «Перемешать» shows it. */
+/** The list at the top of the screen can be played in the smart shuffle: the button of «Перемешать» shows it. */
 export function useSmartForPage(): boolean {
   const chosen = useSmartChosen();
-  const enabled = useSmartEnabled();
-  return useSyncExternalStore(subscribe, () => STANDALONE && enabled && chosen && page !== null);
+  return useSyncExternalStore(subscribe, () => STANDALONE && chosen && page !== null);
 }
 
 // --- the session ---------------------------------------------------------------------------------------------------
@@ -232,7 +206,7 @@ registerSmart({
     listPage = (context === 'playlist' || context === 'liked') && page && (page.context === 'liked') === (context === 'liked') ? page : null;
   },
   canStart() {
-    if (!STANDALONE || !smartEnabled()) return false;
+    if (!STANDALONE) return false;
     // a list of a playlist's / «Любимое» page, noted when it was started (or, for a restored one, the session)
     return listPage !== null && !getListenState().context.startsWith('wave:');
   },

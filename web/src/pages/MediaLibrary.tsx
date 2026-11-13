@@ -531,14 +531,14 @@ export function PlaylistPage({ id }: { id: string }) {
   };
   const drop = async () => {
     if (!p || !(await confirmDialog({ title: `Удалить плейлист «${p.name}»?`, body: 'Песни останутся в библиотеке.', okLabel: 'Удалить', danger: true }))) return;
-    if (await attempt(() => api.deletePlaylist(id), 'Плейлист удалён')) navigate('/playlists', { replace: true });
+    if (await attempt(() => api.deletePlaylist(id), 'Плейлист удалён')) navigate('/library', { replace: true });
   };
 
-  if (res.loading) return (<><PageHeader hero title="Плейлист" back="/playlists" /><SkeletonRows /></>);
-  if (!p) return (<><PageHeader hero title="Плейлист" back="/playlists" /><ErrorState text={res.error ?? 'Плейлист не найден'} onRetry={() => res.reload()} /></>);
+  if (res.loading) return (<><PageHeader hero title="Плейлист" back="/library" /><SkeletonRows /></>);
+  if (!p) return (<><PageHeader hero title="Плейлист" back="/library" /><ErrorState text={res.error ?? 'Плейлист не найден'} onRetry={() => res.reload()} /></>);
   return (
     <div>
-      <PageHeader hero title={p.name} back="/playlists" right={desktop ? undefined : (
+      <PageHeader hero title={p.name} back="/library" right={desktop ? undefined : (
           <>
             <IconButton icon="edit" label="Изменить плейлист" onClick={() => setEditing(true)} />
             <IconButton icon="trash" label="Удалить плейлист" onClick={drop} />

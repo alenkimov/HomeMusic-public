@@ -12,7 +12,7 @@ import { listen, listenAll, type ListenTrack } from '../lib/listen';
 import { canPlay, playList } from '../lib/player';
 import { navigate } from '../lib/router';
 import { attempt, confirmDialog, toast } from '../lib/ui';
-import { ReleaseTypeSelect } from './Library';
+import { ReleaseTypeSelect } from './Files';
 
 const RELEASE_TYPES: ReleaseType[] = ['album', 'single', 'ep', 'compilation'];
 
@@ -27,14 +27,14 @@ export function LibraryAlbumPage({ id }: { id: number }) {
   if (res.loading)
     return (
       <>
-        <PageHeader title="Альбом" back="/library" />
+        <PageHeader title="Альбом" back="/files" />
         <Loading />
       </>
     );
   if (res.error || !res.data)
     return (
       <>
-        <PageHeader title="Альбом" back="/library" />
+        <PageHeader title="Альбом" back="/files" />
         <ErrorState text={res.error ?? 'Альбом не найден'} onRetry={() => res.reload()} />
       </>
     );
@@ -113,7 +113,7 @@ export function LibraryAlbumPage({ id }: { id: number }) {
       <PageHeader
         title={album.title}
         sub={album.album_artist}
-        back="/library"
+        back="/files"
         right={
           <IconButton icon="merge" label="Объединить с другим альбомом" onClick={() => setPicker('merge')} />
         }

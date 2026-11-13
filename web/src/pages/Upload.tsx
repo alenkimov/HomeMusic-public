@@ -10,7 +10,7 @@ import { useAsync } from '../lib/hooks';
 import { navigate } from '../lib/router';
 import { openTagsPick, useTags } from '../lib/tags';
 import { attempt, confirmDialog, toast } from '../lib/ui';
-import { ReleaseTypeSelect } from './Library';
+import { ReleaseTypeSelect } from './Files';
 
 /** «Загрузить файлы»: the user's own audio files into the library. Files are dropped anywhere on the page (a folder
  * too) or picked; the Hub reads their tags and the page shows them as a table that can be edited in place. By
@@ -369,7 +369,7 @@ export function UploadPage() {
     if (!albums) return;
     toast(`Импортировано: ${tracksWord(imported)}`, 'success');
     if (albums === 1 && lastAlbum !== null && (mode !== 'tags' || groups.length === 1)) navigate(`/library/album/${lastAlbum}`, { replace: true });
-    else if (mode !== 'tags' || albums === groups.length) navigate('/library', { replace: true });
+    else if (mode !== 'tags' || albums === groups.length) navigate('/files', { replace: true });
   };
 
   const coversAvailable = uploads.filter((u) => u.tags.has_cover);

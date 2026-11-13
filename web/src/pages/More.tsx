@@ -5,9 +5,8 @@ import { useSession } from '../lib/session';
 import { BrandIcon } from '../components/BrandIcon';
 import { Icon, type IconName } from '../components/Icon';
 import { PageHeader, cx } from '../components/ui';
-import { notifyPermission, requestNotifyPermission, type NotifyPermission } from '../lib/notify';
+import { notifyPermission, requestNotifyPermission, useActiveDownloads, type NotifyPermission } from '../lib/notify';
 import { Link } from '../lib/router';
-import { setSmartEnabled, useSmartEnabled } from '../lib/smartShuffle';
 import { confirmDialog, toast } from '../lib/ui';
 
 interface InstallPromptEvent extends Event {
@@ -26,7 +25,7 @@ export function MorePage() {
   const { me, logout } = useSession();
   const [perm, setPerm] = useState<NotifyPermission>(notifyPermission);
   const [canInstall, setCanInstall] = useState(!!deferredInstall);
-  const smart = useSmartEnabled();
+  const downloads = useActiveDownloads();
   const standalone = window.matchMedia('(display-mode: standalone)').matches;
 
   useEffect(() => {
@@ -67,7 +66,7 @@ export function MorePage() {
 
   return (
     <div>
-      <PageHeader title="Ещё" />
+      <PageHeader title="Меню" />
       <div className="mx-4 mb-4 flex items-center gap-3 rounded-xl bg-surface p-4">
         <span className="flex h-12 w-12 items-center justify-center rounded-full bg-accent text-lg font-bold uppercase text-on-accent">{me.username.slice(0, 1)}</span>
         <div className="min-w-0 flex-1">
@@ -80,23 +79,20 @@ export function MorePage() {
         </div>
       </div>
 
-      <ul className="mx-4 overflow-hidden rounded-xl bg-surface">
+      <ul className="mx-4 overflow-hidden rounded-xl bg-surface lg:grid lg:grid-cols-2">
         {STANDALONE && <Item icon="sparkle" to="/assistant" title="Ассистент" sub="Скриншот, список или просьба — найдёт и скачает" />}
         {STANDALONE && (
           <Item
-            icon="shuffleSmart"
-            title="Умное перемешивание в режимах"
-            sub="Кнопка перемешивания в плейлисте и «Любимом» добавляет рекомендации"
-            onClick={() => setSmartEnabled(!smart)}
-            right={<Switch on={smart} />}
+            icon="download"
+            to="/downloads"
+            title="Загрузки"
+            sub="Что скачивается и что скачано"
+            right={downloads > 0 ? <span className="min-w-5 rounded-full bg-accent px-1.5 text-center text-[11px] font-bold leading-5 text-on-accent">{downloads > 99 ? '99+' : downloads}</span> : undefined}
           />
         )}
         <Item icon="upload" to="/upload" title="Загрузить файлы" sub="Свои аудиофайлы с телефона" />
-        <Item icon="playlist" to="/playlists" title="Плейлисты" sub="Ваши плейлисты в Navidrome" />
+        {STANDALONE && <Item icon="folder" to="/files" title="Мои файлы" sub="Альбомы, чьи файлы хранит хаб: правка, свой альбом" />}
         {STANDALONE && <Item icon="tag" to="/tags" title="Теги" sub="Язык, жанр и свои; подборки по тегам" />}
-        {STANDALONE && <Item icon="sparkle" to="/mix" title="Микс дня" sub="Знакомое и новое, каждый день" />}
-        {STANDALONE && <Item icon="wave" to="/discoveries" title="Открытия недели" sub="Каждый понедельник — 30 треков исполнителей, которых вы ещё не слышали" />}
-        {STANDALONE && <Item icon="disc" to="/releases" title="Релизы" sub="Что вышло у исполнителей, за которыми вы следите" />}
         {STANDALONE && <Item icon="chart" to="/stats" title="Статистика" sub="Что вы слушали: треки, исполнители, жанры; история из Spotify" />}
         <Item icon="transfer" brand="yandex" to="/import?from=yandex" title="Перенести из Яндекс Музыки" sub="«Мне нравится», плейлисты, альбомы и исполнители" />
         <Item icon="transfer" brand="spotify" to="/import?from=spotify" title="Перенести из Spotify" sub="Плейлисты и «Любимые треки» из файлов CSV" />
@@ -120,14 +116,6 @@ export function MorePage() {
 
       <p className="px-6 py-6 text-center text-xs text-dim">HomeMusic · личный музыкальный сервис</p>
     </div>
-  );
-}
-
-function Switch({ on }: { on: boolean }) {
-  return (
-    <span role="switch" aria-checked={on} className={cx('relative h-6 w-10 shrink-0 rounded-full transition-colors', on ? 'bg-accent' : 'bg-line')}>
-      <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all', on ? 'left-[18px]' : 'left-0.5')} />
-    </span>
   );
 }
 
