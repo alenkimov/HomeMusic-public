@@ -209,7 +209,7 @@ export function DownloadsPage() {
           )}
         </Empty>
       ) : desktop ? (
-        <div className="mx-4 overflow-hidden rounded-xl bg-surface" role="table" aria-label="Загрузки">
+        <div className="mx-4 overflow-hidden rounded-2xl bg-surface" role="table" aria-label="Загрузки">
           <div role="row" className={cx(GRID, 'h-9 border-b border-line/60 text-xs text-dim')}>
             <Checkbox checked={chosen.length === shown.length} onChange={(v) => setPicked(v ? new Set(shown.map((x) => x.id)) : new Set())} label="Выбрать все" />
             <span>Трек</span>
@@ -355,7 +355,7 @@ function Card(p: RowProps) {
   const { item } = p;
   const active = DOWNLOAD_ACTIVE.includes(item.status);
   return (
-    <li className={cx('rounded-xl bg-surface p-3', p.picked && 'ring-1 ring-accent')}>
+    <li className={cx('rounded-2xl bg-surface p-3', p.picked && 'ring-1 ring-accent')}>
       <div className="flex items-center gap-3">
         <Link to={`/downloads/${item.id}`} className="flex min-w-0 flex-1 items-center gap-3" aria-label={`Подробности: ${item.artist} — ${item.title}`}>
           <Cover src={item.chosen?.cover_url} size={44} alt="" />

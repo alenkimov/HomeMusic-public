@@ -77,7 +77,7 @@ export function TasteMatrixPage() {
         <ErrorState text={res.error ?? 'Нет данных'} onRetry={() => res.reload()} />
       ) : (
         <div className="px-4">
-          <div className="rounded-xl bg-surface p-3">
+          <div className="rounded-2xl bg-surface p-3">
             <ScrollTable<Row>
               rows={rows}
               rowKey={(r) => r.key}

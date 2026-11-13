@@ -96,7 +96,7 @@ export function StatsPage() {
           <Card title="Последние 26 недель">
             <Weeks heat={d.heatmap} by={by} />
           </Card>
-          <div className="flex flex-wrap items-center gap-3 rounded-xl bg-surface p-4">
+          <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-surface p-4">
             <Icon name="transfer" size={22} className="text-muted" />
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold">История из Spotify</div>
@@ -131,7 +131,7 @@ export function StatsPage() {
 
 function Tile({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="rounded-xl bg-surface p-4" title={hint}>
+    <div className="rounded-2xl bg-surface p-4" title={hint}>
       <div className="text-xs text-muted">{label}</div>
       <div className="pt-1 text-2xl font-bold tabular-nums">{value}</div>
     </div>
@@ -140,7 +140,7 @@ function Tile({ label, value, hint }: { label: string; value: string; hint?: str
 
 function Card({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
   return (
-    <section className="rounded-xl bg-surface p-4">
+    <section className="rounded-2xl bg-surface p-4">
       <div className="flex items-center pb-3">
         <h2 className="flex-1 text-sm font-bold">{title}</h2>
         {right}

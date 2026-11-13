@@ -67,7 +67,7 @@ export function MorePage() {
   return (
     <div>
       <PageHeader title="Меню" />
-      <div className="mx-4 mb-4 flex items-center gap-3 rounded-xl bg-surface p-4">
+      <div className="mx-4 mb-4 flex items-center gap-3 rounded-2xl bg-surface p-4">
         <span className="flex h-12 w-12 items-center justify-center rounded-full bg-accent text-lg font-bold uppercase text-on-accent">{me.username.slice(0, 1)}</span>
         <div className="min-w-0 flex-1">
           <div className="truncate font-semibold">{me.username}</div>

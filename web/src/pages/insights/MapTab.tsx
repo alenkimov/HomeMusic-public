@@ -183,7 +183,7 @@ function TasteMap({ d, userId, layout, layers }: { d: MapOut; userId: number; la
       </p>
 
       {d.missing.length > 0 && (
-        <details className="mt-3 rounded-xl bg-surface p-3 text-sm">
+        <details className="mt-3 rounded-2xl bg-surface p-3 text-sm">
           <summary className="cursor-pointer font-semibold">Без звука: {d.missing.length}</summary>
           <ul className="mt-2 space-y-1 text-muted">
             {d.missing.map((m) => (
@@ -194,7 +194,7 @@ function TasteMap({ d, userId, layout, layers }: { d: MapOut; userId: number; la
           </ul>
         </details>
       )}
-      <details className="mt-3 rounded-xl bg-surface p-3 text-sm">
+      <details className="mt-3 rounded-2xl bg-surface p-3 text-sm">
         <summary className="cursor-pointer font-semibold">Список точек ({visible.length})</summary>
         <ul className="mt-2 divide-y divide-line/50">
           {sorted.map((p) => (

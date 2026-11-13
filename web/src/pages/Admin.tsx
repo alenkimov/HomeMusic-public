@@ -45,7 +45,7 @@ export function AdminPage() {
       {/* in the app the page is opened from its settings: the system back leaves it */}
       <PageHeader title="Пользователи" back={EMBEDDED ? undefined : '/more'} right={<IconButton icon="refresh" label="Обновить" onClick={() => (users.reload(true), invites.reload(true))} />} />
 
-      <ul className="mx-4 mb-3 overflow-hidden rounded-xl bg-surface">
+      <ul className="mx-4 mb-3 overflow-hidden rounded-2xl bg-surface">
         <InsightLink to="/admin/insights" icon="history" title="Аналитика пользователей" sub="прослушивания, миксы, волна по пользователям" />
         <InsightLink to="/admin/taste" icon="heart" title="Веса песен у всех" sub="песни × пользователи по профилю вкуса" />
       </ul>
@@ -76,7 +76,7 @@ export function AdminPage() {
           Новый человек входит по коду приглашения: создайте код и отправьте его. Код одноразовый.
         </p>
       ) : (
-        <ul className="mx-4 overflow-hidden rounded-xl bg-surface">
+        <ul className="mx-4 overflow-hidden rounded-2xl bg-surface">
           {active.map((inv) => (
             <li key={inv.id} className="flex min-h-16 items-center gap-2 border-b border-line/60 py-2 pl-4 pr-1 last:border-0">
               <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setShown(inv)}>
@@ -152,7 +152,7 @@ function InsightLink({ to, icon, title, sub }: { to: string; icon: 'history' | '
 
 function Tile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-xl bg-surface px-3 py-2.5">
+    <div className="min-w-0 rounded-2xl bg-surface px-3 py-2.5">
       <div className="truncate text-lg font-bold">{value}</div>
       <div className="truncate text-[11px] text-muted">{label}</div>
     </div>
@@ -205,7 +205,7 @@ function UserCard({ u }: { u: AdminUserOut }) {
       )}
     </>
   );
-  const cls = 'block rounded-xl bg-surface p-3';
+  const cls = 'block rounded-2xl bg-surface p-3';
   return u.id != null ? (
     <Link to={`/admin/user/${u.id}`} className={cx(cls, 'hover:bg-fg/5')}>
       {body}

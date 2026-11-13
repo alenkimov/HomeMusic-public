@@ -37,7 +37,7 @@ export function MixesTab({ userId }: { userId: number }) {
     <ul className="space-y-2 px-4">
       {res.data.map((m) => (
         <li key={m.id}>
-          <button type="button" onClick={() => navigate(`/admin/mix/${m.id}`)} className="block w-full rounded-xl bg-surface p-3 text-left hover:bg-fg/5">
+          <button type="button" onClick={() => navigate(`/admin/mix/${m.id}`)} className="block w-full rounded-2xl bg-surface p-3 text-left hover:bg-fg/5">
             <div className="flex items-baseline justify-between gap-2">
               <span className="min-w-0 truncate font-semibold">{m.title}</span>
               <span className="shrink-0 text-xs text-muted">{fmtStamp(m.created_at)}</span>
@@ -205,7 +205,7 @@ function MixBody({ m }: { m: MixOut }) {
 
       {rest.length > 0 && (
         <div className="px-4 pt-3">
-          <details className="rounded-xl bg-surface p-3">
+          <details className="rounded-2xl bg-surface p-3">
             <summary className="cursor-pointer text-sm font-semibold">Запас и не скачанные ({rest.length})</summary>
             <div className="mt-2">
               <MixItems items={rest} max={max} />

@@ -3,7 +3,8 @@ import { api } from '../api/client';
 import type { AlbumOut } from '../api/types';
 import { ReleaseCard, TrackRow, TrackTableHeader } from '../components/catalog';
 import { LikeButton } from '../components/LikeButton';
-import { Button, Cover, ErrorState, IconButton, Loading, SectionTitle } from '../components/ui';
+import { Icon } from '../components/Icon';
+import { Button, Cover, ErrorState, IconButton, Loading, SectionTitle, Spinner } from '../components/ui';
 import { startDownload } from '../lib/actions';
 import { useAsync } from '../lib/hooks';
 import { playList } from '../lib/player';
@@ -79,17 +80,34 @@ export function ArtistPage({ refId }: { refId: string }) {
           <div className="absolute inset-0 bg-gradient-to-b from-transparent via-bg/60 to-bg" />
         </div>
         <TopBar overlay />
-        <div className="relative flex flex-col items-center px-4 pb-4 pt-2 text-center">
-          <Cover src={artist.picture_url} size={176} round icon="user" alt={artist.name} className="shadow-2xl" />
-          <h1 className="mt-4 text-3xl font-extrabold leading-tight">{artist.name}</h1>
-          <LikeButton targetType="artist" refId={artist.ref} title={artist.name} size={24} data={{ name: artist.name }} />
+        <div className="relative px-4 pb-4 pt-2">
+          <div className="flex justify-center pb-4">
+            <Cover src={artist.picture_url} size={176} round icon="user" alt={artist.name} className="shadow-2xl" />
+          </div>
+          <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+          <h1 className="line-clamp-2 text-3xl font-extrabold leading-tight">{artist.name}</h1>
           <p className="mt-1 text-sm text-muted">
             {[artist.nb_fans ? `${artist.nb_fans.toLocaleString('ru-RU')} ${plural(artist.nb_fans, ['поклонник', 'поклонника', 'поклонников'])}` : null, `${albums.length + singles.length + compilations.length} релизов`]
               .filter(Boolean)
               .join(' · ')}
           </p>
-          {canWave() && <Button icon="wave" className="mt-4" busy={wave.starting === seedKey({ artist_ref: artist.ref })} onClick={() => void startWave({ artist_ref: artist.ref }, 'artist_page')}>Волна по исполнителю</Button>}
-          <Button variant="primary" icon="download" className="mt-4" busy={allBusy} onClick={downloadAll}>
+          </div>
+          <LikeButton targetType="artist" refId={artist.ref} title={artist.name} size={26} data={{ name: artist.name }} />
+          {canWave() && (
+            <button
+              type="button"
+              aria-label="Волна по исполнителю"
+              title="Волна по исполнителю"
+              disabled={wave.starting !== null}
+              onClick={() => void startWave({ artist_ref: artist.ref }, 'artist_page')}
+              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition hover:scale-105 active:scale-95 disabled:opacity-60"
+            >
+              {wave.starting === seedKey({ artist_ref: artist.ref }) ? <Spinner size={24} /> : <Icon name="wave" size={26} />}
+            </button>
+          )}
+          </div>
+          <Button icon="download" className="mt-4" busy={allBusy} onClick={downloadAll}>
             Скачать всю дискографию
           </Button>
         </div>

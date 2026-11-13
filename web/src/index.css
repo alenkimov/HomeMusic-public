@@ -100,13 +100,13 @@
 
 @layer components {
   .input {
-    @apply w-full rounded-lg border border-line bg-raised px-3 py-2.5 text-fg placeholder:text-dim outline-none transition-colors focus:border-accent;
+    @apply w-full rounded-xl border border-line bg-raised px-3 py-2.5 text-fg placeholder:text-dim outline-none transition-colors focus:border-accent;
   }
   .label {
     @apply mb-1 block text-[13px] font-medium text-muted;
   }
   .card {
-    @apply rounded-xl bg-surface;
+    @apply rounded-2xl bg-surface;
   }
   .hm-range {
     appearance: none;

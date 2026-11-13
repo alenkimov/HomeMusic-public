@@ -96,7 +96,7 @@ export function ImportsPage({ from = null }: { from?: 'yandex' | 'spotify' | nul
       ) : res.error ? (
         <ErrorState text={res.error} onRetry={() => res.reload()} />
       ) : past.length ? (
-        <ul className="mx-4 mb-2 overflow-hidden rounded-xl bg-surface">
+        <ul className="mx-4 mb-2 overflow-hidden rounded-2xl bg-surface">
           {past.map((imp) => (
             <li key={imp.id} className="border-b border-line/60 last:border-0">
               <Link to={`/import/${imp.id}`} className="flex min-h-16 items-center gap-3 px-4 py-2 hover:bg-fg/5">
@@ -327,7 +327,7 @@ function Preview({ imp, onStarted }: { imp: ImportOut; onStarted: (r: ImportOut)
       <p className="px-4 pb-1 text-sm text-muted">
         Найдено {tracksWord(st.tracks)}, из них уже в библиотеке {st.owned}. Отметьте, что перенести.
       </p>
-      <ul className="mx-4 overflow-hidden rounded-xl bg-surface">
+      <ul className="mx-4 overflow-hidden rounded-2xl bg-surface">
         {imp.collections.map((c) => (
           <li key={c.id} className="flex items-center gap-1 border-b border-line/60 pr-2 last:border-0">
             <Checkbox checked={picked.has(c.id)} onChange={(v) => toggle(c.id, v)} label={c.title} />
@@ -460,7 +460,7 @@ function Progress({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) 
       </div>
 
       <SectionTitle>Отчёт</SectionTitle>
-      <ul className="mx-4 overflow-hidden rounded-xl bg-surface">
+      <ul className="mx-4 overflow-hidden rounded-2xl bg-surface">
         <ReportRow to={`/import/${imp.id}/items?match=exact,owned`} icon="check" tone="text-accent" title="Точно" value={st.exact + st.owned} />
         <ReportRow to={`/import/${imp.id}/items?match=probable`} icon="alert" tone="text-warn" title="Вероятно — проверьте" value={st.probable} />
         <ReportRow to={`/import/${imp.id}/items?match=not_found`} icon="x" tone="text-danger" title="Не найдено" value={st.not_found} />
@@ -468,7 +468,7 @@ function Progress({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) 
       </ul>
 
       <SectionTitle>Что перенесли</SectionTitle>
-      <ul className="mx-4 overflow-hidden rounded-xl bg-surface">
+      <ul className="mx-4 overflow-hidden rounded-2xl bg-surface">
         {[...tracks, ...other].map((c) => (
           <li key={c.id} className="border-b border-line/60 last:border-0">
             <Link to={`/import/${imp.id}/items?c=${c.id}`} className="flex min-h-14 items-center gap-3 px-4 py-2 hover:bg-fg/5">

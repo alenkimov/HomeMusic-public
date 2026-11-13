@@ -61,7 +61,7 @@ export function ListenBrainzPage() {
           </p>
           {st.connected ? (
             <>
-              <div className="rounded-xl bg-surface p-4">
+              <div className="rounded-2xl bg-surface p-4">
                 <div className="text-sm text-muted">Подключён аккаунт</div>
                 <div className="text-lg font-semibold">{st.user}</div>
                 <div className="pt-1 text-xs text-dim">

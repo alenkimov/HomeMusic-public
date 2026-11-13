@@ -87,7 +87,7 @@ function OverviewTab({ u }: { u: AdminUserDetailOut }) {
       </div>
 
       <SectionTitle>Аккаунт</SectionTitle>
-      <dl className="mx-4 overflow-hidden rounded-xl bg-surface text-sm">
+      <dl className="mx-4 overflow-hidden rounded-2xl bg-surface text-sm">
         <Row k="Роль" v={u.is_admin ? 'Администратор' : 'Пользователь'} />
         <Row k="Приглашение" v={u.invite_note ?? (u.email ? 'нет, по почте' : '—')} />
         {u.email && <Row k="Почта" v={u.email} />}
@@ -101,7 +101,7 @@ function OverviewTab({ u }: { u: AdminUserDetailOut }) {
       {u.ai_months.length > 0 && (
         <>
           <SectionTitle>ИИ по месяцам</SectionTitle>
-          <dl className="mx-4 overflow-hidden rounded-xl bg-surface text-sm">
+          <dl className="mx-4 overflow-hidden rounded-2xl bg-surface text-sm">
             {u.ai_months.map((m) => (
               <Row key={m.month} k={monthLabel(m.month)} v={`${fmtUsd(m.cost_usd)} · ${m.requests} ${plural(m.requests, ['запрос', 'запроса', 'запросов'])}`} />
             ))}
@@ -112,7 +112,7 @@ function OverviewTab({ u }: { u: AdminUserDetailOut }) {
       {u.ai_recent.length > 0 && (
         <>
           <SectionTitle>Последние запросы к ИИ</SectionTitle>
-          <ul className="mx-4 overflow-hidden rounded-xl bg-surface text-sm">
+          <ul className="mx-4 overflow-hidden rounded-2xl bg-surface text-sm">
             {u.ai_recent.map((r, i) => (
               <li key={i} className="flex min-h-12 items-center gap-3 border-b border-line/60 px-4 py-2 last:border-0">
                 <span className="min-w-0 flex-1">
@@ -131,7 +131,7 @@ function OverviewTab({ u }: { u: AdminUserDetailOut }) {
       {u.recent_downloads.length > 0 && (
         <>
           <SectionTitle>Последние загрузки</SectionTitle>
-          <ul className="mx-4 overflow-hidden rounded-xl bg-surface text-sm">
+          <ul className="mx-4 overflow-hidden rounded-2xl bg-surface text-sm">
             {u.recent_downloads.map((d, i) => (
               <li key={i} className="flex min-h-12 items-center gap-3 border-b border-line/60 px-4 py-2 last:border-0">
                 <span className="min-w-0 flex-1">

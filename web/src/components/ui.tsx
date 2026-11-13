@@ -13,7 +13,7 @@ type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
 const VARIANTS: Record<Variant, string> = {
   primary: 'bg-accent text-on-accent hover:bg-accent-strong active:scale-[0.98] font-semibold disabled:bg-raised disabled:text-dim disabled:opacity-100',
-  secondary: 'bg-raised text-fg border border-line hover:bg-hover active:scale-[0.98]',
+  secondary: 'bg-raised text-fg hover:bg-hover active:scale-[0.98]',
   ghost: 'text-fg hover:bg-fg/5',
   danger: 'bg-danger/15 text-danger border border-danger/30 hover:bg-danger/25',
 };

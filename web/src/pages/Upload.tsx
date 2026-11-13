@@ -538,7 +538,7 @@ export function UploadPage() {
               onRemove={removeUpload}
             />
           ) : (
-          <div className="mx-4 mt-3 overflow-hidden rounded-xl bg-surface" role="table" aria-label="Файлы">
+          <div className="mx-4 mt-3 overflow-hidden rounded-2xl bg-surface" role="table" aria-label="Файлы">
             <div role="row" className="hidden grid-cols-[2.75rem_minmax(0,3fr)_minmax(0,2fr)_minmax(0,2fr)_3.5rem_3.5rem_2.75rem] items-center gap-1 border-b border-line/60 pr-1 text-xs text-dim md:grid">
               <Checkbox checked={allOn} onChange={(v) => setRows((prev) => Object.fromEntries(Object.entries(prev).map(([id, r]) => [id, { ...r, include: v }])))} label="Выбрать все файлы" />
               <span className="px-2">Название</span>
@@ -749,7 +749,7 @@ export function AfterImport({ count, like, onLike, playlists, onPlaylists, onPic
   );
   const nothing = !like && !playlists.length && !picked.length;
   return (
-    <div className={cx(className, 'flex flex-wrap items-center gap-x-1 gap-y-2 rounded-xl bg-surface px-3 py-2')}>
+    <div className={cx(className, 'flex flex-wrap items-center gap-x-1 gap-y-2 rounded-2xl bg-surface px-3 py-2')}>
       <span className="pr-2 text-sm text-muted">{label}</span>
       <IconButton icon="playlist" label="В «Любимое» и плейлисты" onClick={onPickPlaylists} className={like || playlists.length ? 'text-accent' : 'text-muted hover:text-fg'} />
       <IconButton icon="tag" label="Теги" onClick={() => openTagsPick(`${tracksWord(count)} — теги`, tagIds, onTags)} className={picked.length ? 'text-accent' : 'text-muted hover:text-fg'} />
@@ -827,7 +827,7 @@ function AlbumsView({ uploads, rows, known, setRow, patchRows, onRemove }: { upl
         const lib = none ? undefined : known[g.key];
         const open = !closed[g.key];
         return (
-          <section key={g.key} className="overflow-hidden rounded-xl bg-surface">
+          <section key={g.key} className="overflow-hidden rounded-2xl bg-surface">
             <div className={cx('flex items-center gap-2 py-2 pr-2', !on && 'opacity-50')}>
               <Checkbox checked={on === g.uploads.length} onChange={(v) => patchRows(ids, { include: v })} label={`Импортировать все файлы: ${g.title}`} />
               {withCover ? (

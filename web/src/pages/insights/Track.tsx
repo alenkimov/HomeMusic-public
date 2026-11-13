@@ -54,7 +54,7 @@ function Body({ t, facets }: { t: TasteTrackOut; facets: Array<{ id: string; art
   return (
     <>
       <div className="px-4">
-        <div className="rounded-xl bg-surface p-3">
+        <div className="rounded-2xl bg-surface p-3">
           <p className="font-mono text-[13px] leading-relaxed break-words">{t.formula}</p>
           <p className="mt-2 text-sm text-muted">{flags.join(' · ')}</p>
           <p className="mt-1 text-xs text-muted">

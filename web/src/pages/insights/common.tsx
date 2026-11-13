@@ -6,7 +6,7 @@ import { useRoute } from '../../lib/router';
 /** A number with its caption. */
 export function Tile({ value, label, hint }: { value: ReactNode; label: string; hint?: string }) {
   return (
-    <div className="min-w-0 rounded-xl bg-surface px-3 py-2.5" title={hint}>
+    <div className="min-w-0 rounded-2xl bg-surface px-3 py-2.5" title={hint}>
       <div className="truncate text-lg font-bold tabular-nums">{value}</div>
       <div className="truncate text-[11px] text-muted">{label}</div>
     </div>
@@ -35,7 +35,7 @@ export function Block({ title, right, children, className }: { title: ReactNode;
         <h2 className="text-base font-bold">{title}</h2>
         {right}
       </div>
-      <div className="rounded-xl bg-surface p-3">{children}</div>
+      <div className="rounded-2xl bg-surface p-3">{children}</div>
     </section>
   );
 }
