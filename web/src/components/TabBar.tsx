@@ -4,6 +4,9 @@ import { useActiveDownloads } from '../lib/notify';
 import { Icon, type IconName } from './Icon';
 import { cx } from './ui';
 
+/** «Поиск» was tapped while it is open: `pages/Search.tsx` puts the cursor into its field. */
+export const FOCUS_SEARCH = 'hm:focus-search';
+
 export type Tab = 'home' | 'search' | 'downloads' | 'library' | 'assistant' | 'more';
 
 /** Only a plain browser draws it (inside the app the app's tabs open the routes): what is listened to — «Главная»,
@@ -36,6 +39,9 @@ export function TabBar({ active: routeTab, last }: { active: Tab | null; last: P
               <Link
                 to={on ? t.to : (last[t.id] ?? t.to)}
                 aria-current={on ? 'page' : undefined}
+                // «Поиск» tapped again (the second tap of a double one): the field takes the cursor and the keyboard
+                // comes up. Said within the tap itself — a phone opens its keyboard only for a touch
+                onClick={t.id === 'search' && on ? () => window.dispatchEvent(new Event(FOCUS_SEARCH)) : undefined}
                 className={cx('relative flex h-16 flex-col items-center justify-center gap-1 text-[11px] transition-colors', on ? 'text-fg' : 'text-muted/70 hover:text-muted')}
               >
                 <span className="relative">

@@ -15,6 +15,7 @@ import { useAsync, useDebounced, useRememberScrollX, type AsyncState } from '../
 import { extendQueue, markQueued, useListen } from '../lib/listen';
 import { canPlay, canPlayAll, playList } from '../lib/player';
 import { Link, enc, navigate } from '../lib/router';
+import { FOCUS_SEARCH } from '../components/TabBar';
 import { startChatWith } from './AssistantChat';
 
 export type SearchTab = 'catalog' | 'files' | 'reuploads';
@@ -41,6 +42,15 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
     setQ((cur) => (cur.trim() === initialQuery ? cur : initialQuery));
   }, [initialQuery]);
   useEffect(() => setTab(initialTab), [initialTab]);
+
+  useEffect(() => {
+    const focus = () => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    };
+    window.addEventListener(FOCUS_SEARCH, focus);
+    return () => window.removeEventListener(FOCUS_SEARCH, focus);
+  }, []);
 
   useEffect(() => {
     if (!initialQuery) inputRef.current?.focus();
