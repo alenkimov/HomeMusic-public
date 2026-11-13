@@ -1,12 +1,14 @@
 import { askForQueue } from '../lib/playerQueue';
 import { tagKey } from '../lib/tags';
-import { useState, type CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
 import { fmtDuration, providerLabel } from '../lib/format';
-import { cycleRepeat, cycleShuffle, hasNext, hasPrev, next, prev, seek, setVolume, toggle, useListen } from '../lib/listen';
+import { cycleRepeat, cycleShuffle, hasNext, hasPrev, next, prev, setVolume, toggle, useListen } from '../lib/listen';
+import { useSeek } from '../lib/seek';
 import { Link } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
 import { Icon } from './Icon';
 import { SaveButton } from './PlaylistsButton';
+import { SeekLine } from './SeekLine';
 import { TrackMenuButton } from './TrackMenu';
 import { Cover, IconButton, Spinner, cx } from './ui';
 
@@ -28,21 +30,16 @@ export function DesktopPlayer() {
   const onWave = useListen((s) => s.context.startsWith('wave:'));
   const canNext = useListen((s) => hasNext(s) || (s.repeat === 'all' && !s.context.startsWith('wave:')));
   const canPrev = useListen(hasPrev);
-  const [scrub, setScrub] = useState<number | null>(null);
+  const { shownPos, aim, aimPct, range } = useSeek(position, duration);
 
   const waiting = phase === 'resolving' || phase === 'loading';
   const playing = phase === 'playing' || waiting;
   const status = phase === 'error' ? error : phase === 'resolving' && !info ? 'Ищу файл…' : waiting ? 'Загрузка…' : null;
   const source = info?.kind === 'full' ? providerLabel(info.provider) : null;
-  const shownPos = scrub ?? Math.min(position, duration || position);
-  const pct = duration ? Math.min(100, (shownPos / duration) * 100) : 0;
-  const commit = () => {
-    if (scrub !== null) seek(scrub);
-    setScrub(null);
-  };
 
   return (
     <div className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-line bg-bg" role="region" aria-label="Плеер">
+      <SeekLine aim={aim} refId={track?.ref} songId={info?.nd_song_id ?? track?.nd_song_id} className="absolute bottom-full left-1/2 mb-3 w-[min(90vw,40rem)] -translate-x-1/2" />
       <div className="grid h-(--tabbar-h) grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] items-center gap-4 px-4">
         <div className="flex min-w-0 items-center gap-1">
           {track ? (
@@ -103,21 +100,15 @@ export function DesktopPlayer() {
           </div>
           <div className="flex w-full items-center gap-2 text-[11px] tabular-nums text-muted">
             <span className="w-9 shrink-0 text-right">{track ? fmtDuration(shownPos) || '0:00' : ''}</span>
-            <input
-              type="range"
-              className="hm-range min-w-0 flex-1"
-              aria-label="Перемотка"
-              min={0}
-              max={Math.max(1, Math.round(duration))}
-              step={1}
-              value={Math.round(shownPos)}
-              disabled={!track || !duration || phase === 'resolving' || phase === 'error'}
-              style={{ '--p': `${pct}%` } as CSSProperties}
-              onChange={(e) => setScrub(Number(e.target.value))}
-              onPointerUp={commit}
-              onKeyUp={commit}
-              onBlur={commit}
-            />
+            <span className="relative flex min-w-0 flex-1">
+              <input {...range} className="hm-range min-w-0 flex-1" disabled={!track || !duration || phase === 'resolving' || phase === 'error'} />
+              {/* the time aimed at goes with the handle (the eye is there anyway); the line of the text stands still, above */}
+              {aim !== null && (
+                <span className="pointer-events-none absolute bottom-full mb-0.5 -translate-x-1/2 rounded bg-fg px-1.5 py-px text-bg" style={{ left: `calc(6px + (100% - 12px) * ${aimPct / 100})` }}>
+                  {fmtDuration(aim) || '0:00'}
+                </span>
+              )}
+            </span>
             <span className="w-9 shrink-0">{track ? fmtDuration(duration) || '–:––' : ''}</span>
           </div>
         </div>

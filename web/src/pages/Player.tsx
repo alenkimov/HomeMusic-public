@@ -1,5 +1,5 @@
 import { tagKey } from '../lib/tags';
-import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
@@ -9,6 +9,8 @@ import { TrackMenuButton } from '../components/TrackMenu';
 import { Cover, Empty, IconButton, Sheet, Spinner, cx } from '../components/ui';
 import { fmtDuration, providerLabel, tracksWord } from '../lib/format';
 import { queueAsked } from '../lib/playerQueue';
+import { useSeek } from '../lib/seek';
+import { SeekLine } from '../components/SeekLine';
 import {
   cycleRepeat,
   cycleShuffle,
@@ -21,7 +23,6 @@ import {
   playQueueAt,
   prev,
   removeFromQueue,
-  seek,
   toggle,
   useListen,
   type ListenTrack,
@@ -60,7 +61,7 @@ export function PlayerPage() {
   const dl = useListen((s) => (s.track ? s.downloads.get(s.track.ref) : undefined));
   const canNext = useListen((s) => hasNext(s) || (s.repeat === 'all' && !s.context.startsWith('wave:')));
   const canPrev = useListen(hasPrev);
-  const [scrub, setScrub] = useState<number | null>(null);
+  const { shownPos, aim, dragging, range } = useSeek(position, duration);
   const [busy, setBusy] = useState(false);
   const [lyrics, setLyrics] = useState(() => {
     try {
@@ -126,12 +127,6 @@ export function PlayerPage() {
   const owned = info?.kind === 'library';
   // where the sound comes from is said only when it is not the library's own file (the usual case needs no words)
   const source = info?.kind === 'full' ? `${providerLabel(info.provider)} · не из библиотеки` : info?.kind === 'preview' ? 'превью 30 сек' : null;
-  const shownPos = scrub ?? Math.min(position, duration || position);
-  const pct = duration ? Math.min(100, (shownPos / duration) * 100) : 0;
-  const commit = () => {
-    if (scrub !== null) seek(scrub);
-    setScrub(null);
-  };
   const download = async () => {
     setBusy(true);
     await downloadRef(track.ref);
@@ -235,22 +230,10 @@ export function PlayerPage() {
         </div>
       )}
 
-      <div className="px-6 pt-4">
-        <input
-          type="range"
-          className="hm-range w-full"
-          aria-label="Перемотка"
-          min={0}
-          max={Math.max(1, Math.round(duration))}
-          step={1}
-          value={Math.round(shownPos)}
-          disabled={!duration || phase === 'resolving' || phase === 'error'}
-          style={{ '--p': `${pct}%` } as CSSProperties}
-          onChange={(e) => setScrub(Number(e.target.value))}
-          onPointerUp={commit}
-          onKeyUp={commit}
-          onBlur={commit}
-        />
+      <div className="relative px-6 pt-4">
+        {/* the line aimed at, over the bar — unless the text itself is on the screen and goes there with the handle */}
+        <SeekLine aim={textShown && dragging ? null : aim} refId={track.ref} songId={info?.nd_song_id ?? track.nd_song_id} time className="absolute inset-x-6 bottom-full -mb-2" />
+        <input {...range} className="hm-range w-full" disabled={!duration || phase === 'resolving' || phase === 'error'} />
         <div className="flex justify-between pt-1 text-xs tabular-nums text-muted">
           <span>{fmtDuration(shownPos) || '0:00'}</span>
           <span className={cx('truncate px-2', phase === 'error' && 'text-danger')}>

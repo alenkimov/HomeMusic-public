@@ -1,7 +1,9 @@
+import { useSeek } from '../lib/seek';
+import { SeekLine } from './SeekLine';
 import { tagKey } from '../lib/tags';
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { fmtDuration, providerLabel } from '../lib/format';
-import { downloadRef, hasNext, hasPrev, next, prev, seek, setVolume, stopListening, toggle, useListen } from '../lib/listen';
+import { downloadRef, hasNext, hasPrev, next, prev, setVolume, stopListening, toggle, useListen } from '../lib/listen';
 import { STANDALONE } from '../lib/embedded';
 import { addRec, hideRec } from '../lib/smartShuffle';
 import { Link, enc } from '../lib/router';
@@ -28,7 +30,7 @@ export function MiniPlayer() {
   const canPrev = useListen(hasPrev);
   const onWave = useListen((s) => s.context.startsWith('wave:'));
   const [busy, setBusy] = useState(false);
-  const [scrub, setScrub] = useState<number | null>(null);
+  const { shownPos, aim, range } = useSeek(position, duration);
   const box = useRef<HTMLDivElement>(null);
   const shown = !!track;
 
@@ -60,12 +62,6 @@ export function MiniPlayer() {
           ? 'Загрузка…'
           : null;
   const source = info?.kind === 'full' ? providerLabel(info.provider) : owned ? 'из библиотеки' : null;
-  const shownPos = scrub ?? Math.min(position, duration || position);
-  const pct = duration ? Math.min(100, (shownPos / duration) * 100) : 0;
-  const commit = () => {
-    if (scrub !== null) seek(scrub);
-    setScrub(null);
-  };
 
   const download = async () => {
     setBusy(true);
@@ -103,6 +99,7 @@ export function MiniPlayer() {
 
   return (
     <div ref={box} className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-40 mx-auto max-w-(--app-w) px-2 pb-2" role="region" aria-label="Прослушивание">
+      <SeekLine aim={aim} refId={track.ref} songId={info?.nd_song_id ?? track.nd_song_id} time className="absolute inset-x-2 bottom-full mb-1" />
       <div className="anim-up overflow-hidden rounded-xl border border-line bg-raised/95 shadow-2xl backdrop-blur">
         <div className="flex items-center gap-2 py-1.5 pl-2 pr-1">
           {STANDALONE ? (
@@ -164,21 +161,7 @@ export function MiniPlayer() {
         <div className="flex items-center gap-2 pb-1 pl-1 pr-1 text-[11px] tabular-nums text-muted">
           <IconButton icon="prev" label={canPrev ? 'Предыдущий трек' : 'Сначала'} onClick={prev} size={16} className="h-8 w-8 text-muted" />
           <span className="w-9 shrink-0 text-right">{fmtDuration(shownPos) || '0:00'}</span>
-          <input
-            type="range"
-            className="hm-range min-w-0 flex-1"
-            aria-label="Перемотка"
-            min={0}
-            max={Math.max(1, Math.round(duration))}
-            step={1}
-            value={Math.round(shownPos)}
-            disabled={!duration || phase === 'resolving' || phase === 'error'}
-            style={{ '--p': `${pct}%` } as CSSProperties}
-            onChange={(e) => setScrub(Number(e.target.value))}
-            onPointerUp={commit}
-            onKeyUp={commit}
-            onBlur={commit}
-          />
+          <input {...range} className="hm-range min-w-0 flex-1" disabled={!duration || phase === 'resolving' || phase === 'error'} />
           <span className="w-9 shrink-0">{fmtDuration(duration) || '–:––'}</span>
           <IconButton icon="next" label="Следующий трек" onClick={() => void next()} disabled={!canNext} size={16} className="h-8 w-8 text-muted" />
         </div>

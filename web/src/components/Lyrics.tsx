@@ -1,3 +1,5 @@
+import { useScrubAt } from '../lib/seek';
+import { knownLyrics, loadLyrics, putLyrics } from '../lib/trackLyrics';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, errorMessage } from '../api/client';
 import { seek, useListen } from '../lib/listen';
@@ -16,8 +18,14 @@ const HOLD_MS = 4000; // after the user scrolls the text themselves it stays whe
  * lyrics» (out of the way: it is not «hide»; the mic button of the player hides). A text switched off comes back
  * with «Вернуть текст». */
 export function Lyrics({ refId, songId }: { refId: string; songId?: string | null }) {
-  const [data, setData] = useState<LyricsOut | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setShown] = useState<LyricsOut | null>(() => knownLyrics(refId, songId) ?? null);
+  // the text as it is now is the one every other place shows too (the line over the seek bar)
+  const setData = (r: LyricsOut) => {
+    setShown(r);
+    putLyrics(refId, songId, r);
+  };
+  const scrubAt = useScrubAt(); // the seek bar's handle is being dragged: the text goes where it is
+  const [loading, setLoading] = useState(() => !knownLyrics(refId, songId));
   const [picking, setPicking] = useState(false);
   // the translation: asked for when it is on, for this text, in the listener's language (lib/lyrics.ts)
   const prefs = useTranslatePrefs();
@@ -49,12 +57,14 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    setData(null);
-    api.lyrics({ nd_song_id: songId ?? null, ref: refId })
-      .then((r) => alive && setData(r))
-      .catch(() => alive && setData(null))
-      .finally(() => alive && setLoading(false));
+    const have = knownLyrics(refId, songId) ?? null;
+    setShown(have);
+    setLoading(!have);
+    void loadLyrics(refId, songId).then((r) => {
+      if (!alive) return;
+      setShown(r);
+      setLoading(false);
+    });
     return () => {
       alive = false;
     };
@@ -85,21 +95,22 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
 
   const lines = useMemo<LyricsLine[]>(() => data?.lines ?? [], [data]);
   const offset = data?.offset_ms ?? 0;
-  const at = timed ? activeLine(lines, ms - offset) : -1;
-  const pause = timed ? breakAt(lines, at, ms - offset) : null;
+  const now = scrubAt !== null ? scrubAt * 1000 : ms;
+  const at = timed ? activeLine(lines, now - offset) : -1;
+  const pause = timed ? breakAt(lines, at, now - offset) : null;
   const reading = data?.reading ?? null;
   const latin = look.reading ? reading?.lines : undefined;
   const ruby = look.furigana ? reading?.ruby : undefined;
 
   useEffect(() => {
-    if (at < 0 || performance.now() < held.current) return;
+    if (at < 0 || (scrubAt === null && performance.now() < held.current)) return;
     // only the text's own box is scrolled: `scrollIntoView` would move the whole page too, once the last lines cannot
     // be centred inside the box
     const el = box.current?.querySelector<HTMLElement>(`[data-line="${at}"]`);
     if (!box.current || !el) return;
     const frame = box.current.getBoundingClientRect();
     const line = el.getBoundingClientRect();
-    box.current.scrollTo({ top: box.current.scrollTop + line.top - frame.top - (frame.height - line.height) / 2, behavior: 'smooth' });
+    box.current.scrollTo({ top: box.current.scrollTop + line.top - frame.top - (frame.height - line.height) / 2, behavior: scrubAt === null ? 'smooth' : 'auto' });
   }, [at]);
 
   const shift = (by: number) => {
@@ -233,7 +244,7 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
                       i === at && !pause ? 'scale-100 text-fg' : 'scale-[0.97] text-fg/40 hover:text-fg/70',
                     )}
                   >
-                    {replace && tl?.[i] ? tl[i] : i === at && ln.words && !pause ? <Words line={ln} ms={ms - offset} /> : ruby?.[i]?.length ? <Ruby pieces={ruby[i]} /> : ln.text || '♪'}
+                    {replace && tl?.[i] ? tl[i] : i === at && ln.words && !pause ? <Words line={ln} ms={now - offset} /> : ruby?.[i]?.length ? <Ruby pieces={ruby[i]} /> : ln.text || '♪'}
                     {latin?.[i] && <span className="mt-0.5 block text-sm font-medium leading-snug tracking-wide text-fg/55">{latin[i]}</span>}
                     {!replace && tl?.[i] && <span className="mt-0.5 block text-base font-semibold leading-snug text-fg/60">{tl[i]}</span>}
                   </button>
