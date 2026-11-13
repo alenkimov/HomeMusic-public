@@ -219,6 +219,7 @@
     --color-raised: #272727;
     --color-hover: #303030;
     background: var(--color-bg);
+    overflow-x: clip; /* what is wider than the panel (the wave's glow) ends at its edge; the window does not scroll sideways */
   }
 }
 
