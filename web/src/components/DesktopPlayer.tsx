@@ -1,5 +1,5 @@
 import { askForQueue } from '../lib/playerQueue';
-import { tagKey } from '../lib/tags';
+import { openTagsSheet, tagKey } from '../lib/tags';
 import type { CSSProperties } from 'react';
 import { fmtDuration, providerLabel } from '../lib/format';
 import { cycleRepeat, cycleShuffle, hasNext, hasPrev, next, prev, setVolume, toggle, useListen } from '../lib/listen';
@@ -37,6 +37,7 @@ export function DesktopPlayer() {
   const status = phase === 'error' ? error : phase === 'resolving' && !info ? 'Ищу файл…' : waiting ? 'Загрузка…' : null;
   const source = info?.kind === 'full' ? providerLabel(info.provider) : null;
 
+  const trackTags = track ? tagKey({ library_track_id: info?.track_id ?? track.library_track_id }) : null;
   return (
     <div className="pb-safe fixed inset-x-0 bottom-0 z-40 bg-bg" role="region" aria-label="Плеер">
       <SeekLine aim={aim} refId={track?.ref} songId={info?.nd_song_id ?? track?.nd_song_id} className="absolute bottom-full left-1/2 mb-3 w-[min(90vw,40rem)] -translate-x-1/2" />
@@ -114,8 +115,19 @@ export function DesktopPlayer() {
         </div>
 
         <div className="flex min-w-0 items-center justify-end gap-1">
-          {track && <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id, library_track_id: info?.track_id ?? track.library_track_id }} className="!h-9 !w-9" inPlayer lean />}
+          {track && <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id, library_track_id: info?.track_id ?? track.library_track_id }} className="!h-9 !w-9" inPlayer lean noTags />}
           {track && <IconButton icon="share" size={18} label="Поделиться" onClick={() => openShare({ title: track.title, artist: track.artist, ref: track.ref, nd_song_id: info?.nd_song_id })} className="!h-9 !w-9 text-muted hover:text-fg" />}
+          {/* the tags of the track: its own mark here, not a line of ⋯ (a track the library has not got has none) */}
+          {track && (
+            <IconButton
+              icon="tag"
+              size={18}
+              label={trackTags ? 'Теги' : 'Теги появятся, когда трек будет в библиотеке'}
+              disabled={!trackTags}
+              onClick={() => trackTags && openTagsSheet([trackTags], track.title)}
+              className="!h-9 !w-9 text-muted hover:text-fg"
+            />
+          )}
           <Link to="/player" onClick={askForQueue} title="Очередь" aria-label="Очередь" className={cx('flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg', !track && 'pointer-events-none opacity-40')}>
             <Icon name="queue" size={20} />
           </Link>
