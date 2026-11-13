@@ -58,6 +58,7 @@ const PATHS = {
   share: 'M12 15V3m0 0L8 7m4-4 4 4M8 10H6.5A1.5 1.5 0 0 0 5 11.5v8A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-8a1.5 1.5 0 0 0-1.5-1.5H16',
   transfer: 'M4 8h13m0 0-4-4m4 4-4 4M20 16H7m0 0 4-4m-4 4 4 4',
   chart: 'M5 20v-8M12 20V4M19 20v-11',
+  grip: 'M5 9h14M5 15h14',
 } as const;
 
 export type IconName = keyof typeof PATHS;

@@ -1,17 +1,20 @@
 import { tagKey } from '../lib/tags';
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
+import { LikeButton } from '../components/LikeButton';
 import { Lyrics } from '../components/Lyrics';
 import { setLyricsLook, useLyricsLook } from '../lib/lyrics';
 import { SaveButton } from '../components/PlaylistsButton';
 import { TrackMenuButton } from '../components/TrackMenu';
-import { Cover, Empty, IconButton, Spinner, cx } from '../components/ui';
-import { fmtDuration, providerLabel } from '../lib/format';
+import { Cover, Empty, IconButton, Sheet, Spinner, cx } from '../components/ui';
+import { fmtDuration, providerLabel, tracksWord } from '../lib/format';
+import { queueAsked } from '../lib/playerQueue';
 import {
   cycleRepeat,
   cycleShuffle,
   downloadRef,
+  getListenState,
   hasNext,
   hasPrev,
   moveInQueue,
@@ -28,9 +31,19 @@ import { Link, enc, goBack } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
 import { addRec, hideRec } from '../lib/smartShuffle';
 
-/** The full player of the PWA in a plain browser (`/player`, from a tap on the mini player): the big cover, seek,
- * shuffle / repeat, ♥, ⋯ and the queue — a tap plays a track, ↑ moves it up, × takes it out. Inside the app the
- * player is the app's own. */
+const WIDE = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(min-width: 1024px)') : null;
+const watchWide = (cb: () => void) => {
+  WIDE?.addEventListener('change', cb);
+  return () => WIDE?.removeEventListener('change', cb);
+};
+/** A window wide enough for two columns (Tailwind's `lg`). */
+const useWide = () => useSyncExternalStore(watchWide, () => !!WIDE?.matches, () => false);
+
+/** The full player of the PWA in a plain browser (`/player`, from a tap on the mini player): the big cover (or the
+ * text in its place), ♥, seek, the controls; under them ⋯ on the left, «Поделиться» and the queue's button on the
+ * right; below — «Участники»: who plays it, a tap away from their pages and their ♥. The queue is shown when asked
+ * for: a sheet from below on a phone, the right column on a wide screen (where the text or «Участники» otherwise
+ * are). Inside the app the player is the app's own. */
 export function PlayerPage() {
   const track = useListen((s) => s.track);
   const phase = useListen((s) => s.phase);
@@ -58,6 +71,8 @@ export function PlayerPage() {
     }
   });
   const look = useLyricsLook();
+  const wide = useWide();
+  const [queueOpen, setQueueOpen] = useState(queueAsked);
   // «Во весь экран» (the text's «Вид»): the page takes the whole screen and keeps it awake; leaving the whole screen
   // any way (Esc, the system's gesture) switches it off
   useEffect(() => {
@@ -117,9 +132,13 @@ export function PlayerPage() {
     setBusy(false);
   };
   const firstArtist = track.artists?.find((a) => a.ref);
+  // what the right column of a wide screen holds; a narrow one has the text in the cover's place and the queue in a sheet
+  const side = !wide ? null : queueOpen ? 'queue' : lyrics ? 'lyrics' : 'credits';
+  const credits = <Credits track={track} />;
+  const text = <Lyrics refId={track.ref} songId={info?.nd_song_id ?? track.nd_song_id} />;
 
   return (
-    <div className={cx('pt-safe relative isolate mx-auto flex min-h-dvh max-w-2xl flex-col', lyrics && 'lg:max-w-6xl')}>
+    <div className="pt-safe relative isolate mx-auto flex min-h-dvh max-w-2xl flex-col pb-[calc(24px+env(safe-area-inset-bottom))] lg:max-w-6xl">
       {(track.cover_small_url || track.cover_url) && (
         // the cover, blurred, as the page's own light
         <div aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
@@ -140,20 +159,29 @@ export function PlayerPage() {
       <div className="flex min-h-14 items-center gap-1 px-2">
         <IconButton icon="down" label="Свернуть" onClick={() => goBack('/home')} />
         <PlayingFrom context={context} page={page} />
-        <IconButton icon="share" label="Поделиться" onClick={() => openShare({ title: track.title, artist: track.artist, ref: track.ref, nd_song_id: info?.nd_song_id })} className="text-muted" />
         <IconButton icon="lyrics" label={lyrics ? 'Скрыть текст' : 'Показать текст'} aria-pressed={lyrics} onClick={toggleLyrics} className={lyrics ? '!text-accent' : 'text-muted'} />
       </div>
 
-      {/* with the text on: a wide screen has it to the right of the cover; where both don't fit, the text takes the
-          cover's place */}
-      <div className={cx(lyrics && 'lg:grid lg:grid-cols-[minmax(0,24rem)_minmax(0,1fr)] lg:items-start lg:gap-x-8 lg:px-4')}>
-        {lyrics && (
-          <div className={cx('min-h-72 px-3 pt-2 lg:sticky lg:top-2 lg:order-2 lg:h-[calc(100dvh-5.5rem)] lg:px-0', full ? 'h-[calc(100dvh-13rem)]' : 'h-[58dvh]')}>
-            <Lyrics refId={track.ref} songId={info?.nd_song_id ?? track.nd_song_id} />
+      <div className="lg:grid lg:grid-cols-[minmax(0,24rem)_minmax(0,1fr)] lg:items-start lg:gap-x-8 lg:px-4">
+        {side ? (
+          <div className={cx('order-2 min-w-0', side !== 'credits' && 'sticky top-2 h-[calc(100dvh-5.5rem)]')}>
+            {side === 'queue' ? (
+              <section aria-label="Очередь" className="flex h-full flex-col overflow-hidden rounded-2xl bg-surface">
+                <div className="flex items-center gap-2 pl-4 pr-1 pt-1">
+                  <h2 className="flex-1 text-lg font-bold">Очередь</h2>
+                  <IconButton icon="x" label="Закрыть очередь" onClick={() => setQueueOpen(false)} className="text-muted" />
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3">
+                  <QueueList queue={queue} index={index} onWave={onWave} shuffle={shuffle} />
+                </div>
+              </section>
+            ) : side === 'lyrics' ? text : credits}
           </div>
+        ) : (
+          lyrics && <div className={cx('min-h-72 px-3 pt-2', full ? 'h-[calc(100dvh-13rem)]' : 'h-[58dvh]')}>{text}</div>
         )}
         <div className="min-w-0">
-      <div className={cx('px-6 pt-2', lyrics && 'hidden lg:block')}>
+      <div className={cx('px-6 pt-2', lyrics && !wide && 'hidden')}>
         <Cover src={track.cover_url || track.cover_small_url} alt={track.title} className="mx-auto aspect-square w-full max-w-[22rem] shadow-2xl" />
       </div>
 
@@ -182,7 +210,6 @@ export function PlayerPage() {
             )}
           </div>
         </div>
-        <SaveButton songId={info?.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} size={26} />
         {/* a track that is not in the library yet can be downloaded into it; one that is needs no mark */}
         {owned || dl === 'done' ? null : dl ? (
           <span className="flex h-11 w-11 shrink-0 items-center justify-center text-info" title="Скачивается в библиотеку">
@@ -191,7 +218,7 @@ export function PlayerPage() {
         ) : (
           <IconButton icon="download" label="Скачать в библиотеку" onClick={download} busy={busy} />
         )}
-        <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id, library_track_id: info?.track_id ?? track.library_track_id }} inPlayer lean />
+        <SaveButton songId={info?.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} size={26} />
       </div>
 
       {track.rec && (
@@ -263,11 +290,57 @@ export function PlayerPage() {
           className={repeat !== 'off' ? '!text-accent' : 'text-muted'}
         />
       </div>
+
+      <div className="flex items-center justify-between px-4 pt-2">
+        <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id, library_track_id: info?.track_id ?? track.library_track_id }} inPlayer lean />
+        <div className="flex items-center">
+          <IconButton icon="share" label="Поделиться" onClick={() => openShare({ title: track.title, artist: track.artist, ref: track.ref, nd_song_id: info?.nd_song_id })} className="text-muted" />
+          <IconButton icon="queue" label={queueOpen ? 'Скрыть очередь' : 'Очередь'} aria-pressed={queueOpen} onClick={() => setQueueOpen((v) => !v)} className={queueOpen ? '!text-accent' : 'text-muted'} />
+        </div>
+      </div>
+      {side !== 'credits' && credits}
         </div>
       </div>
 
-      <Queue queue={queue} index={index} onWave={onWave} />
+      <Sheet open={queueOpen && !wide} onClose={() => setQueueOpen(false)} title="Очередь" footer={<QueueModes onWave={onWave} />}>
+        <QueueList queue={queue} index={index} onWave={onWave} shuffle={shuffle} />
+      </Sheet>
     </div>
+  );
+}
+
+/** «Участники»: who plays the track — each a link to their page, with their ♥ (to follow them). */
+function Credits({ track }: { track: ListenTrack }) {
+  const people = track.artists?.length ? track.artists : [{ name: track.artist, ref: track.artist_ref ?? undefined }];
+  return (
+    <section aria-label="Участники" className="mx-4 mt-5 rounded-2xl bg-surface px-4 pb-2 pt-3 lg:mx-0">
+      <h2 className="pb-1 text-base font-bold">Участники</h2>
+      <ul>
+        {people.map((a, i) => {
+          const who = (
+            <>
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-fg/10 text-muted">
+                <Icon name="user" size={20} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[15px]">{a.name}</span>
+                <span className="block text-[13px] text-muted">Исполнитель</span>
+              </span>
+            </>
+          );
+          return (
+            <li key={`${a.ref ?? a.name}:${i}`} className="flex min-h-14 items-center gap-1">
+              {a.ref ? (
+                <Link to={`/artist/${enc(a.ref)}`} className="flex min-w-0 flex-1 items-center gap-3 py-1.5 hover:underline">{who}</Link>
+              ) : (
+                <div className="flex min-w-0 flex-1 items-center gap-3 py-1.5">{who}</div>
+              )}
+              {a.ref && <LikeButton targetType="artist" refId={a.ref} title={a.name} data={{ name: a.name }} className="-mr-2" />}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
@@ -306,27 +379,65 @@ function contextLabel(context: string): string {
   )[context] ?? 'Сейчас играет';
 }
 
-function Queue({ queue, index, onWave }: { queue: readonly ListenTrack[]; index: number; onWave: boolean }) {
-  const current = useRef<HTMLLIElement>(null);
+/** The queue: the track that plays and what comes after it. A tap plays a track, × takes it out, the handle on the
+ * right drags it to another place — the order changes as it is dragged. */
+function QueueList({ queue, index, onWave, shuffle }: { queue: readonly ListenTrack[]; index: number; onWave: boolean; shuffle: boolean }) {
+  const list = useRef<HTMLUListElement>(null);
+  const ids = useRef(new WeakMap<ListenTrack, number>());
+  const lastId = useRef(0);
+  const [dragged, setDragged] = useState<string | null>(null);
   const upcoming = queue.length - index - 1;
-  // the current track's row in view once, not on every change of the queue
-  useEffect(() => {
-    current.current?.scrollIntoView({ block: 'nearest' });
-  }, []);
+  // a row keeps its key as it is moved (the same track may stand in the queue twice: then the keys are counted)
+  const seen = new Map<number, number>();
+  const keyOf = (t: ListenTrack) => {
+    let id = ids.current.get(t);
+    if (id === undefined) ids.current.set(t, (id = ++lastId.current));
+    const nth = seen.get(id) ?? 0;
+    seen.set(id, nth + 1);
+    return `${id}:${nth}`;
+  };
+
+  const grab = (e: ReactPointerEvent, key: string) => {
+    e.preventDefault();
+    setDragged(key);
+    const move = (ev: PointerEvent) => {
+      const ul = list.current;
+      if (!ul) return;
+      const box = ul.closest('.overflow-y-auto');
+      if (box) {
+        const r = box.getBoundingClientRect();
+        if (ev.clientY < r.top + 56) box.scrollTop -= 14;
+        else if (ev.clientY > r.bottom - 56) box.scrollTop += 14;
+      }
+      const rows = [...ul.querySelectorAll<HTMLElement>('li[data-i]')];
+      const own = rows.find((r) => r.dataset.k === key);
+      const over = rows.find((r) => {
+        const b = r.getBoundingClientRect();
+        return ev.clientY >= b.top && ev.clientY < b.bottom;
+      });
+      if (!own || !over) return;
+      const from = Number(own.dataset.i);
+      const to = Number(over.dataset.i);
+      if (to !== from && to > getListenState().index) moveInQueue(from, to); // never above the track that plays
+    };
+    const drop = () => {
+      setDragged(null);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', drop);
+      window.removeEventListener('pointercancel', drop);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', drop);
+    window.addEventListener('pointercancel', drop);
+  };
 
   return (
-    <section aria-label="Очередь" className="mt-6 flex-1 rounded-t-2xl bg-surface pb-[calc(16px+env(safe-area-inset-bottom))]">
-      <div className="flex items-center justify-between px-4 pb-1 pt-4">
-        <h2 className="text-lg font-bold">Далее</h2>
-        <span className="text-xs text-muted">{onWave ? 'Подбирается на ходу' : upcoming > 0 ? `${upcoming} в очереди` : 'Очередь закончится на этом треке'}</span>
-      </div>
-      <ul>
-        {queue.map((t, i) => (
-          <li
-            key={`${t.ref}:${i}`}
-            ref={i === index ? current : undefined}
-            className={cx('flex min-h-14 items-center gap-3 pl-4 pr-1', i < index && 'opacity-50', i === index && 'bg-fg/5')}
-          >
+    <ul ref={list} className={cx(dragged && 'select-none')}>
+      {queue.map((t, i) => {
+        if (i < index) return null;
+        const key = keyOf(t);
+        return (
+          <li key={key} data-i={i} data-k={key} className={cx('flex min-h-14 items-center gap-1 rounded-lg', dragged === key && 'bg-fg/10')}>
             <button type="button" onClick={() => playQueueAt(i)} className="flex min-w-0 flex-1 items-center gap-3 py-1.5 text-left" aria-label={`Слушать «${t.title}»`}>
               <Cover src={t.cover_small_url || t.cover_url} size={40} alt="" />
               <span className="min-w-0 flex-1">
@@ -341,12 +452,54 @@ function Queue({ queue, index, onWave }: { queue: readonly ListenTrack[]; index:
                 </span>
               </span>
             </button>
-            {i > index + 1 && <IconButton icon="back" label="Поднять выше" onClick={() => moveInQueue(i, i - 1)} size={18} className="w-9 rotate-90 text-muted" />}
-            {i !== index && <IconButton icon="x" label="Убрать из очереди" onClick={() => removeFromQueue(i)} size={18} className="w-9 text-muted" />}
-            <TrackMenuButton track={t} className="w-9" inPlayer />
+            {i !== index && (
+              <>
+                <IconButton icon="x" label="Убрать из очереди" onClick={() => removeFromQueue(i)} size={18} className="w-9 text-muted" />
+                <span
+                  role="button"
+                  aria-label={`Перетащить «${t.title}»`}
+                  title="Перетащить"
+                  onPointerDown={(e) => grab(e, key)}
+                  className="-mr-2 flex h-11 w-9 shrink-0 cursor-grab touch-none items-center justify-center text-muted hover:text-fg active:cursor-grabbing"
+                >
+                  <Icon name="grip" size={18} />
+                </span>
+              </>
+            )}
           </li>
-        ))}
-      </ul>
-    </section>
+        );
+      }).flatMap((row, i) =>
+        // between the track that plays and the rest: what comes next, and how much of it
+        i === index
+          ? [row, (
+              <li key="next" className="flex items-center gap-1.5 pb-1 pt-3 text-xs text-muted">
+                {shuffle && !onWave && <Icon name="shuffle" size={13} />}
+                {onWave ? 'Далее · подбирается на ходу' : upcoming > 0 ? `${shuffle ? 'Вперемешку' : 'Далее'} · ${tracksWord(upcoming)}` : 'Очередь закончится на этом треке'}
+              </li>
+            )]
+          : [row],
+      )}
+    </ul>
+  );
+}
+
+/** «Вперемешку» and «Повтор» at the foot of a phone's queue: the same switches as by the controls — here the new
+ * order is seen at once. */
+function QueueModes({ onWave }: { onWave: boolean }) {
+  const shuffle = useListen((s) => s.shuffle);
+  const smart = useListen((s) => s.smart);
+  const repeat = useListen((s) => s.repeat);
+  const btn = 'flex flex-1 flex-col items-center gap-1 rounded-xl bg-fg/5 py-2 text-xs font-medium transition active:scale-95 disabled:opacity-40';
+  return (
+    <div className="flex gap-2">
+      <button type="button" onClick={cycleShuffle} disabled={onWave} aria-pressed={shuffle} className={cx(btn, shuffle && !onWave ? 'text-accent' : 'text-muted')}>
+        <Icon name={smart ? 'shuffleSmart' : 'shuffle'} size={20} />
+        {smart ? 'Умное перемешивание' : 'Вперемешку'}
+      </button>
+      <button type="button" onClick={cycleRepeat} disabled={onWave && repeat !== 'one'} aria-pressed={repeat !== 'off'} className={cx(btn, repeat !== 'off' ? 'text-accent' : 'text-muted')}>
+        <Icon name={repeat === 'one' ? 'repeat1' : 'repeat'} size={20} />
+        {repeat === 'one' ? 'Повтор трека' : repeat === 'all' ? 'Повтор очереди' : 'Повтор'}
+      </button>
+    </div>
   );
 }

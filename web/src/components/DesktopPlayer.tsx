@@ -1,3 +1,4 @@
+import { askForQueue } from '../lib/playerQueue';
 import { tagKey } from '../lib/tags';
 import { useState, type CSSProperties } from 'react';
 import { fmtDuration, providerLabel } from '../lib/format';
@@ -124,7 +125,7 @@ export function DesktopPlayer() {
         <div className="flex min-w-0 items-center justify-end gap-1">
           {track && <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id, library_track_id: info?.track_id ?? track.library_track_id }} className="!h-9 !w-9" inPlayer lean />}
           {track && <IconButton icon="share" size={18} label="Поделиться" onClick={() => openShare({ title: track.title, artist: track.artist, ref: track.ref, nd_song_id: info?.nd_song_id })} className="!h-9 !w-9 text-muted hover:text-fg" />}
-          <Link to="/player" title="Очередь" aria-label="Очередь" className={cx('flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg', !track && 'pointer-events-none opacity-40')}>
+          <Link to="/player" onClick={askForQueue} title="Очередь" aria-label="Очередь" className={cx('flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg', !track && 'pointer-events-none opacity-40')}>
             <Icon name="queue" size={20} />
           </Link>
           <Icon name="volume" size={18} className="ml-1 shrink-0 text-muted" />
