@@ -279,11 +279,14 @@ export function Segmented<T extends string>({
   options,
   onChange,
   label,
+  after,
 }: {
   value: T;
   options: Array<{ value: T; label: string }>;
   onChange: (v: T) => void;
   label: string;
+  /** one more thing in the row, after the choices (it scrolls with them) */
+  after?: ReactNode;
 }) {
   return (
     <div role="tablist" aria-label={label} className="flex gap-2 overflow-x-auto no-scrollbar">
@@ -302,6 +305,7 @@ export function Segmented<T extends string>({
           {o.label}
         </button>
       ))}
+      {after}
     </div>
   );
 }

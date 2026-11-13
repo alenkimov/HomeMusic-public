@@ -28,6 +28,7 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
   const dq = useDebounced(q.trim(), 400);
   const inputRef = useRef<HTMLInputElement>(null);
   const shots = useRef<HTMLInputElement>(null);
+  const [nothing, setNothing] = useState(false); // the search that is on the screen found nothing
   // the assistant is the same search, asked in one's own words (or with a screenshot): one button away, never guessed
   const ask = (images: File[] = []) => startChatWith(q.trim() || (images.length ? 'Найди и скачай треки с этих скриншотов' : ''), images, false);
 
@@ -102,7 +103,7 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
         </div>
         {/* where to search is asked only once there is something to search for */}
         {q.trim() && (
-          <div className="no-scrollbar mt-3 flex items-center gap-2 overflow-x-auto">
+          <div className="mt-3">
             <Segmented<SearchTab>
               label="Где искать"
               value={tab}
@@ -112,13 +113,14 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
                 { value: 'files', label: 'Файлы' },
                 { value: 'reuploads', label: 'Без цензуры' },
               ]}
+              // nothing was found: one more place to ask, the fourth in the row — the assistant
+              after={STANDALONE && nothing && (
+                <button type="button" onClick={() => ask()} className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-full bg-raised px-4 text-sm hover:bg-hover">
+                  <Icon name="sparkle" size={16} className="text-accent" />
+                  Спросить ассистента
+                </button>
+              )}
             />
-            {STANDALONE && (
-              <button type="button" onClick={() => ask()} className="ml-auto flex min-h-9 shrink-0 items-center gap-1.5 rounded-full bg-raised px-4 text-sm hover:bg-hover">
-                <Icon name="sparkle" size={16} className="text-accent" />
-                Спросить ассистента
-              </button>
-            )}
           </div>
         )}
       </header>
@@ -126,11 +128,11 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
       {!dq ? (
         <RecentSearches onPick={setQ} />
       ) : tab === 'catalog' ? (
-        <CatalogResults q={dq} />
+        <CatalogResults q={dq} onNothing={setNothing} />
       ) : tab === 'files' ? (
-        <ProviderResults q={dq} />
+        <ProviderResults q={dq} onNothing={setNothing} />
       ) : (
-        <ReuploadResults q={dq} />
+        <ReuploadResults q={dq} onNothing={setNothing} />
       )}
     </div>
   );
@@ -338,7 +340,15 @@ function useMoreTracks(q: string, first: SearchOut | undefined) {
   return { tracks, trigger, sentinel, loading: cur.loading, failed: cur.failed, loadMore };
 }
 
-function CatalogResults({ q }: { q: string }) {
+/** Says to the page whether the search on the screen found nothing (and takes it back when it leaves the screen). */
+function useNothing(nothing: boolean, tell: (nothing: boolean) => void) {
+  useEffect(() => {
+    tell(nothing);
+    return () => tell(false);
+  }, [nothing, tell]);
+}
+
+function CatalogResults({ q, onNothing }: { q: string; onNothing: (nothing: boolean) => void }) {
   const res = useAsync((s) => api.search(q, s).then((out) => ({ q, out })), [q]);
   const fresh = res.data?.q === q ? res.data.out : peekCache<SearchOut>(withQuery('/api/search', { q }));
   // while a new search loads, the results of the previous one stay on screen
@@ -346,6 +356,7 @@ function CatalogResults({ q }: { q: string }) {
   const more = useMoreTracks(dataQ, data);
   const artistsRow = useRememberScrollX(`search:${q}:artists`);
   const albumsRow = useRememberScrollX(`search:${q}:albums`);
+  useNothing(!!data && dataQ === q && !res.error && !data.library.length && !data.artists.length && !data.albums.length && !data.tracks.length, onNothing);
   if (res.loading && !data) return <SkeletonRows n={8} />;
   if (res.error) return <ErrorState text={res.error} onRetry={() => res.reload()} />;
   if (!data) return null;
@@ -465,8 +476,9 @@ function LibraryTrackRow({ t, onPlay }: { t: LibTrackOut; onPlay?: () => void })
 }
 
 /** Raw files from the regular sources. */
-function ProviderResults({ q }: { q: string }) {
+function ProviderResults({ q, onNothing }: { q: string; onNothing: (nothing: boolean) => void }) {
   const res = useAsync<ProviderSearchOut>((s) => api.searchProviders(q, s, 'sources'), [q]);
+  useNothing(!res.loading && !!res.data && !res.data.candidates.length, onNothing);
   return (
     <div className="pb-4">
       <p className="px-4 pt-1 text-xs text-muted">Сырые файлы из hitmoz, hitmos.fm и YouTube. Выберите конкретный файл, если автоматический выбор не подходит; ▷ — послушать его до скачивания.</p>
@@ -476,8 +488,9 @@ function ProviderResults({ q }: { q: string }) {
 }
 
 /** Re-uploads by small channels (slower: SoundCloud answers in ~7 s). */
-function ReuploadResults({ q }: { q: string }) {
+function ReuploadResults({ q, onNothing }: { q: string; onNothing: (nothing: boolean) => void }) {
   const res = useAsync<ProviderSearchOut>((s) => api.searchProviders(q, s, 'reuploads'), [q]);
+  useNothing(!res.loading && !!res.data && !res.data.candidates.length, onNothing);
   return (
     <div className="pb-4">
       <p className="px-4 pt-1 text-xs text-muted">
