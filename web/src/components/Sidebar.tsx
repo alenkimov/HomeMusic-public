@@ -81,10 +81,8 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
       </nav>
       <div className="flex min-h-0 flex-1 flex-col rounded-2xl bg-surface">
       <div className="flex items-center gap-1 px-3 pb-1 pt-3 text-xs text-dim">
-        <span className="flex-1 font-semibold uppercase tracking-wide">Моя медиатека</span>
-        <Link to="/playlists" title="Создать плейлист" aria-label="Создать плейлист" className="flex h-7 w-7 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg">
-          <Icon name="plus" size={18} />
-        </Link>
+        {/* the page of playlists: all of them, and a new one is made there */}
+        <Link to="/playlists" className="flex h-7 flex-1 items-center font-semibold uppercase tracking-wide hover:text-fg">Плейлисты</Link>
       </div>
       <div className="no-scrollbar min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2 pt-0">
         <div className="group relative">
