@@ -1,5 +1,4 @@
 import { api } from '../api/client';
-import { Icon, type IconName } from '../components/Icon';
 import { ReleaseTile } from './Releases';
 import { WaveHero } from '../components/WaveHero';
 import { ErrorState, SectionTitle, Spinner } from '../components/ui';
@@ -10,7 +9,7 @@ import { AlbumRow, ArtistRow } from './MediaLibrary';
 import { TastePrompt } from './Mix';
 
 /** «Главная» of the PWA in a plain browser (`STANDALONE`): «Моя волна», what the followed artists have released,
- * shortcuts to the library, «Радиостанции» (a wave by a library artist, liked ones first) and rows of albums
+ * «Радиостанции» (a wave by a library artist, liked ones first) and rows of albums
  * Navidrome knows the user plays. Inside the app this is its native home screen. */
 export function HomePage() {
   const res = useAsync((s) => api.ndHome(s), []);
@@ -22,10 +21,6 @@ export function HomePage() {
       <WaveHero />
       <TastePrompt />
       <NewReleases />
-      <div className="grid grid-cols-2 gap-2 px-4 pt-3">
-        <Shortcut to="/artists" icon="user" title="Исполнители" />
-        <Shortcut to="/lib/albums" icon="disc" title="Все альбомы" />
-      </div>
 
       {res.loading ? (
         <div className="flex justify-center py-10">
@@ -68,14 +63,5 @@ function NewReleases() {
         ))}
       </div>
     </section>
-  );
-}
-
-function Shortcut({ to, icon, title }: { to: string; icon: IconName; title: string }) {
-  return (
-    <Link to={to} className="flex min-h-14 items-center gap-2.5 rounded-2xl bg-surface px-3.5 py-2 text-sm font-semibold transition hover:bg-raised">
-      <Icon name={icon} size={20} className="shrink-0 text-accent" />
-      <span className="truncate">{title}</span>
-    </Link>
   );
 }
