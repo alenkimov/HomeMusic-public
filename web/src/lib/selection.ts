@@ -3,7 +3,7 @@ import type { ListenTrack } from './listen';
 
 /** Tracks picked in a list to act on together (`components/SelectionBar.tsx`: ♥, playlists, queue, share). On a
  * computer a click on a row's number picks it and a drag from the number down or up picks the rows passed; Ctrl+click
- * picks a row and Shift+click the rows up to it; anywhere «Выбрать» of a row's ⋯ menu starts it, and while something
+ * picks a row, Shift+click the rows up to it and Ctrl+A every track of the lists on the screen; anywhere «Выбрать» of a row's ⋯ menu starts it, and while something
  * is picked a plain click on a row picks instead of playing. Leaving the page drops it. */
 export interface SelTrack {
   ref: string;
@@ -39,6 +39,32 @@ export function selectRange(list: readonly SelTrack[], to: SelTrack) {
   picked = new Map(picked);
   for (const t of list.slice(Math.min(a, b), Math.max(a, b) + 1)) picked.set(t.ref, t);
   emit();
+}
+
+// --- every track of the lists on the screen (Ctrl+A) --------------------------------------------------
+
+// the lists drawn now: a list is known by the array its rows share, with how many rows show it
+const shown = new Map<readonly unknown[], { rows: number; of: () => SelTrack[] }>();
+
+/** A row says which list it is of (for as long as it is drawn): Ctrl+A picks every track of the lists on the
+ * screen — the rows not scrolled to yet as well, they are of the same list. */
+export function showList(list: readonly unknown[], of: () => SelTrack[]): () => void {
+  const had = shown.get(list);
+  if (had) had.rows++;
+  else shown.set(list, { rows: 1, of });
+  return () => {
+    const it = shown.get(list);
+    if (it && --it.rows <= 0) shown.delete(list);
+  };
+}
+
+/** Pick every track of the lists on the screen. False: no list is drawn — nothing to pick. */
+export function selectAll(): boolean {
+  if (!shown.size) return false;
+  picked = new Map(picked);
+  for (const { of } of shown.values()) for (const t of of()) picked.set(t.ref, t);
+  emit();
+  return picked.size > 0;
 }
 
 export function clearSelection() {

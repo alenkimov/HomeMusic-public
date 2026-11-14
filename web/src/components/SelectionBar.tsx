@@ -4,7 +4,7 @@ import { tracksWord } from '../lib/format';
 import { addToQueue } from '../lib/listen';
 import { canPlayAll } from '../lib/player';
 import { useRoute } from '../lib/router';
-import { clearSelection, selectedTracks, useSelectionCount } from '../lib/selection';
+import { clearSelection, selectAll, selectedTracks, useSelectionCount } from '../lib/selection';
 import { openShare } from '../lib/shareTrack';
 import { openTagsSheet } from '../lib/tags';
 import { toast } from '../lib/ui';
@@ -22,6 +22,18 @@ export function SelectionBar() {
   useLiked({}); // the bar follows where the picked tracks are kept
   useInPlaylists(null);
   useEffect(() => clearSelection(), [route.path]);
+  // Ctrl+A (⌘A): every track of the lists on the screen, not the page's text. Where something is being typed, or a
+  // window is open over the page, the keys are that field's and that window's own.
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.code !== 'KeyA') return;
+      const at = e.target as HTMLElement | null;
+      if (at?.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]') || document.querySelector('[role="dialog"]')) return;
+      if (selectAll()) e.preventDefault();
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, []);
   useEffect(() => {
     if (!count || lists) return; // while the playlists window is open, Esc closes it, not the selection
     const key = (e: KeyboardEvent) => e.key === 'Escape' && clearSelection();

@@ -10,7 +10,7 @@ import { canPlay, canPlayAll, playSongs, playTracks } from '../lib/player';
 import { STANDALONE } from '../lib/embedded';
 import { Link, enc, navigate } from '../lib/router';
 import { beginDragAction, dragActionOver, useDragMark } from '../lib/dragAction';
-import { beginDragSelect, dragSelectMoved, dragSelectOver, selectRange, toggleSelected, useSelected, useSelectionCount, type SelTrack } from '../lib/selection';
+import { beginDragSelect, dragSelectMoved, dragSelectOver, selectRange, showList, toggleSelected, useSelected, useSelectionCount, type SelTrack } from '../lib/selection';
 import { useInPlaylists } from '../lib/inPlaylists';
 import { openTagsSheet, tagKey } from '../lib/tags';
 import { useLiked } from '../lib/stars';
@@ -115,6 +115,9 @@ export function ListenButton({ track, onListen }: { track: { ref: string; title:
  * browser: in the page); the rest can be listened to before downloading (a tap on the row or ▷), and the player
  * goes on through `queue` (the album or the list) after it. With app 1.2.0+ every track of the list plays in the
  * app's player; older apps and a browser play the ones that are not downloaded in the page. */
+/** A track of a list as what is picked of it (`lib/selection.ts`). */
+const asSel = (t: TrackOut): SelTrack => ({ ref: t.ref, title: t.title, nd_song_id: t.owned ? t.nd_song_id : null, tag_key: tagKey(t), listen: listenTrack(t) });
+
 export function TrackRow({
   track,
   number,
@@ -242,7 +245,8 @@ export function TrackRow({
   const playCounts = usePlayCounts(showPlays || playsOf !== undefined);
   const dragMark = useDragMark(track.ref); // this row is among the rows a button is being dragged over
   const selecting = useSelectionCount() > 0;
-  const asSel = (t: TrackOut): SelTrack => ({ ref: t.ref, title: t.title, nd_song_id: t.owned ? t.nd_song_id : null, tag_key: tagKey(t), listen: listenTrack(t) });
+  // the row is of this list: Ctrl+A picks all of it (`lib/selection.ts`)
+  useEffect(() => (queue?.length ? showList(queue, () => queue.map(asSel)) : undefined), [queue]);
   const onPick = (e: MouseEvent) => {
     // the row's menu is drawn outside the row (a portal), yet its clicks pass through here: they are not the row's
     if (!(e.currentTarget as HTMLElement).contains(e.target as Node)) return;
