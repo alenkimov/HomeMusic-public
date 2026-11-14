@@ -93,8 +93,9 @@ async def _own(s: AsyncSession, track_id: int) -> Track:
 @router.get("", response_model=LyricsOut)
 async def get(nd_song_id: str | None = None, ref: str | None = None, user: User = Depends(current_user),
               s: AsyncSession = Depends(get_session, scope="function")):
-    """The lyrics of a track the page names: from the Hub's database, or found now (seconds) and kept."""
-    track = await service.track_of(s, nd_song_id=nd_song_id, ref=ref)
+    """The lyrics of a track the page names: from the Hub's database, or found now (seconds) and kept. The track
+    need not be downloaded: a song of the catalog has its text too."""
+    track = await service.track_for(s, nd_song_id=nd_song_id, ref=ref, user_id=user.id)
     if track is None:
         return LyricsOut()
     row = await service.ensure(s, track)

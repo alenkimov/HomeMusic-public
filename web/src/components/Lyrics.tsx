@@ -166,7 +166,7 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
       </div>
     );
   if (!data || data.track_id === null)
-    return <Blank text="Текст показывается для треков из библиотеки. Скачайте трек — и он появится." />;
+    return <Blank text="Не удалось узнать, что это за трек, — искать текст не по чему." />;
 
   const footer = (
     <div className="flex shrink-0 flex-wrap items-center justify-center gap-x-1 gap-y-1 pt-2 text-xs text-muted">

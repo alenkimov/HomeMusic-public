@@ -96,7 +96,7 @@ async def test_sources_in_order_then_the_database(env):
 
     c, calls, answers = env["client"], env["calls"], env["answers"]
     track_id = await add_track()
-    assert (await c.get("/api/lyrics", params={"ref": "dz:404"})).json()["track_id"] is None  # not a library track
+    assert (await c.get("/api/lyrics", params={"ref": "dz:404"})).json()["track_id"] is None  # nobody knows the song
 
     # a plain text is passed over while a later source has a timed one; a failing source is skipped
     answers.update(lrclib=RuntimeError("down"), netease=Found("netease", lines=[{"t": 1000, "text": "строка"}]),
@@ -526,3 +526,25 @@ async def test_a_model_that_miscounts_is_asked_for_the_lines_in_halves(monkeypat
     got = await translate.llm(["a", "b", "bad", "d", "e", "f", "g", "h"], "ru")
     assert got == ["<a>", "<b>", "<bad>", "<d>", "<e>", "<f>", "<g>", "<h>"]
     assert asked[:2] == [8, 8] and 2 in asked  # asked twice whole, then in halves down to where it counts right
+
+
+async def test_a_track_that_only_plays_has_its_text_too(env, monkeypatch):
+    """A song of the catalog nobody downloaded (a wave, a friend's pick): asking for its text makes the track of the
+    catalog's record, and the text is found and kept as for a downloaded one."""
+    from app.catalog.models import CatalogTrack
+    from app.lyrics.providers import Found
+    from app.mixes import resolve
+
+    c, calls, answers = env["client"], env["calls"], env["answers"]
+
+    async def catalog_track(ref):
+        return CatalogTrack(ref=ref, source="dz", id=ref[3:], title="Usseewa", artist="Ado", duration_s=205) if ref == "dz:55" else None
+
+    monkeypatch.setattr(resolve, "catalog_track", catalog_track)
+    answers["lrclib"] = Found(source="lrclib", plain="первая строка\nвторая строка")
+    r = (await c.get("/api/lyrics", params={"ref": "dz:55"})).json()
+    assert r["track_id"] is not None and r["kind"] == "plain" and "вторая строка" in r["plain"]
+    asked = len(calls)
+    again = (await c.get("/api/lyrics", params={"ref": "dz:55"})).json()
+    assert again["track_id"] == r["track_id"] and len(calls) == asked  # kept: the sources are not asked twice
+    assert (await c.get("/api/lyrics", params={"ref": "dz:56"})).json()["track_id"] is None

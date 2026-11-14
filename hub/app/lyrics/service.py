@@ -1,4 +1,8 @@
-"""Lyrics of the library's tracks, kept in the Hub's database so they open at once and without the internet.
+"""Lyrics of the tracks the Hub knows, kept in its database so they open at once and without the internet.
+
+A text belongs to a track, not to a file: a song of the catalog that only plays (a wave, a friend's pick, a search
+result) has its text as a downloaded one does — the Hub makes the track of the catalog's record when its text is
+first asked for (`track_for`).
 
 A track's row (`models.Lyrics`) holds what was found — or that nothing was (`kind` "none"), looked for again after
 `retry_days`. The sources are asked in the order of the settings (`app_settings["lyrics"]`, the admin's page); a
@@ -91,6 +95,20 @@ async def track_of(s: AsyncSession, *, nd_song_id: str | None = None, ref: str |
             return await s.get(Track, int(id_))
         return (await s.execute(select(Track).where(Track.ref == ref))).scalar_one_or_none()
     return None
+
+
+async def track_for(s: AsyncSession, *, nd_song_id: str | None = None, ref: str | None = None,
+                    user_id: int | None = None) -> Track | None:
+    """The track whose text a page asks for: the one the Hub knows, or — for a song of the catalog it has not met
+    yet — the track made of the catalog's record now. None: nothing says what the song is."""
+    from app.library import tracks as registry
+    from app.mixes.resolve import catalog_track
+
+    track = await track_of(s, nd_song_id=nd_song_id, ref=ref)
+    if track is not None or not ref:
+        return track
+    c = await catalog_track(ref)
+    return await registry.of_catalog(s, c, user_id=user_id) if c is not None else None
 
 
 async def find(q: Query, sources: list[str]) -> Found | None:
