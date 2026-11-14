@@ -4,7 +4,7 @@ import type { AlbumOut, ArtistPageOut } from '../api/types';
 import { ReleaseCard, TrackRow } from '../components/catalog';
 import { Icon, type IconName } from '../components/Icon';
 import { ListBar } from '../components/ListBar';
-import { Button, ErrorState, PageHeader, Sheet, SkeletonRows, Spinner, cx } from '../components/ui';
+import { Button, ErrorState, HeroSkeleton, PageHeader, Sheet, Spinner, cx } from '../components/ui';
 import { startDownload } from '../lib/actions';
 import { setDisliked, useDisliked } from '../lib/dislikes';
 import { plural, tracksWord } from '../lib/format';
@@ -58,7 +58,7 @@ export function ArtistPage({ refId }: { refId: string }) {
   const hidden = useDisliked({ artist_ref: refId });
   const likedBy = useLikedBy(artist?.name, refId);
 
-  if (res.loading && !d) return (<><PageHeader hero title="Исполнитель" back="/search" /><SkeletonRows n={8} /></>);
+  if (res.loading && !d) return (<><PageHeader hero title="Исполнитель" back="/search" /><HeroSkeleton round buttons rows={10} /></>);
   if (!d || !artist) return (<><PageHeader hero title="Исполнитель" back="/search" /><ErrorState text={res.error ?? 'Исполнитель не найден'} onRetry={() => res.reload()} /></>);
 
   const releases = [...d.albums, ...d.singles, ...d.compilations].sort((a, b) => (b.release_date ?? '').localeCompare(a.release_date ?? ''));

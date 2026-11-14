@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import type { TrackOut } from '../api/types';
 import { TrackRow, TrackTableHeader, listenTrack } from '../components/catalog';
 import { PlaylistsPick } from '../components/PlaylistsButton';
-import { Button, Cover, ErrorState, ExplicitBadge, IconButton, Loading, OwnedBadge } from '../components/ui';
+import { Button, Cover, ErrorState, ExplicitBadge, HeroSkeleton, IconButton, OwnedBadge } from '../components/ui';
 import { startDownload } from '../lib/actions';
 import { useHubEvent } from '../lib/events';
 import { listen } from '../lib/listen';
@@ -47,7 +47,7 @@ export function AlbumPage({ refId }: { refId: string }) {
     return (
       <>
         <Bar />
-        <Loading />
+        <HeroSkeleton center />
       </>
     );
   if (res.error || !res.data)

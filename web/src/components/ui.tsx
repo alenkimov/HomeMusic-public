@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from 'react';
+import { useDesktop } from '../lib/desktop';
 import { retryImage } from '../lib/img';
 import { goBack } from '../lib/router';
 import { downloadStatusLabel, percent } from '../lib/format';
@@ -127,6 +128,52 @@ export function SkeletonRows({ n = 6 }: { n?: number }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** The loading of a page with a big head (`Hero` of pages/MediaLibrary.tsx): the head's own shape — the picture,
+ * the name in large, a line under it — and then rows, so that the page that comes does not look like another one.
+ * `round`: an artist. `buttons`: the row of buttons an artist's page has under its head. `center`: the picture is
+ * centred on a computer too (an album of the catalog). */
+export function HeroSkeleton({ round, buttons, center, rows = 8 }: { round?: boolean; buttons?: boolean; center?: boolean; rows?: number }) {
+  const desktop = useDesktop() && !center;
+  const shape = round ? 'rounded-full' : 'rounded-md';
+  return (
+    <div aria-hidden="true">
+      {desktop ? (
+        <div className="flex items-end gap-6 px-6 pb-5 pt-3">
+          <div className={cx('skeleton aspect-square w-48 shrink-0', shape)} />
+          <div className="min-w-0 flex-1 space-y-4 pb-1">
+            <div className="skeleton h-3.5 w-24 rounded" />
+            <div className="skeleton h-14 w-2/5 rounded-lg" />
+            <div className="skeleton h-3.5 w-52 rounded" />
+          </div>
+          <div className="skeleton h-14 w-14 shrink-0 rounded-full" />
+        </div>
+      ) : (
+        <div className="px-4 pb-3">
+          <div className="flex justify-center pb-4">
+            <div className={cx('skeleton aspect-square', center ? 'w-[min(56vw,240px)]' : 'w-52', shape)} />
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="min-w-0 flex-1 space-y-2.5">
+              <div className="skeleton h-6 w-3/5 rounded" />
+              <div className="skeleton h-3.5 w-2/5 rounded" />
+            </div>
+            <div className="skeleton h-14 w-14 shrink-0 rounded-full" />
+          </div>
+        </div>
+      )}
+      {buttons && (
+        <div className="flex items-center gap-2 px-4 pb-3 lg:px-6">
+          <div className="skeleton h-9 w-36 rounded-full" />
+          <div className="skeleton h-9 w-9 rounded-full" />
+        </div>
+      )}
+      <div className="lg:px-2">
+        <SkeletonRows n={rows} />
+      </div>
     </div>
   );
 }

@@ -7,7 +7,7 @@ import { Icon, type IconName } from '../components/Icon';
 import { BarWindow, ListBar } from '../components/ListBar';
 import { useListSearch } from '../components/ListSearch';
 import { TagFilterChips } from '../components/Tags';
-import { Button, Cover, Empty, ErrorState, Loading, PageHeader, Segmented, SkeletonRows, Spinner, cx } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, Loading, HeroSkeleton, PageHeader, Segmented, Spinner, cx } from '../components/ui';
 import { useHubEvent } from '../lib/events';
 import { fmtLength, tracksWord } from '../lib/format';
 import { useAsync, useInterval } from '../lib/hooks';
@@ -86,7 +86,7 @@ export function ForYouPage({ kind, mix }: { kind: string; mix?: number }) {
   const title = d?.title ?? TITLES[kind] ?? 'Для вас';
   const icon = ICONS[kind] ?? 'chart';
 
-  if (res.loading && !d) return (<><PageHeader hero title={title} back="/library" /><SkeletonRows n={8} /></>);
+  if (res.loading && !d) return (<><PageHeader hero title={title} back="/library" /><HeroSkeleton /></>);
   if (!d) return (<><PageHeader hero title={title} back="/library" /><ErrorState text={res.error ?? 'Список не найден'} onRetry={() => res.reload()} /></>);
 
   const run = async (key: string, fn: () => Promise<unknown>, done?: string) => {

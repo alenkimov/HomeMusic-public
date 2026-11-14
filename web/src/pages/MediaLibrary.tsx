@@ -10,7 +10,7 @@ import { ListBar } from '../components/ListBar';
 import { useListSearch, type Found } from '../components/ListSearch';
 import { CoverView, ownCover } from '../components/PlaylistMenu';
 import { SaveSelection, TagFilterChips } from '../components/Tags';
-import { Button, Cover, Empty, ErrorState, IconButton, PageHeader, SectionTitle, SkeletonRows, Spinner, cx } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, HeroSkeleton, IconButton, PageHeader, SectionTitle, SkeletonRows, Spinner, cx } from '../components/ui';
 import { fmtLength, tracksWord } from '../lib/format';
 import { playCount, usePlayCounts } from '../lib/stats';
 import { useDesktop } from '../lib/desktop';
@@ -364,7 +364,7 @@ export function SelectionPage({ id }: { id: string }) {
     }
   };
 
-  if (sel.loading || src.loading) return (<><PageHeader hero title="Подборка" back="/tags" /><SkeletonRows /></>);
+  if (sel.loading || src.loading) return (<><PageHeader hero title="Подборка" back="/tags" /><HeroSkeleton /></>);
   if (!unsaved && !sel.data) return (<><PageHeader hero title="Подборка" back="/tags" /><ErrorState text={sel.error ?? 'Подборка не найдена'} onRetry={() => sel.reload()} /></>);
   if (!src.data) return (<><PageHeader hero title={name} back="/tags" /><ErrorState text={src.error ?? 'Не удалось получить треки'} onRetry={() => src.reload()} /></>);
   const list = shown ? shown.map((f) => tracks[f.index]) : tracks;
@@ -431,7 +431,7 @@ export function PlaylistPage({ id }: { id: string }) {
       res.setData((prev) => (prev ? { ...prev, song_count: prev.song_count - (t.owned ? 1 : 0), duration_s: Math.max(0, prev.duration_s - (t.duration_s ?? 0)), tracks: prev.tracks.filter((_, j) => j !== i) } : prev));
   };
 
-  if (res.loading && !p) return (<><PageHeader hero title="Плейлист" back="/library" /><SkeletonRows /></>);
+  if (res.loading && !p) return (<><PageHeader hero title="Плейлист" back="/library" /><HeroSkeleton /></>);
   if (!p) return (<><PageHeader hero title="Плейлист" back="/library" /><ErrorState text={res.error ?? 'Плейлист не найден'} onRetry={() => res.reload()} /></>);
   const cover = p.cover_url ? `${p.cover_url}&size=600` : p.tracks[0]?.cover_url;
   const playing = inOrder(shown ? shown.map((f) => all[f.index]) : all, sort);
@@ -509,7 +509,7 @@ const albumsWord = (n: number) => {
 export function NdArtistPage({ id }: { id: string }) {
   const res = useAsync((s) => api.ndArtist(id, s), [id]);
   const { starting } = useWave();
-  if (res.loading) return (<><PageHeader hero title="Исполнитель" back="/artists" /><SkeletonRows /></>);
+  if (res.loading) return (<><PageHeader hero title="Исполнитель" back="/artists" /><HeroSkeleton round /></>);
   if (!res.data) return (<><PageHeader hero title="Исполнитель" back="/artists" /><ErrorState text={res.error ?? 'Исполнитель не найден'} onRetry={() => res.reload()} /></>);
   const { artist, albums } = res.data;
   // the catalog knows this artist: their page is the catalog's (the popular tracks, the whole discography)
@@ -552,7 +552,7 @@ export function NdArtistPage({ id }: { id: string }) {
 
 export function NdAlbumPage({ id }: { id: string }) {
   const res = useAsync((s) => api.ndAlbum(id, s), [id]);
-  if (res.loading) return (<><PageHeader hero title="Альбом" back="/library" /><SkeletonRows /></>);
+  if (res.loading) return (<><PageHeader hero title="Альбом" back="/library" /><HeroSkeleton /></>);
   if (!res.data) return (<><PageHeader hero title="Альбом" back="/library" /><ErrorState text={res.error ?? 'Альбом не найден'} onRetry={() => res.reload()} /></>);
   const a = res.data;
   const tracks = a.tracks ?? [];
