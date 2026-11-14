@@ -11,18 +11,13 @@ import { cx } from './ui';
 const CODECS: Record<string, string> = { mp3: 'MP3', flac: 'FLAC', opus: 'Opus', aac: 'AAC', vorbis: 'OGG', alac: 'ALAC', wav: 'WAV', pcm_s16le: 'WAV' };
 const LOSSLESS = new Set(['flac', 'alac', 'wav', 'pcm_s16le']);
 
-/** The source's own mark: YouTube's and SoundCloud's are their marks; hitmoz and hitmos.fm have no mark the app
- * carries — a tile with their letter; a file brought by the listener — «upload». */
+/** The source's own mark — YouTube's, SoundCloud's, hitmos.fm's (hitmoz is the same site); a file brought by the
+ * listener — «upload». */
 export function SourceMark({ source, size = 14, className }: { source?: string | null; size?: number; className?: string }) {
   const box = cx('inline-block shrink-0 align-[-0.15em]', className);
   if (source === 'ytdlp' || source === 'yt_reupload') return <BrandIcon service="youtube" size={size} className={box} />;
   if (source === 'soundcloud') return <BrandIcon service="soundcloud" size={size} className={box} />;
-  if (source === 'hitmoz' || source === 'hitmos_fm')
-    return (
-      <span aria-hidden="true" className={cx(box, 'inline-flex items-center justify-center rounded-[25%] bg-[#ff7a1a] font-black leading-none text-black')} style={{ width: size, height: size, fontSize: size * 0.72 }}>
-        h
-      </span>
-    );
+  if (source === 'hitmoz' || source === 'hitmos_fm') return <BrandIcon service="hitmos" size={size} className={box} />;
   if (source === 'upload') return <Icon name="upload" size={size} className={box} />;
   return source ? <Icon name="note" size={size} className={box} /> : null;
 }
