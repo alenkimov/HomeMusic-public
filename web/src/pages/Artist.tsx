@@ -21,7 +21,7 @@ import { Hero } from './MediaLibrary';
  * user's liked tracks the artist is on, when there are any) and ⋯ (the wave by the artist, downloading everything,
  * sharing, «Не включать»). Under them the ten popular tracks (two columns of five on a computer), then
  * «Дискография»: the releases in a row that scrolls sideways, newest first, by kind, and the way to all of them
- * with their tracks («Показать все», `pages/Discography.tsx`).
+ * with their tracks (the heading, `pages/Discography.tsx`).
  *
  * An artist the user does not listen to (`lib/dislikes.ts`) has a grey page that says so and offers to bring them
  * back: nothing of theirs plays by itself, a track tapped still does. */
@@ -202,7 +202,7 @@ export function ArtistPage({ refId }: { refId: string }) {
   );
 }
 
-/** «Дискография»: the releases in a row that scrolls sideways, newest first, by kind; «Показать все» — the page
+/** «Дискография»: the releases in a row that scrolls sideways, newest first, by kind; the heading opens the page
  * of all of them with their tracks. */
 function Discography({ artistRef, releases }: { artistRef: string; releases: AlbumOut[] }) {
   const [kind, setKind] = useState<Kind>('all');
@@ -212,12 +212,12 @@ function Discography({ artistRef, releases }: { artistRef: string; releases: Alb
   const to = `/artist/${enc(artistRef)}/discography`;
   return (
     <section aria-label="Дискография" className="pb-4">
-      <div className="flex items-baseline justify-between px-4 pb-2 pt-5 lg:px-6">
-        <h2 className="text-lg font-bold">Дискография</h2>
-        <Link to={to} className="text-sm font-semibold text-muted hover:text-fg">
-          Показать все
+      <h2 className="px-4 pb-2 pt-5 text-lg font-bold lg:px-6">
+        {/* the heading itself leads to all the releases with their tracks */}
+        <Link to={to} className="hover:underline">
+          Дискография
         </Link>
-      </div>
+      </h2>
       {kinds.length > 2 && (
         <div className="flex gap-2 px-4 pb-3 lg:px-6">
           {kinds.map((k) => (
