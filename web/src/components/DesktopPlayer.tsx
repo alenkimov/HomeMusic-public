@@ -4,13 +4,13 @@ import type { CSSProperties } from 'react';
 import { fmtDuration, providerLabel } from '../lib/format';
 import { cycleRepeat, cycleShuffle, hasNext, hasPrev, next, prev, setVolume, toggle, useListen } from '../lib/listen';
 import { useSeek } from '../lib/seek';
-import { Link } from '../lib/router';
+import { Link, enc } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
 import { Icon } from './Icon';
 import { SaveButton } from './PlaylistsButton';
 import { SeekLine } from './SeekLine';
 import { TrackMenuButton } from './TrackMenu';
-import { Cover, IconButton, Spinner, cx } from './ui';
+import { Cover, IconButton, Marquee, Spinner, cx } from './ui';
 
 /** The player of a computer: a bar along the bottom of the window (where a phone has its tab bar), always there —
  * empty and inactive until something plays. On the left the track (a click opens the full player with the queue)
@@ -45,17 +45,40 @@ export function DesktopPlayer() {
         <div className="flex min-w-0 items-center gap-1">
           {track ? (
             <>
-              <Link to="/player" title="Открыть плеер и очередь" className="flex min-w-0 items-center gap-3">
+              <Link to="/player" title="Открыть плеер и очередь" className="shrink-0">
                 <Cover src={track.cover_small_url || track.cover_url} size={52} alt="" />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium">{track.title}</span>
-                  <span className={cx('flex items-center gap-1.5 text-xs', phase === 'error' ? 'text-danger' : 'text-muted')}>
-                    {onWave && <Icon name="wave" size={13} className="shrink-0 text-accent" />}
-                    {info?.kind === 'preview' && <span className="shrink-0 rounded bg-warn/15 px-1 text-[11px] font-semibold text-warn">превью 30 сек</span>}
-                    <span className="truncate">{status ?? [track.artist, source].filter(Boolean).join(' · ')}</span>
-                  </span>
-                </span>
               </Link>
+              {/* the name leads to the album, each artist to their page; a long line runs under the mouse (`Marquee`) */}
+              <span className="ml-2 min-w-0">
+                <Marquee className="text-sm font-medium">
+                  <Link to={track.album_ref ? `/album/${enc(track.album_ref)}` : '/player'} className="hover:underline">
+                    {track.title}
+                  </Link>
+                </Marquee>
+                <span className={cx('flex items-center gap-1.5 text-xs', phase === 'error' ? 'text-danger' : 'text-muted')}>
+                  {onWave && <Icon name="wave" size={13} className="shrink-0 text-accent" />}
+                  {info?.kind === 'preview' && <span className="shrink-0 rounded bg-warn/15 px-1 text-[11px] font-semibold text-warn">превью 30 сек</span>}
+                  {status ? (
+                    <span className="truncate">{status}</span>
+                  ) : (
+                    <Marquee>
+                      {(track.artists?.length ? track.artists : [{ name: track.artist, ref: track.artist_ref ?? undefined }]).map((a, i) => (
+                        <span key={`${a.ref ?? a.name}:${i}`}>
+                          {i > 0 && ', '}
+                          {a.ref ? (
+                            <Link to={`/artist/${enc(a.ref)}`} className="hover:text-fg hover:underline">
+                              {a.name}
+                            </Link>
+                          ) : (
+                            a.name
+                          )}
+                        </span>
+                      ))}
+                      {source && ` · ${source}`}
+                    </Marquee>
+                  )}
+                </span>
+              </span>
               <SaveButton songId={info?.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} className="ml-1 !w-9" />
             </>
           ) : (

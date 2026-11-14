@@ -190,9 +190,25 @@
   animation: hm-shimmer 1.2s infinite linear;
 }
 
+/* a line too long for its place, under the mouse (`Marquee`): it runs to its end and back, resting at both */
+@keyframes hm-marquee {
+  0%,
+  12% {
+    transform: translateX(0);
+  }
+  88%,
+  100% {
+    transform: translateX(var(--shift));
+  }
+}
+.marquee-run {
+  animation: hm-marquee var(--dur) ease-in-out infinite alternate;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .anim-up,
-  .skeleton {
+  .skeleton,
+  .marquee-run {
     animation: none;
   }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from 'react';
 import { goBack } from '../lib/router';
 import { downloadStatusLabel, percent } from '../lib/format';
 import type { OwnedStatus } from '../api/types';
@@ -378,5 +378,30 @@ export function Notice({ kind = 'warn', children }: { kind?: 'warn' | 'error' | 
       <Icon name="alert" size={18} className="mt-0.5 shrink-0" />
       <div className="min-w-0">{children}</div>
     </div>
+  );
+}
+
+/** A line that may be too long for its place: cut with «…» as ever, and under the mouse it runs slowly to its end and
+ * back, so it can be read whole (25px a second, resting at both ends). A line that fits stays still. */
+export function Marquee({ children, className }: { children: ReactNode; className?: string }) {
+  const inner = useRef<HTMLSpanElement>(null);
+  const [shift, setShift] = useState(0);
+  return (
+    <span
+      className={cx('block min-w-0 overflow-hidden', className)}
+      onMouseEnter={() => {
+        const el = inner.current;
+        if (el) setShift(Math.max(0, el.scrollWidth - el.clientWidth));
+      }}
+      onMouseLeave={() => setShift(0)}
+    >
+      <span
+        ref={inner}
+        className={shift ? 'marquee-run inline-block whitespace-nowrap' : 'block truncate'}
+        style={shift ? ({ '--shift': `-${shift}px`, '--dur': `${Math.max(2.5, shift / 25)}s` } as CSSProperties) : undefined}
+      >
+        {children}
+      </span>
+    </span>
   );
 }
