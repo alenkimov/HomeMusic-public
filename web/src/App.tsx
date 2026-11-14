@@ -64,7 +64,15 @@ import { SubscriptionsPage } from './pages/Subscriptions';
 import { StatsPage } from './pages/Stats';
 import { UploadPage } from './pages/Upload';
 
-type RouteDef = [pattern: string, tab: Tab | null, render: (p: Record<string, string>, r: Route) => ReactNode];
+/** How wide a page is on a computer. Nothing: the whole panel — a list of tracks, an artist, an album, a grid,
+ * the home: they are made to fill what they are given. 'text': a column in the middle (`--app-w`) — settings, forms,
+ * a page of rows to read, which stretched over a wide window is a line of text a metre long. 'wide': the admin's
+ * analytics, tables up to their own width. A phone's page is the screen's width whatever this says.
+ *
+ * It is said here, by the route, once: a page that fills the panel was the exception before, kept in a list by
+ * name, and every new one (an artist, an album, the home) came out as a narrow column until somebody noticed. */
+type Width = 'text' | 'wide';
+type RouteDef = [pattern: string, tab: Tab | null, render: (p: Record<string, string>, r: Route) => ReactNode, width?: Width];
 
 /** Screens of the standalone service (a plain browser, `STANDALONE`): inside the app they are its native ones, so
  * these routes don't exist there (an unknown route goes to the catalog). */
@@ -75,15 +83,15 @@ const STANDALONE_ROUTES: RouteDef[] = [
   ['/artists', 'library', () => <ArtistsPage />],
   ['/playlist/:id', 'library', (p) => <PlaylistPage key={p.id} id={p.id} />],
   ['/selection/:id', 'library', (p) => <SelectionPage key={p.id} id={p.id} />],
-  ['/tags', 'library', () => <TagsPage />],
-  ['/stats', 'more', () => <StatsPage />],
+  ['/tags', 'library', () => <TagsPage />, 'text'],
+  ['/stats', 'more', () => <StatsPage />, 'text'],
   ['/history', 'more', () => <HistoryPage />],
-  ['/hidden', 'more', () => <HiddenPage />],
-  ['/trash', 'more', () => <TrashPage />],
-  ['/offline', 'more', () => <OfflinePage />],
+  ['/hidden', 'more', () => <HiddenPage />, 'text'],
+  ['/trash', 'more', () => <TrashPage />, 'text'],
+  ['/offline', 'more', () => <OfflinePage />, 'text'],
   ['/subscriptions', 'library', () => <SubscriptionsPage />],
   ['/discoveries', 'library', () => <ForYouPage key="weekly" kind="weekly" />],
-  ['/listenbrainz', 'more', () => <ListenBrainzPage />],
+  ['/listenbrainz', 'more', () => <ListenBrainzPage />, 'text'],
   ['/auto/:kind', 'library', (p) => <ForYouPage key={p.kind} kind={p.kind} />],
   ['/lib/albums', 'library', () => <NdAlbumsPage />],
   ['/lib/album/:id', 'library', (p) => <NdAlbumPage key={p.id} id={p.id} />],
@@ -103,20 +111,20 @@ const ROUTES: RouteDef[] = [
   ['/mix/:id', 'library', (p) => <ForYouPage key={`mix:${p.id}`} kind="mix" mix={Number(p.id)} />],
   // «Микс дня» by its name: no mix has the number 0, so the page opens today's
   ['/mix', 'library', () => <ForYouPage key="mix" kind="mix" />],
-  ['/taste', 'search', () => <TastePage />],
-  ['/downloads', 'downloads', () => <DownloadsPage />],
-  ['/downloads/:id', 'downloads', (p) => <DownloadDetailPage key={p.id} id={Number(p.id)} />],
-  ['/library', 'library', () => <LibraryPage />],
-  ['/files', 'more', (_, r) => <FilesPage initialQuery={r.query.get('q') ?? ''} />],
-  ['/library/album/:id', 'more', (p) => <LibraryAlbumPage key={p.id} id={Number(p.id)} />],
-  ['/assistant', 'assistant', (_, r) => <AssistantPage chatId={Number(r.query.get('chat')) || null} />],
-  ['/assistant/chats', 'assistant', () => <AssistantChatsPage />],
-  ['/assistant/:id', 'assistant', (p) => <AssistantTaskPage key={p.id} id={Number(p.id)} />],
-  ['/upload', 'more', () => <UploadPage />],
+  ['/taste', 'search', () => <TastePage />, 'text'],
+  ['/downloads', 'downloads', () => <DownloadsPage />, 'text'],
+  ['/downloads/:id', 'downloads', (p) => <DownloadDetailPage key={p.id} id={Number(p.id)} />, 'text'],
+  ['/library', 'library', () => <LibraryPage />, 'text'],
+  ['/files', 'more', (_, r) => <FilesPage initialQuery={r.query.get('q') ?? ''} />, 'text'],
+  ['/library/album/:id', 'more', (p) => <LibraryAlbumPage key={p.id} id={Number(p.id)} />, 'text'],
+  ['/assistant', 'assistant', (_, r) => <AssistantPage chatId={Number(r.query.get('chat')) || null} />, 'text'],
+  ['/assistant/chats', 'assistant', () => <AssistantChatsPage />, 'text'],
+  ['/assistant/:id', 'assistant', (p) => <AssistantTaskPage key={p.id} id={Number(p.id)} />, 'text'],
+  ['/upload', 'more', () => <UploadPage />, 'text'],
   ['/playlists', STANDALONE ? 'library' : 'more', () => <PlaylistsPage />],
-  ['/file/:id', 'library', (p) => <FileJournalPage key={p.id} id={Number(p.id)} />],
-  ['/import', 'more', (_, r) => <ImportsPage key={r.query.get('from') ?? ''} from={(['yandex', 'spotify', 'vk'] as const).find((x) => x === r.query.get('from')) ?? null} />],
-  ['/import/:id', 'more', (p) => <ImportPage key={p.id} id={Number(p.id)} />],
+  ['/file/:id', 'library', (p) => <FileJournalPage key={p.id} id={Number(p.id)} />, 'text'],
+  ['/import', 'more', (_, r) => <ImportsPage key={r.query.get('from') ?? ''} from={(['yandex', 'spotify', 'vk'] as const).find((x) => x === r.query.get('from')) ?? null} />, 'text'],
+  ['/import/:id', 'more', (p) => <ImportPage key={p.id} id={Number(p.id)} />, 'text'],
   [
     '/import/:id/items',
     'more',
@@ -129,26 +137,27 @@ const ROUTES: RouteDef[] = [
         status={r.query.get('status') ?? undefined}
       />
     ),
+    'text',
   ],
-  ['/more', 'more', () => <MorePage />],
-  ['/admin', 'more', () => <AdminPage />],
-  ['/lyrics-sources', 'more', () => <LyricsSettingsPage />],
-  ['/admin/user/:id', 'more', (p) => <AdminUserPage key={p.id} id={Number(p.id)} />],
-  ['/admin/insights', 'more', () => <InsightsOverviewPage />],
-  ['/admin/taste', 'more', () => <TasteMatrixPage />],
-  ['/admin/user/:id/track', 'more', (p) => <TrackWeightPage key={p.id} userId={Number(p.id)} />],
-  ['/admin/mix/:id', 'more', (p) => <MixDetailPage key={p.id} id={Number(p.id)} />],
-  ['/admin/wave/:sid', 'more', (p) => <WaveDetailPage key={p.sid} sid={p.sid} />],
-  ['/share', null, () => <SharePage />],
-  ['/open', null, (_, r) => <OpenPage key={r.full} query={r.query} />],
+  ['/more', 'more', () => <MorePage />, 'text'],
+  ['/admin', 'more', () => <AdminPage />, 'text'],
+  ['/lyrics-sources', 'more', () => <LyricsSettingsPage />, 'text'],
+  ['/admin/user/:id', 'more', (p) => <AdminUserPage key={p.id} id={Number(p.id)} />, 'wide'],
+  ['/admin/insights', 'more', () => <InsightsOverviewPage />, 'wide'],
+  ['/admin/taste', 'more', () => <TasteMatrixPage />, 'wide'],
+  ['/admin/user/:id/track', 'more', (p) => <TrackWeightPage key={p.id} userId={Number(p.id)} />, 'wide'],
+  ['/admin/mix/:id', 'more', (p) => <MixDetailPage key={p.id} id={Number(p.id)} />, 'wide'],
+  ['/admin/wave/:sid', 'more', (p) => <WaveDetailPage key={p.sid} sid={p.sid} />, 'wide'],
+  ['/share', null, () => <SharePage />, 'text'],
+  ['/open', null, (_, r) => <OpenPage key={r.full} query={r.query} />, 'text'],
 ];
 
 const lastByTab: Partial<Record<Tab, string>> = {};
 
-function resolve(route: Route): { tab: Tab | null; node: ReactNode } | null {
-  for (const [pattern, tab, render] of ROUTES) {
+function resolve(route: Route): { tab: Tab | null; node: ReactNode; width?: Width } | null {
+  for (const [pattern, tab, render, width] of ROUTES) {
     const params = matchPath(pattern, route.path);
-    if (params) return { tab, node: render(params, route) };
+    if (params) return { tab, node: render(params, route), width };
   }
   return null;
 }
@@ -267,18 +276,16 @@ export function App() {
 
   // the full player covers the screen: no mini player and tab bar under it, so no room kept for them
   const fullPlayer = route.path === '/player';
-  // the admin's analytics are wide (tables, two columns on a desktop)
-  const wide = route.path.startsWith('/admin/');
   const panel = desktop && !fullPlayer;
-  // a list of tracks takes the whole panel
-  const whole = /^\/(playlist|liked|auto|mix|discoveries|selection|lib\/album|lib\/artist)(\/|$)/.test(route.path);
+  // a computer's page fills the panel unless its route says otherwise (`Width`); a phone's is a phone's column
+  const width = !panel ? 'max-w-(--app-w)' : resolved?.width === 'text' ? 'max-w-(--app-w)' : resolved?.width === 'wide' ? 'max-w-6xl' : '';
   return (
     <SessionContext.Provider value={{ me, logout }}>
-      {/* a computer's page is a panel beside the side panel: it takes all the room there is, and a list of tracks all
-          of the panel (`whole`); the frame over it keeps its corners round while the window scrolls under them */}
+      {/* a computer's page is a panel beside the side panel, and fills it unless its route makes it a column
+          (`Width`); the frame over it keeps its corners round while the window scrolls under them */}
       <div className={cx(panel && 'pl-[calc(var(--side-w)+8px)] pr-2 pt-(--page-top)')}>
         <div className={cx('min-h-dvh', panel && 'hm-page')}>
-          <main className={cx('mx-auto', panel && whole ? '' : wide ? 'max-w-6xl' : 'max-w-(--app-w)', !fullPlayer && 'pb-[calc(var(--tabbar-h)+16px+env(safe-area-inset-bottom))]')}>
+          <main className={cx('mx-auto', width, !fullPlayer && 'pb-[calc(var(--tabbar-h)+16px+env(safe-area-inset-bottom))]')}>
             {resolved?.node}
             {!fullPlayer && <PlayerSpacer />}
           </main>
