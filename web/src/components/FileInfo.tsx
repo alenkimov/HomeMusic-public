@@ -45,8 +45,9 @@ export function FileInfo({ info, className }: { info: FileOut | null | undefined
 }
 
 /** The file's line of a player, whatever the player is doing with the track. Playing: the file (`FileInfo`). Being
- * looked for and loaded: a bar that runs — after a spinner while no source is picked yet, after the source's mark
- * once one is (the Hub tells no share of the work done, so the bar says «at work», not how much). Not playing: the
+ * looked for: a ring that turns and «Ищу файл…». Found and being opened: the source's mark and «YouTube · загрузка…»
+ * — in words, not as a bar: what takes the seconds is the source opening the file, and nothing says how far along
+ * that is (once it opens the track plays, the rest comes as it plays); a bar would be an ornament. Not playing: the
  * source and what went wrong, in red («YouTube · не отдал файл»), the whole of it under the mouse. The line of the
  * artists above it stays the artists'. */
 export function PlayLine({ phase, info, error, className }: { phase: string; info: ListenOut | null | undefined; error?: string | null; className?: string }) {
@@ -61,14 +62,18 @@ export function PlayLine({ phase, info, error, className }: { phase: string; inf
     );
   }
   if (phase === 'resolving' || phase === 'loading') {
-    const found = !!info?.source;
-    return (
-      <span className={className} role="status" aria-label={found ? 'Загрузка' : 'Ищу файл'} title={found ? `Загрузка: ${providerLabel(info?.source)}` : 'Ищу файл'}>
-        {/* a row of its own inside: the line it stands in may be a block that cuts its text */}
-        <span className="inline-flex h-full items-center gap-1.5 align-middle">
-          {found ? <SourceMark source={info?.source} size={13} /> : <span className="hm-spin h-3 w-3 shrink-0 rounded-full border-[1.5px] border-fg/25 border-t-fg/80" />}
-          <span className="hm-busy" />
+    // no source is picked yet: it is being looked for. One is: its file is being opened — «YouTube · загрузка…»
+    if (!info?.source)
+      return (
+        <span className={className} role="status">
+          <span className="hm-spin mr-1.5 inline-block h-3 w-3 rounded-full border-[1.5px] border-fg/25 border-t-fg/80 align-[-0.15em]" />
+          Ищу файл…
         </span>
+      );
+    return (
+      <span className={className} role="status">
+        <SourceMark source={info.source} size={13} className="mr-1" />
+        {providerLabel(info.source)} · загрузка…
       </span>
     );
   }
