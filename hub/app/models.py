@@ -467,6 +467,8 @@ class PlayEvent(Base):
     position_s: Mapped[float | None] = mapped_column(Float)
     duration_s: Mapped[float | None] = mapped_column(Float)
     context: Mapped[str | None] = mapped_column(String(128))  # mix:<id>, wave:<session>, album, playlist, search...
+    # the page the list was started on ("/playlist/12"), when the player says it: «История» names the list by it
+    page: Mapped[str | None] = mapped_column(String(128))
     client: Mapped[str] = mapped_column(String(32))  # app/<version>, pwa, navidrome
     received_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     # analytics (INSIGHTS.md 6.5): every event of one launched list shares `launch_id` ("wave:<sid>" for a wave);

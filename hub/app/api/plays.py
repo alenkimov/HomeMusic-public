@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Any, Literal
 from zoneinfo import ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,6 +74,29 @@ async def _named(s: AsyncSession, track_id: int | None, ref: str | None, nd_song
     if names is None:
         raise HTTPException(404, "Хаб не знает этот трек")
     return ref or names[0], nd_song_id or names[1]
+
+
+@router.get("/api/plays/history")
+async def listened(offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=300),
+                   show: Literal["all", "finished", "skipped"] = "all", q: str = Query("", max_length=100),
+                   user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")) -> dict[str, Any]:
+    """«История»: the user's listens, the newest first (`app/history.py`) — `items` of this page, the totals of the
+    days they are of, and where the next page starts."""
+    from app import history
+
+    return await history.page(s, user, offset=offset, limit=limit, show=show, q=q)
+
+
+@router.delete("/api/plays/history")
+async def forget_listen(uid: str = Query(min_length=3, max_length=200), user: User = Depends(current_user),
+                        s: AsyncSession = Depends(get_session, scope="function")) -> dict[str, bool]:
+    """Takes a listen out of the history, the statistics and what the taste is made of."""
+    from app import history
+
+    if not await history.remove(s, user.id, uid):
+        raise HTTPException(404, "Такой записи нет")
+    await s.commit()
+    return {"ok": True}
 
 
 @router.get("/api/dislikes", response_model=list[DislikeOut])

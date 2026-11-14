@@ -306,7 +306,7 @@ async def record_events(s: AsyncSession, user_id: int, raw: Iterable[Any], now: 
                       client=e.client, received_at=now, playback_id=e.playback_id, device_id=e.device_id,
                       listened_ms=e.listened_ms, track_metadata=metadata, target_type=e.target_type, nd_album_id=e.nd_album_id,
                       nd_artist_id=e.nd_artist_id, target_data=e.target_data, reverts_event_id=e.reverts_event_id,
-                      launch_id=e.launch_id, launch_origin=e.launch_origin)
+                      launch_id=e.launch_id, launch_origin=e.launch_origin, page=e.page)
         res = await s.execute(sqlite_insert(PlayEvent).values(**values).on_conflict_do_nothing())
         if not res.rowcount:  # a concurrent request stored it first
             out.duplicates += 1

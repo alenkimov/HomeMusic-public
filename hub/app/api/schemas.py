@@ -914,6 +914,7 @@ class PlayEventIn(FavoriteTarget):
     position_s: float | None = Field(default=None, ge=0, le=86400)
     duration_s: float | None = Field(default=None, ge=0, le=86400)
     context: str | None = Field(default=None, max_length=128)
+    page: str | None = Field(default=None, max_length=128)  # the page the list was started on ("/playlist/12")
     client: str = Field(min_length=1, max_length=32)
     reverts_event_id: str | None = Field(default=None, min_length=1, max_length=64)
     # analytics only (the taste profile never reads them): one id for every event of a launched list ("wave:<sid>"

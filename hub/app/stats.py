@@ -56,6 +56,13 @@ class Play:
     title: str
     artist: str
     album: str | None
+    # for «История» (`app/history.py`): what names the listen ("p:<device>|<playback>", "e:<event>", "h:<line>"),
+    # where it was played from, how long the track is, and whose record it is (hub / navidrome / spotify)
+    uid: str = ""
+    context: str | None = None
+    page: str | None = None
+    duration_ms: int | None = None
+    origin: str = "hub"
 
 
 @dataclass(slots=True)
@@ -116,7 +123,7 @@ async def plays(s: AsyncSession, user_id: int, lib: Library | None = None) -> li
     out: list[Play] = []
 
     def play(ts: datetime, ms: int, counted: bool, nd: str | None, ref: str | None, meta: dict[str, Any],
-             track_id: int | None = None) -> None:
+             track_id: int | None = None, **more: Any) -> None:
         tid = track_id if track_id in lib.tracks else None
         if tid is None and nd:
             tid = lib.by_song.get(nd)
@@ -125,11 +132,12 @@ async def plays(s: AsyncSession, user_id: int, lib: Library | None = None) -> li
         title, artist = str(meta.get("title") or ""), str(meta.get("artist_credit") or "")
         if tid is None and not title:
             return  # nothing to show it by
-        out.append(Play(ts, ms, counted, tid, ref or f"nd:{nd}", title, artist, meta.get("album")))
+        out.append(Play(ts, ms, counted, tid, ref or f"nd:{nd}", title, artist, meta.get("album"), **more))
 
     rows = (await s.execute(
         select(PlayEvent.ts, PlayEvent.kind, PlayEvent.ref, PlayEvent.nd_song_id, PlayEvent.track_id, PlayEvent.playback_id,
-               PlayEvent.device_id, PlayEvent.listened_ms, PlayEvent.duration_s, PlayEvent.track_metadata, PlayEvent.client)
+               PlayEvent.device_id, PlayEvent.listened_ms, PlayEvent.duration_s, PlayEvent.track_metadata, PlayEvent.client,
+               PlayEvent.id, PlayEvent.context, PlayEvent.page)
         .where(PlayEvent.user_id == user_id, PlayEvent.ts <= now, PlayEvent.kind.in_(LISTEN_KINDS),
                PlayEvent.superseded_scrobble.is_(False)).order_by(PlayEvent.ts, PlayEvent.id))).all()
     groups: dict[tuple[str, str], list[Any]] = defaultdict(list)
@@ -139,7 +147,8 @@ async def plays(s: AsyncSession, user_id: int, lib: Library | None = None) -> li
         elif r.kind == "finish" and r.client == "navidrome":
             tid = r.track_id if r.track_id in lib.tracks else lib.by_song.get(r.nd_song_id) if r.nd_song_id else None
             seconds = r.duration_s or (lib.tracks[tid].duration_s if tid else None) or 0
-            play(r.ts, int(seconds * 1000), True, r.nd_song_id, r.ref, r.track_metadata or {}, tid)
+            play(r.ts, int(seconds * 1000), True, r.nd_song_id, r.ref, r.track_metadata or {}, tid,
+                 uid=f"e:{r.id}", duration_ms=int(seconds * 1000) or None, origin="navidrome")
     for events in groups.values():
         listened = [e.listened_ms for e in events if e.listened_ms is not None]
         if not listened:
@@ -154,15 +163,20 @@ async def plays(s: AsyncSession, user_id: int, lib: Library | None = None) -> li
             continue
         play(events[0].ts, ms, ms >= listened_threshold_ms(duration),
              next((e.nd_song_id for e in events if e.nd_song_id), None), next((e.ref for e in events if e.ref), None), meta,
-             next((e.track_id for e in events if e.track_id), None))
+             next((e.track_id for e in events if e.track_id), None),
+             uid=f"p:{events[0].device_id}|{events[0].playback_id}",
+             context=next((e.context for e in events if e.context), None), page=next((e.page for e in events if e.page), None),
+             duration_ms=int(duration * 1000) if duration else None)
 
     history = (await s.execute(select(ListenHistory.ts, ListenHistory.ms, ListenHistory.key, ListenHistory.spotify_id,
-                                      ListenHistory.title, ListenHistory.artist, ListenHistory.album)
+                                      ListenHistory.title, ListenHistory.artist, ListenHistory.album, ListenHistory.id,
+                                      ListenHistory.source)
                                .where(ListenHistory.user_id == user_id, ListenHistory.ts <= now))).all()
-    for ts, ms, key, spotify_id, title, artist, album in history:
+    for ts, ms, key, spotify_id, title, artist, album, line, source in history:
         if ms < TOUCHED_MS:
             continue
-        out.append(Play(ts, ms, ms >= COUNTED_MS, _history_track(lib, spotify_id, key), key, title, artist, album))
+        out.append(Play(ts, ms, ms >= COUNTED_MS, _history_track(lib, spotify_id, key), key, title, artist, album,
+                        uid=f"h:{line}", origin=source or "spotify"))
     out.sort(key=lambda p: p.ts)
     return out
 

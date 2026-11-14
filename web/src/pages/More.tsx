@@ -91,6 +91,7 @@ export function MorePage() {
           {STANDALONE && (
             <Group>
               <Item icon="chart" tint="bg-[#2ba6bc]" to="/stats" title="Статистика" sub="Что вы слушали: треки, исполнители, жанры; история из Spotify" />
+              <Item icon="history" tint="bg-[#7b61d9]" to="/history" title="История" sub="Всё, что играло, по порядку" />
             </Group>
           )}
         </div>

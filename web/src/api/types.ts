@@ -1073,6 +1073,8 @@ export interface PlayEventIn {
   duration_s?: number | null;
   /** where the list was started from: album, playlist, search, liked, queue, other (mix:<id>, wave:<id> later) */
   context?: string | null;
+  /** the page the list was started on (`/playlist/12`): «История» names the list by it */
+  page?: string | null;
   client: string;
   /** analytics only (INSIGHTS.md 6.5): one id for every event of a launched list (`wave:<id>` for a wave) */
   launch_id?: string | null;
@@ -1153,6 +1155,38 @@ export interface MixSettingsOut {
   next_build_at: ISODateTime;
   nd_playlist_id?: string | null;
   artists: Array<{ ref: string; name: string }>;
+}
+
+/** A listen of «История» (`/api/plays/history`). */
+export interface HistoryItem {
+  /** names the listen: what «убрать из истории» is told */
+  uid: string;
+  ts: ISODateTime;
+  /** the day it is of, in the Hub's time zone (YYYY-MM-DD) */
+  day: string;
+  /** listened */
+  ms: number;
+  duration_ms?: number | null;
+  /** played long enough to count; false: left early */
+  finished: boolean;
+  title: string;
+  artist: string;
+  /** where it was played from, and the page of that list when the Hub knows which */
+  from?: string | null;
+  from_to?: string | null;
+  origin: string;
+  /** the library's track, when it has one */
+  track?: TrackOut | null;
+  /** a catalog track the library has not got: it plays by this */
+  ref?: string | null;
+}
+
+export interface HistoryOut {
+  items: HistoryItem[];
+  /** the totals of the days the items are of */
+  days: Record<string, { count: number; ms: number }>;
+  total: number;
+  next_offset?: number | null;
 }
 
 /** A list of «Для вас» (`/api/for-you`): `mix`, `weekly` or a kind of the lists of a rule. */

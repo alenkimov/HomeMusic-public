@@ -271,3 +271,44 @@ async def test_the_lists_for_you_are_told_alike(c):
     assert weekly["tracks"] == [] and weekly["weekly"]["issues"] == [] and weekly["context"] == "discoveries"
     assert (await c.get("/api/for-you/nope")).status_code == 404
     assert (await c.get("/api/for-you/weekly", params={"issue": 99})).status_code == 404
+
+
+async def test_the_history_is_the_listens_one_after_another(c):
+    """«История»: the newest first, each with where it was played from; a listen of a few seconds is not shown; one
+    can be taken out, and leaves the statistics too."""
+    from app.db import session_scope
+    from app.models import Playlist, User
+
+    async with session_scope() as s:
+        user_id = (await s.execute(select(User.id))).scalars().first()
+        pl = Playlist(user_id=user_id, kind="user", name="JAPAN")
+        s.add(pl)
+        await s.flush()
+        page = f"/playlist/{pl.id}"
+    now = datetime.now(UTC)
+    old = listen("ndK", 100_000, now - timedelta(days=1, hours=1), "a")
+    for e in old:
+        e["context"], e["page"] = "playlist", page
+    skipped = listen("ndX", 12_000, now - timedelta(hours=2), "b")
+    for e in skipped:
+        e["context"] = "liked"
+    await post(c, *old, *skipped, *listen("ndK", 3_000, now - timedelta(hours=1), "c"))  # the last: leafing through
+
+    got = (await c.get("/api/plays/history")).json()
+    assert got["total"] == 2 and got["next_offset"] is None
+    first, second = got["items"]
+    assert (first["title"], first["finished"], first["ms"], first["from"], first["from_to"]) == ("Своё", False, 12_000, "Любимое", "/liked")
+    assert (second["title"], second["finished"], second["from"], second["from_to"]) == ("Группа крови", True, "JAPAN", page)
+    assert second["track"]["nd_song_id"] == "ndK" and first["day"] != second["day"]
+    assert got["days"][second["day"]] == {"count": 1, "ms": 100_000}
+
+    assert [x["title"] for x in (await c.get("/api/plays/history", params={"show": "finished"})).json()["items"]] == ["Группа крови"]
+    assert [x["title"] for x in (await c.get("/api/plays/history", params={"show": "skipped"})).json()["items"]] == ["Своё"]
+    assert [x["title"] for x in (await c.get("/api/plays/history", params={"q": "крови"})).json()["items"]] == ["Группа крови"]
+    assert (await c.get("/api/plays/history", params={"limit": 1})).json()["next_offset"] == 1
+
+    assert (await c.get("/api/stats", params={"period": "all"})).json()["summary"]["plays"] == 1
+    assert (await c.delete("/api/plays/history", params={"uid": second["uid"]})).status_code == 200
+    assert (await c.delete("/api/plays/history", params={"uid": second["uid"]})).status_code == 404
+    assert [x["title"] for x in (await c.get("/api/plays/history")).json()["items"]] == ["Своё"]
+    assert (await c.get("/api/stats", params={"period": "all"})).json()["summary"]["plays"] == 0  # gone from the count too

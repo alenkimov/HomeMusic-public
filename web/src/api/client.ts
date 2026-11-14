@@ -40,6 +40,7 @@ import type {
   MixSettingsIn,
   MixSettingsOut,
   FileJournalOut,
+  HistoryOut,
   ForYouItem,
   ForYouOut,
   MixTodayOut,
@@ -327,6 +328,10 @@ export const api = {
     request<{ removed: number }>('DELETE', withQuery('/api/dislikes', q)),
 
   // «Микс дня» and the taste onboarding
+  /** «История»: the listens, the newest first; and taking one out. */
+  playsHistory: (q: { offset?: number; limit?: number; show?: string; q?: string }, signal?: AbortSignal) =>
+    request<HistoryOut>('GET', withQuery('/api/plays/history', q), { signal }),
+  forgetListen: (uid: string) => request<OkOut>('DELETE', withQuery('/api/plays/history', { uid })),
   /** How a track's file came to the library: the journal of its download. */
   fileJournal: (trackId: number, signal?: AbortSignal) => request<FileJournalOut>('GET', `/api/library/tracks/${trackId}/journal`, { signal }),
   /** «Для вас»: the lists the Hub makes by itself, and one of them as its page shows it. */

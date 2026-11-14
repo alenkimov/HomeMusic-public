@@ -43,6 +43,7 @@ import { LyricsSettingsPage } from './pages/LyricsSettings';
 import { ArtistsPage, LikedPage, NdAlbumPage, NdAlbumsPage, NdArtistPage, PlaylistPage, SelectionPage } from './pages/MediaLibrary';
 import { TagsPage } from './pages/Tags';
 import { FileJournalPage } from './pages/FileJournal';
+import { HistoryPage } from './pages/History';
 import { ForYouPage } from './pages/ForYou';
 import { TastePage } from './pages/Mix';
 import { MorePage } from './pages/More';
@@ -69,6 +70,7 @@ const STANDALONE_ROUTES: RouteDef[] = [
   ['/selection/:id', 'library', (p) => <SelectionPage key={p.id} id={p.id} />],
   ['/tags', 'library', () => <TagsPage />],
   ['/stats', 'more', () => <StatsPage />],
+  ['/history', 'more', () => <HistoryPage />],
   ['/releases', 'more', () => <ReleasesPage />],
   ['/discoveries', 'library', () => <ForYouPage key="weekly" kind="weekly" />],
   ['/listenbrainz', 'more', () => <ListenBrainzPage />],
