@@ -4,11 +4,11 @@ import type { AlbumOut, ArtistPageOut } from '../api/types';
 import { ReleaseCard, TrackRow } from '../components/catalog';
 import { Icon, type IconName } from '../components/Icon';
 import { ListBar } from '../components/ListBar';
-import { Button, Cover, ErrorState, PageHeader, Sheet, SkeletonRows, Spinner, cx } from '../components/ui';
+import { Button, ErrorState, PageHeader, Sheet, SkeletonRows, Spinner, cx } from '../components/ui';
 import { startDownload } from '../lib/actions';
 import { setDisliked, useDisliked } from '../lib/dislikes';
 import { plural, tracksWord } from '../lib/format';
-import { useAsync } from '../lib/hooks';
+import { useAsync, useRememberScrollX } from '../lib/hooks';
 import { Link, enc } from '../lib/router';
 import { copyText } from '../lib/share';
 import { toggleLike, useLiked } from '../lib/stars';
@@ -17,16 +17,25 @@ import { canWave, startWave } from '../lib/wave';
 import { Hero } from './MediaLibrary';
 
 /** An artist's page (`/artist/<ref>`; a library artist the catalog knows opens it too): a list's head — the photo,
- * the name, ▶ and the shuffle of the popular tracks — then «Подписаться» and ⋯ (the wave by the artist, downloading
- * everything, sharing, «Не включать»). Under them: «Вам нравится» — the user's liked tracks the artist is on, when
- * there are any; the ten popular tracks; the latest releases, and the way to all of them («Вся дискография»,
- * `pages/Discography.tsx`).
+ * the name, ▶ and the shuffle of the popular tracks — then a row of buttons: «Подписаться», «Вам нравится» (the
+ * user's liked tracks the artist is on, when there are any) and ⋯ (the wave by the artist, downloading everything,
+ * sharing, «Не включать»). Under them the ten popular tracks (two columns of five on a computer), then
+ * «Дискография»: the releases in a row that scrolls sideways, newest first, by kind, and the way to all of them
+ * with their tracks («Показать все», `pages/Discography.tsx`).
  *
  * An artist the user does not listen to (`lib/dislikes.ts`) has a grey page that says so and offers to bring them
  * back: nothing of theirs plays by itself, a track tapped still does. */
 
 const POPULAR = 10;
-const LATEST = 4;
+const IN_ROW = 20; // releases in the row of the page; the rest are on «Дискография»
+
+type Kind = 'all' | 'album' | 'single';
+const KINDS: Array<{ value: Kind; label: string }> = [
+  { value: 'all', label: 'Все' },
+  { value: 'album', label: 'Альбомы' },
+  { value: 'single', label: 'Синглы и EP' },
+];
+const kindOf = (a: AlbumOut): Kind => (a.record_type === 'single' || a.record_type === 'ep' ? 'single' : 'album');
 
 /** The user's liked tracks this artist is on (credited anywhere, not only first). */
 function useLikedBy(name: string | undefined, ref: string | undefined): number {
@@ -130,56 +139,36 @@ export function ArtistPage({ refId }: { refId: string }) {
             {busy === 'follow' ? <Spinner size={14} /> : followed && <Icon name="check" size={15} stroke={3} />}
             {followed ? 'Вы подписаны' : 'Подписаться'}
           </button>
+          {likedBy > 0 && (
+            <Link
+              to={`/liked?artist=${enc(artist.name)}&ref=${enc(artist.ref)}`}
+              title={`Вам нравится: ${tracksWord(likedBy)} этого исполнителя в «Любимом»`}
+              className="flex h-9 items-center gap-1.5 rounded-full border border-fg/40 px-4 text-sm font-semibold text-fg transition hover:border-fg active:scale-95"
+            >
+              <Icon name="heart" size={15} filled className="text-accent" />
+              <span className="hidden lg:inline">Вам нравится ·</span>
+              {tracksWord(likedBy)}
+            </Link>
+          )}
           <button type="button" onClick={() => setMenu(true)} aria-label="Ещё" title="Ещё" className="flex h-11 w-11 items-center justify-center rounded-full text-muted hover:text-fg">
             <Icon name="more" size={24} />
           </button>
         </div>
       )}
 
-      <div className="lg:grid lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] lg:gap-x-6">
-        <div className="lg:order-2">
-          {likedBy > 0 && (
-            <section aria-label="Вам нравится" className="px-4 pb-2 lg:px-0 lg:pr-6">
-              <h2 className="hidden pb-2 pt-3 text-lg font-bold lg:block">Вам нравится</h2>
-              <Link to={`/liked?artist=${enc(artist.name)}${`&ref=${enc(artist.ref)}`}`} className="flex items-center gap-3 rounded-2xl bg-surface px-3 py-2.5 hover:bg-raised">
-                <span className="relative shrink-0">
-                  <Cover src={artist.picture_small_url || artist.picture_url} size={44} round icon="user" alt="" />
-                  <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-accent text-on-accent ring-2 ring-surface">
-                    <Icon name="heart" size={11} filled />
-                  </span>
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block font-semibold lg:hidden">Вам нравится</span>
-                  <span className="block text-[13px] text-muted lg:text-[15px] lg:font-semibold lg:text-fg">{tracksWord(likedBy)}</span>
-                </span>
-                <Icon name="chevron" size={18} className="text-dim" />
-              </Link>
-            </section>
-          )}
-          {releases.length > 0 && (
-            <section aria-label="Релизы" className="hidden lg:block lg:pr-6">
-              <Releases artistRef={artist.ref} releases={releases} />
-            </section>
-          )}
-        </div>
-
-        <div className="lg:order-1">
-          {top.length > 0 && (
-            <section aria-label="Популярное">
-              <h2 className="px-4 pb-1 pt-3 text-lg font-bold lg:px-6">Популярное</h2>
-              {top.map((t, i) => (
-                <TrackRow key={t.ref} track={t} number={i + 1} queue={top} />
-              ))}
-            </section>
-          )}
-        </div>
-      </div>
-
-      {releases.length > 0 && (
-        <section aria-label="Релизы" className="lg:hidden">
-          <Releases artistRef={artist.ref} releases={releases} />
+      {top.length > 0 && (
+        <section aria-label="Популярное">
+          <h2 className="px-4 pb-1 pt-3 text-lg font-bold lg:px-6">Популярное</h2>
+          {/* a computer: two columns, 1–5 and 6–10 */}
+          <div className="lg:grid lg:grid-flow-col lg:grid-cols-2 lg:gap-x-4" style={{ gridTemplateRows: `repeat(${Math.ceil(top.length / 2)}, auto)` }}>
+            {top.map((t, i) => (
+              <TrackRow key={t.ref} track={t} number={i + 1} queue={top} />
+            ))}
+          </div>
         </section>
       )}
+
+      {releases.length > 0 && <Discography artistRef={artist.ref} releases={releases} />}
 
       <Sheet open={menu} onClose={() => setMenu(false)} title={artist.name}>
         <div className="-mx-1">
@@ -202,27 +191,44 @@ export function ArtistPage({ refId }: { refId: string }) {
   );
 }
 
-/** The latest releases, and the way to all of them. */
-function Releases({ artistRef, releases }: { artistRef: string; releases: AlbumOut[] }) {
+/** «Дискография»: the releases in a row that scrolls sideways, newest first, by kind; «Показать все» — the page
+ * of all of them with their tracks. */
+function Discography({ artistRef, releases }: { artistRef: string; releases: AlbumOut[] }) {
+  const [kind, setKind] = useState<Kind>('all');
+  const row = useRememberScrollX(`artist:${artistRef}:${kind}`);
+  const kinds = KINDS.filter((k) => k.value === 'all' || releases.some((a) => kindOf(a) === k.value));
+  const shown = releases.filter((a) => kind === 'all' || kindOf(a) === kind);
   const to = `/artist/${enc(artistRef)}/discography`;
   return (
-    <>
-      <div className="flex items-baseline justify-between px-4 pb-2 pt-4 lg:px-0 lg:pt-3">
-        <h2 className="text-lg font-bold">Релизы</h2>
-        <Link to={to} className="text-sm text-muted hover:text-fg">
-          Вся дискография
+    <section aria-label="Дискография" className="pb-4">
+      <div className="flex items-baseline justify-between px-4 pb-2 pt-5 lg:px-6">
+        <h2 className="text-lg font-bold">Дискография</h2>
+        <Link to={to} className="text-sm font-semibold text-muted hover:text-fg">
+          Показать все
         </Link>
       </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-5 px-4 min-[520px]:grid-cols-4 lg:grid-cols-2 lg:px-0">
-        {releases.slice(0, LATEST).map((a) => (
-          <ReleaseCard key={a.ref} album={a} />
+      {kinds.length > 2 && (
+        <div className="flex gap-2 px-4 pb-3 lg:px-6">
+          {kinds.map((k) => (
+            <button key={k.value} type="button" aria-pressed={kind === k.value} onClick={() => setKind(k.value)} className={cx('h-8 rounded-full px-3.5 text-sm transition', kind === k.value ? 'bg-fg font-semibold text-bg' : 'bg-fg/10 text-fg hover:bg-fg/15')}>
+              {k.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div ref={row} className="no-scrollbar flex gap-4 overflow-x-auto px-4 pb-1 lg:px-6">
+        {shown.slice(0, IN_ROW).map((a) => (
+          <div key={a.ref} className="w-36 shrink-0 lg:w-44">
+            <ReleaseCard album={a} />
+          </div>
         ))}
+        {shown.length > IN_ROW && (
+          <Link to={to} className="flex aspect-square w-36 shrink-0 flex-col items-center justify-center gap-2 rounded-md bg-fg/5 text-sm font-semibold text-muted hover:bg-fg/10 hover:text-fg lg:w-44">
+            <Icon name="chevron" size={22} />
+            Ещё {shown.length - IN_ROW}
+          </Link>
+        )}
       </div>
-      <div className="px-4 pb-2 pt-4 lg:px-0">
-        <Link to={to} className="flex h-11 items-center justify-center rounded-full border border-fg/30 text-sm font-semibold hover:border-fg">
-          Вся дискография · {releases.length}
-        </Link>
-      </div>
-    </>
+    </section>
   );
 }

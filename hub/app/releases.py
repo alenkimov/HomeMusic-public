@@ -44,6 +44,15 @@ async def albums_of(ref: str, name: str) -> list[CatalogAlbum]:
     return await svc.deezer.artist_albums_now(id_, name)
 
 
+async def picture_of(ref: str) -> str | None:
+    """The artist's photo in the catalog (a small one: it is shown as a circle in a list)."""
+    src, id_ = split_ref(ref)
+    if src != "dz" or svc.deezer is None:
+        return None
+    a = await svc.deezer.get_artist(id_)
+    return a.picture_small_url or a.picture_url
+
+
 async def tracks_of(album_ref: str) -> list[CatalogTrack]:
     src, id_ = split_ref(album_ref)
     if src != "dz" or svc.deezer is None:
@@ -121,11 +130,17 @@ async def refresh(user_id: int, *, only_new: bool = False) -> int:
         due = [ref for ref in artists
                if ref not in checks or (not only_new and now - checks[ref] >= CHECK_EVERY)]
         found: dict[str, list[CatalogAlbum]] = {}
+        pictures: dict[str, str | None] = {}
         for ref in due:  # the network, with no transaction open
             try:
                 found[ref] = await albums_of(ref, artists[ref])
             except Exception as e:
                 log.info("releases: %s not read: %r", ref, e)
+                continue
+            try:
+                pictures[ref] = await picture_of(ref)
+            except Exception as e:  # the photo it had stays
+                log.info("releases: no photo of %s: %r", ref, e)
         if not found:
             return 0
         today = date.today()
@@ -151,6 +166,8 @@ async def refresh(user_id: int, *, only_new: bool = False) -> int:
                 last = max(out, key=lambda a: a.release_date, default=None)
                 seen = {"checked_at": now, "last_release_date": last.release_date if last else None,
                         "last_release_title": last.title if last else None}
+                if pictures.get(ref):
+                    seen["picture_url"] = pictures[ref]
                 if ref in checks:
                     await s.execute(update(ArtistReleaseCheck).where(
                         ArtistReleaseCheck.user_id == user_id, ArtistReleaseCheck.artist_ref == ref).values(**seen))
@@ -188,12 +205,6 @@ async def fill_tracks(user_id: int, limit: int | None = None) -> int:
         return len(tracks)
 
 
-def picture_of(ref: str) -> str | None:
-    """An artist's picture by their ref alone: the catalog answers this address with the picture itself."""
-    src, id_ = split_ref(ref)
-    return f"https://api.deezer.com/artist/{id_}/image?size=medium" if src == "dz" else None
-
-
 async def feed(s: AsyncSession, user_id: int) -> dict[str, Any]:
     """«Подписки»: the followed artists (the ones with something new first, then by their latest release), and what
     they released in the window, newest first, each release with its tracks as the user has them."""
@@ -222,7 +233,7 @@ async def feed(s: AsyncSession, user_id: int) -> dict[str, Any]:
         "artists": len(artists),
         "unseen": sum(fresh.values()),
         "following": [{
-            "ref": f.ref, "name": f.name, "like_ref": f.like_ref, "nd_id": f.nd_id, "picture_url": picture_of(f.ref),
+            "ref": f.ref, "name": f.name, "like_ref": f.like_ref, "nd_id": f.nd_id, "picture_url": checks[f.ref].picture_url if f.ref in checks else None,
             "last_release_date": last(f).isoformat() if last(f) else None,
             "last_release_title": checks[f.ref].last_release_title if f.ref in checks else None,
             "new": fresh.get(f.ref, 0),

@@ -947,6 +947,7 @@ class ArtistReleaseCheck(Base):
     # the latest thing they released, however long ago: «Подписки» says it beside the artist
     last_release_date: Mapped[date | None] = mapped_column(Date)
     last_release_title: Mapped[str | None] = mapped_column(String(512))
+    picture_url: Mapped[str | None] = mapped_column(String(512))  # the artist's photo, as the catalog gave it
 
 
 class AppSetting(Base):

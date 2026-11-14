@@ -1,4 +1,5 @@
 import { tagKey } from '../lib/tags';
+import { retryImage } from '../lib/img';
 import { FileCard } from '../components/FileInfo';
 import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
 import { api } from '../api/client';
@@ -146,7 +147,7 @@ export function PlayerPage() {
         <div aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
           <div className="absolute inset-0 saturate-150">
             {(['hm-drift-a', 'hm-drift-b', 'hm-drift-c'] as const).map((name, i) => (
-              <img key={name} src={track.cover_small_url || track.cover_url || ''} alt="" className="absolute h-[85%] w-[85%] rounded-full object-cover opacity-45 blur-3xl motion-reduce:!animate-none"
+              <img key={name} src={track.cover_small_url || track.cover_url || ''} alt="" onError={retryImage} className="absolute h-[85%] w-[85%] rounded-full object-cover opacity-45 blur-3xl motion-reduce:!animate-none"
                 style={{ left: ['-20%', '35%', '10%'][i], top: ['-15%', '5%', '40%'][i], animation: `${name} ${[34, 41, 47][i]}s ease-in-out infinite alternate` }} />
             ))}
           </div>

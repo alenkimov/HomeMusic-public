@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from 'react';
+import { retryImage } from '../lib/img';
 import { goBack } from '../lib/router';
 import { downloadStatusLabel, percent } from '../lib/format';
 import type { OwnedStatus } from '../api/types';
@@ -256,7 +257,7 @@ export function Cover({
       loading="lazy"
       decoding="async"
       referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
+      onError={(e) => retryImage(e) || setFailed(true)}
       className={cx('shrink-0 bg-raised object-cover', shape, className)}
       style={style}
     />

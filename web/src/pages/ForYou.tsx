@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { retryImage } from '../lib/img';
 import { api } from '../api/client';
 import type { ForYouOut, MixMode, TrackOut } from '../api/types';
 import type { ListSort } from '../components/catalog';
@@ -49,7 +50,7 @@ function ListCover({ tracks, icon }: { tracks: readonly TrackOut[]; icon: IconNa
     return (
       <div className="grid h-full w-full grid-cols-2 grid-rows-2" aria-hidden>
         {covers.map((c) => (
-          <img key={c} src={c} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="h-full w-full object-cover" />
+          <img key={c} src={c} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={retryImage} className="h-full w-full object-cover" />
         ))}
       </div>
     );
