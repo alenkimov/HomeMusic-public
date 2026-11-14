@@ -934,6 +934,25 @@ class ArtistRelease(Base):
     tracks_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON(none_as_null=True))
 
 
+class ArtistReleaseExclusion(Base):
+    """A release the catalog files under an artist that is a namesake's (app/catalog/namesakes.py): for the whole
+    server. What it was is kept with it, to show it where it can be brought back."""
+
+    __tablename__ = "artist_release_exclusions"
+    __table_args__ = (UniqueConstraint("artist_ref", "album_ref", name="uq_artist_release_exclusions"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artist_ref: Mapped[str] = mapped_column(String(64))
+    artist: Mapped[str] = mapped_column(String(512))
+    album_ref: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(512))
+    record_type: Mapped[str | None] = mapped_column(String(16))
+    year: Mapped[int | None] = mapped_column(Integer)
+    cover_url: Mapped[str | None] = mapped_column(String(512))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class ArtistReleaseCheck(Base):
     """When the releases of a followed artist were last looked up."""
 

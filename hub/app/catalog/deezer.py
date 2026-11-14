@@ -23,6 +23,7 @@ from typing import Any, TypeVar
 import httpx
 from pydantic import BaseModel
 
+from app.catalog import namesakes
 from app.catalog.cache import cache_delete, cached
 from app.catalog.models import (
     ArtistPage,
@@ -351,7 +352,7 @@ class DeezerClient:
         for _ in range(2):
             top = await self._cached_list(key, self.cfg.ttl_artist_s, CatalogTrack, produce)
             if top:
-                return top
+                return namesakes.own_tracks(make_ref("dz", id_), top)  # not a namesake's
             await cache_delete(key)
         return []
 
@@ -382,21 +383,23 @@ class DeezerClient:
 
         return await self._cached_list(f"dz:chart_artists:{limit}", self.cfg.ttl_search_s, CatalogArtist, produce)
 
-    async def get_artist_albums(self, id_: str | int) -> list[CatalogAlbum]:
-        """All releases (every page), clean/explicit twins merged, newest first."""
+    async def get_artist_albums(self, id_: str | int, *, everyones: bool = False) -> list[CatalogAlbum]:
+        """All releases (every page), clean/explicit twins merged, newest first — without the ones said to be a
+        namesake's (catalog/namesakes.py), unless `everyones`: the catalog's own list, to say which are."""
 
         async def produce() -> list[CatalogAlbum]:
             artist, items = await asyncio.gather(self.get_artist(id_), self._get_all(f"artist/{id_}/albums"))
             art = {"id": artist.id, "name": artist.name}
             return dedupe_and_sort([map_album(x, art) for x in items])
 
-        return await self._cached_list(f"dz:artist_albums:{id_}", self.cfg.ttl_artist_s, CatalogAlbum, produce)
+        albums = await self._cached_list(f"dz:artist_albums:{id_}", self.cfg.ttl_artist_s, CatalogAlbum, produce)
+        return albums if everyones else namesakes.own_albums(make_ref("dz", id_), albums)
 
     async def artist_albums_now(self, id_: str | int, name: str = "") -> list[CatalogAlbum]:
         """The artist's releases as the catalog has them now, newest first — not the week-old cached list of
         `get_artist_albums`: the «Релизы» feed is about what came out yesterday."""
         items = await self._get_all(f"artist/{id_}/albums")
-        return dedupe_and_sort([map_album(x, {"id": id_, "name": name}) for x in items])
+        return namesakes.own_albums(make_ref("dz", id_), dedupe_and_sort([map_album(x, {"id": id_, "name": name}) for x in items]))
 
     async def get_artist_page(self, id_: str | int) -> ArtistPage:
         artist, top, albums = await asyncio.gather(

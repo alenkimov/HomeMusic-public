@@ -13,7 +13,7 @@ import { useAsync } from '../lib/hooks';
 import { canPlay, canPlayAll, playList } from '../lib/player';
 import { Link, enc } from '../lib/router';
 import { copyText } from '../lib/share';
-import { attempt, toast } from '../lib/ui';
+import { attempt, confirmDialog, toast } from '../lib/ui';
 import { Hero } from './MediaLibrary';
 
 /** A release of the catalog (`/album/<ref>`), in the shape of every list: the head — the cover, the kind of release
@@ -112,6 +112,20 @@ export function AlbumPage({ refId }: { refId: string }) {
     const url = `${window.location.origin}/#/album/${enc(album.ref)}`;
     toast((await copyText(url)) ? 'Ссылка на релиз скопирована' : url, 'success');
   };
+  /** The catalog keeps namesakes under one artist: this release is not of the one whose page led here. */
+  const namesake = async () => {
+    setMenu(false);
+    const artistRef = album.artist_ref;
+    if (!artistRef) return;
+    const ok = await confirmDialog({
+      title: `Это другой ${album.artist}?`,
+      body: `Каталог держит тёзок под одним исполнителем. «${album.title}» пропадёт со страницы этого исполнителя, из его дискографии и из «Подписок» — у всех на этом сервере. Сами треки останутся доступны. Вернуть можно в «Меню → Скрытое».`,
+      okLabel: 'Убрать у исполнителя',
+      danger: true,
+    });
+    if (!ok) return;
+    if (await attempt(() => api.namesakesExclude(artistRef, [album.ref]))) toast('Релиз убран у исполнителя', 'success', { label: 'Скрытое', to: '/hidden' });
+  };
   const deezer = album.source === 'dz' ? `https://www.deezer.com/album/${album.id}` : null;
   const item = (icon: IconName, label: string, run: () => void) => (
     <button type="button" onClick={run} className="flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-left text-[15px] hover:bg-fg/5">
@@ -190,6 +204,12 @@ export function AlbumPage({ refId }: { refId: string }) {
               <Icon name="user" size={21} className="text-muted" />
               Перейти к исполнителю
             </Link>
+          )}
+          {album.artist_ref?.startsWith('dz:') && (
+            <button type="button" onClick={() => void namesake()} className="flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-left text-[15px] text-danger hover:bg-fg/5">
+              <Icon name="ban" size={21} />
+              Это другой {album.artist}
+            </button>
           )}
         </div>
       </Sheet>

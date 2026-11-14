@@ -8,7 +8,8 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import AlbumOut, ArtistPageOut, DiscographyOut
+from app.api.schemas import AlbumOut, ArtistPageOut, DiscographyOut, NamesakeIn, NamesakeOut
+from app.catalog import namesakes
 from app.auth import current_user
 from app.catalog.models import ArtistPage, CatalogAlbum, split_ref
 from app.db import get_session
@@ -68,7 +69,41 @@ async def artist(ref: str, user: User = Depends(current_user), s: AsyncSession =
         albums=[a for a in albums if a.record_type == "album"],
         singles=[a for a in albums if a.record_type in ("single", "ep")],
         compilations=[a for a in albums if a.record_type == "compile"],
+        excluded=len(namesakes.of(ref)),
     )
+
+
+@router.get("/namesakes", response_model=list[NamesakeOut])
+async def namesakes_list(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    """The releases said to be a namesake's, by artist: where they are brought back («Скрытое»)."""
+    return await namesakes.listed(s)
+
+
+@router.post("/namesakes")
+async def namesakes_exclude(body: NamesakeIn, user: User = Depends(current_user),
+                            s: AsyncSession = Depends(get_session, scope="function")) -> dict[str, int]:
+    """«Это другой TAK»: these releases the catalog files under the artist are not theirs — for everyone here."""
+    src, id_ = _split(body.artist_ref)
+    if src != "dz" or svc.deezer is None or not body.album_refs:
+        raise HTTPException(400, "Нужен исполнитель каталога и его релизы")
+    want = set(body.album_refs)
+    try:
+        artist = await svc.deezer.get_artist(id_)
+        albums = [a for a in await svc.deezer.get_artist_albums(id_, everyones=True) if a.ref in want]
+    except Exception as e:
+        raise HTTPException(502, f"Каталог недоступен: {e}") from e
+    n = await namesakes.exclude(s, user.id, body.artist_ref, artist.name, albums)
+    await s.commit()
+    return {"excluded": n, "total": len(namesakes.of(body.artist_ref))}
+
+
+@router.post("/namesakes/restore")
+async def namesakes_restore(body: NamesakeIn, user: User = Depends(current_user),
+                            s: AsyncSession = Depends(get_session, scope="function")) -> dict[str, int]:
+    """They are the artist's after all."""
+    n = await namesakes.restore(s, body.artist_ref, body.album_refs)
+    await s.commit()
+    return {"restored": n, "total": len(namesakes.of(body.artist_ref))}
 
 
 @router.get("/artist-named")
@@ -112,7 +147,7 @@ async def discography(ref: str, user: User = Depends(current_user),
             o.owned_count = owned
             o.owned_status = "full" if owned and owned >= len(o.tracks) else ("partial" if owned else "none")
     outs.sort(key=lambda a: (a.release_date is not None, a.release_date), reverse=True)
-    return DiscographyOut(artist=page.artist, albums=outs)
+    return DiscographyOut(artist=page.artist, albums=outs, excluded=len(namesakes.of(ref)))
 
 
 @router.get("/album/{ref}", response_model=AlbumOut)

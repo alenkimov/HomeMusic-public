@@ -5,9 +5,10 @@ import { TrackRow, playAll } from '../components/catalog';
 import { Icon } from '../components/Icon';
 import { ListBar } from '../components/ListBar';
 import { useSearchField } from '../components/ListSearch';
-import { Cover, Empty, ErrorState, Loading, PageHeader, Segmented } from '../components/ui';
+import { Button, Checkbox, Cover, Empty, ErrorState, Loading, PageHeader, Segmented, cx } from '../components/ui';
 import { tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
+import { attempt, toast } from '../lib/ui';
 import { Link, enc } from '../lib/router';
 
 /** «Дискография» (`/artist/<ref>/discography`): everything an artist released, newest first — each release with its
@@ -33,6 +34,25 @@ export function DiscographyPage({ refId }: { refId: string }) {
   const [kind, setKind] = useState<Kind>('all');
   const [shown, setShown] = useState(STEP);
   const sf = useSearchField('Трек или релиз');
+  // «это другой исполнитель»: the releases being picked as a namesake's (null: not picking)
+  const [picked, setPicked] = useState<ReadonlySet<string> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const pick = (ref: string) =>
+    setPicked((cur) => {
+      const next = new Set(cur ?? []);
+      if (!next.delete(ref)) next.add(ref);
+      return next;
+    });
+  const exclude = async () => {
+    if (!picked?.size) return;
+    setBusy(true);
+    const r = await attempt(() => api.namesakesExclude(refId, [...picked]));
+    setBusy(false);
+    if (!r) return;
+    setPicked(null);
+    toast(`Убрано у исполнителя: ${r.excluded}`, 'success', { label: 'Скрытое', to: '/hidden' });
+    res.reload(true);
+  };
   const needle = sf.q.trim().toLocaleLowerCase('ru');
   const d = res.data;
   const back = `/artist/${enc(refId)}`;
@@ -66,10 +86,27 @@ export function DiscographyPage({ refId }: { refId: string }) {
   return (
     <div>
       <ListBar plain title={d.artist.name} back={back} search={{ found: null, open: sf.open, alone: sf.alone, show: sf.show, close: sf.close, field: sf.field(found?.length) }} />
-      <div className="flex flex-wrap items-center gap-3 px-4 pb-2 lg:px-6">
-        <Segmented<Kind> label="Какие релизы" value={kind} onChange={setKind} options={KINDS.filter((k) => k.value === 'all' || (d.albums ?? []).some((a) => kindOf(a) === k.value))} />
-        <span className="ml-auto text-xs tabular-nums text-dim">{tracksWord(total)}</span>
-      </div>
+      {picked ? (
+        <div className="sticky top-[calc(var(--page-top)+3.5rem)] z-10 flex flex-wrap items-center gap-2 bg-bg/95 px-4 py-2 backdrop-blur lg:px-6">
+          <span className="mr-auto text-sm font-semibold">{picked.size ? `Выбрано: ${picked.size}` : 'Отметьте релизы другого исполнителя'}</span>
+          <Button small variant="danger" busy={busy} disabled={!picked.size} onClick={() => void exclude()}>
+            Это другой {d.artist.name}
+          </Button>
+          <Button small variant="ghost" onClick={() => setPicked(null)}>
+            Отмена
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3 px-4 pb-2 lg:px-6">
+          <Segmented<Kind> label="Какие релизы" value={kind} onChange={setKind} options={KINDS.filter((k) => k.value === 'all' || (d.albums ?? []).some((a) => kindOf(a) === k.value))} />
+          {refId.startsWith('dz:') && (
+            <button type="button" onClick={() => setPicked(new Set())} title="Каталог держит тёзок под одним исполнителем: отметьте релизы, которые не его" className="text-sm text-muted hover:text-fg">
+              Здесь есть чужие?
+            </button>
+          )}
+          <span className="ml-auto text-xs tabular-nums text-dim">{tracksWord(total)}</span>
+        </div>
+      )}
 
       {found ? (
         found.length ? (
@@ -91,7 +128,8 @@ export function DiscographyPage({ refId }: { refId: string }) {
             const tracks = a.tracks ?? [];
             return (
               <section key={a.ref} aria-label={a.title} className="pt-4">
-                <div className="flex items-center gap-3 px-4 pb-2 lg:px-6">
+                <div className={cx('flex items-center gap-3 px-4 pb-2 lg:px-6', picked?.has(a.ref) && 'opacity-50')}>
+                  {picked && <Checkbox checked={picked.has(a.ref)} onChange={() => pick(a.ref)} label={`«${a.title}» — другого исполнителя`} />}
                   <Link to={`/album/${enc(a.ref)}`} className="shrink-0">
                     <Cover src={a.cover_small_url || a.cover_url} size={64} alt="" />
                   </Link>
@@ -123,6 +161,14 @@ export function DiscographyPage({ refId }: { refId: string }) {
             );
           })}
           <div ref={end} className="h-8" />
+          {!!d.excluded && shown >= albums.length && (
+            <p className="px-4 pb-2 text-sm text-dim lg:px-6">
+              Скрыто как чужие: {d.excluded} ·{' '}
+              <Link to="/hidden" className="text-muted hover:text-fg hover:underline">
+                показать
+              </Link>
+            </p>
+          )}
         </div>
       )}
     </div>

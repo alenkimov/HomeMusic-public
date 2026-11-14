@@ -232,6 +232,19 @@ export interface ArtistPageOut {
   albums: AlbumOut[];
   singles: AlbumOut[];
   compilations: AlbumOut[];
+  /** releases said to be a namesake's: not among these */
+  excluded?: number;
+}
+
+/** A release the catalog files under an artist that is a namesake's — said so by someone here, for everyone. */
+export interface NamesakeOut {
+  artist_ref: string;
+  artist: string;
+  album_ref: string;
+  title: string;
+  record_type?: string | null;
+  year?: number | null;
+  cover_url?: string | null;
 }
 
 // --- library ----------------------------------------------------------------------------------
@@ -661,6 +674,8 @@ export interface NdArtistOut {
 export interface DiscographyOut {
   artist: CatalogArtist;
   albums: AlbumOut[];
+  /** releases said to be a namesake's: not among `albums` */
+  excluded?: number;
 }
 
 export interface NdArtistPageOut {

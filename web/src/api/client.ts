@@ -40,6 +40,7 @@ import type {
   MixSettingsIn,
   MixSettingsOut,
   DiscographyOut,
+  NamesakeOut,
   FileJournalOut,
   HistoryOut,
   ForYouItem,
@@ -333,6 +334,20 @@ export const api = {
   playsHistory: (q: { offset?: number; limit?: number; show?: string; q?: string }, signal?: AbortSignal) =>
     request<HistoryOut>('GET', withQuery('/api/plays/history', q), { signal }),
   forgetListen: (uid: string) => request<OkOut>('DELETE', withQuery('/api/plays/history', { uid })),
+  /** Releases said to be a namesake's, of every artist («Скрытое»). */
+  namesakes: (signal?: AbortSignal) => request<NamesakeOut[]>('GET', '/api/catalog/namesakes', { signal }),
+  /** «Это другой TAK»: these releases are not this artist's — for everyone on the server. */
+  namesakesExclude: async (artist_ref: string, album_refs: string[]) => {
+    const r = await request<{ excluded: number; total: number }>('POST', '/api/catalog/namesakes', { json: { artist_ref, album_refs } });
+    invalidateCache('/api/catalog');
+    return r;
+  },
+  /** They are the artist's after all (`album_refs` omitted: everything excluded of the artist). */
+  namesakesRestore: async (artist_ref: string, album_refs?: string[]) => {
+    const r = await request<{ restored: number; total: number }>('POST', '/api/catalog/namesakes/restore', { json: { artist_ref, album_refs: album_refs ?? null } });
+    invalidateCache('/api/catalog');
+    return r;
+  },
   /** The catalog's artist of this very name (`ref` null: nobody is called so). */
   artistNamed: (name: string, signal?: AbortSignal) => request<{ ref: string | null }>('GET', `/api/catalog/artist-named?name=${enc(name)}`, { signal }),
   /** Every release of an artist with its tracks (the first asking of a long one takes seconds). */

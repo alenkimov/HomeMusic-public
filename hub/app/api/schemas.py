@@ -378,6 +378,25 @@ class ArtistPageOut(BaseModel):
     albums: list[AlbumOut] = []
     singles: list[AlbumOut] = []
     compilations: list[AlbumOut] = []
+    excluded: int = 0  # releases said to be a namesake's: not among these
+
+
+class NamesakeIn(BaseModel):
+    """Releases of an artist of the catalog that are a namesake's («это другой TAK»), or — to bring back — the
+    ones that are theirs after all (`album_refs` None: everything excluded of the artist)."""
+
+    artist_ref: str = Field(min_length=3, max_length=64)
+    album_refs: list[str] | None = Field(default=None, max_length=500)
+
+
+class NamesakeOut(BaseModel):
+    artist_ref: str
+    artist: str
+    album_ref: str
+    title: str
+    record_type: str | None = None
+    year: int | None = None
+    cover_url: str | None = None
 
 
 class DiscographyOut(BaseModel):
@@ -386,6 +405,7 @@ class DiscographyOut(BaseModel):
 
     artist: CatalogArtist
     albums: list[AlbumOut] = []
+    excluded: int = 0  # releases said to be a namesake's: not among `albums`
 
 
 class SearchOut(BaseModel):

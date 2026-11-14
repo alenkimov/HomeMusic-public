@@ -50,6 +50,9 @@ async def lifespan(app: FastAPI):
     from app.services import svc
 
     svc.start()
+    from app.catalog import namesakes
+
+    await namesakes.load()  # what the catalog's client leaves out of an artist's releases
     _import_handlers()
     pool = WorkerPool(s.cfg.jobs.workers)
     tasks: list[asyncio.Task] = []
