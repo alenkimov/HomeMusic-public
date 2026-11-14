@@ -35,7 +35,7 @@ export function FileInfo({ info, className }: { info: ListenOut | null | undefin
   if (!info?.source) return null;
   const words = fileWords(info, true);
   return (
-    <span className={cx(info.sounds_like_kbps ? 'text-warn' : undefined, className)} title={[providerLabel(info.source), fileWords(info), info.sounds_like_kbps ? `по звуку около ${info.sounds_like_kbps} кбит/с` : ''].filter(Boolean).join(' · ')}>
+    <span className={cx(className, info.sounds_like_kbps ? '!text-warn' : undefined)} title={[providerLabel(info.source), fileWords(info), info.sounds_like_kbps ? `по звуку около ${info.sounds_like_kbps} кбит/с` : ''].filter(Boolean).join(' · ')}>
       <SourceMark source={info.source} size={13} className="mr-1" />
       {words || providerLabel(info.source)}
       {info.sounds_like_kbps ? `, по звуку ~${info.sounds_like_kbps}` : ''}

@@ -50,7 +50,7 @@ export function DesktopPlayer() {
               </Link>
               {/* the name leads to the album, each artist to their page; a long line runs under the mouse (`Marquee`) */}
               <span className="ml-2 min-w-0">
-                <Marquee className="text-sm font-medium">
+                <Marquee className="text-sm font-medium leading-5">
                   <Link to={track.album_ref ? `/album/${enc(track.album_ref)}` : '/player'} className="hover:underline">
                     {track.title}
                   </Link>
@@ -74,15 +74,11 @@ export function DesktopPlayer() {
                           )}
                         </span>
                       ))}
-                      {info?.source && info.kind !== 'preview' && (
-                        <>
-                          {' · '}
-                          <FileInfo info={info} />
-                        </>
-                      )}
                     </Marquee>
                   )}
                 </span>
+                {/* the file that plays, a line of its own: its source's mark, what it is, its bitrate */}
+                {info?.source && info.kind !== 'preview' && <FileInfo info={info} className="block truncate text-[11px] leading-4 text-dim" />}
               </span>
               <SaveButton songId={info?.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} className="ml-1 !w-9" />
             </>
