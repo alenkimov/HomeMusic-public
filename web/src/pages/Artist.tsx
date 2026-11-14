@@ -74,6 +74,8 @@ export function ArtistPage({ refId }: { refId: string }) {
 
   const releases = [...d.albums, ...d.singles, ...d.compilations].sort((a, b) => (b.release_date ?? '').localeCompare(a.release_date ?? ''));
   const top = d.top_tracks.slice(0, POPULAR);
+  // how many of them, at the end, are Last.fm's
+  const lfm = Math.max(0, Math.min(d.top_from_lastfm ?? 0, top.length - (d.top_tracks.length - (d.top_from_lastfm ?? 0))));
 
   const follow = async () => {
     setBusy('follow');
@@ -125,7 +127,7 @@ export function ArtistPage({ refId }: { refId: string }) {
         cover={artist.picture_url}
         round
         title={artist.name}
-        sub={[artist.nb_fans ? `${artist.nb_fans.toLocaleString('ru-RU')} ${plural(artist.nb_fans, ['поклонник', 'поклонника', 'поклонников'])} в Deezer` : null, releases.length ? `${releases.length} ${plural(releases.length, ['релиз', 'релиза', 'релизов'])}` : null].filter(Boolean).join(' · ')}
+        sub={[d.lastfm_listeners ? `${d.lastfm_listeners.toLocaleString('ru-RU')} ${plural(d.lastfm_listeners, ['слушатель', 'слушателя', 'слушателей'])} в Last.fm` : null, artist.nb_fans ? `${artist.nb_fans.toLocaleString('ru-RU')} ${plural(artist.nb_fans, ['поклонник', 'поклонника', 'поклонников'])} в Deezer` : null, releases.length ? `${releases.length} ${plural(releases.length, ['релиз', 'релиза', 'релизов'])}` : null].filter(Boolean).join(' · ')}
         tracks={hidden ? undefined : top}
         context="artist"
       />
@@ -169,7 +171,11 @@ export function ArtistPage({ refId }: { refId: string }) {
 
       {top.length > 0 && (
         <section aria-label="Популярное">
-          <h2 className="px-4 pb-1 pt-3 text-lg font-bold lg:px-6">Популярное</h2>
+          <h2 className="flex items-baseline gap-2 px-4 pb-1 pt-3 text-lg font-bold lg:px-6">
+            Популярное
+            {/* whose listens put them there: the catalog's own, and Last.fm's where the catalog's list is short */}
+            <span className="text-xs font-normal text-dim">{lfm >= top.length ? 'по Last.fm' : lfm > 0 ? `по Deezer, с ${top.length - lfm + 1}-го — по Last.fm` : 'по Deezer'}</span>
+          </h2>
           {/* a wide window: two columns, 1–5 and 6–10 — only where a row keeps room for its name, and only when
               there are tracks for two */}
           <div className={top.length > 5 ? 'min-[1700px]:grid min-[1700px]:grid-flow-col min-[1700px]:grid-cols-2 min-[1700px]:gap-x-4' : undefined} style={{ gridTemplateRows: `repeat(${Math.ceil(top.length / 2)}, auto)` }}>

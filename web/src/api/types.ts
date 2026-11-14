@@ -234,6 +234,10 @@ export interface ArtistPageOut {
   compilations: AlbumOut[];
   /** releases said to be a namesake's: not among these */
   excluded?: number;
+  /** how many listened to the artist on Last.fm (not known: none) */
+  lastfm_listeners?: number | null;
+  /** how many of the last `top_tracks` are Last.fm's, added where the catalog's own list is short */
+  top_from_lastfm?: number;
 }
 
 /** A release the catalog files under an artist that is a namesake's — said so by someone here, for everyone. */

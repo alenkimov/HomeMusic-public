@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import AlbumOut, ArtistPageOut, DiscographyOut, NamesakeIn, NamesakeOut
-from app.catalog import namesakes
+from app.catalog import namesakes, popular
 from app.auth import current_user
 from app.catalog.models import ArtistPage, CatalogAlbum, split_ref
 from app.db import get_session
@@ -63,9 +63,11 @@ async def artist(ref: str, user: User = Depends(current_user), s: AsyncSession =
     page = await get_artist_page(ref)
     albums = await annotate_albums(s, page.albums, user.id)
     albums.sort(key=lambda a: (a.release_date is not None, a.release_date), reverse=True)
+    heard, extra = await asyncio.gather(popular.listeners(page.artist.name), popular.more(page.artist, page.top_tracks))
     return ArtistPageOut(
         artist=page.artist,
-        top_tracks=await annotate_tracks(s, page.top_tracks, user.id),
+        top_tracks=await annotate_tracks(s, [*page.top_tracks, *extra], user.id),
+        lastfm_listeners=heard, top_from_lastfm=len(extra),
         albums=[a for a in albums if a.record_type == "album"],
         singles=[a for a in albums if a.record_type in ("single", "ep")],
         compilations=[a for a in albums if a.record_type == "compile"],
