@@ -15,9 +15,9 @@ import { AUTO_PLAYLISTS } from '../lib/stats';
  * (a finger held on one of them: its menu — the name, the picture, deleting it), the lists that make themselves («Для вас», tiles) and, last, the tags: the saved filters by them and «Все теги». A computer has the same in its
  * side panel (`components/Sidebar.tsx`). The files the Hub keeps are «Мои файлы» of «Меню» (`pages/Files.tsx`). */
 export function LibraryPage() {
-  const lists = useAsync((s) => api.playlists(s), []);
-  const liked = useAsync((s) => api.ndLiked(s), []);
-  const sels = useAsync((s) => api.tagSelections(s), []);
+  const lists = useAsync((s) => api.playlists(s), [], true, 'playlists');
+  const liked = useAsync((s) => api.ndLiked(s), [], true, 'liked');
+  const sels = useAsync((s) => api.tagSelections(s), [], true, 'selections');
   const counts = useForYouCounts();
   const count = (n: number | undefined) => (n === undefined ? ' ' : tracksWord(n));
   const again = () => {

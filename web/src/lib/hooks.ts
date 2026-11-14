@@ -11,9 +11,12 @@ export interface AsyncState<T> {
 }
 
 // What a page showed the last time, by the name it keeps it under: shown at once the next time the page opens, while
-// the fresh answer is on its way. In memory, and in the browser's storage when it is not too large for it.
+// the fresh answer is on its way. In memory, and in the browser's storage within a budget: the answers asked for
+// longest ago leave it first, and one too large for it stays in memory alone.
 const LAST = 'hm-last:';
-const LAST_MAX = 400_000; // characters of JSON the storage is given for one answer
+const LAST_INDEX = 'hm-last-index'; // [name, characters][], the latest kept last
+const LAST_MAX = 1_500_000; // characters of JSON the storage is given for one answer
+const LAST_BUDGET = 3_000_000; // …and for all of them
 const last = new Map<string, unknown>();
 
 function lastOf<T>(key: string): T | undefined {
@@ -31,8 +34,20 @@ function keepLast(key: string, value: unknown) {
   last.set(key, value);
   try {
     const raw = JSON.stringify(value);
-    if (raw.length <= LAST_MAX) localStorage.setItem(LAST + key, raw);
-    else localStorage.removeItem(LAST + key);
+    let index = (JSON.parse(localStorage.getItem(LAST_INDEX) ?? '[]') as [string, number][]).filter(([k]) => k !== key);
+    localStorage.removeItem(LAST + key);
+    if (raw.length <= LAST_MAX) {
+      index.push([key, raw.length]);
+      let total = index.reduce((n, [, size]) => n + size, 0);
+      while (total > LAST_BUDGET && index.length > 1) {
+        const [gone, size] = index[0];
+        index = index.slice(1);
+        total -= size;
+        localStorage.removeItem(LAST + gone);
+      }
+      localStorage.setItem(LAST + key, raw);
+    }
+    localStorage.setItem(LAST_INDEX, JSON.stringify(index));
   } catch {
     /* a full or closed storage: it stays in memory */
   }
@@ -42,7 +57,7 @@ function keepLast(key: string, value: unknown) {
 export function forgetLast() {
   last.clear();
   try {
-    for (const k of Object.keys(localStorage)) if (k.startsWith(LAST)) localStorage.removeItem(k);
+    for (const k of Object.keys(localStorage)) if (k.startsWith(LAST)) localStorage.removeItem(k); // the index too
   } catch {
     /* nothing to clear */
   }
@@ -60,10 +75,19 @@ export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: Depen
   const fnRef = useRef(fn);
   fnRef.current = fn;
 
+  const keptAs = useRef(keep);
+
   useEffect(() => {
     if (!enabled) {
       setLoading(false);
       return;
+    }
+    if (keep !== keptAs.current) {
+      // the same page, another thing (a playlist after a playlist): what that one showed last, or nothing yet
+      keptAs.current = keep;
+      const was = keep ? lastOf<T>(keep) : undefined;
+      setData(was);
+      silentRef.current = was !== undefined;
     }
     const ctl = new AbortController();
     if (!silentRef.current) setLoading(true);

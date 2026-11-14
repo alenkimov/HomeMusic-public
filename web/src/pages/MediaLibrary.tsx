@@ -236,7 +236,7 @@ export function Hero({ cover, round, title, sub, right, kicker, art, tracks, con
 // --- pages -------------------------------------------------------------------------------------------------
 
 export function LikedPage() {
-  const res = useAsync((s) => api.ndLiked(s), []);
+  const res = useAsync((s) => api.ndLiked(s), [], true, 'liked');
   useSmartPage('liked', null);
   useHubEvent('library', () => res.reload(true));
   useHubEvent('import', () => res.reload(true));
@@ -410,7 +410,7 @@ export function ArtistRow({ artists, rowKey, radio }: { artists: NdArtistOut[]; 
 }
 
 export function PlaylistPage({ id }: { id: string }) {
-  const res = useAsync((s) => api.playlist(id, s), [id]);
+  const res = useAsync((s) => api.playlist(id, s), [id], true, `playlist:${id}`);
   const p = res.data;
   useSmartPage(`playlist:${id}`, p?.name ?? null);
   // the playlist is the Hub's: every track stands in its place, whether the library has its file yet or not
@@ -462,7 +462,7 @@ export function PlaylistPage({ id }: { id: string }) {
 }
 
 export function ArtistsPage() {
-  const res = useAsync((s) => api.ndArtists(s), []);
+  const res = useAsync((s) => api.ndArtists(s), [], true, 'nd-artists');
   const [q, setQ] = useState('');
   const shown = useMemo(() => {
     const needle = q.trim().toLocaleLowerCase('ru');
@@ -507,7 +507,7 @@ const albumsWord = (n: number) => {
 };
 
 export function NdArtistPage({ id }: { id: string }) {
-  const res = useAsync((s) => api.ndArtist(id, s), [id]);
+  const res = useAsync((s) => api.ndArtist(id, s), [id], true, `nd-artist:${id}`);
   const { starting } = useWave();
   if (res.loading) return (<><PageHeader hero title="Исполнитель" back="/artists" /><HeroSkeleton round /></>);
   if (!res.data) return (<><PageHeader hero title="Исполнитель" back="/artists" /><ErrorState text={res.error ?? 'Исполнитель не найден'} onRetry={() => res.reload()} /></>);
@@ -551,7 +551,7 @@ export function NdArtistPage({ id }: { id: string }) {
 }
 
 export function NdAlbumPage({ id }: { id: string }) {
-  const res = useAsync((s) => api.ndAlbum(id, s), [id]);
+  const res = useAsync((s) => api.ndAlbum(id, s), [id], true, `nd-album:${id}`);
   if (res.loading) return (<><PageHeader hero title="Альбом" back="/library" /><HeroSkeleton /></>);
   if (!res.data) return (<><PageHeader hero title="Альбом" back="/library" /><ErrorState text={res.error ?? 'Альбом не найден'} onRetry={() => res.reload()} /></>);
   const a = res.data;

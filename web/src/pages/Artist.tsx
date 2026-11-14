@@ -39,7 +39,7 @@ const kindOf = (a: AlbumOut): Kind => (a.record_type === 'single' || a.record_ty
 
 /** The user's liked tracks this artist is on (credited anywhere, not only first). */
 function useLikedBy(name: string | undefined, ref: string | undefined): number {
-  const liked = useAsync((s) => api.ndLiked(s), []);
+  const liked = useAsync((s) => api.ndLiked(s), [], true, 'liked');
   return useMemo(() => {
     if (!name) return 0;
     const want = name.trim().toLocaleLowerCase('ru');
@@ -59,7 +59,7 @@ export function ArtistNamedPage({ name }: { name: string }) {
 }
 
 export function ArtistPage({ refId }: { refId: string }) {
-  const res = useAsync((s) => api.artist(refId, s), [refId]);
+  const res = useAsync((s) => api.artist(refId, s), [refId], true, `artist:${refId}`);
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const d: ArtistPageOut | undefined = res.data;

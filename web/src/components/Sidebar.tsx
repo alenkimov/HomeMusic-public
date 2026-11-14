@@ -31,21 +31,21 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
   const route = useRoute();
   const activeDownloads = useActiveDownloads();
   // the Hub says when a playlist is made, changed or deleted (the «library» event): no page has to tell this one
-  const lists = useAsync((s) => api.playlists(s), []);
+  const lists = useAsync((s) => api.playlists(s), [], true, 'playlists');
   const counts = useForYouCounts();
   const fresh = useUnseenReleases();
   useHubEvent('library', () => lists.reload(true));
   useHubEvent('import', () => lists.reload(true));
   useHubEvent('reconnect', () => lists.reload(true));
   // the saved filters by tags (lib/tags.ts)
-  const sels = useAsync((s) => api.tagSelections(s), []);
+  const sels = useAsync((s) => api.tagSelections(s), [], true, 'selections');
   useEffect(() => {
     const changed = () => sels.reload(true);
     window.addEventListener(SELECTIONS_EVENT, changed);
     return () => window.removeEventListener(SELECTIONS_EVENT, changed);
   }, [sels.reload]);
   // «Любимое» is a playlist too: its number of tracks, kept fresh as ♥ are set
-  const liked = useAsync((s) => api.ndLiked(s), []);
+  const liked = useAsync((s) => api.ndLiked(s), [], true, 'liked');
   useHubEvent('library', () => liked.reload(true));
   useEffect(() => {
     let timer: number | undefined;

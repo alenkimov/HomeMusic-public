@@ -17,7 +17,7 @@ import { attempt, toast } from '../lib/ui';
 
 export function AlbumPage({ refId }: { refId: string }) {
   const [rev, setRev] = useState(0);
-  const res = useAsync((s) => api.album(refId, s, rev > 0), [refId, rev]);
+  const res = useAsync((s) => api.album(refId, s, rev > 0), [refId, rev], true, `album:${refId}`);
   const [dlBusy, setDlBusy] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 

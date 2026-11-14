@@ -65,7 +65,7 @@ function ListCover({ tracks, icon }: { tracks: readonly TrackOut[]; icon: IconNa
 export function ForYouPage({ kind, mix }: { kind: string; mix?: number }) {
   const { me } = useSession();
   const [issue, setIssue] = useState<number | null>(null);
-  const res = useAsync((s) => api.forYouList(kind, { mix, issue: issue ?? undefined }, s), [kind, mix, issue]);
+  const res = useAsync((s) => api.forYouList(kind, { mix, issue: issue ?? undefined }, s), [kind, mix, issue], true, `for-you:${kind}:${mix ?? ''}:${issue ?? ''}`);
   const d: ForYouOut | undefined = res.data;
   const [busy, setBusy] = useState<string | null>(null);
   // a list being made is asked for again as soon as the Hub says

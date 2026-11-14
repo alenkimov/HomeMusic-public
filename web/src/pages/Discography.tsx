@@ -29,7 +29,7 @@ const kindOf = (a: AlbumOut): Kind => (a.record_type === 'ep' ? 'single' : a.rec
 const yearOf = (a: AlbumOut) => a.year ?? (a.release_date ? Number(a.release_date.slice(0, 4)) : null);
 
 export function DiscographyPage({ refId }: { refId: string }) {
-  const res = useAsync((s) => api.discography(refId, s), [refId]);
+  const res = useAsync((s) => api.discography(refId, s), [refId], true, `discography:${refId}`);
   const [kind, setKind] = useState<Kind>('all');
   const [shown, setShown] = useState(STEP);
   const sf = useSearchField('Трек или релиз');

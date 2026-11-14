@@ -11,7 +11,7 @@ import { Link, enc } from '../lib/router';
 import { attempt } from '../lib/ui';
 
 export function PlaylistsPage() {
-  const res = useAsync((s) => api.playlists(s), []);
+  const res = useAsync((s) => api.playlists(s), [], true, 'playlists');
   // made, changed or deleted anywhere: the Hub says so
   useHubEvent('library', () => res.reload(true));
   useHubEvent('reconnect', () => res.reload(true));
