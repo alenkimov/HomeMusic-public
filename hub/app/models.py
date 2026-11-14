@@ -930,6 +930,8 @@ class ArtistRelease(Base):
     nb_tracks: Mapped[int | None] = mapped_column(Integer)
     found_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     seen_at: Mapped[datetime | None] = mapped_column(DateTime)  # the user has opened the feed since
+    # its tracks as the catalog gave them (`CatalogTrack`); None: not asked for yet
+    tracks_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON(none_as_null=True))
 
 
 class ArtistReleaseCheck(Base):
@@ -942,6 +944,9 @@ class ArtistReleaseCheck(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     artist_ref: Mapped[str] = mapped_column(String(64))
     checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # the latest thing they released, however long ago: «Подписки» says it beside the artist
+    last_release_date: Mapped[date | None] = mapped_column(Date)
+    last_release_title: Mapped[str | None] = mapped_column(String(512))
 
 
 class AppSetting(Base):

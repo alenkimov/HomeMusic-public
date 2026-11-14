@@ -997,7 +997,7 @@ export interface DiscoveriesOut {
   building: boolean;
 }
 
-/** A release of a followed artist («Релизы», pages/Releases.tsx). */
+/** A release of a followed artist («Подписки», pages/Subscriptions.tsx). */
 export interface ReleaseOut {
   album_ref: string;
   title: string;
@@ -1010,12 +1010,32 @@ export interface ReleaseOut {
   nb_tracks?: number | null;
   /** not seen before this opening of the feed */
   new: boolean;
+  /** its tracks; null: the catalog has not been asked for them yet */
+  tracks?: TrackOut[] | null;
+}
+
+/** An artist the user follows. */
+export interface FollowOut {
+  /** the artist in the catalog */
+  ref: string;
+  name: string;
+  /** what the follow itself is kept by: to unfollow by */
+  like_ref?: string | null;
+  nd_id?: string | null;
+  picture_url?: string | null;
+  /** the latest thing they released, however long ago (YYYY-MM-DD) */
+  last_release_date?: string | null;
+  last_release_title?: string | null;
+  /** how many of their releases the user has not seen */
+  new: number;
 }
 
 export interface ReleasesOut {
   /** how many artists are followed */
   artists: number;
   unseen: number;
+  /** the ones with something new first, then by their latest release */
+  following: FollowOut[];
   items: ReleaseOut[];
 }
 

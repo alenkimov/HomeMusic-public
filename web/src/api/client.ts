@@ -438,7 +438,7 @@ export const api = {
   discoveriesBuild: () => request<OkOut>('POST', '/api/discoveries/build'),
   // «Релизы» (lib/releases.ts)
   releases: (signal?: AbortSignal) => request<ReleasesOut>('GET', '/api/releases', { signal }),
-  releasesCount: () => request<{ unseen: number }>('GET', '/api/releases/count'),
+  releasesCount: () => request<{ unseen: number; artists: number }>('GET', '/api/releases/count'),
   releasesSeen: () => request<OkOut>('POST', '/api/releases/seen'),
   // «Статистика» (lib/stats.ts)
   stats: (q: { period: StatsPeriod; by: StatsBy; limit: number }, signal?: AbortSignal) => request<StatsOut>('GET', withQuery('/api/stats', { ...q, tz: timeZone() }), { signal }),

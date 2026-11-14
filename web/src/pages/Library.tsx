@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
+import { useFollowedCount, useUnseenReleases } from '../lib/releases';
 import { api } from '../api/client';
 import { Icon, type IconName } from '../components/Icon';
 import { Cover, ErrorState, IconButton, SkeletonRows } from '../components/ui';
 import { useHubEvent } from '../lib/events';
-import { tracksWord } from '../lib/format';
+import { plural, tracksWord } from '../lib/format';
 import { useForYouCounts } from '../lib/forYou';
 import { useAsync } from '../lib/hooks';
 import { playlistMenuProps } from '../lib/playlistMenu';
@@ -28,6 +29,9 @@ export function LibraryPage() {
   useHubEvent('library', again);
   useHubEvent('reconnect', again);
 
+  const followed = useFollowedCount();
+  const fresh = useUnseenReleases();
+
   return (
     <div className="px-4 pb-4">
       <header className="pt-safe flex items-center justify-between pb-1 pt-4">
@@ -38,6 +42,12 @@ export function LibraryPage() {
       <Title>Плейлисты</Title>
       <ul className="overflow-hidden rounded-2xl bg-surface">
         <Row to="/liked" title="Любимое" sub={liked.data ? tracksWord(liked.data.songs.length) : undefined} art={<span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-accent text-on-accent"><Icon name="heart" size={22} filled /></span>} />
+        <Row
+          to="/subscriptions"
+          title="Подписки"
+          sub={followed ? [`${followed} ${plural(followed, ['исполнитель', 'исполнителя', 'исполнителей'])}`, fresh ? `новых релизов: ${fresh}` : null].filter(Boolean).join(' · ') : 'Исполнители и их новые релизы'}
+          art={<span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent/20 text-accent"><Icon name="user" size={22} />{fresh > 0 && <span className="absolute right-0 top-0 h-3 w-3 rounded-full bg-accent ring-2 ring-surface" />}</span>}
+        />
         {(lists.data ?? []).map((p) => (
           <Row
             key={p.id}

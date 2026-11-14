@@ -7,6 +7,7 @@ import { useHubEvent } from '../lib/events';
 import { tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { useActiveDownloads } from '../lib/notify';
+import { useUnseenReleases } from '../lib/releases';
 import { AUTO_PLAYLISTS } from '../lib/stats';
 import { SELECTIONS_EVENT } from '../lib/tags';
 import { attempt } from '../lib/ui';
@@ -32,6 +33,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
   // the Hub says when a playlist is made, changed or deleted (the «library» event): no page has to tell this one
   const lists = useAsync((s) => api.playlists(s), []);
   const counts = useForYouCounts();
+  const fresh = useUnseenReleases();
   useHubEvent('library', () => lists.reload(true));
   useHubEvent('import', () => lists.reload(true));
   useHubEvent('reconnect', () => lists.reload(true));
@@ -79,6 +81,11 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
             </Fragment>
           );
         })}
+        <Link to="/subscriptions" aria-current={at('/subscriptions') ? 'page' : undefined} className={cx(item, at('/subscriptions') ? 'bg-accent/15 font-semibold text-accent' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
+          <Icon name="bell" size={20} stroke={at('/subscriptions') ? 2.4 : 2} />
+          <span className="flex-1">Подписки</span>
+          {fresh > 0 && <span className="min-w-5 rounded-full bg-accent px-1.5 text-center text-[11px] font-bold leading-5 text-on-accent">{fresh > 99 ? '99+' : fresh}</span>}
+        </Link>
       </nav>
       <div className="flex min-h-0 flex-1 flex-col rounded-2xl bg-surface">
       <div className="flex items-center gap-1 px-3 pb-1 pt-3 text-xs text-dim">

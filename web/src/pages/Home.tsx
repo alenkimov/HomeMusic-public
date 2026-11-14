@@ -1,26 +1,36 @@
 import { api } from '../api/client';
-import { ReleaseTile } from './Releases';
 import { WaveHero } from '../components/WaveHero';
+import { Icon } from '../components/Icon';
 import { ErrorState, SectionTitle, Spinner } from '../components/ui';
 import { useHubEvent } from '../lib/events';
-import { useAsync, useRememberScrollX } from '../lib/hooks';
+import { useAsync } from '../lib/hooks';
+import { useUnseenReleases } from '../lib/releases';
 import { Link } from '../lib/router';
 import { AlbumRow, ArtistRow } from './MediaLibrary';
 import { TastePrompt } from './Mix';
+import { NewFromFollowed } from './Subscriptions';
 
-/** «Главная» of the PWA in a plain browser (`STANDALONE`): «Моя волна», what the followed artists have released,
+/** «Главная» of the PWA in a plain browser (`STANDALONE`): «Моя волна», what the followed artists have released
+ * (and the bell to «Подписки» in the corner of a phone — a computer has them in its side panel),
  * «Радиостанции» (a wave by a library artist, liked ones first) and rows of albums
  * Navidrome knows the user plays. Inside the app this is its native home screen. */
 export function HomePage() {
   const res = useAsync((s) => api.ndHome(s), []);
   useHubEvent('library', () => res.reload(true));
   const d = res.data;
+  const fresh = useUnseenReleases();
 
   return (
-    <div className="pt-safe pb-4">
+    <div className="pt-safe relative pb-4">
+      <Link to="/subscriptions" aria-label={fresh ? `Подписки: новых релизов ${fresh}` : 'Подписки'} title="Подписки" className="pt-safe absolute right-2 top-2 z-10 lg:hidden">
+        <span className="relative flex h-11 w-11 items-center justify-center rounded-full text-fg">
+          <Icon name="bell" size={24} />
+          {fresh > 0 && <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-accent ring-2 ring-bg" />}
+        </span>
+      </Link>
       <WaveHero />
       <TastePrompt />
-      <NewReleases />
+      <NewFromFollowed />
 
       {res.loading ? (
         <div className="flex justify-center py-10">
@@ -42,26 +52,5 @@ export function HomePage() {
         </>
       ) : null}
     </div>
-  );
-}
-
-/** «Новые релизы»: what the artists the user follows have released lately, the newest first — seen here without
- * going to «Релизы» for it. Nothing is shown when there is nothing; what is new stays marked until «Релизы» is opened. */
-function NewReleases() {
-  const res = useAsync((s) => api.releases(s), []);
-  const row = useRememberScrollX('home:releases');
-  const items = res.data?.items.slice(0, 12) ?? [];
-  if (!items.length) return null;
-  return (
-    <section aria-label="Новые релизы">
-      <SectionTitle right={<Link to="/releases" className="text-sm text-muted hover:text-fg">Все</Link>}>Новые релизы</SectionTitle>
-      <div ref={row} className="no-scrollbar flex gap-4 overflow-x-auto px-4 pb-1">
-        {items.map((r) => (
-          <div key={r.album_ref} className="w-36 shrink-0">
-            <ReleaseTile r={r} />
-          </div>
-        ))}
-      </div>
-    </section>
   );
 }

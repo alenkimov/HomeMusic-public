@@ -58,7 +58,7 @@ import { PlaylistsPage } from './pages/Playlists';
 import { SearchPage, searchTab } from './pages/Search';
 import { SharePage } from './pages/Share';
 import { ListenBrainzPage } from './pages/ListenBrainz';
-import { ReleasesPage } from './pages/Releases';
+import { SubscriptionsPage } from './pages/Subscriptions';
 import { StatsPage } from './pages/Stats';
 import { UploadPage } from './pages/Upload';
 
@@ -78,7 +78,7 @@ const STANDALONE_ROUTES: RouteDef[] = [
   ['/history', 'more', () => <HistoryPage />],
   ['/hidden', 'more', () => <HiddenPage />],
   ['/offline', 'more', () => <OfflinePage />],
-  ['/releases', 'more', () => <ReleasesPage />],
+  ['/subscriptions', 'library', () => <SubscriptionsPage />],
   ['/discoveries', 'library', () => <ForYouPage key="weekly" kind="weekly" />],
   ['/listenbrainz', 'more', () => <ListenBrainzPage />],
   ['/auto/:kind', 'library', (p) => <ForYouPage key={p.kind} kind={p.kind} />],
