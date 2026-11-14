@@ -24,17 +24,15 @@ export interface ListSearch {
   field: ReactNode;
 }
 
-/** The search inside a list of tracks (a playlist, «Любимое»): by title, artist and album, and inside the
- * lyrics the Hub keeps (`/api/lyrics/search`). The magnifier of the list's bar or Ctrl+F (instead of the browser's
- * own find, which sees only the rows on the page, not their texts) opens the field in the bar. Esc closes it and
- * brings the whole list back. */
-export function useListSearch(tracks: readonly TrackOut[], placeholder = 'Название, исполнитель или строчка'): ListSearch {
+/** The field of a bar's search, and what is typed in it: the magnifier of the bar or Ctrl+F (instead of the browser's
+ * own find, which sees only the rows on the page) opens it in the bar itself; Esc closes it and clears it. What is
+ * searched, and how, is the page's: a list of tracks looks through its own rows (`useListSearch`), «История» asks the
+ * Hub. `field(count)`: the field, with how many were found. */
+export function useSearchField(placeholder: string): { q: string; open: boolean; alone: boolean; show: () => void; close: () => void; field: (count?: number | null) => ReactNode } {
   const desktop = useDesktop();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
-  const [inLyrics, setInLyrics] = useState<Map<string, string>>(new Map());
   const input = useRef<HTMLInputElement>(null);
-  const needle = q.trim().toLocaleLowerCase('ru');
 
   const show = () => {
     if (!desktop) window.scrollTo(0, 0); // what is found starts right under the field
@@ -60,6 +58,47 @@ export function useListSearch(tracks: readonly TrackOut[], placeholder = 'Наз
     return () => window.removeEventListener('keydown', key);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, desktop]);
+
+  const field = (count?: number | null) => (
+    <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-xl bg-fg/10 pl-3 pr-1" role="search">
+      <Icon name="search" size={18} className="shrink-0 text-muted" />
+      <input
+        ref={input}
+        autoFocus
+        type="search"
+        enterKeyHint="search"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        className="min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-dim [&::-webkit-search-cancel-button]:hidden"
+      />
+      {q.trim() && count !== null && count !== undefined && <span className="shrink-0 text-xs tabular-nums text-muted">{count}</span>}
+      <button
+        type="button"
+        aria-label={q ? 'Стереть' : 'Закрыть поиск'}
+        title={q ? 'Стереть' : 'Закрыть поиск'}
+        onClick={() => {
+          if (!q) return close();
+          setQ('');
+          input.current?.focus();
+        }}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted hover:text-fg"
+      >
+        <Icon name="x" size={16} />
+      </button>
+    </div>
+  );
+  return { q, open, alone: open && !desktop, show, close, field };
+}
+
+/** The search inside a list of tracks (a playlist, «Любимое»): by title, artist and album, and inside the
+ * lyrics the Hub keeps (`/api/lyrics/search`). */
+export function useListSearch(tracks: readonly TrackOut[], placeholder = 'Название, исполнитель или строчка'): ListSearch {
+  const f = useSearchField(placeholder);
+  const [inLyrics, setInLyrics] = useState<Map<string, string>>(new Map());
+  const needle = f.q.trim().toLocaleLowerCase('ru');
 
   // inside the lyrics: asked of the Hub, a moment after the typing stops
   useEffect(() => {
@@ -102,36 +141,5 @@ export function useListSearch(tracks: readonly TrackOut[], placeholder = 'Наз
     return out;
   }, [tracks, needle, inLyrics]);
 
-  const field = (
-    <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-xl bg-fg/10 pl-3 pr-1" role="search">
-      <Icon name="search" size={18} className="shrink-0 text-muted" />
-      <input
-        ref={input}
-        autoFocus
-        type="search"
-        enterKeyHint="search"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-        placeholder={placeholder}
-        aria-label="Поиск по списку"
-        className="min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-dim [&::-webkit-search-cancel-button]:hidden"
-      />
-      {found && <span className="shrink-0 text-xs tabular-nums text-muted">{found.length}</span>}
-      <button
-        type="button"
-        aria-label={q ? 'Стереть' : 'Закрыть поиск'}
-        title={q ? 'Стереть' : 'Закрыть поиск'}
-        onClick={() => {
-          if (!q) return close();
-          setQ('');
-          input.current?.focus();
-        }}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted hover:text-fg"
-      >
-        <Icon name="x" size={16} />
-      </button>
-    </div>
-  );
-  return { found, open, alone: open && !desktop, show, close, field };
+  return { found, open: f.open, alone: f.alone, show: f.show, close: f.close, field: f.field(found?.length) };
 }

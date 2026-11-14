@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { HistoryItem, HistoryOut } from '../api/types';
 import { listenTrack } from '../components/catalog';
-import { Icon } from '../components/Icon';
 import { SaveButton } from '../components/PlaylistsButton';
-import { Cover, Empty, ErrorState, IconButton, PageHeader, Segmented, SkeletonRows, Spinner, cx } from '../components/ui';
+import { ListBar } from '../components/ListBar';
+import { useSearchField } from '../components/ListSearch';
+import { Cover, Empty, ErrorState, IconButton, Segmented, SkeletonRows, Spinner, cx } from '../components/ui';
 import { useDesktop } from '../lib/desktop';
 import { fmtDuration, fmtLength, tracksWord } from '../lib/format';
 import { useDebounced } from '../lib/hooks';
@@ -48,8 +49,9 @@ const playable = (x: HistoryItem): ListenTrack | null => (x.track ? listenTrack(
 export function HistoryPage() {
   const desktop = useDesktop();
   const [show, setShow] = useState<Show>('all');
-  const [q, setQ] = useState('');
-  const dq = useDebounced(q.trim(), 350);
+  // the same search as a list's: the magnifier of the bar, there while the page is scrolled
+  const sf = useSearchField('Название или исполнитель');
+  const dq = useDebounced(sf.q.trim(), 350);
   const [data, setData] = useState<HistoryOut | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [more, setMore] = useState(false);
@@ -104,13 +106,10 @@ export function HistoryPage() {
 
   return (
     <div>
-      <PageHeader title="История" back="/more" sub={data ? (data.total ? `${data.total.toLocaleString('ru-RU')} прослушиваний` : undefined) : undefined} />
-      <div className="flex flex-wrap items-center gap-2 px-4 pb-2 lg:px-6">
+      <ListBar plain title="История" back="/more" search={{ found: null, open: sf.open, alone: sf.alone, show: sf.show, close: sf.close, field: sf.field(data?.total) }} />
+      <div className="flex flex-wrap items-center gap-3 px-4 pb-2 lg:px-6">
         <Segmented<Show> label="Что показывать" value={show} onChange={setShow} options={SHOWS} />
-        <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-xl bg-fg/10 px-3 lg:ml-auto lg:max-w-xs">
-          <Icon name="search" size={16} className="shrink-0 text-muted" />
-          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Найти в истории" aria-label="Найти в истории" className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-dim" />
-        </div>
+        {data && data.total > 0 && <span className="ml-auto text-xs tabular-nums text-dim">{data.total.toLocaleString('ru-RU')}</span>}
       </div>
 
       {error ? (

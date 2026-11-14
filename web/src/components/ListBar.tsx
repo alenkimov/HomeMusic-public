@@ -98,9 +98,10 @@ export function BarWindow({ icon, label, children }: { icon: IconName; label: st
  * list's head it is only «back» and, at the right, the tags and the search; once the head has gone up it gets the
  * list's name and ▶. The search opens in the bar itself; the tags — in a window (`TagFilterBody`); the ones chosen
  * are a line above the tracks (`TagFilterChips`, the page's own). */
-export function ListBar({ title, back, tracks, context, search, tags, extra, offline }: { title: string; back: string; tracks?: readonly TrackOut[]; context?: string; search?: ListSearch; tags?: ListTags; /** the list can be kept on the device: its key, its page and all of its tracks (`components/Offline.tsx`) */ offline?: { key: string; to: string; tracks: readonly TrackOut[] }; /** a mark of the list's own, before the tags («Режим микса») */ extra?: ReactNode }) {
+export function ListBar({ title, back, tracks, context, search, tags, extra, offline, plain }: { /** a page with no head of its own («История»): the bar is its title, there from the start */ plain?: boolean; title: string; back: string; tracks?: readonly TrackOut[]; context?: string; search?: ListSearch; tags?: ListTags; /** the list can be kept on the device: its key, its page and all of its tracks (`components/Offline.tsx`) */ offline?: { key: string; to: string; tracks: readonly TrackOut[] }; /** a mark of the list's own, before the tags («Режим микса») */ extra?: ReactNode }) {
   const desktop = useDesktop();
-  const gone = useHeadGone();
+  const scrolled = useHeadGone();
+  const gone = scrolled || !!plain;
   const [tagsOpen, setTagsOpen] = useState(false);
   const narrowed = !!tags && filterActive(tags.filter);
   const solid = gone || !!search?.alone;
