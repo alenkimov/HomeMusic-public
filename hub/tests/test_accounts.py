@@ -666,8 +666,11 @@ async def test_files_are_looked_after_by_who_brought_them(env):
         assert not mine["Общий"]["can_edit"] and mine["Общий"]["track_count"] == 1  # her track of it only
         assert [t["title"] for t in (await anna.get(f"/api/library/albums/{ids['both']}")).json()["tracks"]] == ["Четыре"]
         assert (await anna.get(f"/api/library/albums/{ids['his']}")).status_code == 404
-        assert (await anna.patch(f"/api/library/albums/{ids['both']}", json={"title": "Моё"})).status_code == 403
-        assert (await anna.patch(f"/api/library/tracks/{ids['t_his']}", json={"title": "Моё"})).status_code == 404
+        # a name is everybody's to put right (app/library/edits.py) — an album's and a track's, whoever brought the
+        # files; deleting them and moving them about stays with who brought them
+        assert (await anna.patch(f"/api/library/albums/{ids['both']}", json={"title": "Общий"})).status_code == 200
+        r = await anna.patch(f"/api/library/tracks/{ids['t_his']}", json={"title": "Его трек"})
+        assert r.status_code == 200 and r.json()["title"] == "Его трек"
         assert (await anna.delete(f"/api/library/tracks/{ids['t_his']}")).status_code == 404
         assert (await anna.post("/api/library/albums/merge", json={"target_id": ids["hers"], "source_ids": [ids["his"]]})).status_code == 404
         assert (await anna.delete(f"/api/library/tracks/{ids['t_hers']}")).status_code == 200

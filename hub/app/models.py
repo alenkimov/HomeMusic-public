@@ -195,6 +195,10 @@ class Track(Base):
     catalog: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # a listener put its name right (app/library/edits.py): the lists the catalog answers show this name then
+    renamed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # it has a cover of its own (`track_covers`); the key changes with the picture, for the caches of a page
+    cover_key: Mapped[str | None] = mapped_column(String(16))
     # its files: given with a new track they are saved with it. Never read through here (a query names them)
     files: Mapped[list[TrackFile]] = relationship(lazy="raise", passive_deletes=True, cascade="save-update, merge")
 
@@ -774,6 +778,30 @@ class LyricsTranslation(Base):
     edited_json: Mapped[list[Any] | None] = mapped_column(JSON)  # the lines a listener corrected by hand
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class TrackCover(Base):
+    """A track's own cover (app/library/edits.py): a square JPEG, in its file too."""
+
+    __tablename__ = "track_covers"
+
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
+    image: Mapped[bytes] = mapped_column(LargeBinary)
+
+
+class Edit(Base):
+    """A change a listener made to a track or an album (app/library/edits.py): who, when, and `changes_json`
+    {field: [what it was, what it is]}. The last one is shown beside the name; any can be read back."""
+
+    __tablename__ = "edits"
+    __table_args__ = (Index("ix_edits_target", "target_type", "target_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    target_type: Mapped[str] = mapped_column(String(8))  # track / album
+    target_id: Mapped[int] = mapped_column(Integer)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    changes_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class PlaylistCover(Base):

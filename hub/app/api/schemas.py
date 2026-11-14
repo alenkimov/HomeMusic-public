@@ -267,6 +267,25 @@ class TracksMoveIn(BaseModel):
     album_id: int
 
 
+class TrackEditOut(BaseModel):
+    """What the window of a track's names shows (app/library/edits.py)."""
+
+    track_id: int
+    title: str
+    artist: str
+    # what the catalog calls it (None: the catalog does not know the song): what «вернуть» goes back to
+    catalog_title: str | None = None
+    catalog_artist: str | None = None
+    renamed: bool = False
+    last_by: str | None = None  # who changed it last
+    last_at: datetime | None = None
+    own_cover: bool = False
+    cover_url: str | None = None
+    album_id: int | None = None  # its album of the library, whose cover can be changed too
+    album_title: str | None = None
+    has_file: bool = False
+
+
 class TrackPatchIn(BaseModel):
     title: str | None = None
     artist: str | None = None

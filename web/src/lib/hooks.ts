@@ -116,6 +116,15 @@ export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: Depen
     setNonce((n) => n + 1);
   }, []);
 
+  // a track or an album was put right (`lib/trackEdit.ts`): what a page keeps of its lists is stale — asked again,
+  // quietly, by every page that keeps its answer
+  useEffect(() => {
+    if (!keep) return;
+    const again = () => reload(true);
+    window.addEventListener('hm:track-edited', again);
+    return () => window.removeEventListener('hm:track-edited', again);
+  }, [keep, reload]);
+
   const set = useCallback((v: T | ((prev: T | undefined) => T | undefined)) => {
     setData(v as T | ((prev: T | undefined) => T));
   }, []);

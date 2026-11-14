@@ -982,6 +982,24 @@ export interface ListenBrainzOut {
   sent?: number;
 }
 
+/** A track's names as they are, what the catalog calls it and who changed it last (`components/TrackEdit.tsx`). */
+export interface TrackEditOut {
+  track_id: number;
+  title: string;
+  artist: string;
+  catalog_title?: string | null;
+  catalog_artist?: string | null;
+  renamed: boolean;
+  last_by?: string | null;
+  last_at?: string | null;
+  own_cover: boolean;
+  cover_url?: string | null;
+  /** its album of the library, whose cover can be changed too */
+  album_id?: number | null;
+  album_title?: string | null;
+  has_file: boolean;
+}
+
 /** A list the user played from lately («Продолжить» of the home): where it leads and how it is drawn. */
 export interface RecentPlaceOut {
   /** the address of its page */

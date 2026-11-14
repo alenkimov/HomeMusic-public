@@ -1,4 +1,5 @@
 import { useState, type MouseEvent, type ReactNode } from 'react';
+import { openTrackEdit } from '../lib/trackEdit';
 import { createPortal } from 'react-dom';
 import { setDisliked, useDisliked, type DislikeTarget } from '../lib/dislikes';
 import { STANDALONE } from '../lib/embedded';
@@ -165,6 +166,17 @@ function TrackMenu({ track, extra, inPlayer, lean, noTags, onClose }: { track: M
             }}
           />
         ))}
+        {(track.library_track_id || track.ref || track.nd_song_id) && (
+          <MenuItem
+            icon="edit"
+            label="Переименовать"
+            hint="Название, исполнители и обложка — для всех"
+            onClick={() => {
+              onClose();
+              openTrackEdit({ title: track.title, artist: track.artist, library_track_id: track.library_track_id, ref: track.ref, nd_song_id: track.nd_song_id });
+            }}
+          />
+        )}
         {albumTo && <MenuItem icon="disc" label="Перейти к альбому" onClick={() => go(albumTo)} />}
         {artistTo && <MenuItem icon="user" label="Перейти к исполнителю" hint={track.artist} onClick={() => go(artistTo)} />}
         {canWave() && trackWave && (

@@ -23,7 +23,7 @@ from app.library.importer import _move, _write_cover_file, album_reldir, library
 from app.library.layout import track_filename, unique_path
 from app.library.tracks import current_file, files_of
 from app.matching.normalize import fingerprint
-from app.models import Album, Track, TrackFile
+from app.models import Album, Track, TrackCover, TrackFile
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +44,12 @@ async def _album_cover(album: Album) -> bytes | None:
     return await asyncio.to_thread(p.read_bytes) if p.is_file() else None
 
 
+async def _own_cover(s: AsyncSession, track: Track) -> bytes | None:
+    if not track.cover_key:
+        return None
+    return (await s.execute(select(TrackCover.image).where(TrackCover.track_id == track.id))).scalar_one_or_none()
+
+
 async def relocate_track(s: AsyncSession, track: Track, album: Album, *, cover: bytes | None = None,
                          retag: bool = True) -> None:
     """Write album/track fields into the file and move it to the album folder if the path changed. A track without
@@ -58,7 +64,8 @@ async def relocate_track(s: AsyncSession, track: Track, album: Album, *, cover: 
         return
     old_abs = library_abs(file.path)
     if retag and old_abs.is_file():
-        await asyncio.to_thread(tagger.write_tags, old_abs, tagdata_for(track, album, file, cover=cover))
+        own = await _own_cover(s, track)  # the track's own picture, not the album's
+        await asyncio.to_thread(tagger.write_tags, old_abs, tagdata_for(track, album, file, cover=own or cover))
     ext = old_abs.suffix.lstrip(".") or "mp3"
     new_dir_rel = album_reldir(album)
     new_name = track_filename(track.disc_no, track.track_no, track.title, ext)
@@ -98,8 +105,9 @@ async def set_album_cover(s: AsyncSession, album: Album, image: bytes) -> Album:
         d = library_abs(album_reldir(album))
         await asyncio.to_thread(_write_cover_file, d, cover)
         album.cover_path = (album_reldir(album) / "cover.jpg").as_posix()
+        # a track with a cover of its own keeps it
         paths = (await s.execute(select(TrackFile.path).join(Track, Track.id == TrackFile.track_id)
-                                 .where(Track.album_id == album.id))).scalars().all()
+                                 .where(Track.album_id == album.id, Track.cover_key.is_(None)))).scalars().all()
         for rel in paths:
             p = library_abs(rel)
             if p.is_file():
@@ -145,6 +153,7 @@ async def update_track(s: AsyncSession, track: Track, **fields) -> Track:
                 setattr(track, k, v)
         album = await s.get(Album, track.album_id) if track.album_id else None
         if album is None:
+            track.fingerprint = fingerprint(track.artist, track.title)
             file = await current_file(s, track.id)
             p = library_abs(file.path) if file else None
             if p is not None and p.is_file():

@@ -75,6 +75,7 @@ import type {
   StarOut,
   StarredOut,
   TasteOnboardingOut,
+  TrackEditOut,
   TrackPatchIn,
   TracksMoveIn,
   UploadCommitIn,
@@ -319,6 +320,15 @@ export const api = {
   patchTrack: (id: number, body: TrackPatchIn) =>
     request<LibTrackOut>('PATCH', `/api/library/tracks/${id}`, { json: body }),
   deleteTrack: (id: number) => request<OkOut>('DELETE', `/api/library/tracks/${id}`),
+  /** A track's names and cover as they are, for the window that puts them right; a catalog song the Hub has not
+   * met becomes a track by this. */
+  trackEdit: (q: { track_id?: number; ref?: string; nd_song_id?: string }) => request<TrackEditOut>('GET', withQuery('/api/library/track-edit', q)),
+  setTrackCover: (id: number, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request<TrackEditOut>('PUT', `/api/library/tracks/${id}/cover`, { form });
+  },
+  dropTrackCover: (id: number) => request<TrackEditOut>('DELETE', `/api/library/tracks/${id}/cover`),
   star: (body: StarIn, signal?: AbortSignal) => request<StarOut>('POST', '/api/star', { json: body, signal }),
   starred: (signal?: AbortSignal) => request<StarredOut>('GET', '/api/starred', { signal }),
 

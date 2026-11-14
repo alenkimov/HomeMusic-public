@@ -114,6 +114,21 @@ def _dz_id(ref: str | None) -> str | None:
     return id_ if src == "dz" else None
 
 
+def put_right(o: Any, t: Track) -> None:
+    """What listeners put right of the track (app/library/edits.py) goes over what a catalog or Navidrome says of it:
+    the name it was given by hand, and its own cover."""
+    if t.renamed_at is not None:
+        if o.artist != t.artist:
+            o.artists = [a.strip() for a in t.artist.split(",") if a.strip()] or [t.artist]
+            if len(o.artists) != len(getattr(o, "artist_refs", None) or o.artists):
+                o.artist_refs = []
+            if hasattr(o, "nd_artist_ids") and len(o.artists) != len(o.nd_artist_ids or o.artists):
+                o.nd_artist_ids = []
+        o.title, o.artist = t.title, t.artist
+    if t.cover_key:
+        o.cover_url = o.cover_small_url = f"/api/library/tracks/{t.id}/cover?v={t.cover_key}"
+
+
 async def annotate_tracks(
     s: AsyncSession, tracks: Iterable[CatalogTrack], user_id: int | None = None
 ) -> list[TrackOut]:
@@ -165,6 +180,7 @@ async def annotate_tracks(
         o = TrackOut(**t.model_dump())
         if hit is not None:
             o.library_track_id = hit.id  # the Hub knows the song; whether it has a file is `owned`
+            put_right(o, hit)
         if hit is not None and hit.path is not None:
             o.owned = True
             o.nd_song_id = hit.nd_song_id

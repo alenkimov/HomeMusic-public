@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
+    TrackEditOut,
     AlbumCreateIn,
     AlbumMergeIn,
     AlbumPatchIn,
@@ -33,7 +34,7 @@ from app.db import get_session
 from app.events import bus
 from app.jobs.downloads import enqueue_scan
 from app.jobs.queue import notify
-from app.library import access, editor, tagger
+from app.library import access, editor, edits, tagger
 from app.library.importer import album_reldir, library_abs
 from app.library.tracks import current_file, current_files
 from app.matching.normalize import normalize_title
@@ -72,6 +73,21 @@ async def album_out(s: AsyncSession, a: Album, user: User, *, with_tracks: bool 
         can_edit=await access.owns_album(s, user, a),
         tracks=[track_out(t, files.get(t.id)) for t in tracks] if with_tracks else None,
     )
+
+
+async def _track(s: AsyncSession, track_id: int) -> Track:
+    """A track to put right: anybody signed in may (app/library/edits.py) — the library is everybody's."""
+    t = await s.get(Track, track_id)
+    if t is None:
+        raise HTTPException(404, "Трек не найден")
+    return t
+
+
+async def _album(s: AsyncSession, album_id: int) -> Album:
+    a = await s.get(Album, album_id)
+    if a is None:
+        raise HTTPException(404, "Альбом не найден")
+    return a
 
 
 async def _after_edit(s: AsyncSession, user: User, album_id: int | None) -> None:
@@ -128,8 +144,8 @@ async def get_album(album_id: int, user: User = Depends(current_user), s: AsyncS
 @router.patch("/api/library/albums/{album_id}", response_model=LibAlbumOut)
 async def patch_album(album_id: int, body: AlbumPatchIn, user: User = Depends(current_user),
                       s: AsyncSession = Depends(get_session, scope="function")):
-    a = await access.need_own_album(s, user, album_id)
-    await editor.update_album(s, a, **body.model_dump(exclude_unset=True))
+    a = await _album(s, album_id)
+    await edits.update_album(s, user, a, **body.model_dump(exclude_unset=True))
     await _after_edit(s, user, a.id)
     return await album_out(s, a, user, with_tracks=True)
 
@@ -137,12 +153,12 @@ async def patch_album(album_id: int, body: AlbumPatchIn, user: User = Depends(cu
 @router.put("/api/library/albums/{album_id}/cover", response_model=LibAlbumOut)
 async def put_cover(album_id: int, file: UploadFile = File(...), user: User = Depends(current_user),
                     s: AsyncSession = Depends(get_session, scope="function")):
-    a = await access.need_own_album(s, user, album_id)
+    a = await _album(s, album_id)
     data = await file.read()
     if len(data) > 20 * 1024 * 1024:
         raise HTTPException(413, "Картинка слишком большая")
     try:
-        await editor.set_album_cover(s, a, data)
+        await edits.set_album_cover(s, user, a, data)
     except Exception as e:
         raise HTTPException(400, f"Не удалось прочитать картинку: {e}") from e
     await _after_edit(s, user, a.id)
@@ -201,11 +217,66 @@ async def move(body: TracksMoveIn, user: User = Depends(current_user), s: AsyncS
 @router.patch("/api/library/tracks/{track_id}", response_model=LibTrackOut)
 async def patch_track(track_id: int, body: TrackPatchIn, user: User = Depends(current_user),
                       s: AsyncSession = Depends(get_session, scope="function")):
-    t = await access.need_own_track(s, user, track_id)
-    await editor.update_track(s, t, **body.model_dump(exclude_unset=True))
+    t = await _track(s, track_id)
+    try:
+        await edits.update_track(s, user, t, **body.model_dump(exclude_unset=True))
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
     await _after_edit(s, user, t.album_id)
     await s.refresh(t)
     return track_out(t, await current_file(s, t.id))
+
+
+@router.get("/api/library/track-edit", response_model=TrackEditOut)
+async def track_edit(track_id: int | None = None, ref: str | None = None, nd_song_id: str | None = None,
+                     user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    """A track's names as they are, what the catalog calls it and who changed it last — for the window that changes
+    them. A song of the catalog the Hub has not met yet becomes a track here: it can be renamed as any other."""
+    from app.lyrics.service import track_for
+
+    t = await s.get(Track, track_id) if track_id else await track_for(s, nd_song_id=nd_song_id, ref=ref, user_id=user.id)
+    if t is None:
+        raise HTTPException(404, "Трек не найден")
+    out = await edits.info(s, t)
+    await s.commit()
+    return out
+
+
+@router.put("/api/library/tracks/{track_id}/cover", response_model=TrackEditOut)
+async def put_track_cover(track_id: int, file: UploadFile = File(...), user: User = Depends(current_user),
+                          s: AsyncSession = Depends(get_session, scope="function")):
+    """The track's own cover, for everyone: where the album's picture is not its."""
+    t = await _track(s, track_id)
+    data = await file.read()
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(413, "Картинка слишком большая")
+    try:
+        await edits.set_track_cover(s, user, t, data)
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось прочитать картинку: {e}") from e
+    await _after_edit(s, user, t.album_id)
+    return await edits.info(s, t)
+
+
+@router.delete("/api/library/tracks/{track_id}/cover", response_model=TrackEditOut)
+async def delete_track_cover(track_id: int, user: User = Depends(current_user),
+                             s: AsyncSession = Depends(get_session, scope="function")):
+    """No cover of its own any more: the album's again."""
+    t = await _track(s, track_id)
+    await edits.set_track_cover(s, user, t, None)
+    await _after_edit(s, user, t.album_id)
+    return await edits.info(s, t)
+
+
+@router.get("/api/library/tracks/{track_id}/cover")
+async def get_track_cover(track_id: int, size: int | None = Query(None, ge=32, le=1000), user: User = Depends(current_user),
+                          s: AsyncSession = Depends(get_session, scope="function")):
+    data = await edits.track_cover(s, track_id)
+    if data is None:
+        raise HTTPException(404, "Нет обложки")
+    if size:
+        data = await asyncio.to_thread(_resize, data, size)
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
 
 @router.get("/api/library/tracks/{track_id}/journal", response_model=FileJournalOut)

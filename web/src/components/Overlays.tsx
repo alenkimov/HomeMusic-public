@@ -1,4 +1,5 @@
 import { dismissToast, useDialog, useToasts } from '../lib/ui';
+import { TrackEdit } from './TrackEdit';
 import { navigate } from '../lib/router';
 import { Button, cx } from './ui';
 import { Icon } from './Icon';
@@ -54,6 +55,7 @@ export function Overlays() {
       <OfflineBanner />
       <TagsSheet />
       <PlaylistMenu />
+      <TrackEdit />
       <TelegramSetup />
       <ShareSheet />
       <PlaylistsSheet />

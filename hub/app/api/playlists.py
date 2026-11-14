@@ -123,6 +123,8 @@ def track_with_file(t: Track) -> NdSongOut:
         out.ref, out.source, out.id = f"nd:{t.nd_song_id}", "nd", t.nd_song_id
     if t.album_id:
         out.cover_url = out.cover_small_url = f"/api/library/albums/{t.album_id}/cover"
+    if t.cover_key:
+        out.cover_url = out.cover_small_url = f"/api/library/tracks/{t.id}/cover?v={t.cover_key}"
     return out
 
 
