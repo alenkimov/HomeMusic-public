@@ -561,6 +561,8 @@ async def test_download_after_listening_takes_the_heard_file(env):
     # now owned: listening plays the library file
     r = await c.get("/api/listen", params={"ref": "dz:100"})
     assert r.json()["kind"] == "library"
+    # the player says what the own file is and where it came from
+    assert r.json()["source"] == "hitmoz" and r.json()["codec"] and r.json()["bitrate_kbps"]
 
 
 async def like(c, ref: str, *, liked: bool = True) -> None:

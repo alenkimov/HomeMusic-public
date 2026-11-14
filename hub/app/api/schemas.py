@@ -416,6 +416,11 @@ class ListenOut(BaseModel):
     duration_s: int | None = None
     provider: str | None = None  # hitmoz / hitmos_fm / ytdlp for "full"
     bitrate_kbps: int | None = None
+    # the file that plays, as the player says it: where it came from (a provider; "upload"), what it is (mp3, flac,
+    # opus…), and what it sounds like when that is less than it says (`library.probe.sounds_like`)
+    source: str | None = None
+    codec: str | None = None
+    sounds_like_kbps: int | None = None
     page_url: str | None = None
     nd_song_id: str | None = None  # "library": the Navidrome song (♥, the app's player)
     track_id: int | None = None  # the Hub's track, if the Hub knows the song (tags, playlists)

@@ -115,6 +115,8 @@ async def test_listen_picks_the_ranked_file_and_streams_ranges(env):
     assert r.status_code == 200, r.text
     out = r.json()
     assert out["kind"] == "full" and out["provider"] == "hitmoz" and out["page_url"] == "https://hitmoz.test/song/1"
+    # a file still at its source says where it is and its bitrate; what it is is known once it is the library's
+    assert (out["source"], out["bitrate_kbps"], out["codec"], out["sounds_like_kbps"]) == ("hitmoz", 320, None, None)
     assert out["title"] == "Группа крови" and out["duration_s"] == 245
     assert out["stream_url"] == "/api/listen/stream?ref=dz%3A100"
 

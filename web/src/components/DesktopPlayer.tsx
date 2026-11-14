@@ -1,11 +1,12 @@
 import { askForQueue } from '../lib/playerQueue';
 import { openTagsSheet, tagKey } from '../lib/tags';
 import type { CSSProperties } from 'react';
-import { fmtDuration, providerLabel } from '../lib/format';
+import { fmtDuration } from '../lib/format';
 import { cycleRepeat, cycleShuffle, hasNext, hasPrev, next, prev, setVolume, toggle, useListen } from '../lib/listen';
 import { useSeek } from '../lib/seek';
 import { Link, enc } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
+import { FileInfo } from './FileInfo';
 import { Icon } from './Icon';
 import { SaveButton } from './PlaylistsButton';
 import { SeekLine } from './SeekLine';
@@ -35,7 +36,6 @@ export function DesktopPlayer() {
   const waiting = phase === 'resolving' || phase === 'loading';
   const playing = phase === 'playing' || waiting;
   const status = phase === 'error' ? error : phase === 'resolving' && !info ? 'Ищу файл…' : waiting ? 'Загрузка…' : null;
-  const source = info?.kind === 'full' ? providerLabel(info.provider) : null;
 
   const trackTags = track ? tagKey({ library_track_id: info?.track_id ?? track.library_track_id }) : null;
   return (
@@ -74,7 +74,12 @@ export function DesktopPlayer() {
                           )}
                         </span>
                       ))}
-                      {source && ` · ${source}`}
+                      {info?.source && info.kind !== 'preview' && (
+                        <>
+                          {' · '}
+                          <FileInfo info={info} />
+                        </>
+                      )}
                     </Marquee>
                   )}
                 </span>

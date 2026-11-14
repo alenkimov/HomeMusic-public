@@ -434,6 +434,11 @@ export interface ListenOut {
   duration_s?: number | null;
   provider?: string | null;
   bitrate_kbps?: number | null;
+  /** the file that plays: where it came from (a provider; `upload`), what it is (mp3, flac, opus…), and what it sounds
+   * like when that is less than it says */
+  source?: string | null;
+  codec?: string | null;
+  sounds_like_kbps?: number | null;
   page_url?: string | null;
   /** library: the Navidrome song (♥), once Navidrome has scanned the file */
   nd_song_id?: string | null;

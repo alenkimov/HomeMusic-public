@@ -1,4 +1,5 @@
 import { tagKey } from '../lib/tags';
+import { FileCard } from '../components/FileInfo';
 import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
@@ -287,6 +288,7 @@ export function PlayerPage() {
         </div>
       </div>
       <Credits track={track} />
+      <FileCard info={info} />
         </div>
       </div>
 
