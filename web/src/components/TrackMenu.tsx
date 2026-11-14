@@ -1,15 +1,17 @@
-import { useState, type MouseEvent } from 'react';
+import { useState, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { setDisliked, useDisliked, type DislikeTarget } from '../lib/dislikes';
 import { STANDALONE } from '../lib/embedded';
 import { addToQueue, next, stopListening, useListen, type ListenTrack } from '../lib/listen';
+import { useInPlaylists } from '../lib/inPlaylists';
 import { canPlayAll } from '../lib/player';
 import { enc, navigate } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
+import { useLiked } from '../lib/stars';
 import { openTagsSheet, tagKey } from '../lib/tags';
 import { artistSeed, canWave, startWave, trackSeed } from '../lib/wave';
 import { Icon, type IconName } from './Icon';
-import { TrackPlaylists } from './PlaylistsButton';
+import { SaveMark, TrackPlaylists } from './PlaylistsButton';
 import { IconButton, Sheet, cx } from './ui';
 
 export interface MenuTrack {
@@ -111,7 +113,7 @@ function TrackMenu({ track, extra, inPlayer, lean, noTags, onClose }: { track: M
       <div className="-mx-4 -my-3 flex flex-col py-1">
         {queueable && (
           <MenuItem
-            icon="plus"
+            icon="queue"
             label="Добавить в очередь"
             hint={hasQueue ? undefined : 'Сейчас ничего не играет — начнёт играть'}
             onClick={() => {
@@ -123,6 +125,7 @@ function TrackMenu({ track, extra, inPlayer, lean, noTags, onClose }: { track: M
         {!(lean && track.nd_song_id) && (track.nd_song_id || track.ref) && (
           <MenuItem
             icon="playlist"
+            mark={<KeptMark track={track} />}
             label="Добавить в плейлист"
             hint={tagKey(track) ? undefined : 'Трек скачается в библиотеку'}
             onClick={() => setPicking(true)}
@@ -207,10 +210,24 @@ function TrackMenu({ track, extra, inPlayer, lean, noTags, onClose }: { track: M
   );
 }
 
-function MenuItem({ icon, label, hint, active, onClick }: { icon: IconName; label: string; hint?: string; active?: boolean; onClick: () => void }) {
+/** The mark of «Добавить в плейлист»: the one the track's own button wears (`SaveMark`) — «+» in a ring, ♥ or ✓ in a
+ * green circle when it is in «Любимое» or in a playlist already. */
+function KeptMark({ track }: { track: MenuTrack }) {
+  const key = tagKey(track);
+  const liked = useLiked({ targetType: 'track', trackId: key ? Number(key) : null, songId: track.nd_song_id, ref: track.ref });
+  const listed = useInPlaylists(key);
+  return (
+    <span className={cx('flex w-[22px] shrink-0 justify-center', !liked && !listed && 'text-muted')}>
+      <SaveMark state={liked ? 'liked' : listed ? 'listed' : 'none'} size={20} />
+    </span>
+  );
+}
+
+/** `mark`: a mark of its own in place of the icon. */
+function MenuItem({ icon, mark, label, hint, active, onClick }: { icon: IconName; mark?: ReactNode; label: string; hint?: string; active?: boolean; onClick: () => void }) {
   return (
     <button type="button" onClick={onClick} className="flex min-h-14 items-center gap-4 px-4 py-2 text-left transition hover:bg-fg/5 active:bg-fg/10">
-      <Icon name={icon} size={22} className={cx('shrink-0', active ? 'text-accent' : 'text-muted')} />
+      {mark ?? <Icon name={icon} size={22} className={cx('shrink-0', active ? 'text-accent' : 'text-muted')} />}
       <span className="min-w-0 flex-1">
         <span className="block text-[15px]">{label}</span>
         {hint && <span className="block text-[13px] text-muted">{hint}</span>}
