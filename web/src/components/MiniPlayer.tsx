@@ -1,11 +1,12 @@
 import { tagKey } from '../lib/tags';
+import { PlayLine } from './FileInfo';
 import { useLayoutEffect, useRef, type TouchEvent } from 'react';
 import { stopListening, toggle, useListen } from '../lib/listen';
 import { STANDALONE } from '../lib/embedded';
 import { Link, enc } from '../lib/router';
 import { Icon } from './Icon';
 import { SaveButton } from './PlaylistsButton';
-import { Cover, Spinner, cx } from './ui';
+import { Cover, Spinner } from './ui';
 
 /** What plays, above the tabs of a phone (inside the app: at the bottom of the Hub page, which the app keeps above
  * its own player): the cover, the name, the artist — and two buttons, ♥ (a track that isn't downloaded is downloaded
@@ -41,24 +42,17 @@ export function MiniPlayer() {
 
   const waiting = phase === 'resolving' || phase === 'loading';
   const playing = phase === 'playing' || waiting;
-  const status =
-    phase === 'error'
-      ? error
-      : phase === 'resolving' && !info
-        ? 'Ищу файл…'
-        : waiting
-          ? 'Загрузка…'
-          : null;
-
   const head = (
     <>
       <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[15px] font-medium leading-tight">{track.title}</div>
-        {status ? (
-          <div className={cx('text-[13px] leading-tight', phase === 'error' ? 'line-clamp-2 text-danger' : 'truncate text-muted')}>{status}</div>
+        {phase === 'error' ? (
+          // a narrow bar has two lines: what went wrong takes the artists' while it is so
+          <PlayLine phase={phase} info={info} error={error} className="block truncate text-[13px] leading-tight" />
         ) : (
           <div className="flex items-center gap-1.5 text-[13px] leading-tight text-muted">
+            {waiting && <PlayLine phase={phase} info={info} className="shrink-0" />}
             {/* the preview is all there is: no source has the full track */}
             {onWave && (
               <span title="Моя волна" className="shrink-0 text-accent">

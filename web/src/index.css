@@ -190,6 +190,44 @@
   animation: hm-shimmer 1.2s infinite linear;
 }
 
+/* a player at work on a track (`PlayLine`): a short bar with a piece that runs along it, and a ring that turns */
+.hm-busy {
+  position: relative;
+  display: inline-block;
+  width: 3.25rem;
+  height: 3px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 2px;
+  background: color-mix(in srgb, currentColor 22%, transparent);
+}
+.hm-busy::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 40%;
+  border-radius: 2px;
+  background: currentColor;
+  animation: hm-busy 1.15s ease-in-out infinite;
+}
+@keyframes hm-busy {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(260%);
+  }
+}
+.hm-spin {
+  animation: hm-spin 0.8s linear infinite;
+}
+@keyframes hm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* a line too long for its place, under the mouse (`Marquee`): it runs to its end and back, resting at both */
 @keyframes hm-marquee {
   0%,
@@ -210,6 +248,11 @@
   .skeleton,
   .marquee-run {
     animation: none;
+  }
+  /* at work still shows: the piece stands in the middle of its bar */
+  .hm-busy::after {
+    animation: none;
+    left: 30%;
   }
 }
 

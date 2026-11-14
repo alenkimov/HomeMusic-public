@@ -6,7 +6,7 @@ import { artistTo, creditedOf, cycleRepeat, cycleShuffle, hasNext, hasPrev, next
 import { useSeek } from '../lib/seek';
 import { Link, enc } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
-import { FileInfo } from './FileInfo';
+import { PlayLine } from './FileInfo';
 import { Icon } from './Icon';
 import { SaveButton } from './PlaylistsButton';
 import { SeekLine } from './SeekLine';
@@ -35,7 +35,6 @@ export function DesktopPlayer() {
 
   const waiting = phase === 'resolving' || phase === 'loading';
   const playing = phase === 'playing' || waiting;
-  const status = phase === 'error' ? error : phase === 'resolving' && !info ? 'Ищу файл…' : waiting ? 'Загрузка…' : null;
 
   const trackTags = track ? tagKey({ library_track_id: info?.track_id ?? track.library_track_id }) : null;
   return (
@@ -55,30 +54,28 @@ export function DesktopPlayer() {
                     {track.title}
                   </Link>
                 </Marquee>
-                <span className={cx('flex items-center gap-1.5 text-xs', phase === 'error' ? 'text-danger' : 'text-muted')}>
+                <span className="flex items-center gap-1.5 text-xs text-muted">
                   {onWave && <Icon name="wave" size={13} className="shrink-0 text-accent" />}
                   {info?.kind === 'preview' && <span className="shrink-0 rounded bg-warn/15 px-1 text-[11px] font-semibold text-warn">превью 30 сек</span>}
-                  {status ? (
-                    <span className="truncate">{status}</span>
-                  ) : (
-                    <Marquee>
-                      {creditedOf(track).map((a, i) => (
-                        <span key={`${a.name}:${i}`}>
-                          {i > 0 && ', '}
-                          {artistTo(a) ? (
-                            <Link to={artistTo(a)!} className="hover:text-fg hover:underline">
-                              {a.name}
-                            </Link>
-                          ) : (
-                            a.name
-                          )}
-                        </span>
-                      ))}
-                    </Marquee>
-                  )}
+                  {/* the artists, always: what the player is doing is said by the line under them */}
+                  <Marquee>
+                    {creditedOf(track).map((a, i) => (
+                      <span key={`${a.name}:${i}`}>
+                        {i > 0 && ', '}
+                        {artistTo(a) ? (
+                          <Link to={artistTo(a)!} className="hover:text-fg hover:underline">
+                            {a.name}
+                          </Link>
+                        ) : (
+                          a.name
+                        )}
+                      </span>
+                    ))}
+                  </Marquee>
                 </span>
-                {/* the file that plays, a line of its own: its source's mark, what it is, its bitrate */}
-                {info?.source && info.kind !== 'preview' && <FileInfo info={info} className="block truncate text-[11px] leading-4 text-dim" />}
+                {/* the file's line: what plays — its source's mark, what it is, its bitrate — or what the player is
+                    doing about it */}
+                <PlayLine phase={phase} info={info} error={error} className="block truncate text-[11px] leading-4 text-dim" />
               </span>
               <SaveButton songId={info?.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} className="ml-1 !w-9" />
             </>

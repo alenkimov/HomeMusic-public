@@ -1,6 +1,6 @@
 import { tagKey } from '../lib/tags';
 import { imageUrl, retryImage } from '../lib/img';
-import { FileCard } from '../components/FileInfo';
+import { FileCard, PlayLine } from '../components/FileInfo';
 import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
@@ -247,8 +247,8 @@ export function PlayerPage() {
         <input {...range} className="hm-range w-full" disabled={!duration || phase === 'resolving' || phase === 'error'} />
         <div className="flex justify-between pt-1 text-xs tabular-nums text-muted">
           <span>{fmtDuration(shownPos) || '0:00'}</span>
-          <span className={cx('truncate px-2', phase === 'error' && 'text-danger')}>
-            {phase === 'error' ? error : phase === 'resolving' && !info ? 'Ищу файл…' : waiting ? 'Загрузка…' : source}
+          <span className="min-w-0 truncate px-2">
+            {phase === 'error' || waiting ? <PlayLine phase={phase} info={info} error={error} className="max-w-full truncate" /> : source}
           </span>
           <span>{fmtDuration(duration) || '–:––'}</span>
         </div>
