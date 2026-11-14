@@ -1,21 +1,29 @@
-import { Icon } from '../components/Icon';
-import { imageUrl, retryImage } from '../lib/img';
 import { useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { TrackOut } from '../api/types';
-import { TrackRow, TrackTableHeader, listenTrack } from '../components/catalog';
+import { TrackRow, TrackTableHeader } from '../components/catalog';
+import { Icon, type IconName } from '../components/Icon';
+import { ListBar } from '../components/ListBar';
 import { PlaylistsPick } from '../components/PlaylistsButton';
-import { Button, Cover, ErrorState, ExplicitBadge, HeroSkeleton, IconButton, OwnedBadge } from '../components/ui';
+import { ErrorState, ExplicitBadge, HeroSkeleton, OwnedBadge, PageHeader, Sheet, Spinner, cx } from '../components/ui';
 import { startDownload } from '../lib/actions';
 import { useHubEvent } from '../lib/events';
-import { listen } from '../lib/listen';
 import { fmtLength, recordTypeLabel, tracksWord, yearOf } from '../lib/format';
 import { useAsync } from '../lib/hooks';
-import { canPlay, canPlayAll, playList, playTracks } from '../lib/player';
-import { Link, enc, goBack } from '../lib/router';
+import { canPlay, canPlayAll, playList } from '../lib/player';
+import { Link, enc } from '../lib/router';
+import { copyText } from '../lib/share';
 import { attempt, toast } from '../lib/ui';
+import { Hero } from './MediaLibrary';
+
+/** A release of the catalog (`/album/<ref>`), in the shape of every list: the head — the cover, the kind of release
+ * over its name, the artist, the year, the tracks and their length, ▶ and the shuffle — then a row of buttons
+ * («Скачать альбом», «В плейлист», ⋯: the link, the release in Deezer, the artist), the tracks by their numbers and,
+ * under them, the day it came out. */
+const pill = 'flex h-9 items-center gap-1.5 rounded-full border border-fg/40 px-4 text-sm font-semibold text-fg transition hover:border-fg active:scale-95 disabled:opacity-60';
 
 export function AlbumPage({ refId }: { refId: string }) {
+  const [menu, setMenu] = useState(false);
   const [rev, setRev] = useState(0);
   const res = useAsync((s) => api.album(refId, s, rev > 0), [refId, rev], true, `album:${refId}`);
   const [dlBusy, setDlBusy] = useState(false);
@@ -44,14 +52,14 @@ export function AlbumPage({ refId }: { refId: string }) {
   if (res.loading && !res.data)
     return (
       <>
-        <Bar />
-        <HeroSkeleton center />
+        <PageHeader hero title="Альбом" back="/search" />
+        <HeroSkeleton buttons />
       </>
     );
   if (res.error || !res.data)
     return (
       <>
-        <Bar />
+        <PageHeader hero title="Альбом" back="/search" />
         <ErrorState text={res.error ?? 'Альбом не найден'} onRetry={() => res.reload()} />
       </>
     );
@@ -64,16 +72,6 @@ export function AlbumPage({ refId }: { refId: string }) {
   // Older apps: owned tracks Navidrome has scanned play in the app's player, in album order.
   const playable = canPlay() && !canPlayAll() ? owned.filter((t) => t.nd_song_id) : [];
   const play = (from?: TrackOut) => playList(playable, (t) => t.nd_song_id, from);
-  // The whole album (own files and the rest from sources): in the app's player (1.2.0+), in a browser in the page.
-  const listenAll =
-    tracks.length === 0
-      ? null
-      : canPlayAll()
-        ? () => playTracks(tracks)
-        : !canPlay()
-          ? () => listen(listenTrack(tracks[0]), tracks.map(listenTrack))
-          : null;
-
   const markDownloading = (refs: Set<string>) =>
     res.setData((prev) => (prev ? { ...prev, tracks: (prev.tracks ?? []).map((t) => (refs.has(t.ref) ? { ...t, downloading: true } : t)) } : prev));
 
@@ -109,60 +107,58 @@ export function AlbumPage({ refId }: { refId: string }) {
     );
   };
 
+  const share = async () => {
+    setMenu(false);
+    const url = `${window.location.origin}/#/album/${enc(album.ref)}`;
+    toast((await copyText(url)) ? 'Ссылка на релиз скопирована' : url, 'success');
+  };
+  const deezer = album.source === 'dz' ? `https://www.deezer.com/album/${album.id}` : null;
+  const item = (icon: IconName, label: string, run: () => void) => (
+    <button type="button" onClick={run} className="flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-left text-[15px] hover:bg-fg/5">
+      <Icon name={icon} size={21} className="text-muted" />
+      {label}
+    </button>
+  );
+  const allHere = tracks.length > 0 && missing.length === 0;
+  const facts = [year, tracks.length ? tracksWord(tracks.length) : null, total ? fmtLength(total) : null].filter(Boolean);
+
   return (
     <div>
-      <div className="relative">
-        <div className="absolute inset-0 overflow-hidden">
-          {album.cover_url && <img src={imageUrl(album.cover_small_url || album.cover_url)} alt="" onError={retryImage} className="h-full w-full scale-125 object-cover opacity-40 blur-3xl" referrerPolicy="no-referrer" />}
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-bg/50 to-bg" />
-        </div>
-        <Bar overlay />
-        <div className="relative px-4 pb-4">
-          <div className="flex justify-center pb-4">
-            <Cover src={album.cover_url} alt={album.title} className="aspect-square w-[min(56vw,240px)] shadow-2xl" icon="disc" />
-          </div>
-          <div className="flex items-center gap-3">
-          <div className="min-w-0 flex-1">
-          <h1 className="line-clamp-2 text-2xl font-bold leading-tight">{album.title}</h1>
-          {album.artist_ref ? (
-            <Link to={`/artist/${enc(album.artist_ref)}`} className="mt-1 block truncate font-semibold hover:underline">
-              {album.artist}
-            </Link>
-          ) : (
-            <div className="mt-1 truncate font-semibold">{album.artist}</div>
-          )}
-          <div className="mt-1 flex flex-wrap items-center gap-x-1.5 text-sm text-muted">
+      <ListBar title={album.title} back="/search" tracks={tracks} context="album" />
+      <Hero
+        kicker={recordTypeLabel(album.record_type) || 'Релиз'}
+        cover={album.cover_url}
+        title={album.title}
+        sub={
+          <span className="flex flex-wrap items-center gap-x-1.5">
             {album.explicit && <ExplicitBadge />}
-            <span>{[recordTypeLabel(album.record_type), year, tracks.length ? tracksWord(tracks.length) : null, total ? fmtLength(total) : null].filter(Boolean).join(' · ')}</span>
-          </div>
-          <div className="mt-2">
-            <OwnedBadge status={album.owned_status} count={album.owned_count} total={tracks.length || album.nb_tracks} />
-          </div>
-          </div>
-          {(playable.length > 0 || listenAll) && (
-            <button
-              type="button"
-              aria-label="Слушать"
-              title={playable.length > 0 && playable.length < tracks.length ? `Слушать ${playable.length} из ${tracks.length}` : 'Слушать'}
-              onClick={() => (playable.length > 0 ? play() : listenAll?.())}
-              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition hover:scale-105 active:scale-95"
-            >
-              <Icon name="play" size={26} filled className="translate-x-0.5" />
-            </button>
-          )}
-          </div>
-        </div>
-      </div>
+            {album.artist_ref ? (
+              <Link to={`/artist/${enc(album.artist_ref)}`} className="font-semibold text-fg hover:underline">
+                {album.artist}
+              </Link>
+            ) : (
+              <span className="font-semibold text-fg">{album.artist}</span>
+            )}
+            {facts.length > 0 && <span>· {facts.join(' · ')}</span>}
+          </span>
+        }
+        tracks={tracks}
+        context="album"
+      />
 
-      <div className="grid grid-cols-2 gap-2 px-4 pb-2">
-        {!(playable.length > 0 && missing.length === 0) && (
-          <Button icon="download" className="col-span-2" busy={dlBusy} disabled={missing.length === 0} onClick={downloadAlbum}>
-            {missing.length === 0 ? 'Всё скачано' : owned.length ? `Скачать недостающие ${missing.length} из ${tracks.length}` : 'Скачать альбом'}
-          </Button>
-        )}
-        <Button icon="playlist" className="col-span-2" onClick={() => setPickerOpen(true)}>
+      <div className="flex flex-wrap items-center gap-2 px-4 pb-3 lg:px-6">
+        <button type="button" className={cx(pill, allHere && 'border-accent !text-accent')} disabled={dlBusy || allHere || !tracks.length} onClick={() => void downloadAlbum()}>
+          {dlBusy ? <Spinner size={14} /> : <Icon name={allHere ? 'check' : 'download'} size={16} stroke={allHere ? 3 : 2} />}
+          {allHere ? 'Всё скачано' : owned.length ? `Скачать недостающие ${missing.length} из ${tracks.length}` : 'Скачать альбом'}
+        </button>
+        <button type="button" className={pill} onClick={() => setPickerOpen(true)}>
+          <Icon name="playlist" size={16} />
           В плейлист
-        </Button>
+        </button>
+        <button type="button" onClick={() => setMenu(true)} aria-label="Ещё" title="Ещё" className="flex h-11 w-11 items-center justify-center rounded-full text-muted hover:text-fg">
+          <Icon name="more" size={24} />
+        </button>
+        {!allHere && owned.length > 0 && <OwnedBadge status={album.owned_status} count={album.owned_count} total={tracks.length || album.nb_tracks} />}
       </div>
 
       <section aria-label="Треки" className="pt-2">
@@ -178,7 +174,25 @@ export function AlbumPage({ refId }: { refId: string }) {
         {!tracks.length && <p className="px-4 py-6 text-center text-muted">Треклист недоступен</p>}
       </section>
 
-      {album.release_date && <p className="px-4 pb-2 pt-4 text-xs text-dim">Дата выхода: {new Date(album.release_date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}</p>}
+      {album.release_date && <p className="px-4 pb-4 pt-4 text-xs text-dim lg:px-6">{new Date(album.release_date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}</p>}
+
+      <Sheet open={menu} onClose={() => setMenu(false)} title={album.title}>
+        <div className="-mx-1">
+          {item('link', 'Скопировать ссылку', () => void share())}
+          {deezer && (
+            <a href={deezer} target="_blank" rel="noopener noreferrer" onClick={() => setMenu(false)} className="flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-[15px] hover:bg-fg/5">
+              <Icon name="external" size={21} className="text-muted" />
+              Открыть в Deezer
+            </a>
+          )}
+          {album.artist_ref && (
+            <Link to={`/artist/${enc(album.artist_ref)}`} onClick={() => setMenu(false)} className="flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-[15px] hover:bg-fg/5">
+              <Icon name="user" size={21} className="text-muted" />
+              Перейти к исполнителю
+            </Link>
+          )}
+        </div>
+      </Sheet>
 
       {pickerOpen && (
         <PlaylistsPick
@@ -189,14 +203,6 @@ export function AlbumPage({ refId }: { refId: string }) {
           onDone={(lists) => void addToPlaylists(lists)}
         />
       )}
-    </div>
-  );
-}
-
-function Bar({ overlay }: { overlay?: boolean }) {
-  return (
-    <div className={`pt-safe ${overlay ? 'relative' : 'sticky top-(--page-top) z-20 bg-bg/90'} flex h-14 items-center px-2`}>
-      <IconButton icon="back" label="Назад" onClick={() => goBack('/search')} className="bg-black/30 !text-white" />
     </div>
   );
 }

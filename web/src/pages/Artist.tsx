@@ -19,7 +19,7 @@ import { Hero } from './MediaLibrary';
 /** An artist's page (`/artist/<ref>`; a library artist the catalog knows opens it too): a list's head — the photo,
  * the name, ▶ and the shuffle of the popular tracks — then a row of buttons: «Подписаться», «Вам нравится» (the
  * user's liked tracks the artist is on, when there are any) and ⋯ (the wave by the artist, downloading everything,
- * sharing, «Не включать»). Under them the ten popular tracks (two columns of five on a computer), then
+ * sharing, «Не включать»). Under them the ten popular tracks (two columns of five in a wide window), then
  * «Дискография»: the releases in a row that scrolls sideways, newest first, by kind, and the way to all of them
  * with their tracks (the heading, `pages/Discography.tsx`).
  *
@@ -170,8 +170,9 @@ export function ArtistPage({ refId }: { refId: string }) {
       {top.length > 0 && (
         <section aria-label="Популярное">
           <h2 className="px-4 pb-1 pt-3 text-lg font-bold lg:px-6">Популярное</h2>
-          {/* a computer: two columns, 1–5 and 6–10 */}
-          <div className="lg:grid lg:grid-flow-col lg:grid-cols-2 lg:gap-x-4" style={{ gridTemplateRows: `repeat(${Math.ceil(top.length / 2)}, auto)` }}>
+          {/* a wide window: two columns, 1–5 and 6–10 — only where a row keeps room for its name, and only when
+              there are tracks for two */}
+          <div className={top.length > 5 ? 'min-[1700px]:grid min-[1700px]:grid-flow-col min-[1700px]:grid-cols-2 min-[1700px]:gap-x-4' : undefined} style={{ gridTemplateRows: `repeat(${Math.ceil(top.length / 2)}, auto)` }}>
             {top.map((t, i) => (
               <TrackRow key={t.ref} track={t} number={i + 1} queue={top} />
             ))}
