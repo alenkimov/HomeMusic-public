@@ -80,7 +80,8 @@ export function SelectionBar() {
       </div>
       {lists && (
         <div className="pointer-events-auto">
-          <BulkPlaylists tracks={lists} onClose={() => setLists(null)} />
+          {/* done with them: the bar goes — as after «В очередь» and «Поделиться»; only closed: they stay picked */}
+          <BulkPlaylists tracks={lists} onClose={() => setLists(null)} onDone={clearSelection} />
         </div>
       )}
     </div>

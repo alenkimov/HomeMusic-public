@@ -242,7 +242,7 @@ export interface PickedTrack {
  * them (✓), some (–) or none; a tap goes round «add the missing ones» → «take them all out» → «leave as it is» (for
  * one that had some), and the row says what will happen. Nothing changes until «Готово». A picked catalog track the
  * library has not got is downloaded when it is added somewhere. */
-export function BulkPlaylists({ tracks, onClose }: { tracks: PickedTrack[]; onClose: () => void }) {
+export function BulkPlaylists({ tracks, onClose, onDone }: { tracks: PickedTrack[]; onClose: () => void; /** what was asked is done (not just closed): the picking that led here is over */ onDone?: () => void }) {
   const n = tracks.length;
   const targets = useMemo<LikeTarget[]>(() => tracks.map((t) => ({ targetType: 'track' as const, trackId: t.key ? Number(t.key) : null, songId: t.nd_song_id, ref: t.ref, data: t.data })), [tracks]);
   const songIds = useMemo(() => tracks.map((t) => t.key).filter((x): x is string => !!x), [tracks]);
@@ -309,6 +309,7 @@ export function BulkPlaylists({ tracks, onClose }: { tracks: PickedTrack[]; onCl
     const out = [...(like === false ? [LIKED] : []), ...remove];
     toast([into.length ? `Добавлено в: ${names(into)}` : '', out.length ? `Убрано из: ${names(out)}` : ''].filter(Boolean).join('. '), 'success');
     onClose();
+    onDone?.();
   };
   const plan = [...(like === true ? [`+${n - likedCount} Любимое`] : like === false ? [`−${likedCount} Любимое`] : []), ...add.map((p) => `+${n - p.count} ${p.name}`), ...remove.map((p) => `−${p.count} ${p.name}`)].join(', ');
 
