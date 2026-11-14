@@ -6,10 +6,11 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import AlbumOut, ArtistPageOut, DiscographyOut, NamesakeIn, NamesakeOut
-from app.catalog import namesakes, popular
+from app.catalog import banners, namesakes, popular
 from app.auth import current_user
 from app.catalog.models import ArtistPage, CatalogAlbum, split_ref
 from app.db import get_session
@@ -63,16 +64,27 @@ async def artist(ref: str, user: User = Depends(current_user), s: AsyncSession =
     page = await get_artist_page(ref)
     albums = await annotate_albums(s, page.albums, user.id)
     albums.sort(key=lambda a: (a.release_date is not None, a.release_date), reverse=True)
-    heard, extra = await asyncio.gather(popular.listeners(page.artist.name), popular.more(page.artist, page.top_tracks))
+    heard, extra, banner = await asyncio.gather(
+        popular.listeners(page.artist.name), popular.more(page.artist, page.top_tracks),
+        banners.url_of(page.artist, [t.title for t in page.top_tracks] + [a.title for a in page.albums]))
     return ArtistPageOut(
         artist=page.artist,
         top_tracks=await annotate_tracks(s, [*page.top_tracks, *extra], user.id),
-        lastfm_listeners=heard, top_from_lastfm=len(extra),
+        lastfm_listeners=heard, top_from_lastfm=len(extra), banner_url=banner,
         albums=[a for a in albums if a.record_type == "album"],
         singles=[a for a in albums if a.record_type in ("single", "ep")],
         compilations=[a for a in albums if a.record_type == "compile"],
         excluded=len(namesakes.of(ref)),
     )
+
+
+@router.get("/artist/{ref}/banner")
+async def artist_banner(ref: str, user: User = Depends(current_user)):
+    """The wide picture over the artist's page, as the Hub keeps it."""
+    data = await banners.image_of(ref)
+    if data is None:
+        raise HTTPException(404, "Нет картинки")
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
 
 @router.get("/namesakes", response_model=list[NamesakeOut])

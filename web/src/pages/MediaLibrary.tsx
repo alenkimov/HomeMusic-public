@@ -70,7 +70,7 @@ export function NdArtistBubble({ artist, radio = false }: { artist: NdArtistOut;
 
 /** ▶ and the shuffle of a whole list, at the right of its name. The shuffle goes round as the player's — off, on,
  * and for a playlist or «Любимое» the smart one; ▶ starts the list as the button says. */
-function PlayPair({ tracks, context }: { tracks: readonly TrackOut[]; context?: string }) {
+export function PlayPair({ tracks, context }: { tracks: readonly TrackOut[]; context?: string }) {
   const canSmart = useSmartPossible() && (context === 'playlist' || context === 'liked');
   const smart = useSmartForPage() && canSmart; // the shuffle is the smart one
   const shuffleOn = useListen((s) => s.shuffle);

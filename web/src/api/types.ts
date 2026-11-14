@@ -236,6 +236,8 @@ export interface ArtistPageOut {
   excluded?: number;
   /** how many listened to the artist on Last.fm (not known: none) */
   lastfm_listeners?: number | null;
+  /** the wide picture over the page, kept on the Hub (none: the round photo is the page's head) */
+  banner_url?: string | null;
   /** how many of the last `top_tracks` are Last.fm's, added where the catalog's own list is short */
   top_from_lastfm?: number;
 }

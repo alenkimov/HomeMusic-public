@@ -804,6 +804,18 @@ class Edit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class ArtistBanner(Base):
+    """The wide picture over an artist's page (app/catalog/banners.py): kept on the Hub. No `image`: there is none —
+    looked for again some time after `checked_at`."""
+
+    __tablename__ = "artist_banners"
+
+    artist_ref: Mapped[str] = mapped_column(String(64), primary_key=True)
+    image: Mapped[bytes | None] = mapped_column(LargeBinary)  # a JPEG
+    key: Mapped[str | None] = mapped_column(String(16))  # changes with the picture, for the caches of a page
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class TrashedTrack(Base):
     """A deleted track, while its file is kept in the trash (app/library/trash.py): what it was — the track, its
     files and where they went, the places it had in playlists, its tags — to bring it back as it was."""

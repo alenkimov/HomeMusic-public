@@ -399,6 +399,7 @@ class ArtistPageOut(BaseModel):
     compilations: list[AlbumOut] = []
     excluded: int = 0  # releases said to be a namesake's: not among these
     lastfm_listeners: int | None = None  # how many listened to the artist on Last.fm (None: not known)
+    banner_url: str | None = None  # the wide picture over the page (None: there is none — the round photo then)
     # how many of the last `top_tracks` are Last.fm's popular ones, added where the catalog's own list is short
     top_from_lastfm: int = 0
 

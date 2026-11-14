@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
-import type { AlbumOut, ArtistPageOut } from '../api/types';
+import type { AlbumOut, ArtistPageOut, TrackOut } from '../api/types';
 import { ReleaseCard, TrackRow } from '../components/catalog';
 import { Icon, type IconName } from '../components/Icon';
 import { ListBar } from '../components/ListBar';
@@ -14,7 +14,7 @@ import { copyText } from '../lib/share';
 import { toggleLike, useLiked } from '../lib/stars';
 import { confirmDialog, toast } from '../lib/ui';
 import { canWave, startWave } from '../lib/wave';
-import { Hero } from './MediaLibrary';
+import { Hero, PlayPair } from './MediaLibrary';
 
 /** An artist's page (`/artist/<ref>`; a library artist the catalog knows opens it too): a list's head — the photo,
  * the name, ▶ and the shuffle of the popular tracks — then a row of buttons: «Подписаться», «Вам нравится» (the
@@ -22,6 +22,9 @@ import { Hero } from './MediaLibrary';
  * sharing, «Не включать»). Under them the ten popular tracks (two columns of five in a wide window), then
  * «Дискография»: the releases in a row that scrolls sideways, newest first, by kind, and the way to all of them
  * with their tracks (the heading, `pages/Discography.tsx`).
+ *
+ * Where the artist has a wide picture (the Hub finds one and keeps it: `catalog/banners.py`) it is the head of the
+ * page, the name over it; where there is none — the round photo beside the name, as a list's head.
  *
  * An artist the user does not listen to (`lib/dislikes.ts`) has a grey page that says so and offers to bring them
  * back: nothing of theirs plays by itself, a track tapped still does. */
@@ -119,18 +122,16 @@ export function ArtistPage({ refId }: { refId: string }) {
     </button>
   );
 
+  const facts = [d.lastfm_listeners ? `${d.lastfm_listeners.toLocaleString('ru-RU')} ${plural(d.lastfm_listeners, ['слушатель', 'слушателя', 'слушателей'])} в Last.fm` : null, artist.nb_fans ? `${artist.nb_fans.toLocaleString('ru-RU')} ${plural(artist.nb_fans, ['поклонник', 'поклонника', 'поклонников'])} в Deezer` : null, releases.length ? `${releases.length} ${plural(releases.length, ['релиз', 'релиза', 'релизов'])}` : null].filter(Boolean).join(' · ');
+
   return (
     <div className={hidden ? 'grayscale' : undefined}>
       <ListBar title={artist.name} back="/search" tracks={hidden ? undefined : top} context="artist" />
-      <Hero
-        kicker="Исполнитель"
-        cover={artist.picture_url}
-        round
-        title={artist.name}
-        sub={[d.lastfm_listeners ? `${d.lastfm_listeners.toLocaleString('ru-RU')} ${plural(d.lastfm_listeners, ['слушатель', 'слушателя', 'слушателей'])} в Last.fm` : null, artist.nb_fans ? `${artist.nb_fans.toLocaleString('ru-RU')} ${plural(artist.nb_fans, ['поклонник', 'поклонника', 'поклонников'])} в Deezer` : null, releases.length ? `${releases.length} ${plural(releases.length, ['релиз', 'релиза', 'релизов'])}` : null].filter(Boolean).join(' · ')}
-        tracks={hidden ? undefined : top}
-        context="artist"
-      />
+      {d.banner_url ? (
+        <Banner src={d.banner_url} name={artist.name} sub={facts} tracks={hidden ? undefined : top} />
+      ) : (
+        <Hero kicker="Исполнитель" cover={artist.picture_url} round title={artist.name} sub={facts} tracks={hidden ? undefined : top} context="artist" />
+      )}
 
       {hidden ? (
         <div className="mx-4 mb-3 rounded-2xl bg-danger/15 px-4 py-3 text-sm text-fg lg:mx-6">
@@ -205,6 +206,28 @@ export function ArtistPage({ refId }: { refId: string }) {
           {item('ban', 'Не включать этого исполнителя', () => void hide(), true)}
         </div>
       </Sheet>
+    </div>
+  );
+}
+
+/** The head of the page where the artist has a wide picture: the picture over the whole width, reaching up under
+ * the bar with «back», the name in large over its darkened foot, what is known of the artist under the name, ▶ and
+ * the shuffle beside it. The round photo is not shown then — it is the same person twice. */
+function Banner({ src, name, sub, tracks }: { src: string; name: string; sub: string; tracks?: readonly TrackOut[] }) {
+  return (
+    <div className="relative isolate -mt-[calc(3.5rem+env(safe-area-inset-top))] flex h-[clamp(15rem,34vw,26rem)] items-end overflow-hidden">
+      <img src={src} alt="" className="absolute inset-0 -z-10 h-full w-full object-cover object-[center_25%]" />
+      <div aria-hidden="true" className="absolute inset-0 -z-10 bg-gradient-to-t from-bg via-bg/45 to-black/15" />
+      <div className="flex w-full items-end gap-3 px-4 pb-4 lg:px-6 lg:pb-5">
+        <div className="min-w-0 flex-1">
+          <div className="hidden text-sm text-fg/80 lg:block">Исполнитель</div>
+          <h2 data-list-title className="line-clamp-2 break-words text-4xl font-black leading-[1.05] tracking-tight [text-shadow:0_2px_16px_rgb(0_0_0/0.55)] lg:text-7xl">
+            {name}
+          </h2>
+          {sub && <div className="mt-2 text-sm text-fg/85 [text-shadow:0_1px_8px_rgb(0_0_0/0.6)]">{sub}</div>}
+        </div>
+        {!!tracks?.length && <PlayPair tracks={tracks} context="artist" />}
+      </div>
     </div>
   );
 }
