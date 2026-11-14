@@ -1,4 +1,5 @@
 import { useState, type MouseEvent, type ReactNode } from 'react';
+import { deleteFile } from '../lib/deleteFile';
 import { openTrackEdit } from '../lib/trackEdit';
 import { createPortal } from 'react-dom';
 import { setDisliked, useDisliked, type DislikeTarget } from '../lib/dislikes';
@@ -23,6 +24,8 @@ export interface MenuTrack {
   /** what the Hub calls the track (`lib/tags.ts` `tagKey`), if it knows it: given as is, or as the track's id */
   key?: string | null;
   library_track_id?: number | null;
+  /** the library has a file of it: «Удалить файл» is offered */
+  has_file?: boolean;
   artist_ref?: string | null;
   album_ref?: string | null;
   /** the song's Navidrome album and artist (the library pages of a browser) */
@@ -208,6 +211,17 @@ function TrackMenu({ track, extra, inPlayer, lean, noTags, onClose }: { track: M
           hint={disliked ? 'Трек снова может попадать в миксы' : 'Трек не будет попадать в миксы и «Мою волну»'}
           onClick={() => toggle(target, disliked)}
         />
+        {track.has_file && track.library_track_id != null && (
+          <MenuItem
+            icon="trash"
+            label="Удалить файл"
+            hint="С сервера — если трек не лежит в плейлистах у других"
+            onClick={() => {
+              onClose();
+              void deleteFile({ library_track_id: track.library_track_id as number, title: track.title, artist: track.artist });
+            }}
+          />
+        )}
         {artist && (
           <MenuItem
             icon="user"

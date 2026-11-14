@@ -279,6 +279,17 @@ async def get_track_cover(track_id: int, size: int | None = Query(None, ge=32, l
     return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
 
+@router.get("/api/library/tracks/{track_id}/keeping")
+async def track_keeping(track_id: int, user: User = Depends(current_user),
+                        s: AsyncSession = Depends(get_session, scope="function")) -> dict:
+    """Whether the asker may delete the track's file (library/access.py): nobody else keeps it — and what keeps it
+    on their own side, to take it out of there instead."""
+    t = await _track(s, track_id)
+    may, others, mine = await access.keeping(s, user, t.id)
+    return {"can_delete": may, "others": others, "has_file": await current_file(s, t.id) is not None,
+            "mine": [{"id": str(p.id), "name": p.name, "liked": p.kind == "liked"} for p in mine]}
+
+
 @router.get("/api/library/tracks/{track_id}/journal", response_model=FileJournalOut)
 async def track_journal(track_id: int, user: User = Depends(current_user),
                         s: AsyncSession = Depends(get_session, scope="function")):
@@ -301,7 +312,7 @@ async def track_journal(track_id: int, user: User = Depends(current_user),
 
 @router.delete("/api/library/tracks/{track_id}")
 async def delete_track(track_id: int, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    t = await access.need_own_track(s, user, track_id)
+    t = await access.need_deletable_track(s, user, track_id)
     album_id = t.album_id
     await editor.trash_track(s, t)
     await _after_edit(s, user, album_id)

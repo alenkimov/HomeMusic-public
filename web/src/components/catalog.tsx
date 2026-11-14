@@ -228,6 +228,8 @@ export function TrackRow({
     ref: track.ref,
     nd_song_id: track.nd_song_id,
     key: tagKey(track),
+    library_track_id: track.library_track_id,
+    has_file: track.owned,
     artist_ref: track.artist_ref,
     album_ref: track.album_ref,
     nd_album_id: track.nd_album_id,

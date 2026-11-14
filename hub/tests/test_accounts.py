@@ -659,6 +659,12 @@ async def test_files_are_looked_after_by_who_brought_them(env):
             s.add_all(tracks)
             await s.flush()
             ids = {"hers": hers.id, "his": his.id, "both": both.id, "t_hers": tracks[0].id, "t_his": tracks[1].id}
+            # he keeps his track in a playlist of his, she keeps hers in «Любимое» and in a playlist, and so does he
+            from app import playlists as lists
+
+            await lists.add(s, await lists.create(s, admin_id, "Его плейлист"), [tracks[1].id, tracks[3].id])
+            await lists.add(s, await lists.liked(s, anna_id), [tracks[3].id])
+            ids["t_shared"], ids["t_free"] = tracks[3].id, tracks[2].id
 
         mine = {a["title"]: a for a in (await anna.get("/api/library/albums")).json()}
         assert set(mine) == {"Её", "Общий"}
@@ -671,12 +677,22 @@ async def test_files_are_looked_after_by_who_brought_them(env):
         assert (await anna.patch(f"/api/library/albums/{ids['both']}", json={"title": "Общий"})).status_code == 200
         r = await anna.patch(f"/api/library/tracks/{ids['t_his']}", json={"title": "Его трек"})
         assert r.status_code == 200 and r.json()["title"] == "Его трек"
-        assert (await anna.delete(f"/api/library/tracks/{ids['t_his']}")).status_code == 404
+        # a file is deleted by the one who alone keeps the track (library/access.py), whoever brought it:
+        # his track is kept by him — she cannot; hers that he keeps too — she cannot either, though she brought it
+        k = (await anna.get(f"/api/library/tracks/{ids['t_his']}/keeping")).json()
+        assert (k["can_delete"], k["others"], k["mine"]) == (False, 1, [])
+        assert (await anna.delete(f"/api/library/tracks/{ids['t_his']}")).status_code == 409
+        k = (await anna.get(f"/api/library/tracks/{ids['t_shared']}/keeping")).json()
+        assert (k["can_delete"], k["others"], [m["liked"] for m in k["mine"]]) == (False, 1, [True])
+        assert (await anna.delete(f"/api/library/tracks/{ids['t_shared']}")).status_code == 409
+        # one he brought and nobody keeps: hers to delete
+        assert (await anna.get(f"/api/library/tracks/{ids['t_free']}/keeping")).json()["can_delete"] is True
+        assert (await anna.delete(f"/api/library/tracks/{ids['t_free']}")).status_code == 200
         assert (await anna.post("/api/library/albums/merge", json={"target_id": ids["hers"], "source_ids": [ids["his"]]})).status_code == 404
         assert (await anna.delete(f"/api/library/tracks/{ids['t_hers']}")).status_code == 200
 
     everything = {a["title"]: a for a in (await env["admin"].get("/api/library/albums")).json()}
-    assert {"Его", "Общий"} <= set(everything) and everything["Общий"]["track_count"] == 2
+    assert {"Его", "Общий"} <= set(everything) and everything["Общий"]["track_count"] == 1  # «Три» she deleted
     assert all(a["can_edit"] for a in everything.values())
     # what she could not delete is still there
     assert len((await env["admin"].get(f"/api/library/albums/{ids['his']}")).json()["tracks"]) == 1

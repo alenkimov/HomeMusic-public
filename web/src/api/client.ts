@@ -320,6 +320,9 @@ export const api = {
   patchTrack: (id: number, body: TrackPatchIn) =>
     request<LibTrackOut>('PATCH', `/api/library/tracks/${id}`, { json: body }),
   deleteTrack: (id: number) => request<OkOut>('DELETE', `/api/library/tracks/${id}`),
+  /** May the file be deleted (nobody else keeps the track), and which of the asker's playlists keep it. */
+  trackKeeping: (id: number) =>
+    request<{ can_delete: boolean; others: number; has_file: boolean; mine: { id: string; name: string; liked: boolean }[] }>('GET', `/api/library/tracks/${id}/keeping`),
   /** A track's names and cover as they are, for the window that puts them right; a catalog song the Hub has not
    * met becomes a track by this. */
   trackEdit: (q: { track_id?: number; ref?: string; nd_song_id?: string }) => request<TrackEditOut>('GET', withQuery('/api/library/track-edit', q)),
