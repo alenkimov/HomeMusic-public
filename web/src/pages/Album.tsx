@@ -183,7 +183,7 @@ export function AlbumPage({ refId }: { refId: string }) {
           <div key={disc}>
             {discs.length > 1 && <div className="px-4 pb-1 pt-3 text-sm font-semibold text-muted">Диск {disc}</div>}
             {list.map((t, i) => (
-              <TrackRow key={t.ref} track={t} number={t.track_no ?? i + 1} showCover={false} link={false} onPlay={() => play(t)} queue={tracks} />
+              <TrackRow key={t.ref} track={t} number={t.track_no ?? i + 1} link={false} onPlay={() => play(t)} queue={tracks} />
             ))}
           </div>
         ))}

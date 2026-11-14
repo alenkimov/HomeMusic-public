@@ -194,7 +194,7 @@ export function ReleaseBlock({ r, open, date = false }: { r: ReleaseOut; open: n
       {visible.length > 0 && (
         <div className="pl-6">
           {visible.map((t, i) => (
-            <TrackRow key={t.ref} track={t} number={t.track_no ?? i + 1} showCover={false} queue={tracks} />
+            <TrackRow key={t.ref} track={t} number={t.track_no ?? i + 1} queue={tracks} />
           ))}
         </div>
       )}

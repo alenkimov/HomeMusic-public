@@ -116,7 +116,7 @@ export function DiscographyPage({ refId }: { refId: string }) {
                   )}
                 </div>
                 {tracks.map((t, i) => (
-                  <TrackRow key={t.ref} track={t} number={t.track_no ?? i + 1} showCover={false} queue={tracks} />
+                  <TrackRow key={t.ref} track={t} number={t.track_no ?? i + 1} queue={tracks} />
                 ))}
                 {!tracks.length && <p className="px-4 pb-2 text-sm text-dim lg:px-6">Каталог не отдал треки этого релиза — откройте его страницу.</p>}
               </section>

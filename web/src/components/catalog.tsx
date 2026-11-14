@@ -179,8 +179,8 @@ export function TrackRow({
   const sub = track.artists?.length ? track.artists.join(', ') : track.artist; // the album is a column of its own, or nowhere
   const body = (
     <>
-      {/* the number of the row, and the cover: a list of one album alone has no covers (`showCover` false) — the
-          mark of playing is over the cover, or over the number where there is none */}
+      {/* the number of the row, and the cover — a tap on the cover is what plays the track, so a list has covers even
+          where every row has the same one; the mark of playing is over it, or over the number where there is none */}
       {number !== undefined && showCover && <span className="w-6 shrink-0 text-center text-sm tabular-nums text-dim">{number}</span>}
       {number !== undefined || showCover ? (
         <span className={cx('relative flex h-12 shrink-0 items-center justify-center', showCover ? 'w-12' : 'w-7')}>
