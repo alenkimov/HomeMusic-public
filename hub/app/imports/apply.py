@@ -283,6 +283,11 @@ async def sync_playlists(s: AsyncSession, imp: Import) -> None:
             dates[it.track_id] = naive(parse_time((it.raw_json or {}).get("liked_at"))) or utcnow()
         p = await playlists.own(s, imp.user_id, c.playlist_id) if c.playlist_id else None
         if p is None:
+            if c.given:
+                # the playlist was made of this collection and is gone: the user deleted it. It is not made again —
+                # the collection is let go, its tracks stay in the library
+                c.selected, c.playlist_id = False, None
+                continue
             if not want:
                 continue
             p = await playlists.create(s, imp.user_id, c.title)

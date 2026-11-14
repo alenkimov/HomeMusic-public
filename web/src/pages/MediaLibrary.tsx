@@ -9,7 +9,7 @@ import { useListSearch, type Found } from '../components/ListSearch';
 import { CoverView, ownCover } from '../components/PlaylistMenu';
 import { SaveSelection, TagFilterChips } from '../components/Tags';
 import { Button, Cover, Empty, ErrorState, IconButton, PageHeader, SectionTitle, SkeletonRows, Spinner, cx } from '../components/ui';
-import { fmtLength, plural, tracksWord } from '../lib/format';
+import { fmtLength, tracksWord } from '../lib/format';
 import { playCount, usePlayCounts } from '../lib/stats';
 import { useDesktop } from '../lib/desktop';
 import { useHubEvent } from '../lib/events';
@@ -402,7 +402,6 @@ export function PlaylistPage({ id }: { id: string }) {
   useSmartPage(`playlist:${id}`, p?.name ?? null);
   // the playlist is the Hub's: every track stands in its place, whether the library has its file yet or not
   const all = useMemo(() => p?.tracks ?? [], [p]);
-  const waits = all.filter((t) => !t.owned).length;
   const search = useListSearch(all);
   const [sort, setSort] = useState<ListSort>(null);
   const [viewing, setViewing] = useState(false);
@@ -432,7 +431,7 @@ export function PlaylistPage({ id }: { id: string }) {
         onCover={() => setViewing(true)}
         cover={cover}
         title={p.name}
-        sub={[tracksWord(all.length), p.duration_s ? fmtLength(p.duration_s) : null, waits ? `${waits} ещё не ${plural(waits, ['скачан', 'скачаны', 'скачаны'])} — скачаются, когда послушаете` : null].filter(Boolean).join(' · ')}
+        sub={[tracksWord(all.length), p.duration_s ? fmtLength(p.duration_s) : null].filter(Boolean).join(' · ')}
         tracks={playing}
         context="playlist"
       />}

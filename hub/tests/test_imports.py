@@ -674,3 +674,27 @@ async def test_vk_refusal_ends_the_import_and_a_captcha_is_passed_on(env, monkey
     assert imp["auth"]["kind"] == "captcha" and imp["auth"]["verification_url"] == "https://id.vk.com/captcha?x=1"
     imp = (await c.post(f"/api/imports/{imp['id']}/auth", json={"captcha": "passed"})).json()
     assert imp["status"] == "failed" and "закрыл вход" in imp["error"] and imp["auth"] is None
+
+
+async def test_a_playlist_of_an_import_deleted_by_the_user_is_not_made_again(env):
+    """The import made the playlist; the user deleted it. A later rewrite (a track of it was downloaded) leaves it
+    gone, and lets the collection go."""
+    from app.db import session_scope
+    from app.imports import apply
+    from app.models import Import, ImportCollection
+
+    c = env["client"]
+    imp = await prepared(c)
+    r = await c.post(f"/api/imports/{imp['id']}/start",
+                     json={"collection_ids": [x["id"] for x in imp["collections"]], "mode": "economy"})
+    assert r.status_code == 200, r.text
+    await run_imports()
+    made = next(x for x in (await c.get("/api/playlists")).json() if x["name"] == "Дорога")
+    assert (await c.delete(f"/api/playlists/{made['id']}")).status_code == 200
+
+    async with session_scope() as s:
+        await apply.sync_playlists(s, await s.get(Import, imp["id"]))
+    assert "Дорога" not in [x["name"] for x in (await c.get("/api/playlists")).json()]
+    async with session_scope() as s:
+        coll = (await s.execute(select(ImportCollection).where(ImportCollection.title == "Дорога"))).scalar_one()
+        assert not coll.selected and coll.playlist_id is None

@@ -13,9 +13,14 @@ export function OfflineButton({ listKey, title, to, tracks }: { listKey: string;
   useEffect(() => {
     if (st.kept) void syncList(listKey, title, tracks);
   }, [st.kept, listKey, title, tracks]);
-  if (!offlineSupported() || (!tracks.length && !st.kept)) return null;
+  if (!tracks.length && !st.kept) return null;
 
   const tap = async () => {
+    if (!offlineSupported()) {
+      // a browser keeps files only for a secure address: the mark is there, and says why it cannot
+      toast('Скачать на устройство можно только по защищённому адресу (https). Откройте приложение по нему, а не по номеру в домашней сети.', 'info');
+      return;
+    }
     if (!st.kept) {
       await keepList(listKey, title, to, tracks);
       toast('Скачиваю на устройство — не закрывайте приложение, пока идёт загрузка', 'info');
@@ -23,7 +28,9 @@ export function OfflineButton({ listKey, title, to, tracks }: { listKey: string;
     }
     if (await confirmDialog({ title: `Убрать «${title}» с устройства?`, body: 'Сам список останется, но без сети играть не будет.', okLabel: 'Убрать' })) await dropList(listKey);
   };
-  const label = !st.kept
+  const label = !offlineSupported()
+    ? 'Скачать на устройство: нужен адрес с https'
+    : !st.kept
     ? 'Скачать на устройство: слушать без сети'
     : st.busy
       ? `Скачивается: ${st.done} из ${st.total}`
@@ -37,7 +44,7 @@ export function OfflineButton({ listKey, title, to, tracks }: { listKey: string;
         {st.done}/{st.total}
       </button>
     );
-  return <IconButton icon={st.kept ? 'check' : 'download'} label={label} aria-pressed={st.kept} onClick={() => void tap()} className={st.kept ? (st.done < st.total ? '!text-warn' : '!text-accent') : undefined} />;
+  return <IconButton icon={st.kept ? 'check' : 'download'} label={label} aria-pressed={st.kept} onClick={() => void tap()} className={st.kept ? (st.done < st.total ? '!text-warn' : '!text-accent') : offlineSupported() ? undefined : 'opacity-50'} />;
 }
 
 /** A small mark at a track kept on the device. */
