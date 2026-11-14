@@ -179,15 +179,20 @@ export function TrackRow({
   const sub = track.artists?.length ? track.artists.join(', ') : track.artist; // the album is a column of its own, or nowhere
   const body = (
     <>
+      {/* the number of the row, and the cover: a list of one album alone has no covers (`showCover` false) — the
+          mark of playing is over the cover, or over the number where there is none */}
+      {number !== undefined && showCover && <span className="w-6 shrink-0 text-center text-sm tabular-nums text-dim">{number}</span>}
       {number !== undefined || showCover ? (
-        <span className={cx('relative flex h-12 shrink-0 items-center justify-center', number !== undefined ? 'w-7' : 'w-12')}>
-          {number !== undefined ? (
+        <span className={cx('relative flex h-12 shrink-0 items-center justify-center', showCover ? 'w-12' : 'w-7')}>
+          {showCover ? (
+            <Cover src={track.cover_small_url || track.cover_url} size={48} alt="" />
+          ) : (
             <span className={cx('text-sm tabular-nums text-dim', rowPlays && 'group-hover/track:opacity-0 group-focus-within/track:opacity-0', rowPlays && current && 'opacity-0')}>{number}</span>
-          ) : <Cover src={track.cover_small_url || track.cover_url} size={48} alt="" />}
+          )}
           {rowPlays && (
             <span aria-hidden="true" className={cx(
               'pointer-events-none absolute inset-0 flex items-center justify-center rounded-md transition-opacity group-hover/track:opacity-100 group-focus-within/track:opacity-100',
-              number !== undefined ? 'text-fg' : 'bg-black/60 text-white',
+              showCover ? 'bg-black/60 text-white' : 'text-fg',
               current ? 'opacity-100' : 'opacity-0',
             )}>
               {waiting ? <Spinner size={22} /> : <Icon name={playing ? 'pause' : 'play'} size={22} filled />}
@@ -260,7 +265,17 @@ export function TrackRow({
     const titleColor = current ? 'text-accent' : 'text-fg';
     const playMark = waiting ? <Spinner size={18} /> : <Icon name={playing ? 'pause' : 'play'} size={18} filled />;
     const lead = (hover: boolean): ReactNode =>
-      number !== undefined ? (
+      number !== undefined && showCover ? (
+        <>
+          <span className="w-5 shrink-0 text-center text-sm tabular-nums text-dim">{number}</span>
+          <span className="relative flex h-10 w-10 shrink-0 items-center justify-center">
+            <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />
+            <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !current && 'opacity-0', hover && action && 'group-hover/track:opacity-100')}>
+              {playMark}
+            </span>
+          </span>
+        </>
+      ) : number !== undefined ? (
         <span className="relative flex h-10 w-8 shrink-0 items-center justify-center text-sm tabular-nums text-dim">
           <span className={cx(hover && action && 'group-hover/track:opacity-0', current && 'opacity-0')}>{number}</span>
           <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center', current ? 'text-accent' : 'text-fg opacity-0', hover && action && 'group-hover/track:opacity-100')}>
@@ -355,7 +370,7 @@ export function TrackRow({
             onPointerDown={track.owned ? undefined : () => touchTrack(track.ref)}
             className={cx('flex min-w-0 items-center gap-3 py-1.5 text-left', (toAlbum || action) && 'cursor-pointer')}
           >
-            {number === undefined && showCover &&
+            {showCover &&
               (action ? (
                 <button
                   type="button"

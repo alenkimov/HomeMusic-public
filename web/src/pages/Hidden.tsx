@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Icon } from '../components/Icon';
-import { Button, Empty, PageHeader } from '../components/ui';
+import { Button, Cover, Empty, PageHeader } from '../components/ui';
 import { refreshDislikes, setDisliked, useDislikes } from '../lib/dislikes';
 import { Link, enc } from '../lib/router';
 
@@ -47,7 +47,9 @@ export function HiddenPage() {
             <h2 className="px-1 pb-2 text-[13px] font-semibold uppercase tracking-wide text-muted">Треки · {tracks.length}</h2>
             <ul className="overflow-hidden rounded-2xl bg-surface">
               {tracks.map((d) => (
-                <li key={`t:${d.id}:${d.ref ?? d.nd_song_id}`} className="flex min-h-14 items-center gap-3 border-b border-fg/5 pl-4 pr-2 last:border-0">
+                <li key={`t:${d.id}:${d.ref ?? d.nd_song_id}`} className="flex min-h-14 items-center gap-3 border-b border-fg/5 pl-3 pr-2 last:border-0">
+                  {/* a track of the library has its cover by its id; one known by the catalog alone has none kept */}
+                  <Cover src={d.nd_song_id ? `/api/nd/cover/${enc(d.nd_song_id)}?size=96` : null} size={40} alt="" />
                   <span className="min-w-0 flex-1 py-2">
                     <span className="block truncate">{d.title || 'Трек'}</span>
                     {d.artist && <span className="block truncate text-[13px] text-muted">{d.artist}</span>}
