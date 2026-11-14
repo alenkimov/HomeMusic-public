@@ -1239,6 +1239,29 @@ export interface ForYouItem {
   title: string;
   /** tracks it has now; null: nothing was made yet */
   count: number | null;
+  /** a mix or an issue made since the user last opened the list */
+  fresh?: boolean;
+}
+
+/** A change somebody made to a track (`components/TrackEdit.tsx`): each field as it was and as it became. */
+export interface TrackEditEntry {
+  id: number;
+  by?: string | null;
+  at: string;
+  changes: Record<string, [unknown, unknown]>;
+}
+
+/** A track whose file was deleted lately and is still kept («Корзина», pages/Trash.tsx). */
+export interface TrashedOut {
+  id: number;
+  title: string;
+  artist: string;
+  album?: string | null;
+  deleted_by?: string | null;
+  deleted_at: string;
+  days_left: number;
+  /** how many playlists it stood in */
+  playlists: number;
 }
 
 /** A list of «Для вас» as its page shows it: the tracks, and what is the list's own beside them. */

@@ -94,6 +94,7 @@ export function MorePage() {
               <Item icon="history" tint="bg-[#7b61d9]" to="/history" title="История" sub="Всё, что играло, по порядку" />
               <Item icon="download" tint="bg-[#1f9d55]" to="/offline" title="Офлайн" sub="Что скачано на это устройство и играет без сети" />
               <Item icon="ban" tint="bg-[#b0483f]" to="/hidden" title="Скрытое" sub="Исполнители и треки, которые не включаются сами" />
+              <Item icon="trash" tint="bg-[#6b7280]" to="/trash" title="Корзина" sub="Удалённые файлы: 30 дней их можно вернуть" />
             </Group>
           )}
         </div>

@@ -63,6 +63,17 @@ export function forgetLast() {
   }
 }
 
+/** Listen to an event of the window while the component is there. */
+export function useWindowEvent(name: string, fn: () => void) {
+  const ref = useRef(fn);
+  ref.current = fn;
+  useEffect(() => {
+    const run = () => ref.current();
+    window.addEventListener(name, run);
+    return () => window.removeEventListener(name, run);
+  }, [name]);
+}
+
 /** Runs `fn` whenever deps change; aborts the previous run. `keep`: a name to remember the answer under — the next
  * time the page opens it shows that answer at once (no spinner, nothing appearing half a second later) and replaces
  * it with the fresh one when it comes. */

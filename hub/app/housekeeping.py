@@ -74,6 +74,11 @@ async def run_daily() -> None:
         log.exception("hub db backup failed")
     try:
         n = await asyncio.to_thread(purge_trash, cfg.library.trash_days)
+        from app.db import session_scope
+        from app.library import trash
+
+        async with session_scope() as s:  # what was written down of the tracks stirred out with those files
+            await trash.purge(s, cfg.library.trash_days)
         m = await asyncio.to_thread(purge_stale_uploads)
         c = await cache_purge_expired()
         e = await purge_email_codes()

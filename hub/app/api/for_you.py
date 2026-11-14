@@ -21,7 +21,7 @@ from app.auth import current_user
 from app.db import get_session
 from app.library.owned import annotate_tracks
 from app.mixes import core, discover
-from app.models import DiscoveryIssue, ForYouList, Mix, Track, User
+from app.models import DiscoveryIssue, ForYouList, ForYouSeen, Mix, Track, User
 
 router = APIRouter(prefix="/api/for-you", tags=["for-you"])
 
@@ -51,7 +51,32 @@ async def index(user: User = Depends(current_user), s: AsyncSession = Depends(ge
     for kind in stats.AUTO:
         # as the playlist was last written (rewritten now and then); a list never written yet is counted now
         counts[kind] = len(kept[kind].songs_json or []) if kind in kept else len(await stats.auto(s, user.id, kind))
-    return [ForYouItem(kind=k, title=TITLES[k], count=counts[k]) for k in ORDER]
+    # what was made since the list was last opened: today's mix, this week's issue
+    now = {MIX: str(mix.id) if mix is not None else None, for_you.WEEKLY: str(issue.id) if issue is not None else None}
+    seen = dict((await s.execute(select(ForYouSeen.kind, ForYouSeen.issue).where(ForYouSeen.user_id == user.id))).all())
+    return [ForYouItem(kind=k, title=TITLES[k], count=counts[k], fresh=bool(now.get(k)) and seen.get(k) != now.get(k))
+            for k in ORDER]
+
+
+@router.post("/{kind}/seen")
+async def seen(kind: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")) -> dict[str, bool]:
+    """The list's latest mix or issue was opened: it is not «новый» any more."""
+    if kind == MIX:
+        mix = await core.current_mix(s, user.id)
+        issue = str(mix.id) if mix is not None else None
+    elif kind == for_you.WEEKLY:
+        latest = await _latest_issue(s, user.id)
+        issue = str(latest.id) if latest is not None else None
+    else:
+        raise HTTPException(404, "Такого списка нет")
+    if issue is not None:
+        row = await s.get(ForYouSeen, (user.id, kind))
+        if row is None:
+            s.add(ForYouSeen(user_id=user.id, kind=kind, issue=issue))
+        else:
+            row.issue = issue
+        await s.commit()
+    return {"ok": True}
 
 
 @router.get("/{kind}", response_model=ForYouOut)

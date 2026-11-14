@@ -94,6 +94,14 @@ async def set_track_cover(s: AsyncSession, user: User, track: Track, image: byte
     return track
 
 
+async def history(s: AsyncSession, track_id: int, limit: int = 30) -> list[dict[str, Any]]:
+    """What was changed of the track, the latest first: who, when, and each field as it was and as it became."""
+    rows = (await s.execute(
+        select(Edit, User.nd_username).join(User, User.id == Edit.user_id, isouter=True)
+        .where(Edit.target_type == "track", Edit.target_id == track_id).order_by(Edit.id.desc()).limit(limit))).all()
+    return [{"id": e.id, "by": who, "at": e.created_at, "changes": e.changes_json} for e, who in rows]
+
+
 def cover_url(track: Track) -> str | None:
     return f"/api/library/tracks/{track.id}/cover?v={track.cover_key}" if track.cover_key else None
 

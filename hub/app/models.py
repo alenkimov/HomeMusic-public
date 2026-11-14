@@ -804,6 +804,33 @@ class Edit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class TrashedTrack(Base):
+    """A deleted track, while its file is kept in the trash (app/library/trash.py): what it was — the track, its
+    files and where they went, the places it had in playlists, its tags — to bring it back as it was."""
+
+    __tablename__ = "trashed_tracks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    track_id: Mapped[int] = mapped_column(Integer)  # the id it had: it gets it back while nothing has taken it
+    title: Mapped[str] = mapped_column(String(512))
+    artist: Mapped[str] = mapped_column(String(512))
+    album: Mapped[str | None] = mapped_column(String(512))
+    data_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    cover: Mapped[bytes | None] = mapped_column(LargeBinary)  # its own cover, if it had one
+    deleted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    deleted_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ForYouSeen(Base):
+    """The issue of a list of «Для вас» the user opened last (app/api/for_you.py): a newer one is «новый»."""
+
+    __tablename__ = "for_you_seen"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)  # mix / weekly
+    issue: Mapped[str] = mapped_column(String(32))
+
+
 class PlaylistCover(Base):
     """A picture the user gave a playlist (app/api/playlists.py): shown instead of the one Navidrome makes."""
 

@@ -34,7 +34,7 @@ from app.db import get_session
 from app.events import bus
 from app.jobs.downloads import enqueue_scan
 from app.jobs.queue import notify
-from app.library import access, editor, edits, tagger
+from app.library import access, editor, edits, tagger, trash
 from app.library.importer import album_reldir, library_abs
 from app.library.tracks import current_file, current_files
 from app.matching.normalize import normalize_title
@@ -279,6 +279,35 @@ async def get_track_cover(track_id: int, size: int | None = Query(None, ge=32, l
     return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
 
+@router.get("/api/library/tracks/{track_id}/edits")
+async def track_edits(track_id: int, user: User = Depends(current_user),
+                      s: AsyncSession = Depends(get_session, scope="function")) -> list[dict]:
+    """The journal of what was changed of the track, the latest first: any of it can be gone back to."""
+    return await edits.history(s, (await _track(s, track_id)).id)
+
+
+@router.get("/api/library/trash")
+async def trash_list(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")) -> list[dict]:
+    """«Корзина»: the tracks deleted lately, whose files are still kept — anybody may bring one back."""
+    return await trash.listed(s)
+
+
+@router.post("/api/library/trash/{trashed_id}/restore")
+async def trash_restore(trashed_id: int, user: User = Depends(current_user),
+                        s: AsyncSession = Depends(get_session, scope="function")) -> dict:
+    from app.models import TrashedTrack
+
+    row = await s.get(TrashedTrack, trashed_id)
+    if row is None:
+        raise HTTPException(404, "В корзине такого нет")
+    try:
+        t = await trash.restore(s, row)
+    except ValueError as e:
+        raise HTTPException(410, str(e)) from e
+    await _after_edit(s, user, t.album_id)
+    return {"ok": True, "track_id": t.id}
+
+
 @router.get("/api/library/tracks/{track_id}/keeping")
 async def track_keeping(track_id: int, user: User = Depends(current_user),
                         s: AsyncSession = Depends(get_session, scope="function")) -> dict:
@@ -314,7 +343,7 @@ async def track_journal(track_id: int, user: User = Depends(current_user),
 async def delete_track(track_id: int, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     t = await access.need_deletable_track(s, user, track_id)
     album_id = t.album_id
-    await editor.trash_track(s, t)
+    await editor.trash_track(s, t, user.id)
     await _after_edit(s, user, album_id)
     return {"ok": True}
 

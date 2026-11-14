@@ -465,7 +465,7 @@ async def remove_unheard(mix_ids: list[int]) -> int:
                 verdict = "kept: " + ", ".join(why)
             else:
                 log.info("mix cleanup: trash %s — %s", track.artist, track.title)
-                await editor.trash_track(s, track)
+                await editor.trash_track(s, track, kept=False)
                 verdict = "trashed"
                 removed += 1
             it.features_json = {**(it.features_json or {}), "cleanup": verdict}

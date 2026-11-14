@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.library import tagger
 from app.library.importer import _move, _write_cover_file, album_reldir, library_abs, library_lock, tagdata_for
-from app.library.layout import track_filename, unique_path
+from app.library.layout import unique_path
 from app.library.tracks import current_file, files_of
 from app.matching.normalize import fingerprint
 from app.models import Album, Track, TrackCover, TrackFile
@@ -51,9 +51,13 @@ async def _own_cover(s: AsyncSession, track: Track) -> bytes | None:
 
 
 async def relocate_track(s: AsyncSession, track: Track, album: Album, *, cover: bytes | None = None,
-                         retag: bool = True) -> None:
-    """Write album/track fields into the file and move it to the album folder if the path changed. A track without
-    a file only gets the fields."""
+                         retag: bool = True, move: bool = True) -> None:
+    """Write album/track fields into the file and — `move` — take it to where the album and its name put it. A
+    track without a file only gets the fields.
+
+    A file is moved when its album changes (another folder), not when the track itself is renamed (`move` False):
+    Navidrome meets a moved file as a new song first and learns only at the end of its scan that it is the old one,
+    so for a while the library showed the track twice. A file's own name is nobody's to read; it stays."""
     file = await current_file(s, track.id)
     track.album_id = album.id
     track.album = album.title
@@ -66,11 +70,10 @@ async def relocate_track(s: AsyncSession, track: Track, album: Album, *, cover: 
     if retag and old_abs.is_file():
         own = await _own_cover(s, track)  # the track's own picture, not the album's
         await asyncio.to_thread(tagger.write_tags, old_abs, tagdata_for(track, album, file, cover=own or cover))
-    ext = old_abs.suffix.lstrip(".") or "mp3"
     new_dir_rel = album_reldir(album)
-    new_name = track_filename(track.disc_no, track.track_no, track.title, ext)
+    new_name = old_abs.name  # the name it came with: only the folder follows the album
     new_rel = PurePosixPath(new_dir_rel, new_name).as_posix()
-    if new_rel != file.path and old_abs.is_file():
+    if move and new_rel != file.path and old_abs.is_file():
         dest = library_abs(new_rel)
         if dest.exists():
             dest = unique_path(dest.parent, new_name)
@@ -160,29 +163,38 @@ async def update_track(s: AsyncSession, track: Track, **fields) -> Track:
                 await asyncio.to_thread(tagger.update_tags, p, **{k: v for k, v in fields.items() if v is not None})
             await s.flush()
             return track
-        await relocate_track(s, track, album, cover=await _album_cover(album))
+        await relocate_track(s, track, album, cover=await _album_cover(album), move=False)
         await s.flush()
         return track
 
 
-async def trash_track(s: AsyncSession, track: Track) -> None:
-    """Move the track's files to MUSIC_ROOT/.trash/<date>/<path> (purged after N days) and delete the track."""
+async def trash_track(s: AsyncSession, track: Track, user_id: int | None = None, *, kept: bool = True) -> None:
+    """Move the track's files to MUSIC_ROOT/.trash/<date>/<path> (purged after N days) and delete the track. What it
+    was is written down first, so that it can be brought back while its files are kept (library/trash.py) — unless
+    `kept` is False: what the Hub clears by itself (a mix's tracks nobody took) is nobody's to bring back."""
+    from app.library import trash
+
     async with library_lock:
+        moved: dict[int, str] = {}
         for file in await files_of(s, track.id):
             src = library_abs(file.path)
             if src.is_file():
                 dest = get_settings().trash_dir / datetime.now().strftime("%Y-%m-%d") / Path(*PurePosixPath(file.path).parts)
+                if dest.exists():
+                    dest = unique_path(dest.parent, dest.name)
                 await asyncio.to_thread(_move, src, dest)
                 await asyncio.to_thread(_remove_empty_dirs, src.parent)
+                moved[file.id] = str(dest)
         album_id = track.album_id
+        last = album_id is not None and (await s.execute(select(func.count(Track.id)).where(
+            Track.album_id == album_id, Track.id != track.id))).scalar_one() == 0
+        album = await s.get(Album, album_id) if last else None
+        if kept:
+            await trash.remember(s, track, moved, user_id, album)
         await s.delete(track)
         await s.flush()
-        if album_id:
-            n = (await s.execute(select(func.count(Track.id)).where(Track.album_id == album_id))).scalar_one()
-            if n == 0:
-                a = await s.get(Album, album_id)
-                if a:
-                    await s.delete(a)
+        if album is not None:  # its last track is gone: the album goes with it
+            await s.delete(album)
 
 
 def purge_trash(days: int) -> int:

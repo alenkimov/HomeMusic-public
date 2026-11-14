@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
-import type { TrackEditOut } from '../api/types';
+import type { TrackEditEntry, TrackEditOut } from '../api/types';
 import { fmtAdded } from '../lib/format';
 import { EDITED_EVENT, closeTrackEdit, useTrackEdit, type EditedTrack } from '../lib/trackEdit';
 import { attempt, toast } from '../lib/ui';
@@ -23,6 +23,7 @@ function Window({ track }: { track: EditedTrack }) {
   const [artist, setArtist] = useState(track.artist);
   const [busy, setBusy] = useState<string | null>(null);
   const [changed, setChanged] = useState(false);
+  const [history, setHistory] = useState<TrackEditEntry[] | null>(null);
   const ownFile = useRef<HTMLInputElement>(null);
   const albumFile = useRef<HTMLInputElement>(null);
 
@@ -34,6 +35,7 @@ function Window({ track }: { track: EditedTrack }) {
         setInfo(r);
         setTitle(r.title);
         setArtist(r.artist);
+        if (r.last_at) api.trackEdits(r.track_id).then(setHistory, () => undefined);
       })
       .catch((e: Error) => setError(e.message || 'Не удалось открыть трек'));
   };
@@ -74,6 +76,8 @@ function Window({ track }: { track: EditedTrack }) {
     setChanged(true);
   };
 
+  // the changes of the name: each can be gone back to (what it was before it)
+  const named = (history ?? []).filter((e) => e.changes.title || e.changes.artist);
   const same = !!info && title.trim() === info.title && artist.trim() === info.artist;
   const fromCatalog = !!info?.catalog_title && (info.catalog_title !== info.title || (info.catalog_artist ?? info.artist) !== info.artist);
   return (
@@ -142,6 +146,31 @@ function Window({ track }: { track: EditedTrack }) {
               </div>
             </div>
           </div>
+          {named.length > 0 && (
+            <details className="border-t border-fg/10 pt-3">
+              <summary className="cursor-pointer select-none text-[13px] text-muted hover:text-fg">История названия · {named.length}</summary>
+              <ul className="mt-2 space-y-2">
+                {named.map((e) => {
+                  const was = { title: (e.changes.title?.[0] as string | undefined) ?? null, artist: (e.changes.artist?.[0] as string | undefined) ?? null };
+                  return (
+                    <li key={e.id} className="flex items-start gap-2 text-[13px]">
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">
+                          {[was.title && `«${was.title}»`, was.artist].filter(Boolean).join(' — ')}
+                          <span className="text-dim"> → </span>
+                          {[e.changes.title && `«${e.changes.title[1] as string}»`, e.changes.artist && (e.changes.artist[1] as string)].filter(Boolean).join(' — ')}
+                        </span>
+                        <span className="block text-xs text-dim">{[e.by, fmtAdded(e.at)].filter(Boolean).join(', ')}</span>
+                      </span>
+                      <button type="button" className="shrink-0 text-muted underline-offset-2 hover:text-fg hover:underline" title="Вернуть то, что было до этой правки" onClick={() => void save(was.title ?? info.title, was.artist ?? info.artist)}>
+                        вернуть
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </details>
+          )}
           <input ref={ownFile} type="file" accept="image/*" hidden onChange={(e) => void cover('own', e.target.files?.[0]).finally(() => (e.target.value = ''))} />
           <input ref={albumFile} type="file" accept="image/*" hidden onChange={(e) => void cover('album', e.target.files?.[0]).finally(() => (e.target.value = ''))} />
         </div>

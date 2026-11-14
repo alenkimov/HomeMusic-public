@@ -706,10 +706,12 @@ async def confirm_chat(s: AsyncSession, user: User, task: AssistantTask, token: 
                 playlists.append(pid)
                 bus.publish(user.id, "library", {"kind": "playlist", "playlist_id": pid})
             continue
-        # only the listener's own files (an admin: anybody's), as in «Мои файлы»
-        for t in (await s.execute(select(Track).where(Track.id.in_(a.get("track_ids") or []), access.tracks_of(user)))).scalars().all():
+        # a file nobody else keeps (library/access.py), as when it is deleted from a track's menu
+        for t in (await s.execute(select(Track).where(Track.id.in_(a.get("track_ids") or [])))).scalars().all():
+            if not (await access.keeping(s, user, t.id))[0]:
+                continue
             albums.add(t.album_id)
-            await editor.trash_track(s, t)
+            await editor.trash_track(s, t, user.id)
             tracks += 1
     if albums:
         await enqueue_scan(s)

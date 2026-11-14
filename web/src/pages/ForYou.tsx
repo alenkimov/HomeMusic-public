@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { forYouOpened } from '../lib/forYou';
 import { imageUrl, retryImage } from '../lib/img';
 import { api } from '../api/client';
 import type { ForYouOut, MixMode, TrackOut } from '../api/types';
@@ -76,6 +77,12 @@ export function ForYouPage({ kind, mix }: { kind: string; mix?: number }) {
     else setIssue(null); // a new issue: it is the one shown
   });
   useHubEvent('reconnect', () => res.reload(true));
+
+  // the latest mix or issue is on screen: it is «новый» no more
+  const latest = !!d && mix === undefined && issue === null && d.tracks.length > 0;
+  useEffect(() => {
+    if (latest) forYouOpened(kind);
+  }, [latest, kind]);
 
   const tracks = useMemo(() => d?.tracks ?? [], [d]);
   const search = useListSearch(tracks);

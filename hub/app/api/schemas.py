@@ -1094,6 +1094,7 @@ class ForYouItem(BaseModel):
     kind: str
     title: str
     count: int | None = None  # tracks it has now; None: nothing was made yet
+    fresh: bool = False  # a mix or an issue made since the user last opened the list
 
 
 class ForYouOut(BaseModel):

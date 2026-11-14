@@ -46,6 +46,7 @@ import { TagsPage } from './pages/Tags';
 import { FileJournalPage } from './pages/FileJournal';
 import { DiscographyPage } from './pages/Discography';
 import { HiddenPage } from './pages/Hidden';
+import { TrashPage } from './pages/Trash';
 import { HistoryPage } from './pages/History';
 import { OfflinePage } from './pages/Offline';
 import { refreshDislikes, resetDislikes } from './lib/dislikes';
@@ -78,6 +79,7 @@ const STANDALONE_ROUTES: RouteDef[] = [
   ['/stats', 'more', () => <StatsPage />],
   ['/history', 'more', () => <HistoryPage />],
   ['/hidden', 'more', () => <HiddenPage />],
+  ['/trash', 'more', () => <TrashPage />],
   ['/offline', 'more', () => <OfflinePage />],
   ['/subscriptions', 'library', () => <SubscriptionsPage />],
   ['/discoveries', 'library', () => <ForYouPage key="weekly" kind="weekly" />],

@@ -75,7 +75,9 @@ import type {
   StarOut,
   StarredOut,
   TasteOnboardingOut,
+  TrackEditEntry,
   TrackEditOut,
+  TrashedOut,
   TrackPatchIn,
   TracksMoveIn,
   UploadCommitIn,
@@ -320,6 +322,11 @@ export const api = {
   patchTrack: (id: number, body: TrackPatchIn) =>
     request<LibTrackOut>('PATCH', `/api/library/tracks/${id}`, { json: body }),
   deleteTrack: (id: number) => request<OkOut>('DELETE', `/api/library/tracks/${id}`),
+  /** What was changed of the track, the latest first. */
+  trackEdits: (id: number) => request<TrackEditEntry[]>('GET', `/api/library/tracks/${id}/edits`),
+  /** «Корзина»: the tracks deleted lately, and bringing one back. */
+  trash: (signal?: AbortSignal) => request<TrashedOut[]>('GET', '/api/library/trash', { signal }),
+  trashRestore: (id: number) => request<{ ok: boolean; track_id: number }>('POST', `/api/library/trash/${id}/restore`),
   /** May the file be deleted (nobody else keeps the track), and which of the asker's playlists keep it. */
   trackKeeping: (id: number) =>
     request<{ can_delete: boolean; others: number; has_file: boolean; mine: { id: string; name: string; liked: boolean }[] }>('GET', `/api/library/tracks/${id}/keeping`),
@@ -371,6 +378,8 @@ export const api = {
   fileJournal: (trackId: number, signal?: AbortSignal) => request<FileJournalOut>('GET', `/api/library/tracks/${trackId}/journal`, { signal }),
   /** «Для вас»: the lists the Hub makes by itself, and one of them as its page shows it. */
   forYou: (signal?: AbortSignal) => request<ForYouItem[]>('GET', '/api/for-you', { signal }),
+  /** The list's latest mix or issue was opened: it is not «новый» any more. */
+  forYouSeen: (kind: string) => request<OkOut>('POST', `/api/for-you/${kind}/seen`),
   forYouList: (kind: string, q: { mix?: number; issue?: number }, signal?: AbortSignal) =>
     request<ForYouOut>('GET', withQuery(`/api/for-you/${encodeURIComponent(kind)}`, q), { signal }),
   mixToday: (signal?: AbortSignal) => request<MixTodayOut>('GET', '/api/mixes/today', { signal }),

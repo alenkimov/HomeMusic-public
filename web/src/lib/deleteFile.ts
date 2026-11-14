@@ -30,10 +30,12 @@ export async function deleteFile(t: { library_track_id: number; title: string; a
   }
   const ok = await confirmDialog({
     title: 'Удалить файл с сервера?',
-    body: `${name}\n` + (k.others ? `Трек есть ещё у ${people(k.others)} — он пропадёт и из их плейлистов.\n` : k.mine.length ? 'Он пропадёт из ваших плейлистов.\n' : '') + 'Файл переместится в корзину и будет стёрт через 30 дней.',
+    body: `${name}\n` + (k.others ? `Трек есть ещё у ${people(k.others)} — он пропадёт и из их плейлистов.\n` : k.mine.length ? 'Он пропадёт из ваших плейлистов.\n' : '') + 'Файл уйдёт в корзину: 30 дней его можно вернуть.',
     okLabel: 'Удалить',
     danger: true,
   });
   if (!ok) return;
-  if (await attempt(() => api.deleteTrack(t.library_track_id), 'Файл удалён')) window.dispatchEvent(new Event(EDITED_EVENT));
+  if (!(await attempt(() => api.deleteTrack(t.library_track_id)))) return;
+  toast('Файл удалён: 30 дней его можно вернуть', 'success', { label: 'Корзина', to: '/trash' });
+  window.dispatchEvent(new Event(EDITED_EVENT));
 }
