@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useDesktop } from '../lib/desktop';
 import { imageUrl, retryImage } from '../lib/img';
 import { goBack } from '../lib/router';
@@ -406,7 +407,11 @@ export function Sheet({ open, onClose, title, children, footer }: { open: boolea
     };
   }, [open, onClose]);
   if (!open) return null;
-  return (
+  // Drawn at the end of the document, not where it is asked for: a window over everything must not be inside what
+  // makes a layer of its own (a sticky bar, a column of the player, a row that moves) — there it is over that layer
+  // only, and whatever is drawn above the layer shows through it (the seek bar's hint over «Перевод текста», a sheet
+  // under the tab bar).
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-label={title}>
       <button type="button" aria-label="Закрыть" className="absolute inset-0 bg-black/70" onClick={onClose} />
       <div className="anim-up pb-safe relative flex max-h-[88dvh] w-full max-w-lg flex-col rounded-t-2xl bg-surface sm:rounded-2xl">
@@ -417,7 +422,8 @@ export function Sheet({ open, onClose, title, children, footer }: { open: boolea
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">{children}</div>
         {footer && <div className="border-t border-line px-4 py-3">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
