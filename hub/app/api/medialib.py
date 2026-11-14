@@ -5,6 +5,8 @@ has these as native screens (Tempus); the PWA in a plain browser shows them from
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 from datetime import datetime
 from urllib.parse import quote
@@ -23,6 +25,7 @@ from app.library.navidrome import NavidromeClient, SubsonicError
 from app.mixes.resolve import library_track
 from app.models import Track, TrackFile, User
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/nd", tags=["medialib"])
 
 ALBUM_LISTS = ("recent", "frequent", "newest", "starred", "alphabeticalByName", "alphabeticalByArtist", "random")
@@ -152,7 +155,24 @@ async def artist(artist_id: str, user: User = Depends(current_user)):
     # newest year first, albums without a year last, ties by title
     albums_ = sorted(a.get("album") or [], key=lambda x: (not x.get("year"), -(x.get("year") or 0),
                                                           (x.get("name") or x.get("title") or "").casefold(), x.get("id") or ""))
-    return NdArtistPageOut(artist=artist_out(a), albums=[album_out(x) for x in albums_])
+    return NdArtistPageOut(artist=artist_out(a), albums=[album_out(x) for x in albums_],
+                           catalog_ref=await _in_catalog(a.get("name") or ""))
+
+
+async def _in_catalog(name: str) -> str | None:
+    """The catalog's artist of this very name (the best known of them, as the catalog orders its search); none: the
+    catalog has nobody called so, or does not answer."""
+    from app.services import svc
+
+    if not name.strip() or svc.deezer is None:
+        return None
+    try:
+        found = await svc.deezer.search(name, kinds=("artist",), limit=5)
+    except Exception as e:
+        log.info("library artist %r not looked up in the catalog: %r", name, e)
+        return None
+    want = name.strip().casefold()
+    return next((x.ref for x in found.artists if x.name.strip().casefold() == want), None)
 
 
 ALL_SONGS_PAGE = 500

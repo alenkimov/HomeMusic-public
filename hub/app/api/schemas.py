@@ -380,6 +380,14 @@ class ArtistPageOut(BaseModel):
     compilations: list[AlbumOut] = []
 
 
+class DiscographyOut(BaseModel):
+    """Everything an artist released, newest first, each release with its tracks: the page shows it by releases and
+    searches all of it at once."""
+
+    artist: CatalogArtist
+    albums: list[AlbumOut] = []
+
+
 class SearchOut(BaseModel):
     library: list[LibTrackOut] = []
     artists: list[CatalogArtist] = []
@@ -641,6 +649,8 @@ class NdArtistOut(BaseModel):
 class NdArtistPageOut(BaseModel):
     artist: NdArtistOut
     albums: list[NdAlbumOut] = []
+    # the same artist in the catalog, when it has one of this very name: their page is the catalog's then
+    catalog_ref: str | None = None
 
 
 class NdLikedOut(BaseModel):

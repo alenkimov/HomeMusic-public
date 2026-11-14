@@ -136,10 +136,11 @@ class V2Profile(Profile):
         from app.mixes.taste_select import top_artists
         return top_artists(self, n)
 
-    def disliked(self, *, ref, nd_song_id, artist, artist_ref) -> bool:
+    def disliked(self, *, ref, nd_song_id, artist, artist_ref, artists=(), artist_refs=()) -> bool:
         t = self.find(ref=ref, nd_song_id=nd_song_id)
         return bool(t and t.key in self.explicit_negative_keys) or super().disliked(
-            ref=ref, nd_song_id=nd_song_id, artist=artist, artist_ref=artist_ref)
+            ref=ref, nd_song_id=nd_song_id, artist=artist, artist_ref=artist_ref, artists=artists,
+            artist_refs=artist_refs)
 
     def positive_weights(self) -> dict[str, float]:
         return {k: t.score for k, t in sorted(self.tracks.items()) if t.score >= 1}

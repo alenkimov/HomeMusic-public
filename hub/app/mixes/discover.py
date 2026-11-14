@@ -91,6 +91,9 @@ def novel(c: Cand, p: Profile, known_artists: set[str], past: set[str]) -> str |
         return "library"
     if c.nd_song_id:
         return "library"
+    if p.disliked(ref=t.ref, nd_song_id=None, artist=t.artist, artist_ref=t.artist_ref, artists=t.artists,
+                  artist_refs=t.artist_refs):
+        return "disliked"  # the track, or an artist the user does not listen to
     fp = fingerprint(t.artist, t.title)
     if p.find(ref=t.ref, nd_song_id=None, fp=fp) is not None:
         return "heard"

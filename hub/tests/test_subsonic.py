@@ -180,3 +180,32 @@ async def test_a_catalog_album_opens_with_its_tracks_and_is_kept(env):
         "id": ext("dz:1", "r"), "name": "Кино", "coverArt": ext("dz:1", "r"), "albumCount": 12}
     r = await c.get("/rest/getArtistInfo2", params={**AUTH, "f": "json", "id": ext("dz:1", "r")})
     assert r.json()["subsonic-response"]["artistInfo2"] == {}
+
+
+async def test_the_whole_discography_of_an_artist(env, monkeypatch):
+    """`/api/catalog/artist/<ref>/discography`: every release with its tracks, newest first."""
+    from datetime import date
+
+    from app.catalog.models import ArtistPage, CatalogArtist
+    from app.services import svc
+
+    old = svc.deezer.album.model_copy(update={"ref": "dz:11", "id": "11", "title": "Раньше", "release_date": date(1986, 1, 1),
+                                               "tracks": None})
+    asked: list[str] = []
+
+    async def get_artist_page(id_):
+        return ArtistPage(artist=CatalogArtist(ref="dz:1", source="dz", id="1", name="Кино"),
+                          albums=[old, svc.deezer.album.model_copy(update={"tracks": None})])
+
+    async def get_album(id_):
+        asked.append(str(id_))
+        if str(id_) == "11":
+            raise RuntimeError("the catalog does not give it")
+        return svc.deezer.album
+
+    monkeypatch.setattr(svc.deezer, "get_artist_page", get_artist_page, raising=False)
+    monkeypatch.setattr(svc.deezer, "get_album", get_album)
+    got = (await env["client"].get("/api/catalog/artist/dz:1/discography")).json()
+    assert got["artist"]["name"] == "Кино" and sorted(asked) == ["10", "11"]
+    assert [(a["title"], [t["title"] for t in a["tracks"] or []]) for a in got["albums"]] == [
+        ("Группа крови", ["Группа крови"]), ("Раньше", [])]  # newest first; the one without tracks comes without them

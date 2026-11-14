@@ -115,10 +115,15 @@ class Profile:
         """In the user's history: heard, liked, downloaded or disliked."""
         return self.find(ref=ref, nd_song_id=nd_song_id, fp=fp) is not None
 
-    def disliked(self, *, ref: str | None, nd_song_id: str | None, artist: str, artist_ref: str | None) -> bool:
+    def disliked(self, *, ref: str | None, nd_song_id: str | None, artist: str, artist_ref: str | None,
+                 artists: Any = (), artist_refs: Any = ()) -> bool:
+        """The track is marked «Не нравится», or one of its artists is — the main one or any credited with them
+        (`artists`, `artist_refs`): a track a hidden artist only features on is theirs too."""
         if (ref and ref in self.disliked_ids) or (nd_song_id and song_key(nd_song_id) in self.disliked_ids):
             return True
-        return bool(artist_ref and artist_ref in self.disliked_artist_refs) or artist_key(artist) in self.disliked_artists
+        if any(r and r in self.disliked_artist_refs for r in (artist_ref, *(artist_refs or ()))):
+            return True
+        return any(a and artist_key(a) in self.disliked_artists for a in (artist, *(artists or ())))
 
     @property
     def empty(self) -> bool:

@@ -389,7 +389,8 @@ def keep_reason(c: Cand, p: Profile, cfg) -> str | None:
     """Return the first rejection reason, or None when kept; sets `familiar`."""
     t = c.track
     ref = t.ref if t.source == "dz" else None
-    if p.disliked(ref=ref, nd_song_id=c.nd_song_id, artist=t.artist, artist_ref=t.artist_ref):
+    if p.disliked(ref=ref, nd_song_id=c.nd_song_id, artist=t.artist, artist_ref=t.artist_ref, artists=t.artists,
+                  artist_refs=t.artist_refs):
         return "disliked"
     if version_kind(split_version(t.title)[1]) in BANNED_VERSIONS:
         return "version"

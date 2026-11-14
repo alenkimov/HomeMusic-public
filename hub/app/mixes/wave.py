@@ -607,7 +607,7 @@ def pick(st: State, p: Profile, mode: str, vectors: dict[str, list[float]], n: i
 def _disliked(c: build.Cand, p: Profile) -> bool:
     t = c.track
     return p.disliked(ref=t.ref if t.source in ("dz", "file") else None, nd_song_id=c.nd_song_id, artist=t.artist,
-                      artist_ref=t.artist_ref)
+                      artist_ref=t.artist_ref, artists=t.artists, artist_refs=t.artist_refs)
 
 
 async def _vectors(rt: Runtime) -> dict[str, list[float]]:
