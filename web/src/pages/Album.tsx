@@ -21,8 +21,6 @@ export function AlbumPage({ refId }: { refId: string }) {
   const [dlBusy, setDlBusy] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  const [starBusy, setStarBusy] = useState(false);
-  const [starred, setStarred] = useState(false);
   const reloadTimer = useRef<number | undefined>(undefined);
 
   // New imports may complete tracks of this album: refetch (debounced, bypassing the cache).
@@ -111,13 +109,6 @@ export function AlbumPage({ refId }: { refId: string }) {
     );
   };
 
-  const star = async () => {
-    setStarBusy(true);
-    const ok = await attempt(() => api.star({ catalog_album_ref: album.ref }), 'Добавлено в коллекцию');
-    setStarBusy(false);
-    if (ok) setStarred(true);
-  };
-
   return (
     <div>
       <div className="relative">
@@ -169,11 +160,8 @@ export function AlbumPage({ refId }: { refId: string }) {
             {missing.length === 0 ? 'Всё скачано' : owned.length ? `Скачать недостающие ${missing.length} из ${tracks.length}` : 'Скачать альбом'}
           </Button>
         )}
-        <Button icon="playlist" onClick={() => setPickerOpen(true)}>
+        <Button icon="playlist" className="col-span-2" onClick={() => setPickerOpen(true)}>
           В плейлист
-        </Button>
-        <Button icon={starred ? 'check' : 'star'} busy={starBusy} onClick={star} className={starred ? '!text-accent' : ''}>
-          {starred ? 'В коллекции' : 'В коллекцию'}
         </Button>
       </div>
 
