@@ -8,7 +8,7 @@ import { Lyrics } from '../components/Lyrics';
 import { SaveButton } from '../components/PlaylistsButton';
 import { TrackMenuButton } from '../components/TrackMenu';
 import { Cover, Empty, IconButton, Sheet, Spinner, cx } from '../components/ui';
-import { fmtDuration, providerLabel, tracksWord } from '../lib/format';
+import { fmtDuration, tracksWord } from '../lib/format';
 import { queueAsked } from '../lib/playerQueue';
 import { useSeek } from '../lib/seek';
 import { SeekLine } from '../components/SeekLine';
@@ -127,8 +127,8 @@ export function PlayerPage() {
   const waiting = phase === 'resolving' || phase === 'loading';
   const playing = phase === 'playing' || waiting;
   const owned = info?.kind === 'library';
-  // where the sound comes from is said only when it is not the library's own file (the usual case needs no words)
-  const source = info?.kind === 'full' ? `${providerLabel(info.provider)} · не из библиотеки` : info?.kind === 'preview' ? 'превью 30 сек' : null;
+  // under the seek bar: only that this is a 30 s preview. Where the file came from is the card «Файл» below
+  const source = info?.kind === 'preview' ? 'превью 30 сек' : null;
   const download = async () => {
     setBusy(true);
     await downloadRef(track.ref);

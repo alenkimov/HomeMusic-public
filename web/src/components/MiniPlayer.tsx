@@ -1,6 +1,5 @@
 import { tagKey } from '../lib/tags';
 import { useLayoutEffect, useRef, type TouchEvent } from 'react';
-import { providerLabel } from '../lib/format';
 import { stopListening, toggle, useListen } from '../lib/listen';
 import { STANDALONE } from '../lib/embedded';
 import { Link, enc } from '../lib/router';
@@ -42,7 +41,6 @@ export function MiniPlayer() {
 
   const waiting = phase === 'resolving' || phase === 'loading';
   const playing = phase === 'playing' || waiting;
-  const owned = info?.kind === 'library';
   const status =
     phase === 'error'
       ? error
@@ -51,7 +49,6 @@ export function MiniPlayer() {
         : waiting
           ? 'Загрузка…'
           : null;
-  const source = info?.kind === 'full' ? providerLabel(info.provider) : owned ? 'из библиотеки' : null;
 
   const head = (
     <>
@@ -74,7 +71,7 @@ export function MiniPlayer() {
               </span>
             )}
             {info?.kind === 'preview' && <span className="shrink-0 rounded bg-warn/15 px-1 text-[11px] font-semibold text-warn">превью 30 сек</span>}
-            <span className="truncate">{[track.artist, source].filter(Boolean).join(' · ')}</span>
+            <span className="truncate">{track.artist}</span>
           </div>
         )}
       </div>
