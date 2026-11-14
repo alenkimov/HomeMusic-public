@@ -742,3 +742,18 @@ async def test_search_finds_what_the_library_has(env):
         (own,) = r.json()["library"]
         assert (own["title"], own["nd_song_id"], own["source"]) == ("Группа крови", "nd0", "hitmoz")
         assert own["path"].endswith("1-01 - Группа крови.mp3") and own["bitrate_kbps"]
+
+
+async def test_a_file_tells_how_it_came(env):
+    """A downloaded track's file says its download kept a journal, and the journal is read by the track."""
+    c = env["client"]
+    item = await download_one(c, {"artist": "Кино", "title": "Группа крови"})
+    assert item["status"] == "done", item
+    got = (await c.get(f"/api/library/tracks/{item['track_id']}/journal")).json()
+    assert (got["artist"], got["title"], got["download_id"]) == ("Кино", "Группа крови", item["id"])
+    assert got["file"]["source"] == "hitmoz" and got["file"]["journal"]
+    assert got["steps"][0]["text"].startswith("Запрос") and got["steps"][-1]["kind"] == "ok"
+    assert (await c.get("/api/library/tracks/99999/journal")).status_code == 404
+    # the player's answer says so too
+    r = (await c.get("/api/listen", params={"ref": f"nd:{item['nd_song_id']}"})).json()
+    assert r["kind"] == "library" and r["journal"] and r["track_id"] == item["track_id"]

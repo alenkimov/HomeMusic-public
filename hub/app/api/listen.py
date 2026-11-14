@@ -14,7 +14,7 @@ from app import listen
 from app.api.schemas import ListenOut, ListenPrefetchIn, ListenPrefetchOut
 from app.auth import current_user
 from app.db import session_scope
-from app.library.owned import file_out
+from app.library.owned import file_out, with_journal
 from app.library.tracks import by_ref, current_file
 from app.models import TrackFile, User
 
@@ -48,6 +48,9 @@ async def resolve(ref: str, ahead: Literal["whole", "head"] | None = None, user:
         # an own file: what it is and where it came from (a file picked at a source says only its source)
         own = await current_file(s, track_id) if c.kind == "library" and track_id else None
     file = file_out(own) if own else None
+    if file and track_id:
+        async with session_scope() as s:
+            file.journal = track_id in await with_journal(s, [track_id])
     return ListenOut(
         ref=c.ref,
         kind=c.kind,
@@ -59,6 +62,7 @@ async def resolve(ref: str, ahead: Literal["whole", "head"] | None = None, user:
         source=file.source if file else cand.provider if cand else None,
         codec=file.codec if file else None,
         sounds_like_kbps=file.sounds_like_kbps if file else None,
+        journal=bool(file and file.journal),
         page_url=cand.page_url if cand else None,
         nd_song_id=c.nd_song_id,
         track_id=track_id,

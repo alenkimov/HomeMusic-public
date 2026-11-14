@@ -45,10 +45,23 @@ async def with_files(s: AsyncSession, tracks: list[Any]) -> None:
     owned = [t for t in tracks if t.owned and t.library_track_id and t.file is None]
     if not owned:
         return
-    files = await current_files(s, [t.library_track_id for t in owned])
+    ids = [t.library_track_id for t in owned]
+    files = await current_files(s, ids)
+    told = await with_journal(s, ids)
     for t in owned:
         if f := files.get(t.library_track_id):
             t.file = file_out(f)
+            t.file.journal = t.library_track_id in told
+
+
+async def with_journal(s: AsyncSession, track_ids: list[int]) -> set[int]:
+    """The tracks whose file came by a download that kept its journal."""
+    out: set[int] = set()
+    for i in range(0, len(track_ids), 500):
+        out.update((await s.execute(select(DownloadItem.track_id).where(
+            DownloadItem.track_id.in_(track_ids[i:i + 500]), func.json_array_length(DownloadItem.log_json) > 0)
+            .distinct())).scalars())
+    return out
 
 
 def _duration_ok(a: int | None, b: int | None, tol: int = 3) -> bool:

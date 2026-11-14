@@ -1,5 +1,6 @@
 import type { FileOut, ListenOut } from '../api/types';
 import { providerLabel } from '../lib/format';
+import { Link } from '../lib/router';
 import { BrandIcon } from './BrandIcon';
 import { Icon } from './Icon';
 import { cx } from './ui';
@@ -69,6 +70,14 @@ export function FileCard({ info }: { info: ListenOut | null | undefined }) {
         )}
       </div>
       {info.sounds_like_kbps ? <p className="pt-1 text-[13px] text-warn">По звуку около {info.sounds_like_kbps} кбит/с: похоже, файл сделан из худшего.</p> : null}
+      {/* the journal of the download that brought the file: where it was looked for, why this one was taken */}
+      {info.journal && info.track_id ? (
+        <Link to={`/file/${info.track_id}`} className="-mx-2 mt-1 flex min-h-11 items-center gap-2 rounded-lg px-2 text-[15px] hover:bg-fg/5">
+          <Icon name="history" size={18} className="text-muted" />
+          <span className="flex-1">Как скачан</span>
+          <Icon name="chevron" size={18} className="text-dim" />
+        </Link>
+      ) : null}
     </section>
   );
 }

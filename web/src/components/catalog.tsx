@@ -398,7 +398,18 @@ export function TrackRow({
           {added && <span className="truncate text-sm text-muted" title={track.added_at ? parseTime(track.added_at).toLocaleString('ru-RU') : undefined}>{fmtAdded(track.added_at)}</span>}
           {plays && <PlaysCell songId={track.nd_song_id} count={playsOf ?? ((track.nd_song_id && playCounts[track.nd_song_id]) || 0)} title={track.title} artist={track.artist} />}
           {/* always a cell, so the columns line up: a track with no file of its own has it empty */}
-          {cols.file && <span className="truncate text-xs text-muted">{track.file && <FileInfo info={track.file} />}</span>}
+          {cols.file && (
+            <span className="truncate text-xs text-muted">
+              {track.file &&
+                (track.file.journal && track.library_track_id ? (
+                  <Link to={`/file/${track.library_track_id}`} onClick={(e) => e.stopPropagation()} className="hover:text-fg hover:underline" title="Как скачан этот файл">
+                    <FileInfo info={track.file} />
+                  </Link>
+                ) : (
+                  <FileInfo info={track.file} />
+                ))}
+            </span>
+          )}
           <div data-row-actions className="flex h-11 items-center justify-end">
             {track.owned || dl === 'done' ? null : downloading ? (
               <span className="flex h-11 w-9 items-center justify-center text-info" title="Скачивается"><Spinner size={14} /></span>

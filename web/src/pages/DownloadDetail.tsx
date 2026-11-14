@@ -170,7 +170,7 @@ const STEP_DOT: Record<DownloadStep['kind'], string> = { info: 'bg-fg/25', ok: '
 
 /** «Журнал»: the steps of the download in order — where the file was looked for, which ones were tried and why each
  * was dropped or taken. The first word of a verdict («Выбран:», «Не подошёл:») is in its colour. */
-function Journal({ steps }: { steps: DownloadStep[] }) {
+export function Journal({ steps }: { steps: DownloadStep[] }) {
   if (!steps.length) return null;
   const clock = (iso: string) => new Date(iso + (/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? '' : 'Z')).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   return (

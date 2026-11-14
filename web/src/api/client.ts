@@ -39,6 +39,7 @@ import type {
   MeOut,
   MixSettingsIn,
   MixSettingsOut,
+  FileJournalOut,
   ForYouItem,
   ForYouOut,
   MixTodayOut,
@@ -326,6 +327,8 @@ export const api = {
     request<{ removed: number }>('DELETE', withQuery('/api/dislikes', q)),
 
   // «Микс дня» and the taste onboarding
+  /** How a track's file came to the library: the journal of its download. */
+  fileJournal: (trackId: number, signal?: AbortSignal) => request<FileJournalOut>('GET', `/api/library/tracks/${trackId}/journal`, { signal }),
   /** «Для вас»: the lists the Hub makes by itself, and one of them as its page shows it. */
   forYou: (signal?: AbortSignal) => request<ForYouItem[]>('GET', '/api/for-you', { signal }),
   forYouList: (kind: string, q: { mix?: number; issue?: number }, signal?: AbortSignal) =>

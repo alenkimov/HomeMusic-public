@@ -42,6 +42,7 @@ import { LoginPage } from './pages/Login';
 import { LyricsSettingsPage } from './pages/LyricsSettings';
 import { ArtistsPage, LikedPage, NdAlbumPage, NdAlbumsPage, NdArtistPage, PlaylistPage, SelectionPage } from './pages/MediaLibrary';
 import { TagsPage } from './pages/Tags';
+import { FileJournalPage } from './pages/FileJournal';
 import { ForYouPage } from './pages/ForYou';
 import { TastePage } from './pages/Mix';
 import { MorePage } from './pages/More';
@@ -99,6 +100,7 @@ const ROUTES: RouteDef[] = [
   ['/assistant/:id', 'assistant', (p) => <AssistantTaskPage key={p.id} id={Number(p.id)} />],
   ['/upload', 'more', () => <UploadPage />],
   ['/playlists', STANDALONE ? 'library' : 'more', () => <PlaylistsPage />],
+  ['/file/:id', 'library', (p) => <FileJournalPage key={p.id} id={Number(p.id)} />],
   ['/import', 'more', (_, r) => <ImportsPage key={r.query.get('from') ?? ''} from={(['yandex', 'spotify', 'vk'] as const).find((x) => x === r.query.get('from')) ?? null} />],
   ['/import/:id', 'more', (p) => <ImportPage key={p.id} id={Number(p.id)} />],
   [

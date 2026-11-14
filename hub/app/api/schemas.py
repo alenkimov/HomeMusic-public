@@ -342,6 +342,18 @@ class FileOut(BaseModel):
     codec: str | None = None
     bitrate_kbps: int | None = None
     sounds_like_kbps: int | None = None
+    journal: bool = False  # the download that brought it kept its journal (`GET /api/library/tracks/<id>/journal`)
+
+
+class FileJournalOut(BaseModel):
+    """How a track's file came to the library: the journal of the download that brought it."""
+
+    track_id: int
+    artist: str
+    title: str
+    file: FileOut | None = None
+    steps: list[dict[str, Any]] = []
+    download_id: int | None = None  # the download itself, when it is the asker's own (its page has more: the files found)
 
 
 class TrackOut(CatalogTrack):
@@ -433,6 +445,7 @@ class ListenOut(BaseModel):
     source: str | None = None
     codec: str | None = None
     sounds_like_kbps: int | None = None
+    journal: bool = False  # an own file whose download kept its journal
     page_url: str | None = None
     nd_song_id: str | None = None  # "library": the Navidrome song (♥, the app's player)
     track_id: int | None = None  # the Hub's track, if the Hub knows the song (tags, playlists)

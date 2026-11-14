@@ -18,6 +18,7 @@ from app.api.schemas import (
     AlbumCreateIn,
     AlbumMergeIn,
     AlbumPatchIn,
+    FileJournalOut,
     LibAlbumOut,
     LibTrackOut,
     StarIn,
@@ -36,7 +37,8 @@ from app.library import access, editor, tagger
 from app.library.importer import album_reldir, library_abs
 from app.library.tracks import current_file, current_files
 from app.matching.normalize import normalize_title
-from app.models import Album, Track, TrackFile, User
+from app.library.owned import file_out
+from app.models import Album, DownloadItem, Track, TrackFile, User
 
 router = APIRouter(tags=["library"])
 log = logging.getLogger(__name__)
@@ -204,6 +206,26 @@ async def patch_track(track_id: int, body: TrackPatchIn, user: User = Depends(cu
     await _after_edit(s, user, t.album_id)
     await s.refresh(t)
     return track_out(t, await current_file(s, t.id))
+
+
+@router.get("/api/library/tracks/{track_id}/journal", response_model=FileJournalOut)
+async def track_journal(track_id: int, user: User = Depends(current_user),
+                        s: AsyncSession = Depends(get_session, scope="function")):
+    """How the track's file came to the library: the journal of the download that brought it (the last one that
+    kept a journal). The library is everybody's, so anybody may read how a file of it was picked."""
+    t = await s.get(Track, track_id)
+    if t is None:
+        raise HTTPException(404, "Трек не найден")
+    f = await current_file(s, t.id)
+    item = (await s.execute(select(DownloadItem).where(
+        DownloadItem.track_id == t.id, func.json_array_length(DownloadItem.log_json) > 0)
+        .order_by(DownloadItem.id.desc()).limit(1))).scalar_one_or_none()
+    file = file_out(f) if f else None
+    if file:
+        file.journal = item is not None
+    return FileJournalOut(track_id=t.id, artist=t.artist, title=t.title, file=file,
+                          steps=list(item.log_json or []) if item else [],
+                          download_id=item.id if item and item.user_id == user.id and not item.hidden else None)
 
 
 @router.delete("/api/library/tracks/{track_id}")

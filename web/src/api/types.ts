@@ -192,6 +192,19 @@ export interface FileOut {
   codec?: string | null;
   bitrate_kbps?: number | null;
   sounds_like_kbps?: number | null;
+  /** the download that brought it kept its journal (`/file/<track>`) */
+  journal?: boolean;
+}
+
+/** How a track's file came to the library: the journal of the download that brought it. */
+export interface FileJournalOut {
+  track_id: number;
+  artist: string;
+  title: string;
+  file?: FileOut | null;
+  steps: DownloadStep[];
+  /** the download itself, when it is one's own */
+  download_id?: number | null;
 }
 
 export interface TrackOut extends CatalogTrack {
@@ -450,6 +463,8 @@ export interface ListenOut {
   source?: string | null;
   codec?: string | null;
   sounds_like_kbps?: number | null;
+  /** an own file whose download kept its journal */
+  journal?: boolean;
   page_url?: string | null;
   /** library: the Navidrome song (♥), once Navidrome has scanned the file */
   nd_song_id?: string | null;
