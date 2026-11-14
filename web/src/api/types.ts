@@ -982,6 +982,19 @@ export interface ListenBrainzOut {
   sent?: number;
 }
 
+/** A list the user played from lately («Продолжить» of the home): where it leads and how it is drawn. */
+export interface RecentPlaceOut {
+  /** the address of its page */
+  to: string;
+  kind: 'liked' | 'playlist' | 'album' | 'artist' | 'for-you' | 'selection';
+  title: string;
+  cover_url?: string | null;
+  /** the mark drawn where it has no picture */
+  icon: string;
+  /** an artist: the picture is a circle */
+  round?: boolean;
+}
+
 /** A release of a followed artist («Подписки», pages/Subscriptions.tsx). */
 export interface ReleaseOut {
   album_ref: string;

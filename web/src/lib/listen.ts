@@ -386,7 +386,7 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
   const a = el();
   reportEnd();
   // a recommendation of the smart shuffle reports under its session, the playlist's own songs under their list
-  played = { ref: track.ref, context: track.rec ? `smart:${track.rec.session}` : listContext, launch: listLaunch, started: false, playbackId: newEventId(), listenedMs: 0, anchor: null, account: listeningAccount() };
+  played = { ref: track.ref, context: track.rec ? `smart:${track.rec.session}` : listContext, page: listPage, launch: listLaunch, started: false, playbackId: newEventId(), listenedMs: 0, anchor: null, account: listeningAccount() };
   resolving?.abort();
   const ctl = new AbortController();
   resolving = ctl;

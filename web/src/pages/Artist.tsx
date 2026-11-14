@@ -144,7 +144,7 @@ export function ArtistPage({ refId }: { refId: string }) {
             onClick={() => void follow()}
             disabled={busy === 'follow'}
             aria-pressed={followed}
-            title={followed ? 'Вы подписаны: новые релизы появятся в «Подписках». Нажмите, чтобы отписаться' : 'Подписаться: новые релизы появятся в «Подписках»'}
+            title={followed ? 'Вы подписаны: новые релизы появятся в «Релизах». Нажмите, чтобы отписаться' : 'Подписаться: новые релизы появятся в «Релизах»'}
             className={cx('flex h-9 items-center gap-1.5 rounded-full border px-4 text-sm font-semibold transition active:scale-95', followed ? 'border-accent text-accent' : 'border-fg/40 text-fg hover:border-fg')}
           >
             {busy === 'follow' ? <Spinner size={14} /> : followed && <Icon name="check" size={15} stroke={3} />}

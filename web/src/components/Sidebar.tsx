@@ -71,6 +71,14 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
           const on = shown === t.id;
           return (
             <Fragment key={t.id}>
+            {/* what the followed artists released: before «Меню», which is the last of the sections */}
+            {t.id === 'more' && (
+            <Link to="/subscriptions" aria-current={at('/subscriptions') ? 'page' : undefined} className={cx(item, at('/subscriptions') ? 'bg-accent/15 font-semibold text-accent' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
+              <Icon name="bell" size={20} stroke={at('/subscriptions') ? 2.4 : 2} />
+              <span className="flex-1">Релизы</span>
+              {fresh > 0 && <span className="min-w-5 rounded-full bg-accent px-1.5 text-center text-[11px] font-bold leading-5 text-on-accent">{fresh > 99 ? '99+' : fresh}</span>}
+            </Link>
+            )}
             <Link to={on ? t.to : (last[t.id] ?? t.to)} aria-current={on ? 'page' : undefined} className={cx(item, on ? 'bg-accent/15 font-semibold text-accent' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
               <Icon name={t.icon} size={20} stroke={on ? 2.4 : 2} />
               <span className="flex-1">{t.label}</span>
@@ -81,11 +89,6 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
             </Fragment>
           );
         })}
-        <Link to="/subscriptions" aria-current={at('/subscriptions') ? 'page' : undefined} className={cx(item, at('/subscriptions') ? 'bg-accent/15 font-semibold text-accent' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
-          <Icon name="bell" size={20} stroke={at('/subscriptions') ? 2.4 : 2} />
-          <span className="flex-1">Подписки</span>
-          {fresh > 0 && <span className="min-w-5 rounded-full bg-accent px-1.5 text-center text-[11px] font-bold leading-5 text-on-accent">{fresh > 99 ? '99+' : fresh}</span>}
-        </Link>
       </nav>
       <div className="flex min-h-0 flex-1 flex-col rounded-2xl bg-surface">
       <div className="flex items-center gap-1 px-3 pb-1 pt-3 text-xs text-dim">

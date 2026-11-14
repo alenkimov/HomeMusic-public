@@ -3,7 +3,7 @@ import { api } from '../api/client';
 import type { FollowOut, ReleaseOut } from '../api/types';
 import { TrackRow, playAll } from '../components/catalog';
 import { Icon } from '../components/Icon';
-import { Cover, Empty, ErrorState, Loading, PageHeader, SectionTitle, Segmented, Spinner, cx } from '../components/ui';
+import { Cover, Empty, ErrorState, Loading, PageHeader, Segmented, Spinner, cx } from '../components/ui';
 import { useDesktop } from '../lib/desktop';
 import { STANDALONE } from '../lib/embedded';
 import { useHubEvent } from '../lib/events';
@@ -53,12 +53,12 @@ export function SubscriptionsPage() {
   const shown = useMemo(() => (d?.items ?? []).filter((r) => (kind === 'all' || kindOf(r) === kind) && (!only || r.artist_ref === only)), [d, kind, only]);
   const back = STANDALONE ? '/home' : '/library';
 
-  if (res.error && !d) return (<><PageHeader title="Подписки" back={back} /><ErrorState text={res.error} onRetry={() => res.reload()} /></>);
-  if (!d) return (<><PageHeader title="Подписки" back={back} /><Loading text="Смотрю, что вышло…" /></>);
+  if (res.error && !d) return (<><PageHeader title="Релизы" back={back} /><ErrorState text={res.error} onRetry={() => res.reload()} /></>);
+  if (!d) return (<><PageHeader title="Релизы" back={back} /><Loading text="Смотрю, что вышло…" /></>);
   if (!d.artists)
     return (
       <>
-        <PageHeader title="Подписки" back={back} />
+        <PageHeader title="Релизы" back={back} />
         <Empty icon="user" title="Вы пока ни на кого не подписаны" text="Откройте страницу исполнителя и нажмите «Подписаться» — его новые альбомы и синглы будут появляться здесь, сразу треками." />
       </>
     );
@@ -96,7 +96,7 @@ export function SubscriptionsPage() {
 
   return (
     <div>
-      <PageHeader title="Подписки" back={back} sub={[artistsWord(d.artists), d.unseen ? `новых релизов: ${d.unseen}` : null].filter(Boolean).join(' · ')} />
+      <PageHeader title="Релизы" back={back} sub={[artistsWord(d.artists), d.unseen ? `новых релизов: ${d.unseen}` : null].filter(Boolean).join(' · ')} />
       {desktop ? (
         <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] gap-x-4">
           {feed}
@@ -243,24 +243,5 @@ function ArtistLine({ f, on, onPick }: { f: FollowOut; on: boolean; onPick: () =
         {followed ? 'Вы подписаны' : 'Подписаться'}
       </button>
     </li>
-  );
-}
-
-const ON_HOME = 5;
-
-/** «Новое от подписок» of «Главная»: the latest releases, each one line — a single plays at once, an album opens
- * to its tracks. Nothing is shown when nothing came out; what is new stays marked until «Подписки» is opened. */
-export function NewFromFollowed() {
-  const res = useAsync((s) => api.releases(s), [], true, 'releases');
-  useHubEvent('library', (e) => (e as { kind?: string }).kind === 'releases' && res.reload(true));
-  const items = res.data?.items.slice(0, ON_HOME) ?? [];
-  if (!items.length) return null;
-  return (
-    <section aria-label="Новое от подписок">
-      <SectionTitle right={<Link to="/subscriptions" className="text-sm text-muted hover:text-fg">Все подписки</Link>}>Новое от подписок</SectionTitle>
-      {items.map((r) => (
-        <ReleaseBlock key={r.album_ref} r={r} open={0} date />
-      ))}
-    </section>
   );
 }

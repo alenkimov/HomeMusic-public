@@ -24,6 +24,7 @@ import type {
   DownloadBatchOut,
   ListenBrainzOut,
   DownloadIn,
+  RecentPlaceOut,
   ReleasesOut,
   DownloadItemOut,
   ImportIn,
@@ -58,7 +59,6 @@ import type {
   NdAlbumOut,
   NdArtistOut,
   NdArtistPageOut,
-  NdHomeOut,
   NdLikedOut,
   NdSongOut,
   ProviderSearchOut,
@@ -334,6 +334,8 @@ export const api = {
   playsHistory: (q: { offset?: number; limit?: number; show?: string; q?: string }, signal?: AbortSignal) =>
     request<HistoryOut>('GET', withQuery('/api/plays/history', q), { signal }),
   forgetListen: (uid: string) => request<OkOut>('DELETE', withQuery('/api/plays/history', { uid })),
+  /** The lists the user last played from («Продолжить» of the home). */
+  recentPlaces: (signal?: AbortSignal) => request<RecentPlaceOut[]>('GET', '/api/plays/places', { signal }),
   /** Releases said to be a namesake's, of every artist («Скрытое»). */
   namesakes: (signal?: AbortSignal) => request<NamesakeOut[]>('GET', '/api/catalog/namesakes', { signal }),
   /** «Это другой TAK»: these releases are not this artist's — for everyone on the server. */
@@ -415,7 +417,6 @@ export const api = {
   deletePlaylist: (id: string) => request<OkOut>('DELETE', `/api/playlists/${enc(id)}`),
 
   // the Navidrome library (a browser shows it; the app has it natively)
-  ndHome: (signal?: AbortSignal) => request<NdHomeOut>('GET', '/api/nd/home', { signal }),
   ndLiked: (signal?: AbortSignal) => request<NdLikedOut>('GET', '/api/nd/liked', { signal }),
   ndArtists: (signal?: AbortSignal) => cachedGet<NdArtistOut[]>('/api/nd/artists', signal),
   ndArtist: (id: string, signal?: AbortSignal) => request<NdArtistPageOut>('GET', `/api/nd/artists/${enc(id)}`, { signal }),

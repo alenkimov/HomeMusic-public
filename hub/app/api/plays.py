@@ -87,6 +87,14 @@ async def listened(offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, l
     return await history.page(s, user, offset=offset, limit=limit, show=show, q=q)
 
 
+@router.get("/api/plays/places")
+async def places(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")) -> list[dict[str, Any]]:
+    """«Продолжить» of the home screen: the lists the user last played from, the latest first (`app/recent.py`)."""
+    from app import recent
+
+    return await recent.places(s, user.id)
+
+
 @router.delete("/api/plays/history")
 async def forget_listen(uid: str = Query(min_length=3, max_length=200), user: User = Depends(current_user),
                         s: AsyncSession = Depends(get_session, scope="function")) -> dict[str, bool]:

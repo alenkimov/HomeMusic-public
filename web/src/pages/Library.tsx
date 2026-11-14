@@ -1,15 +1,14 @@
 import type { ReactNode } from 'react';
 import { useFollowedCount, useUnseenReleases } from '../lib/releases';
 import { api } from '../api/client';
-import { Icon, type IconName } from '../components/Icon';
+import { ForYouTiles } from '../components/ForYouTiles';
+import { Icon } from '../components/Icon';
 import { Cover, ErrorState, IconButton, SkeletonRows } from '../components/ui';
 import { useHubEvent } from '../lib/events';
 import { plural, tracksWord } from '../lib/format';
-import { useForYouCounts } from '../lib/forYou';
 import { useAsync } from '../lib/hooks';
 import { playlistMenuProps } from '../lib/playlistMenu';
 import { Link, enc, navigate } from '../lib/router';
-import { AUTO_PLAYLISTS } from '../lib/stats';
 
 /** «Библиотека» of a phone: the lists themselves, at once — «Любимое» and the playlists one keeps (a group of rows),
  * (a finger held on one of them: its menu — the name, the picture, deleting it), the lists that make themselves («Для вас», tiles) and, last, the tags: the saved filters by them and «Все теги». A computer has the same in its
@@ -18,8 +17,6 @@ export function LibraryPage() {
   const lists = useAsync((s) => api.playlists(s), [], true, 'playlists');
   const liked = useAsync((s) => api.ndLiked(s), [], true, 'liked');
   const sels = useAsync((s) => api.tagSelections(s), [], true, 'selections');
-  const counts = useForYouCounts();
-  const count = (n: number | undefined) => (n === undefined ? ' ' : tracksWord(n));
   const again = () => {
     lists.reload(true);
     liked.reload(true);
@@ -44,7 +41,7 @@ export function LibraryPage() {
         <Row to="/liked" title="Любимое" sub={liked.data ? tracksWord(liked.data.songs.length) : undefined} art={<span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-accent text-on-accent"><Icon name="heart" size={22} filled /></span>} />
         <Row
           to="/subscriptions"
-          title="Подписки"
+          title="Релизы"
           sub={followed ? [`${followed} ${plural(followed, ['исполнитель', 'исполнителя', 'исполнителей'])}`, fresh ? `новых релизов: ${fresh}` : null].filter(Boolean).join(' · ') : 'Исполнители и их новые релизы'}
           art={<span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent/20 text-accent"><Icon name="user" size={22} />{fresh > 0 && <span className="absolute right-0 top-0 h-3 w-3 rounded-full bg-accent ring-2 ring-surface" />}</span>}
         />
@@ -62,13 +59,7 @@ export function LibraryPage() {
       {lists.loading && !lists.data ? <SkeletonRows n={3} /> : lists.error && !lists.data ? <ErrorState text={lists.error} onRetry={() => lists.reload()} /> : null}
 
       <Title>Для вас</Title>
-      <div className="grid grid-cols-2 gap-2">
-        <Tile to="/mix" icon="sparkle" tint="bg-[#a78bfa]/15 text-[#b9a3fb]" title="Микс дня" sub={count(counts.mix)} />
-        <Tile to="/discoveries" icon="wave" tint="bg-[#4da3ff]/15 text-[#7dbbff]" title="Открытия недели" sub={count(counts.weekly)} />
-        {AUTO_PLAYLISTS.map((a, i) => (
-          <Tile key={a.kind} to={`/auto/${a.kind}`} icon={a.icon} tint={TINTS[i % TINTS.length]} title={a.title} sub={count(counts[a.kind])} />
-        ))}
-      </div>
+      <ForYouTiles />
 
       {/* the tags, last: the saved filters by them, and the way to the tags themselves */}
       <Title>Подборки по тегам</Title>
@@ -88,8 +79,6 @@ export function LibraryPage() {
   );
 }
 
-const TINTS = ['bg-accent/15 text-accent', 'bg-[#2ba6bc]/15 text-[#5fcfe2]', 'bg-[#f2b705]/15 text-[#f5cd4d]', 'bg-[#fb923c]/15 text-[#fda766]'];
-
 function Title({ children }: { children: ReactNode }) {
   return <h2 className="px-1 pb-2 pt-5 text-[13px] font-semibold uppercase tracking-wide text-muted">{children}</h2>;
 }
@@ -106,20 +95,5 @@ function Row({ to, title, sub, art, menu }: { to: string; title: string; sub?: s
         </span>
       </Link>
     </li>
-  );
-}
-
-/** A list that makes itself: a tile with its mark in its own colour. */
-function Tile({ to, icon, tint, title, sub }: { to: string; icon: IconName; tint: string; title: string; sub: string }) {
-  return (
-    <Link to={to} className="flex flex-col gap-2.5 rounded-2xl bg-surface px-3.5 py-3 hover:bg-raised">
-      <span className={`flex h-8 w-8 items-center justify-center rounded-full ${tint}`}>
-        <Icon name={icon} size={18} />
-      </span>
-      <span className="min-w-0">
-        <span className="block truncate text-[15px] font-semibold">{title}</span>
-        <span className="block truncate text-[13px] text-muted">{sub}</span>
-      </span>
-    </Link>
   );
 }

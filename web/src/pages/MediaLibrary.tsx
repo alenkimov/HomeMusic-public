@@ -10,13 +10,13 @@ import { ListBar } from '../components/ListBar';
 import { useListSearch, type Found } from '../components/ListSearch';
 import { CoverView, ownCover } from '../components/PlaylistMenu';
 import { SaveSelection, TagFilterChips } from '../components/Tags';
-import { Button, Cover, Empty, ErrorState, HeroSkeleton, IconButton, PageHeader, SectionTitle, SkeletonRows, Spinner, cx } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, HeroSkeleton, IconButton, PageHeader, SkeletonRows, Spinner, cx } from '../components/ui';
 import { fmtLength, tracksWord } from '../lib/format';
 import { playCount, usePlayCounts } from '../lib/stats';
 import { useDesktop } from '../lib/desktop';
 import { useHubEvent } from '../lib/events';
 import { cyclePageShuffle, useListen } from '../lib/listen';
-import { useAsync, useRememberScrollX } from '../lib/hooks';
+import { useAsync } from '../lib/hooks';
 import { Link, enc, navigate, useRoute } from '../lib/router';
 import { filterActive, filterOfQuery, filterWords, passes, selectionsChanged, tagKey, useTags, type TagFilter } from '../lib/tags';
 import { attempt, confirmDialog } from '../lib/ui';
@@ -35,24 +35,6 @@ export function NdAlbumCard({ album, showArtist = true }: { album: NdAlbumOut; s
       <div className="mt-2 line-clamp-2 text-sm font-medium leading-tight">{album.title}</div>
       <div className="mt-0.5 truncate text-xs text-muted">{[showArtist ? album.artist : null, album.year].filter(Boolean).join(' · ')}</div>
     </Link>
-  );
-}
-
-/** A horizontal row of album cards that remembers its scroll. */
-export function AlbumRow({ title, albums, rowKey, more }: { title: string; albums: NdAlbumOut[]; rowKey: string; more?: string }) {
-  const row = useRememberScrollX(rowKey);
-  if (!albums.length) return null;
-  return (
-    <section aria-label={title}>
-      <SectionTitle right={more ? <Link to={more} className="text-sm text-muted hover:text-fg">Все</Link> : undefined}>{title}</SectionTitle>
-      <div ref={row} className="no-scrollbar flex gap-4 overflow-x-auto px-4 pb-1">
-        {albums.map((a) => (
-          <div key={a.id} className="w-36 shrink-0">
-            <NdAlbumCard album={a} />
-          </div>
-        ))}
-      </div>
-    </section>
   );
 }
 
@@ -394,17 +376,6 @@ export function SelectionPage({ id }: { id: string }) {
       </ListActions>
       <TagFilterChips filter={filter} onChange={setFilter} count={list.length} />
       <SongList tracks={tracks} found={shown ?? (filterActive(filter) ? [] : null)} sort={sort} onSort={setSort} />
-    </div>
-  );
-}
-
-export function ArtistRow({ artists, rowKey, radio }: { artists: NdArtistOut[]; rowKey: string; radio?: boolean }) {
-  const row = useRememberScrollX(rowKey);
-  return (
-    <div ref={row} className="no-scrollbar flex gap-3 overflow-x-auto px-4 pb-1">
-      {artists.map((a) => (
-        <NdArtistBubble key={a.id} artist={a} radio={radio} />
-      ))}
     </div>
   );
 }
