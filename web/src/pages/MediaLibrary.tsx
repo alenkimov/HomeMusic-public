@@ -294,7 +294,7 @@ export function LikedPage() {
         />
       )}
       {res.loading ? (
-        <SkeletonRows />
+        res.data ? <SkeletonRows /> : <HeroSkeleton />
       ) : res.error ? (
         <ErrorState text={res.error} onRetry={() => res.reload()} />
       ) : !songs.length ? (
