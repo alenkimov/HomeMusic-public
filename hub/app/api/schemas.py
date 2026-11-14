@@ -1008,6 +1008,32 @@ class MixTodayOut(BaseModel):
     onboarding: bool = False  # a new user without history and picked artists: show «Что вы слушаете?»
 
 
+class ForYouItem(BaseModel):
+    """A list of «Для вас» (`/api/for-you`): "mix", "weekly" or a kind of the lists of a rule."""
+
+    kind: str
+    title: str
+    count: int | None = None  # tracks it has now; None: nothing was made yet
+
+
+class ForYouOut(BaseModel):
+    """A list of «Для вас» as its page shows it: the tracks (`TrackOut`s of the list's own kind), and what is the
+    list's own beside them."""
+
+    kind: str
+    title: str
+    context: str  # the player's context of a list started from here
+    tracks: list[dict[str, Any]] = []
+    note: str | None = None  # one more thing to say under the name: «скачано 32», «прежний микс»
+    refresh_s: int | None = None  # the list is being made: ask again this soon
+    plays: dict[str, int] | None = None  # a top: Navidrome song id -> the listens its rule counted
+    plays_label: str | None = None
+    # «Микс дня»: {id, current, building, settings (`MixSettingsOut`), onboarding}
+    mix: dict[str, Any] | None = None
+    # «Открытия недели»: {issue, week, latest, building, issues: [{id, week, count}]}
+    weekly: dict[str, Any] | None = None
+
+
 class MixSettingsIn(BaseModel):
     mode: MixMode | None = None
     mix_hour: int | None = Field(default=None, ge=0, le=23)

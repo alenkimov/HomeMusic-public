@@ -1124,6 +1124,32 @@ export interface MixSettingsOut {
   artists: Array<{ ref: string; name: string }>;
 }
 
+/** A list of «Для вас» (`/api/for-you`): `mix`, `weekly` or a kind of the lists of a rule. */
+export interface ForYouItem {
+  kind: string;
+  title: string;
+  /** tracks it has now; null: nothing was made yet */
+  count: number | null;
+}
+
+/** A list of «Для вас» as its page shows it: the tracks, and what is the list's own beside them. */
+export interface ForYouOut {
+  kind: string;
+  title: string;
+  /** the player's context of a list started from here */
+  context: string;
+  tracks: TrackOut[];
+  /** one more thing to say under the name: «скачано 32», «прежний микс» */
+  note?: string | null;
+  /** the list is being made: ask again this soon (seconds) */
+  refresh_s?: number | null;
+  /** a top: Navidrome song id -> the listens its rule counted */
+  plays?: Record<string, number> | null;
+  plays_label?: string | null;
+  mix?: { id: number | null; current: boolean; building: boolean; settings: MixSettingsOut; onboarding: boolean } | null;
+  weekly?: { issue: number | null; week: string | null; latest: boolean; building: boolean; issues: { id: number; week: string; count: number }[] } | null;
+}
+
 export interface MixTodayOut {
   mix: MixOut | null;
   /** a build is queued or running */

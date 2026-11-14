@@ -54,7 +54,7 @@ export function LibraryPage() {
       <Title>Для вас</Title>
       <div className="grid grid-cols-2 gap-2">
         <Tile to="/mix" icon="sparkle" tint="bg-[#a78bfa]/15 text-[#b9a3fb]" title="Микс дня" sub={count(counts.mix)} />
-        <Tile to="/discoveries" icon="wave" tint="bg-[#4da3ff]/15 text-[#7dbbff]" title="Открытия недели" sub={count(counts.discoveries)} />
+        <Tile to="/discoveries" icon="wave" tint="bg-[#4da3ff]/15 text-[#7dbbff]" title="Открытия недели" sub={count(counts.weekly)} />
         {AUTO_PLAYLISTS.map((a, i) => (
           <Tile key={a.kind} to={`/auto/${a.kind}`} icon={a.icon} tint={TINTS[i % TINTS.length]} title={a.title} sub={count(counts[a.kind])} />
         ))}

@@ -249,3 +249,25 @@ async def test_an_issue_of_discoveries_is_a_mix_of_the_week(c, monkeypatch):
         assert (await s.get(Mix, daily_id)).status == "active"  # a new issue closes issues, not the daily mix
         left = {d.query_json["meta"]["track_ref"]: d.status for d in (await s.execute(select(DownloadItem))).scalars()}
         assert left["dz:901"] == "cancelled" and left["dz:903"] == "queued"  # the old issue's download not started is dropped
+
+
+async def test_the_lists_for_you_are_told_alike(c):
+    """`/api/for-you`: every list the Hub makes by itself, with its count; one of them as its page shows it."""
+    now = datetime.now(UTC)
+    await post(c, *listen("ndK", 100_000, now - timedelta(days=2), "a"), *listen("ndK", 100_000, now - timedelta(days=1), "b"))
+    lists = (await c.get("/api/for-you")).json()
+    assert [(x["kind"], x["title"], x["count"]) for x in lists] == [
+        ("mix", "Микс дня", None), ("weekly", "Открытия недели", None), ("top-month", "Топ месяца", 1),
+        ("top-year", "Топ года", 1), ("top-all", "Топ за всё время", 1), ("forgotten", "Давно не слушал", 0)]
+
+    top = (await c.get("/api/for-you/top-month")).json()
+    assert (top["title"], top["context"], top["plays"], top["plays_label"]) == ("Топ месяца", "auto", {"ndK": 2}, "За месяц")
+    assert [(t["nd_song_id"], t["owned"], t["added_at"]) for t in top["tracks"]] == [("ndK", True, None)]
+    assert top["mix"] is None and top["weekly"] is None and top["refresh_s"] is None
+
+    mix = (await c.get("/api/for-you/mix")).json()  # none was built: the page still gets the settings
+    assert mix["tracks"] == [] and mix["mix"]["id"] is None and mix["mix"]["settings"]["mode"] == "normal"
+    weekly = (await c.get("/api/for-you/weekly")).json()
+    assert weekly["tracks"] == [] and weekly["weekly"]["issues"] == [] and weekly["context"] == "discoveries"
+    assert (await c.get("/api/for-you/nope")).status_code == 404
+    assert (await c.get("/api/for-you/weekly", params={"issue": 99})).status_code == 404

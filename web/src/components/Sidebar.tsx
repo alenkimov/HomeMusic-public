@@ -133,7 +133,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
           </span>
           <span className="min-w-0">
             <span className={cx('block truncate', at('/discoveries') ? 'font-semibold text-accent' : 'text-fg')}>Открытия недели</span>
-            {counts.discoveries !== undefined && <span className="block truncate text-xs text-dim">{tracksWord(counts.discoveries)}</span>}
+            {counts.weekly !== undefined && <span className="block truncate text-xs text-dim">{tracksWord(counts.weekly)}</span>}
           </span>
         </Link>
         {AUTO_PLAYLISTS.map((a) => {

@@ -40,16 +40,16 @@ import { LibraryPage } from './pages/Library';
 import { LibraryAlbumPage } from './pages/LibraryAlbum';
 import { LoginPage } from './pages/Login';
 import { LyricsSettingsPage } from './pages/LyricsSettings';
-import { ArtistsPage, AutoPlaylistPage, LikedPage, NdAlbumPage, NdAlbumsPage, NdArtistPage, PlaylistPage, SelectionPage } from './pages/MediaLibrary';
+import { ArtistsPage, LikedPage, NdAlbumPage, NdAlbumsPage, NdArtistPage, PlaylistPage, SelectionPage } from './pages/MediaLibrary';
 import { TagsPage } from './pages/Tags';
-import { MixPage, TastePage } from './pages/Mix';
+import { ForYouPage } from './pages/ForYou';
+import { TastePage } from './pages/Mix';
 import { MorePage } from './pages/More';
 import { OpenPage } from './pages/Open';
 import { PlayerPage } from './pages/Player';
 import { PlaylistsPage } from './pages/Playlists';
 import { SearchPage, searchTab } from './pages/Search';
 import { SharePage } from './pages/Share';
-import { DiscoveriesPage } from './pages/Discoveries';
 import { ListenBrainzPage } from './pages/ListenBrainz';
 import { ReleasesPage } from './pages/Releases';
 import { StatsPage } from './pages/Stats';
@@ -69,9 +69,9 @@ const STANDALONE_ROUTES: RouteDef[] = [
   ['/tags', 'library', () => <TagsPage />],
   ['/stats', 'more', () => <StatsPage />],
   ['/releases', 'more', () => <ReleasesPage />],
-  ['/discoveries', 'library', () => <DiscoveriesPage />],
+  ['/discoveries', 'library', () => <ForYouPage key="weekly" kind="weekly" />],
   ['/listenbrainz', 'more', () => <ListenBrainzPage />],
-  ['/auto/:kind', 'library', (p) => <AutoPlaylistPage key={p.kind} kind={p.kind} />],
+  ['/auto/:kind', 'library', (p) => <ForYouPage key={p.kind} kind={p.kind} />],
   ['/lib/albums', 'library', () => <NdAlbumsPage />],
   ['/lib/album/:id', 'library', (p) => <NdAlbumPage key={p.id} id={p.id} />],
   ['/lib/artist/:id', 'library', (p) => <NdArtistPage key={p.id} id={p.id} />],
@@ -85,9 +85,9 @@ const ROUTES: RouteDef[] = [
   ['/search', 'search', (_, r) => <SearchPage initialQuery={r.query.get('q') ?? ''} initialTab={searchTab(r.query.get('tab'))} />],
   ['/artist/:ref', 'search', (p) => <ArtistPage key={p.ref} refId={p.ref} />],
   ['/album/:ref', 'search', (p) => <AlbumPage key={p.ref} refId={p.ref} />],
-  ['/mix/:id', 'library', (p) => <MixPage key={p.id} id={Number(p.id)} />],
+  ['/mix/:id', 'library', (p) => <ForYouPage key={`mix:${p.id}`} kind="mix" mix={Number(p.id)} />],
   // «Микс дня» by its name: no mix has the number 0, so the page opens today's
-  ['/mix', 'library', () => <MixPage key="today" id={0} />],
+  ['/mix', 'library', () => <ForYouPage key="mix" kind="mix" />],
   ['/taste', 'search', () => <TastePage />],
   ['/downloads', 'downloads', () => <DownloadsPage />],
   ['/downloads/:id', 'downloads', (p) => <DownloadDetailPage key={p.id} id={Number(p.id)} />],

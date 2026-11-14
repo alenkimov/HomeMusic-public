@@ -1,5 +1,5 @@
 import type { LyricsCandidate, LyricsOut, LyricsSettings, LyricsTranslation, LyricsTranslators } from '../lib/lyrics';
-import type { StatsAutoOut, StatsBy, StatsImportOut, StatsOut, StatsPeriod, StatsTrackOut } from '../lib/stats';
+import type { StatsBy, StatsImportOut, StatsOut, StatsPeriod, StatsTrackOut } from '../lib/stats';
 import { timeZone } from '../lib/stats';
 import type { Tag, TagSelection, TagsData } from '../lib/tags';
 import type { TelegramChat, TelegramStatus } from '../lib/telegram';
@@ -22,7 +22,6 @@ import type {
   DislikeIn,
   DislikeOut,
   DownloadBatchOut,
-  DiscoveriesOut,
   ListenBrainzOut,
   DownloadIn,
   ReleasesOut,
@@ -38,9 +37,10 @@ import type {
   ListenOut,
   LoginIn,
   MeOut,
-  MixOut,
   MixSettingsIn,
   MixSettingsOut,
+  ForYouItem,
+  ForYouOut,
   MixTodayOut,
   OkOut,
   PlayEventIn,
@@ -326,8 +326,11 @@ export const api = {
     request<{ removed: number }>('DELETE', withQuery('/api/dislikes', q)),
 
   // «Микс дня» and the taste onboarding
+  /** «Для вас»: the lists the Hub makes by itself, and one of them as its page shows it. */
+  forYou: (signal?: AbortSignal) => request<ForYouItem[]>('GET', '/api/for-you', { signal }),
+  forYouList: (kind: string, q: { mix?: number; issue?: number }, signal?: AbortSignal) =>
+    request<ForYouOut>('GET', withQuery(`/api/for-you/${encodeURIComponent(kind)}`, q), { signal }),
   mixToday: (signal?: AbortSignal) => request<MixTodayOut>('GET', '/api/mixes/today', { signal }),
-  mix: (id: number, signal?: AbortSignal) => request<MixOut>('GET', `/api/mixes/${id}`, { signal }),
   mixSettings: (body: MixSettingsIn) => request<MixSettingsOut>('PUT', '/api/mixes/settings', { json: body }),
   rebuildMix: () => request<{ queued: boolean }>('POST', '/api/mixes/rebuild', { json: {} }),
   tasteOnboarding: (q?: string, signal?: AbortSignal) =>
@@ -421,7 +424,6 @@ export const api = {
   listenbrainzSend: (again: boolean) => request<ListenBrainzOut>('POST', withQuery('/api/listenbrainz/send', { again: again || undefined })),
   listenbrainzDisconnect: () => request<ListenBrainzOut>('DELETE', '/api/listenbrainz'),
   // «Открытия недели»
-  discoveries: (issue: number | null, signal?: AbortSignal) => request<DiscoveriesOut>('GET', withQuery('/api/discoveries', { issue: issue ?? undefined }), { signal }),
   discoveriesBuild: () => request<OkOut>('POST', '/api/discoveries/build'),
   // «Релизы» (lib/releases.ts)
   releases: (signal?: AbortSignal) => request<ReleasesOut>('GET', '/api/releases', { signal }),
@@ -429,7 +431,6 @@ export const api = {
   releasesSeen: () => request<OkOut>('POST', '/api/releases/seen'),
   // «Статистика» (lib/stats.ts)
   stats: (q: { period: StatsPeriod; by: StatsBy; limit: number }, signal?: AbortSignal) => request<StatsOut>('GET', withQuery('/api/stats', { ...q, tz: timeZone() }), { signal }),
-  statsAuto: (kind: string, signal?: AbortSignal) => request<StatsAutoOut>('GET', `/api/stats/auto/${encodeURIComponent(kind)}`, { signal }),
   statsTrack: (ndSongId: string) => request<StatsTrackOut>('GET', withQuery('/api/stats/track', { nd_song_id: ndSongId })),
   statsCounts: () => request<Record<string, number>>('GET', '/api/stats/counts'),
   statsImport: (files: File[], onProgress?: (f: number) => void) => {
