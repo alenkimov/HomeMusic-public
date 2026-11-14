@@ -38,7 +38,7 @@ export function day(iso: string): string {
 }
 
 export function SubscriptionsPage() {
-  const res = useAsync((s) => api.releases(s), []);
+  const res = useAsync((s) => api.releases(s), [], true, 'releases');
   useHubEvent('library', (e) => (e as { kind?: string }).kind === 'releases' && res.reload(true));
   const desktop = useDesktop();
   const [kind, setKind] = useState<Kind>('all');
@@ -251,7 +251,7 @@ const ON_HOME = 5;
 /** «Новое от подписок» of «Главная»: the latest releases, each one line — a single plays at once, an album opens
  * to its tracks. Nothing is shown when nothing came out; what is new stays marked until «Подписки» is opened. */
 export function NewFromFollowed() {
-  const res = useAsync((s) => api.releases(s), []);
+  const res = useAsync((s) => api.releases(s), [], true, 'releases');
   useHubEvent('library', (e) => (e as { kind?: string }).kind === 'releases' && res.reload(true));
   const items = res.data?.items.slice(0, ON_HOME) ?? [];
   if (!items.length) return null;

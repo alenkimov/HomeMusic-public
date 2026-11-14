@@ -10,13 +10,53 @@ export interface AsyncState<T> {
   setData: (fn: T | ((prev: T | undefined) => T | undefined)) => void;
 }
 
-/** Runs `fn` whenever deps change; aborts the previous run. */
-export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: DependencyList, enabled = true): AsyncState<T> {
-  const [data, setData] = useState<T | undefined>(undefined);
+// What a page showed the last time, by the name it keeps it under: shown at once the next time the page opens, while
+// the fresh answer is on its way. In memory, and in the browser's storage when it is not too large for it.
+const LAST = 'hm-last:';
+const LAST_MAX = 400_000; // characters of JSON the storage is given for one answer
+const last = new Map<string, unknown>();
+
+function lastOf<T>(key: string): T | undefined {
+  if (last.has(key)) return last.get(key) as T;
+  try {
+    const raw = localStorage.getItem(LAST + key);
+    if (raw) last.set(key, JSON.parse(raw));
+  } catch {
+    /* no storage, or not JSON: nothing is remembered */
+  }
+  return last.get(key) as T | undefined;
+}
+
+function keepLast(key: string, value: unknown) {
+  last.set(key, value);
+  try {
+    const raw = JSON.stringify(value);
+    if (raw.length <= LAST_MAX) localStorage.setItem(LAST + key, raw);
+    else localStorage.removeItem(LAST + key);
+  } catch {
+    /* a full or closed storage: it stays in memory */
+  }
+}
+
+/** The account is left: what its pages showed goes with it. */
+export function forgetLast() {
+  last.clear();
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith(LAST)) localStorage.removeItem(k);
+  } catch {
+    /* nothing to clear */
+  }
+}
+
+/** Runs `fn` whenever deps change; aborts the previous run. `keep`: a name to remember the answer under — the next
+ * time the page opens it shows that answer at once (no spinner, nothing appearing half a second later) and replaces
+ * it with the fresh one when it comes. */
+export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: DependencyList, enabled = true, keep?: string): AsyncState<T> {
+  const [data, setData] = useState<T | undefined>(() => (keep ? lastOf<T>(keep) : undefined));
   const [error, setError] = useState<string | undefined>(undefined);
-  const [loading, setLoading] = useState<boolean>(enabled);
+  const [loading, setLoading] = useState<boolean>(enabled && data === undefined);
   const [nonce, setNonce] = useState(0);
-  const silentRef = useRef(false);
+  const silentRef = useRef(data !== undefined); // with a remembered answer on screen the first asking is a quiet one
   const fnRef = useRef(fn);
   fnRef.current = fn;
 
@@ -35,6 +75,7 @@ export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: Depen
         if (!ctl.signal.aborted) {
           setData(d);
           setLoading(false);
+          if (keep) keepLast(keep, d);
         }
       })
       .catch((e) => {

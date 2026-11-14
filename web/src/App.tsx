@@ -1,4 +1,5 @@
 import { setListeningAccount } from './lib/plays';
+import { forgetLast } from './lib/hooks';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ApiError, UNAUTHORIZED_EVENT, api, errorMessage, invalidateCache } from './api/client';
 import type { MeOut } from './api/types';
@@ -226,6 +227,7 @@ export function App() {
       /* ignore: we drop the session anyway */
     }
     invalidateCache();
+    forgetLast();
     stopListening();
     forgetAccount(); // what was kept on the device for this account, and what its pages read
     resetStars();

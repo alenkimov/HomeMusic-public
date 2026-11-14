@@ -15,7 +15,7 @@ import { NewFromFollowed } from './Subscriptions';
  * «Радиостанции» (a wave by a library artist, liked ones first) and rows of albums
  * Navidrome knows the user plays. Inside the app this is its native home screen. */
 export function HomePage() {
-  const res = useAsync((s) => api.ndHome(s), []);
+  const res = useAsync((s) => api.ndHome(s), [], true, 'home');
   useHubEvent('library', () => res.reload(true));
   const d = res.data;
   const fresh = useUnseenReleases();
@@ -32,11 +32,11 @@ export function HomePage() {
       <TastePrompt />
       <NewFromFollowed />
 
-      {res.loading ? (
+      {res.loading && !d ? (
         <div className="flex justify-center py-10">
           <Spinner className="text-accent" />
         </div>
-      ) : res.error ? (
+      ) : res.error && !d ? (
         <ErrorState text={res.error} onRetry={() => res.reload()} />
       ) : d ? (
         <>
