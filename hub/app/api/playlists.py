@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import playlists
+from app.library.owned import with_files
 from app.api.medialib import songs_out
 from app.api.schemas import (
     NdSongOut,
@@ -135,7 +136,9 @@ async def tracks_out(s: AsyncSession, user: User, rows: list[Track]) -> list[NdS
             log.info("playlists: songs not read from Navidrome: %r", e)
     known = [index[t.nd_song_id] for t in rows if t.nd_song_id in index]
     drawn = {x.nd_song_id: x for x in await songs_out(s, known)}
-    return [drawn.get(t.nd_song_id) or (track_with_file(t) if t.path else track_without_file(t)) for t in rows]
+    out = [drawn.get(t.nd_song_id) or (track_with_file(t) if t.path else track_without_file(t)) for t in rows]
+    await with_files(s, out)
+    return out
 
 
 @router.get("", response_model=list[PlaylistOut])

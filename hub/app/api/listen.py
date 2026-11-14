@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Literal
 from urllib.parse import quote
 
@@ -15,12 +14,12 @@ from app import listen
 from app.api.schemas import ListenOut, ListenPrefetchIn, ListenPrefetchOut
 from app.auth import current_user
 from app.db import session_scope
+from app.library.owned import file_out
 from app.library.tracks import by_ref, current_file
 from app.models import TrackFile, User
 
 router = APIRouter(prefix="/api/listen", tags=["listen"])
-# the remark of a file made of a poorer one (`jobs.downloads.try_candidates`)
-_BLOWN_RE = re.compile(r"по звуку около (\d+)")
+
 
 
 async def _choose(ref: str, *, background: bool = False) -> listen.Choice:
@@ -48,7 +47,7 @@ async def resolve(ref: str, ahead: Literal["whole", "head"] | None = None, user:
             track_id = track.id
         # an own file: what it is and where it came from (a file picked at a source says only its source)
         own = await current_file(s, track_id) if c.kind == "library" and track_id else None
-    blown = next((m for w in (own.warnings or []) if (m := _BLOWN_RE.search(str(w)))), None) if own else None
+    file = file_out(own) if own else None
     return ListenOut(
         ref=c.ref,
         kind=c.kind,
@@ -56,10 +55,10 @@ async def resolve(ref: str, ahead: Literal["whole", "head"] | None = None, user:
         title=c.title,
         duration_s=c.duration_s,
         provider=cand.provider if cand else None,
-        bitrate_kbps=own.bitrate_kbps if own else cand.bitrate_kbps if cand else None,
-        source=own.source if own else cand.provider if cand else None,
-        codec=own.codec if own else None,
-        sounds_like_kbps=int(blown.group(1)) if blown else None,
+        bitrate_kbps=file.bitrate_kbps if file else cand.bitrate_kbps if cand else None,
+        source=file.source if file else cand.provider if cand else None,
+        codec=file.codec if file else None,
+        sounds_like_kbps=file.sounds_like_kbps if file else None,
         page_url=cand.page_url if cand else None,
         nd_song_id=c.nd_song_id,
         track_id=track_id,

@@ -185,8 +185,19 @@ export interface CatalogAlbum {
   genre?: string | null;
 }
 
+/** The file a track plays from: where it came from (a provider; `upload`), what it is (mp3, flac, opus…), its bitrate,
+ * and what it sounds like when that is less than it says. */
+export interface FileOut {
+  source?: string | null;
+  codec?: string | null;
+  bitrate_kbps?: number | null;
+  sounds_like_kbps?: number | null;
+}
+
 export interface TrackOut extends CatalogTrack {
   owned: boolean;
+  /** an owned track: its file */
+  file?: FileOut | null;
   library_track_id?: number | null;
   nd_song_id?: string | null;
   /** a download of it is under way (not counting ones queued only for ♥) */

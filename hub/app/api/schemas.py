@@ -333,8 +333,20 @@ class StarredOut(BaseModel):
 OwnedStatus = Literal["full", "partial", "none"]
 
 
+class FileOut(BaseModel):
+    """The file a track of the library plays from, as a list and the player say it: where it came from (a provider;
+    "upload"), what it is (mp3, flac, opus…), its bitrate, and what it sounds like when that is less than it says
+    (`library.probe.sounds_like`)."""
+
+    source: str | None = None
+    codec: str | None = None
+    bitrate_kbps: int | None = None
+    sounds_like_kbps: int | None = None
+
+
 class TrackOut(CatalogTrack):
     owned: bool = False
+    file: FileOut | None = None  # an owned track: its file
     library_track_id: int | None = None
     nd_song_id: str | None = None
     downloading: bool = False  # a download of it is under way (not counting the Hub's own quiet ones)

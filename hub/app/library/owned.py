@@ -6,15 +6,16 @@ Match order (PLAN 8.4 / 2.3): ISRC → Deezer track id → fingerprint (normaliz
 from __future__ import annotations
 
 from collections.abc import Iterable
+import re
 from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import AlbumOut, TrackOut
+from app.api.schemas import AlbumOut, FileOut, TrackOut
 from app.catalog.models import CatalogAlbum, CatalogTrack, split_ref
 from app.matching.normalize import fingerprint, normalize_artist, normalize_title
-from app.models import Album, DownloadItem, Track
+from app.models import Album, DownloadItem, Track, TrackFile
 
 ACTIVE_STATUSES = ("queued", "searching", "downloading", "tagging", "importing")
 
@@ -24,6 +25,30 @@ def quiet(query_json: dict[str, Any] | None) -> bool:
     or a track of «Моя волна» played to its end (`app.mixes.wave`). Clients don't show it as a download."""
     qj = query_json or {}
     return bool(qj.get("import") or qj.get("mix") or qj.get("wave")) and not qj.get("requested")
+
+
+# the remark of a file made of a poorer one (`jobs.downloads.try_candidates`)
+_BLOWN_RE = re.compile(r"по звуку около (\d+)")
+
+
+def file_out(f: TrackFile) -> FileOut:
+    """A file as a list and the player say it."""
+    blown = next((m for w in (f.warnings or []) if (m := _BLOWN_RE.search(str(w)))), None)
+    return FileOut(source=f.source, codec=f.codec, bitrate_kbps=f.bitrate_kbps,
+                   sounds_like_kbps=int(blown.group(1)) if blown else None)
+
+
+async def with_files(s: AsyncSession, tracks: list[Any]) -> None:
+    """The owned tracks of a list (`TrackOut`s) are told their files."""
+    from app.library.tracks import current_files
+
+    owned = [t for t in tracks if t.owned and t.library_track_id and t.file is None]
+    if not owned:
+        return
+    files = await current_files(s, [t.library_track_id for t in owned])
+    for t in owned:
+        if f := files.get(t.library_track_id):
+            t.file = file_out(f)
 
 
 def _duration_ok(a: int | None, b: int | None, tol: int = 3) -> bool:
@@ -133,6 +158,7 @@ async def annotate_tracks(
         else:
             o.downloading = t.ref in downloading_refs or fp in downloading_fps
         out.append(o)
+    await with_files(s, out)
     return out
 
 

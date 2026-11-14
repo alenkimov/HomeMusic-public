@@ -15,6 +15,7 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.library.owned import with_files
 from app.api.schemas import NdAlbumOut, NdArtistOut, NdArtistPageOut, NdHomeOut, NdLikedOut, NdSongOut
 from app.auth import current_user, user_navidrome
 from app.db import get_session
@@ -80,6 +81,7 @@ async def songs_out(s: AsyncSession, songs: list[dict]) -> list[NdSongOut]:
             added_at=acquired.get(sid),
             nd_album_id=x.get("albumId"), nd_artist_id=x.get("artistId"), nd_artist_ids=artist_ids,
         ))
+    await with_files(s, out)
     return out
 
 

@@ -1,4 +1,4 @@
-import type { ListenOut } from '../api/types';
+import type { FileOut, ListenOut } from '../api/types';
 import { providerLabel } from '../lib/format';
 import { BrandIcon } from './BrandIcon';
 import { Icon } from './Icon';
@@ -23,7 +23,7 @@ export function SourceMark({ source, size = 14, className }: { source?: string |
 }
 
 /** «MP3 · 320 кбит/с» of the file (empty: the Hub does not know). A lossless file says no bitrate: it tells nothing. */
-export function fileWords(info: Pick<ListenOut, 'codec' | 'bitrate_kbps'> | null | undefined, short = false): string {
+export function fileWords(info: FileOut | null | undefined, short = false): string {
   if (!info) return '';
   const codec = info.codec ? (CODECS[info.codec.toLowerCase()] ?? info.codec.toUpperCase()) : '';
   const rate = info.bitrate_kbps && !(info.codec && LOSSLESS.has(info.codec.toLowerCase())) ? (short ? String(info.bitrate_kbps) : `${info.bitrate_kbps} кбит/с`) : '';
@@ -31,9 +31,9 @@ export function fileWords(info: Pick<ListenOut, 'codec' | 'bitrate_kbps'> | null
 }
 
 /** In a line of text: the source's mark, then the file's words; yellow when the file sounds like less than it says. */
-export function FileInfo({ info, className }: { info: ListenOut | null | undefined; className?: string }) {
-  if (!info?.source) return null;
+export function FileInfo({ info, className }: { info: FileOut | null | undefined; className?: string }) {
   const words = fileWords(info, true);
+  if (!info || (!info.source && !words)) return null;
   return (
     <span className={cx(className, info.sounds_like_kbps ? '!text-warn' : undefined)} title={[providerLabel(info.source), fileWords(info), info.sounds_like_kbps ? `по звуку около ${info.sounds_like_kbps} кбит/с` : ''].filter(Boolean).join(' · ')}>
       <SourceMark source={info.source} size={13} className="mr-1" />

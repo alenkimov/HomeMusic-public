@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { FileInfo } from './FileInfo';
 import type { AlbumOut, CatalogArtist, TrackOut } from '../api/types';
 import { fmtAdded, fmtDuration, parseTime, recordTypeLabel, yearOf } from '../lib/format';
 import { useDesktop } from '../lib/desktop';
@@ -329,7 +330,7 @@ export function TrackRow({
           data-track-row
           aria-selected={selected}
           className={cx('group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors', selected ? 'bg-accent/15 hover:bg-accent/20' : dragMark ? 'bg-accent/10' : 'hover:bg-fg/5 focus-within:bg-fg/5')}
-          style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration, added, tagCols, plays) }}
+          style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration, added, tagCols, plays, cols.file) }}
         >
           {/* the number is the queue button: «в очередь» on hovering the row, green once the track is queued */}
           {rowNumber !== undefined && (
@@ -396,6 +397,8 @@ export function TrackRow({
           {tagCols?.own && tagCell('own', 2)}
           {added && <span className="truncate text-sm text-muted" title={track.added_at ? parseTime(track.added_at).toLocaleString('ru-RU') : undefined}>{fmtAdded(track.added_at)}</span>}
           {plays && <PlaysCell songId={track.nd_song_id} count={playsOf ?? ((track.nd_song_id && playCounts[track.nd_song_id]) || 0)} title={track.title} artist={track.artist} />}
+          {/* always a cell, so the columns line up: a track with no file of its own has it empty */}
+          {cols.file && <span className="truncate text-xs text-muted">{track.file && <FileInfo info={track.file} />}</span>}
           <div data-row-actions className="flex h-11 items-center justify-end">
             {track.owned || dl === 'done' ? null : downloading ? (
               <span className="flex h-11 w-9 items-center justify-center text-info" title="Скачивается"><Spinner size={14} /></span>
@@ -599,7 +602,7 @@ export function TrackTableHeader({ numbered = false, album = false, added = fals
         setOpen(true);
       }}
       className="group/head relative mx-2 mb-1 grid h-9 items-center gap-3 border-b border-line/60 px-2 text-xs text-dim"
-      style={{ gridTemplateColumns: trackGrid(numbered, album && cols.album, cols.duration, added && cols.added, tags ? { lang: cols.tagLang, genre: cols.tagGenre, own: cols.tagOwn } : null, !!playsLabel || (plays && cols.plays)) }}
+      style={{ gridTemplateColumns: trackGrid(numbered, album && cols.album, cols.duration, added && cols.added, tags ? { lang: cols.tagLang, genre: cols.tagGenre, own: cols.tagOwn } : null, !!playsLabel || (plays && cols.plays), cols.file) }}
     >
       {numbered && <span className="text-center">#</span>}
       <span>Название</span>
@@ -631,6 +634,7 @@ export function TrackTableHeader({ numbered = false, album = false, added = fals
           {(sort === 'most' || sort === 'least') && <span className="text-[10px] text-accent" aria-hidden="true">{sort === 'most' ? '▼' : '▲'}</span>}
         </button>
       )}
+      {cols.file && <span title="Откуда файл, его формат и битрейт">Файл</span>}
       <span />
       {cols.duration && <span className="text-right">Время</span>}
       <IconButton icon="more" size={18} label="Колонки таблицы" aria-expanded={open} onClick={() => setOpen((v) => !v)} className={cx('!h-8 !w-8 text-dim hover:text-fg focus-visible:opacity-100', !open && 'opacity-0 group-hover/head:opacity-100')} />
