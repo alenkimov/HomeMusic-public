@@ -29,6 +29,7 @@ import {
   useListen,
   type ListenTrack,
   artistTo,
+  creditedOf,
 } from '../lib/listen';
 import { Link, enc, goBack } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
@@ -135,7 +136,6 @@ export function PlayerPage() {
     await downloadRef(track.ref);
     setBusy(false);
   };
-  const firstArtist = track.artists?.find((a) => artistTo(a));
   // what the right column of a wide screen holds; a narrow one has the text in the cover's place and the queue in a sheet
   const side = !wide ? null : queueOpen ? 'queue' : lyrics ? 'lyrics' : null;
   const text = <Lyrics refId={track.ref} songId={info?.nd_song_id ?? track.nd_song_id} />;
@@ -204,13 +204,21 @@ export function PlayerPage() {
                 <Icon name="sparkle" size={15} />
               </span>
             )}
-            {firstArtist?.ref ? (
-              <Link to={artistTo(firstArtist)!} className="truncate hover:underline">
-                {track.artist}
-              </Link>
-            ) : (
-              <span className="truncate">{track.artist}</span>
-            )}
+            {/* every credited artist opens their own page */}
+            <span className="truncate">
+              {creditedOf(track).map((a, i) => (
+                <span key={`${a.name}:${i}`}>
+                  {i > 0 && ', '}
+                  {artistTo(a) ? (
+                    <Link to={artistTo(a)!} className="hover:text-fg hover:underline">
+                      {a.name}
+                    </Link>
+                  ) : (
+                    a.name
+                  )}
+                </span>
+              ))}
+            </span>
           </div>
         </div>
         {/* a track that is not in the library yet can be downloaded into it; one that is needs no mark */}
@@ -303,7 +311,7 @@ export function PlayerPage() {
 
 /** «Участники»: who plays the track — each a link to their page, with their ♥ (to follow them). */
 function Credits({ track }: { track: ListenTrack }) {
-  const people = track.artists?.length ? track.artists : [{ name: track.artist, ref: track.artist_ref ?? undefined }];
+  const people = creditedOf(track);
   return (
     <section aria-label="Участники" className="mx-4 mt-5 rounded-2xl bg-surface px-4 pb-2 pt-3">
       <h2 className="pb-1 text-base font-bold">Участники</h2>

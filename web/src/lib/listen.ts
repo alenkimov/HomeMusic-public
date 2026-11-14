@@ -59,6 +59,15 @@ export interface ListenTrack {
 export const artistTo = (a: { name?: string | null; ref?: string | null; nd?: string | null }): string | null =>
   a.ref ? `/artist/${encodeURIComponent(a.ref)}` : a.nd ? `/lib/artist/${encodeURIComponent(a.nd)}` : a.name?.trim() ? `/artist-named/${encodeURIComponent(a.name.trim())}` : null;
 
+/** Everyone credited on a playing track, each with what opens their page (`artistTo`). A track that names its
+ * artists one by one says so itself; one that has only a line of them («Eliminate, fussy» — a wave's, a line of the
+ * history) is read by its commas, the first being the one its `artist_ref` is of. */
+export function creditedOf(t: Pick<ListenTrack, 'artist' | 'artist_ref' | 'artists'>): { name: string; ref?: string; nd?: string }[] {
+  if (t.artists?.length) return t.artists;
+  const names = t.artist.split(',').map((x) => x.trim()).filter(Boolean);
+  return (names.length ? names : [t.artist]).map((name, i) => ({ name, ...(i === 0 && t.artist_ref ? { ref: t.artist_ref } : {}) }));
+}
+
 /** off; all: the queue starts over after its end; one: the track plays again. */
 export type RepeatMode = 'off' | 'all' | 'one';
 

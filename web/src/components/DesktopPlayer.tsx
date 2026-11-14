@@ -2,7 +2,7 @@ import { askForQueue } from '../lib/playerQueue';
 import { openTagsSheet, tagKey } from '../lib/tags';
 import type { CSSProperties } from 'react';
 import { fmtDuration } from '../lib/format';
-import { artistTo, cycleRepeat, cycleShuffle, hasNext, hasPrev, next, prev, setVolume, toggle, useListen } from '../lib/listen';
+import { artistTo, creditedOf, cycleRepeat, cycleShuffle, hasNext, hasPrev, next, prev, setVolume, toggle, useListen } from '../lib/listen';
 import { useSeek } from '../lib/seek';
 import { Link, enc } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
@@ -62,7 +62,7 @@ export function DesktopPlayer() {
                     <span className="truncate">{status}</span>
                   ) : (
                     <Marquee>
-                      {(track.artists?.length ? track.artists : [{ name: track.artist, ref: track.artist_ref ?? undefined }]).map((a, i) => (
+                      {creditedOf(track).map((a, i) => (
                         <span key={`${a.name}:${i}`}>
                           {i > 0 && ', '}
                           {artistTo(a) ? (
