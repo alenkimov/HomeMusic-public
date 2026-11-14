@@ -41,12 +41,18 @@ export interface ListenTrack {
   cover_small_url?: string | null;
   album_ref?: string | null;
   artist_ref?: string | null;
-  artists?: { name: string; ref?: string }[];
+  /** every credited artist, with the page each opens: the catalog's (`ref`) when the Hub knows it, else the library's
+   * (`nd`: Navidrome's artist) — `artistTo` */
+  artists?: { name: string; ref?: string; nd?: string }[];
   album?: string;
   isrc?: string;
   year?: number;
   duration_s?: number | null;
 }
+
+/** The page of a credited artist of a playing track; null: the Hub knows neither a catalog nor a library one. */
+export const artistTo = (a: { ref?: string | null; nd?: string | null }): string | null =>
+  a.ref ? `/artist/${encodeURIComponent(a.ref)}` : a.nd ? `/lib/artist/${encodeURIComponent(a.nd)}` : null;
 
 /** off; all: the queue starts over after its end; one: the track plays again. */
 export type RepeatMode = 'off' | 'all' | 'one';

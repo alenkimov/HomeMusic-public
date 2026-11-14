@@ -27,6 +27,7 @@ import {
   toggle,
   useListen,
   type ListenTrack,
+  artistTo,
 } from '../lib/listen';
 import { Link, enc, goBack } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
@@ -133,7 +134,7 @@ export function PlayerPage() {
     await downloadRef(track.ref);
     setBusy(false);
   };
-  const firstArtist = track.artists?.find((a) => a.ref);
+  const firstArtist = track.artists?.find((a) => artistTo(a));
   // what the right column of a wide screen holds; a narrow one has the text in the cover's place and the queue in a sheet
   const side = !wide ? null : queueOpen ? 'queue' : lyrics ? 'lyrics' : null;
   const text = <Lyrics refId={track.ref} songId={info?.nd_song_id ?? track.nd_song_id} />;
@@ -203,7 +204,7 @@ export function PlayerPage() {
               </span>
             )}
             {firstArtist?.ref ? (
-              <Link to={`/artist/${enc(firstArtist.ref)}`} className="truncate hover:underline">
+              <Link to={artistTo(firstArtist)!} className="truncate hover:underline">
                 {track.artist}
               </Link>
             ) : (
@@ -320,8 +321,8 @@ function Credits({ track }: { track: ListenTrack }) {
           );
           return (
             <li key={`${a.ref ?? a.name}:${i}`} className="flex min-h-14 items-center gap-1">
-              {a.ref ? (
-                <Link to={`/artist/${enc(a.ref)}`} className="flex min-w-0 flex-1 items-center gap-3 py-1.5 hover:underline">{who}</Link>
+              {artistTo(a) ? (
+                <Link to={artistTo(a)!} className="flex min-w-0 flex-1 items-center gap-3 py-1.5 hover:underline">{who}</Link>
               ) : (
                 <div className="flex min-w-0 flex-1 items-center gap-3 py-1.5">{who}</div>
               )}

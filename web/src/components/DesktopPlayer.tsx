@@ -2,7 +2,7 @@ import { askForQueue } from '../lib/playerQueue';
 import { openTagsSheet, tagKey } from '../lib/tags';
 import type { CSSProperties } from 'react';
 import { fmtDuration } from '../lib/format';
-import { cycleRepeat, cycleShuffle, hasNext, hasPrev, next, prev, setVolume, toggle, useListen } from '../lib/listen';
+import { artistTo, cycleRepeat, cycleShuffle, hasNext, hasPrev, next, prev, setVolume, toggle, useListen } from '../lib/listen';
 import { useSeek } from '../lib/seek';
 import { Link, enc } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
@@ -63,10 +63,10 @@ export function DesktopPlayer() {
                   ) : (
                     <Marquee>
                       {(track.artists?.length ? track.artists : [{ name: track.artist, ref: track.artist_ref ?? undefined }]).map((a, i) => (
-                        <span key={`${a.ref ?? a.name}:${i}`}>
+                        <span key={`${a.name}:${i}`}>
                           {i > 0 && ', '}
-                          {a.ref ? (
-                            <Link to={`/artist/${enc(a.ref)}`} className="hover:text-fg hover:underline">
+                          {artistTo(a) ? (
+                            <Link to={artistTo(a)!} className="hover:text-fg hover:underline">
                               {a.name}
                             </Link>
                           ) : (

@@ -57,7 +57,14 @@ export function TrackStatus({
 }
 
 /** What the page player needs to know about a catalog track. */
-export function listenTrack(t: TrackOut): ListenTrack {
+export function listenTrack(t: TrackOut & { nd_artist_id?: string | null; nd_artist_ids?: (string | null)[] }): ListenTrack {
+  // every credited artist with the page it opens, as a track's row has them: the catalog's, else the library's
+  const credited = t.artists?.length ? t.artists : [t.artist];
+  const artists = credited.map((name, i) => {
+    const ref = t.artist_refs?.[i] ?? (name === t.artist ? t.artist_ref : null);
+    const nd = t.nd_artist_ids?.[i] ?? (credited.length === 1 ? t.nd_artist_id : null);
+    return { name, ...(ref ? { ref } : {}), ...(nd ? { nd } : {}) };
+  });
   return {
     ref: t.ref,
     nd_song_id: t.nd_song_id,
@@ -68,8 +75,7 @@ export function listenTrack(t: TrackOut): ListenTrack {
     cover_small_url: t.cover_small_url,
     album_ref: t.album_ref,
     artist_ref: t.artist_ref,
-    artists: (t.artists?.length ? t.artists : [t.artist]).map((name) =>
-      ({ name, ...(t.artists?.length && name === t.artist && t.artist_ref ? { ref: t.artist_ref } : {}) })),
+    artists,
     album: t.album_title ?? undefined, isrc: t.isrc ?? undefined,
     year: t.release_date ? Number(t.release_date.slice(0, 4)) || undefined : undefined,
     duration_s: t.duration_s,
