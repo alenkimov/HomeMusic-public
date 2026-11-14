@@ -44,6 +44,7 @@ async def lifespan(app: FastAPI):
     from app.housekeeping import scheduler_loop
     from app.jobs.queue import WorkerPool, recover_stale
     from app.mixes import smart, wave
+    from app.for_you import loop as for_you_loop
     from app.mixes.core import schedule_loop
     from app.plays import scrobbles_loop
     from app.services import svc
@@ -69,6 +70,7 @@ async def lifespan(app: FastAPI):
         from app.mixes.discover import loop as discoveries_loop
 
         tasks.append(asyncio.create_task(discoveries_loop(), name="discoveries"))
+        tasks.append(asyncio.create_task(for_you_loop(), name="for_you"))
         from app.listenbrainz import loop as listenbrainz_loop
 
         tasks.append(asyncio.create_task(listenbrainz_loop(), name="listenbrainz"))

@@ -536,7 +536,9 @@ class MixSettings(Base):
 
 
 class Mix(Base):
-    """One «Микс дня» of a user: lives until the next one (MIXES.md 6)."""
+    """One «Микс дня» of a user: lives until the next one (MIXES.md 6). `kind` "weekly": an issue of «Открытия
+    недели» kept the same way — its tracks downloaded quietly, its playlist in Navidrome, the unheard ones gone with
+    the next issue."""
 
     __tablename__ = "mixes"
 
@@ -546,11 +548,25 @@ class Mix(Base):
     title: Mapped[str] = mapped_column(String(256))
     description: Mapped[str] = mapped_column(Text, default="")
     mode: Mapped[str] = mapped_column(String(16))
+    kind: Mapped[str] = mapped_column(String(16), default="daily", server_default="daily")  # daily/weekly
     nd_playlist_id: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(16), default="active")  # active/closed
     batch_id: Mapped[int | None] = mapped_column(ForeignKey("download_batches.id", ondelete="SET NULL"))
     stats_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # generators, timings (the report)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class ForYouList(Base):
+    """A list of «Для вас» as a playlist of Navidrome (`app/for_you.py`): one per user and list — "weekly" or a kind
+    of `app.stats.AUTO`. `songs_json`: the songs it was last given."""
+
+    __tablename__ = "for_you_lists"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    nd_playlist_id: Mapped[str | None] = mapped_column(String(64))
+    songs_json: Mapped[list[Any]] = mapped_column(JSON, default=list, server_default="[]")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class MixItem(Base):

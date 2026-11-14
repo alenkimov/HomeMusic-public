@@ -168,3 +168,84 @@ async def test_a_catalog_track_listened_to_becomes_a_track_and_counts_as_one(c):
     tag = (await c.post("/api/tags", json={"name": "Услышал"})).json()["id"]
     r = await c.post("/api/tags/assign", json={"track_ids": [tracks["hm:777"].id], "add": [tag], "remove": []})
     assert tag in r.json()["map"][str(tracks["hm:777"].id)]
+
+
+async def test_lists_of_a_rule_are_playlists_of_navidrome(c, monkeypatch):
+    """«Для вас»: the tops and «Давно не слушал» are written to Navidrome as playlists — made once there are songs,
+    rewritten only when the songs change."""
+    from app import for_you
+    from app.db import session_scope
+    from app.models import ForYouList, User
+
+    now = datetime.now(UTC)
+    await post(c, *listen("ndK", 100_000, now - timedelta(days=2), "a"), *listen("ndK", 100_000, now - timedelta(days=1), "b"))
+    put: list[tuple] = []
+
+    async def fake_put(user, playlist_id, kind, songs):
+        put.append((playlist_id, kind, list(songs)))
+        return playlist_id or f"pl-{kind}"
+
+    monkeypatch.setattr(for_you, "put", fake_put)
+    async with session_scope() as s:
+        user_id = (await s.execute(select(User.id))).scalars().first()
+    assert await for_you.refresh(user_id) == 3
+    assert put == [(None, "top-month", ["ndK"]), (None, "top-year", ["ndK"]), (None, "top-all", ["ndK"])]  # «Давно не слушал» is empty: no playlist
+    async with session_scope() as s:
+        rows = {r.kind: (r.nd_playlist_id, r.songs_json) for r in (await s.execute(select(ForYouList))).scalars()}
+        assert rows["top-month"] == ("pl-top-month", ["ndK"]) and rows["forgotten"] == (None, [])
+        assert await for_you.playlist_ids(s) == {"pl-top-month", "pl-top-year", "pl-top-all"}
+    assert await for_you.refresh(user_id) == 0 and len(put) == 3  # nothing changed: nothing is written
+
+    await post(c, *listen("ndX", 100_000, now - timedelta(hours=1), "x"))
+    assert await for_you.refresh(user_id) == 3
+    assert put[3] == ("pl-top-month", "top-month", ["ndK", "ndX"])  # the same playlist, its songs replaced
+
+
+async def test_an_issue_of_discoveries_is_a_mix_of_the_week(c, monkeypatch):
+    """«Открытия недели»: the issue's tracks are downloaded quietly and written to a playlist of their own; a new
+    issue closes the previous one and leaves the daily mix alone."""
+    from types import SimpleNamespace
+
+    from app import for_you
+    from app.catalog.models import CatalogTrack
+    from app.db import session_scope
+    from app.library.owned import quiet
+    from app.mixes import core
+    from app.models import DownloadItem, Mix, Track, User
+
+    put: list[tuple] = []
+
+    async def fake_put(user, playlist_id, kind, songs):
+        put.append((kind, list(songs)))
+        return "pl-weekly"
+
+    monkeypatch.setattr(for_you, "put", fake_put)
+
+    def cand(i: int, song: str | None = None, track_id: int | None = None):
+        t = CatalogTrack(ref=f"dz:{900 + i}", source="dz", id=str(900 + i), title=f"Новое {i}", artist="Некто", duration_s=200)
+        return SimpleNamespace(track=t, nd_song_id=song, library_track_id=track_id, generator="ytm_radio", score=0.5,
+                               features=lambda t=t: {"track": t.model_dump(mode="json")})
+
+    async with session_scope() as s:
+        user_id = (await s.execute(select(User.id))).scalars().first()
+        owned = (await s.execute(select(Track.id).where(Track.nd_song_id == "ndK"))).scalar_one()
+        daily = Mix(user_id=user_id, title="Микс", mode="normal", status="active")
+        s.add(daily)
+        await s.flush()
+        daily_id = daily.id
+
+    first = await core.save_weekly(user_id, [cand(1), cand(2, "ndK", owned)], issue_id=1, description="Неделя")
+    assert put == [("weekly", ["ndK"])]  # what the library has is in the playlist at once
+    async with session_scope() as s:
+        mix = await s.get(Mix, first)
+        assert (mix.kind, mix.nd_playlist_id, mix.status) == ("weekly", "pl-weekly", "active")
+        dls = list((await s.execute(select(DownloadItem))).scalars())
+        assert [d.query_json["meta"]["track_ref"] for d in dls] == ["dz:901"] and quiet(dls[0].query_json)
+        assert (await core.current_mix(s, user_id)).id == daily_id  # «Микс дня» is still the daily one
+
+    second = await core.save_weekly(user_id, [cand(3)], issue_id=2, description="Неделя")
+    async with session_scope() as s:
+        assert (await s.get(Mix, first)).status == "closed" and (await s.get(Mix, second)).status == "active"
+        assert (await s.get(Mix, daily_id)).status == "active"  # a new issue closes issues, not the daily mix
+        left = {d.query_json["meta"]["track_ref"]: d.status for d in (await s.execute(select(DownloadItem))).scalars()}
+        assert left["dz:901"] == "cancelled" and left["dz:903"] == "queued"  # the old issue's download not started is dropped

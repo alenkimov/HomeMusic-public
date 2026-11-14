@@ -227,6 +227,14 @@ async def build_for(user_id: int, now: datetime | None = None) -> DiscoveryIssue
             s.add(issue)
         issue.tracks_json, issue.stats_json, issue.created_at = tracks, stats, utcnow()
         await s.flush()
+        issue_id = issue.id
+    # the issue's tracks are downloaded and kept as a playlist, the way «Микс дня» is (`app/for_you.py`)
+    try:
+        from app.mixes.core import save_weekly
+
+        await save_weekly(user_id, picked, issue_id=issue_id, description=f"Неделя с {week:%d.%m.%Y}")
+    except Exception:
+        log.exception("discover: the issue of user %s was not made a playlist", user_id)
     bus.publish(user_id, "library", {"kind": "discoveries", "issue_id": issue.id})
     log.info("discover: issue of %s for user %s: %s tracks in %s s", week, user_id, len(tracks), stats["build_seconds"])
     return issue
@@ -268,6 +276,35 @@ async def due_users(now: datetime | None = None) -> list[int]:
 
 # a user whose build found nothing is not asked about again every half an hour: once a day is enough
 _tried: dict[int, date] = {}
+
+
+async def ensure_playlist(user_id: int) -> bool:
+    """The user's latest issue is kept as a mix of the week (`core.save_weekly`) — made here for an issue built before
+    issues were kept so, or whose keeping failed. True: it was made now."""
+    from types import SimpleNamespace
+
+    from app.library.owned import annotate_tracks
+    from app.mixes.core import WEEKLY, save_weekly
+    from app.models import Mix
+
+    async with session_scope() as s:
+        issue = (await s.execute(select(DiscoveryIssue).where(DiscoveryIssue.user_id == user_id)
+                                 .order_by(DiscoveryIssue.week.desc()).limit(1))).scalar_one_or_none()
+        if issue is None or not issue.tracks_json:
+            return False
+        kept = [m for m in (await s.execute(select(Mix).where(
+            Mix.user_id == user_id, Mix.kind == WEEKLY, Mix.status == "active"))).scalars()
+            if (m.stats_json or {}).get("issue") == issue.id]
+        if kept:
+            return False
+        issue_id, week = issue.id, issue.week
+        found = await annotate_tracks(s, as_tracks(issue), user_id)
+    picked = [SimpleNamespace(track=CatalogTrack.model_validate(t.model_dump()), nd_song_id=t.nd_song_id,
+                              library_track_id=t.library_track_id, generator="discover", score=0.0,
+                              features=lambda t=t: {"track": CatalogTrack.model_validate(t.model_dump()).model_dump(mode="json")})
+              for t in found]
+    await save_weekly(user_id, picked, issue_id=issue_id, description=f"Неделя с {week:%d.%m.%Y}")
+    return True
 
 
 async def loop() -> None:
