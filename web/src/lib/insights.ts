@@ -1,5 +1,5 @@
 // Admin insight screens: the period and the filters live in the address (a reload by a new build keeps them).
-import { ROUTE_EVENT, useRoute } from './router';
+import { ROUTE_EVENT } from './router';
 
 export type PeriodKey = '7' | '30' | '90' | 'all';
 
@@ -43,11 +43,6 @@ export function setQuery(patch: Record<string, string | null | undefined>) {
   const s = q.toString();
   window.history.replaceState(window.history.state, '', '#' + path + (s ? `?${s}` : ''));
   window.dispatchEvent(new Event(ROUTE_EVENT));
-}
-
-/** The query of the current route and its setter. */
-export function useQuery(): [URLSearchParams, typeof setQuery] {
-  return [useRoute().query, setQuery];
 }
 
 /** A track key goes into an address only in the query, encoded (`nd:…`, `dz:…`, `file:…`). */

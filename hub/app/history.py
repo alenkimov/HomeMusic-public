@@ -10,7 +10,6 @@ of too."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -28,12 +27,6 @@ CONTEXTS = {"liked": ("Любимое", "/liked"), "playlist": ("Плейлис�
             "artist": ("Исполнитель", None), "search": ("Поиск", None), "queue": ("Очередь", None),
             "discoveries": ("Открытия недели", "/discoveries"), "selection": ("Подборка по тегам", None),
             "auto": ("Для вас", None), "radio": ("Радио", None), "history": ("История", "/history")}
-
-
-@dataclass(slots=True)
-class Entry:
-    uid: str
-    play: stats.Play
 
 
 def local_day(ts) -> str:

@@ -687,10 +687,6 @@ export interface NdHomeOut {
 
 export type NdAlbumList = 'recent' | 'frequent' | 'newest' | 'starred' | 'alphabeticalByName' | 'alphabeticalByArtist' | 'random';
 
-export interface PlaylistCreateIn {
-  name: string;
-}
-
 export interface PlaylistAddIn {
   /** the Hub's ids of the tracks */
   track_ids: number[];
@@ -767,22 +763,11 @@ export interface AssistantTaskOut {
   created_at: ISODateTime;
 }
 
-export interface AssistantTextIn {
-  text?: string | null;
-  url?: string | null;
-}
-
 // --- assistant free chat (stage 3.8) --------------------------------------------------------------
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
-}
-
-export interface ChatIn {
-  messages: ChatMessage[];
-  /** the saved chat this turn continues; none → the Hub starts a new one */
-  chat_id?: number | null;
 }
 
 /** What the assistant may not do without a tap: everything else it does itself (`ChatOut.done`). */
@@ -802,11 +787,6 @@ export interface ChatOut {
   /** the saved chat this turn went into */
   chat_id: number;
   title: string;
-}
-
-export interface ChatConfirmIn {
-  confirm_token: string;
-  chat_id?: number | null;
 }
 
 /** A saved chat in the history list. */
@@ -985,16 +965,6 @@ export interface ListenBrainzOut {
   sent_until?: string | null;
   /** `send`: how many listens went this time */
   sent?: number;
-}
-
-/** «Открытия недели» (pages/Discoveries.tsx). */
-export interface DiscoveriesOut {
-  /** every issue, the newest first; `week` is its Monday, YYYY-MM-DD */
-  issues: { id: number; week: string; count: number }[];
-  /** the issue shown (none: there is no issue yet) */
-  issue: { id: number; week: string; tracks: TrackOut[] } | null;
-  /** this week's issue is being built */
-  building: boolean;
 }
 
 /** A release of a followed artist («Подписки», pages/Subscriptions.tsx). */

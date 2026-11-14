@@ -39,12 +39,6 @@ export const AUTO_PLAYLISTS = [
   { kind: 'forgotten', title: 'Давно не слушал', column: 'Прослушивания', icon: 'history' },
 ] as const;
 
-export interface StatsAutoOut {
-  kind: string;
-  title: string;
-  items: { nd_song_id: string; plays: number }[];
-}
-
 export interface StatsTop {
   total: number;
   items: StatsItem[];

@@ -43,23 +43,6 @@ def album_dirname(year: int | None, album: str) -> str:
     return sanitize_component(name)
 
 
-def track_relpath(
-    album_artist: str,
-    year: int | None,
-    album: str,
-    disc_no: int | None,
-    track_no: int | None,
-    title: str,
-    ext: str,
-) -> PurePosixPath:
-    """Path relative to `library/`: `{AlbumArtist}/{Year} - {Album}/{Disc}-{NN} - {Title}.{ext}`."""
-    return PurePosixPath(
-        sanitize_component(album_artist),
-        album_dirname(year, album),
-        track_filename(disc_no, track_no, title, ext),
-    )
-
-
 def _split_ext(name: str) -> tuple[str, str]:
     p = PurePosixPath(name)
     suffix = p.suffix

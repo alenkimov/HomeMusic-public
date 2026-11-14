@@ -773,15 +773,6 @@ export function cycleRepeat() {
   prefetchNext();
 }
 
-/** «Играть следующим»: right after the current track (when nothing plays, they start now). */
-export function playNext(tracks: readonly ListenTrack[]) {
-  if (!tracks.length) return;
-  if (!state.track) return listen(tracks[0], tracks);
-  const added = tracks.map((t) => ({ ...t, queued: true })); // own objects: the same track may be in the queue twice
-  set({ queue: [...state.queue.slice(0, state.index + 1), ...added, ...state.queue.slice(state.index + 1)] });
-  prefetchNext();
-}
-
 /** «Добавить в очередь»: after the last track (when nothing plays, they start now). */
 export function addToQueue(tracks: readonly ListenTrack[]) {
   if (!tracks.length) return;

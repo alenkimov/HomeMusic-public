@@ -7,7 +7,7 @@ scrobble history of Navidrome (other clients) imported every hour.
 - A Navidrome scrobble is a `finish` with client "navidrome". The app's own events of the same song near it win: a
   scrobble is not imported next to them, and a scrobble imported first is dropped when they arrive (`DEDUP_WINDOW`
   plus the track's length: Navidrome counts a play at half of it, the app's `finish` comes at its end).
-- ♥ that an import of another service set are not the user's own (M4): `imported_likes`.
+- ♥ that an import of another service set are not the user's own (M4): the like says its provenance.
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ from app.models import (
     CatalogCache,
     Dislike,
     DownloadItem,
-    Import,
     ImportItem,
     NavidromeSync,
     PlayEvent,
@@ -395,19 +394,6 @@ async def user_events(s: AsyncSession, user_id: int, days: float = 30, *, kinds:
     if kinds is not None:
         q = q.where(PlayEvent.kind.in_(list(kinds)))
     return list((await s.execute(q.order_by(PlayEvent.ts, PlayEvent.id))).scalars())
-
-
-async def imported_likes(s: AsyncSession, user_id: int) -> set[str]:
-    """Navidrome songs whose ♥ an import of another service set (`imports.options_json.liked`) and the user did not
-    like again themselves since (a `like` event): such ♥ don't count for the taste profile (M4)."""
-    liked: set[str] = set()
-    for opts in (await s.execute(select(Import.options_json).where(Import.user_id == user_id))).scalars():
-        liked.update((opts or {}).get("liked") or [])
-    if not liked:
-        return liked
-    own = set((await s.execute(select(PlayEvent.nd_song_id).where(
-        PlayEvent.user_id == user_id, PlayEvent.kind == "like", PlayEvent.nd_song_id.in_(liked)))).scalars())
-    return liked - own
 
 
 # --- «Не нравится» ---------------------------------------------------------------------------------------------

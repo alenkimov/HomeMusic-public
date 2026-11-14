@@ -13,7 +13,6 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -176,10 +175,3 @@ async def resolve_artist(s: AsyncSession, source: str, external_id: str, raw: di
                 break
     await _remember(s, source, "artist", external_id, r)
     return r
-
-
-async def library_track_ids(s: AsyncSession, track_ids: set[int]) -> dict[int, str | None]:
-    """track id -> Navidrome song id."""
-    if not track_ids:
-        return {}
-    return dict((await s.execute(select(Track.id, Track.nd_song_id).where(Track.id.in_(track_ids)))).all())

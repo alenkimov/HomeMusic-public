@@ -234,8 +234,6 @@ export function forgetAccount() {
 
 /** What the Hub said of a kept track's file: the player shows it when the Hub cannot be asked. */
 export const keptInfo = (ref: string): ListenOut | null => tracks.get(ref)?.info ?? null;
-export const isKept = (ref: string): boolean => tracks.has(ref);
-
 // --- for the screen -----------------------------------------------------------------------------------------
 
 export interface ListState {

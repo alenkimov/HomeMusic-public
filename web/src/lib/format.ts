@@ -225,8 +225,6 @@ export function toIntOrNull(v: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-export const URL_RE = /https?:\/\/[^\s<>"']+/i;
-
 /** AI spending: cents matter, fractions of a cent are shown while the sum is small. */
 export function fmtUsd(v: number): string {
   if (!v) return '$0';
@@ -243,12 +241,6 @@ export const fmtNum = (n?: number | null): string => (n == null ? '—' : Math.r
 export function fmtDec(n?: number | null, digits = 2): string {
   if (n == null || !Number.isFinite(n)) return '—';
   return n.toLocaleString('ru-RU', { minimumFractionDigits: digits, maximumFractionDigits: digits });
-}
-
-/** A signed weight: "+1,86" / "−0,88". */
-export function fmtSigned(n: number, digits = 2): string {
-  const s = fmtDec(Math.abs(n), digits);
-  return n > 0 ? `+${s}` : n < 0 ? `−${s}` : s;
 }
 
 /** `part / whole` in percent: "46 %"; no whole → "—". */

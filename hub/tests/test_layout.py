@@ -1,4 +1,4 @@
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import pytest
 
@@ -7,7 +7,6 @@ from app.library.layout import (
     next_version_path,
     sanitize_component,
     track_filename,
-    track_relpath,
     unique_path,
     version_suffixed,
 )
@@ -51,12 +50,6 @@ def test_track_filename() -> None:
 def test_album_dirname() -> None:
     assert album_dirname(1988, "Группа крови") == "1988 - Группа крови"
     assert album_dirname(None, "Untitled: Demo") == "Untitled_ Demo"
-
-
-def test_track_relpath() -> None:
-    p = track_relpath("Кино", 1988, "Группа крови", 1, 1, "Группа крови", "opus")
-    assert p == PurePosixPath("Кино/1988 - Группа крови/1-01 - Группа крови.opus")
-    assert isinstance(p, PurePosixPath)
 
 
 def test_unique_path(tmp_path: Path) -> None:

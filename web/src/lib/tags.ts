@@ -141,12 +141,7 @@ export interface TagSelection {
 export const SELECTIONS_EVENT = 'hm:selections-changed';
 export const selectionsChanged = () => window.dispatchEvent(new Event(SELECTIONS_EVENT));
 
-/** A filter as the query of an address (`/selection/library?yes=3,untagged&no=7`), and back. */
-export function filterQuery(f: TagFilter): string {
-  const of = (mode: string) => Object.keys(f).filter((k) => f[k] === mode).join(',');
-  return [of('yes') && `yes=${of('yes')}`, of('no') && `no=${of('no')}`].filter(Boolean).join('&');
-}
-
+/** A filter from the query of an address (`/selection/library?yes=3,untagged&no=7`). */
 export function filterOfQuery(q: URLSearchParams): TagFilter {
   const out: TagFilter = {};
   for (const k of (q.get('yes') ?? '').split(',').filter(Boolean)) out[k] = 'yes';

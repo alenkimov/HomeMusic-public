@@ -111,12 +111,3 @@ export async function deliverToTelegram(tracks: readonly ShareTrack[], withLyric
   }
 }
 
-/** `withLyrics`: true / false — with or without the texts this time; null — as the user's setting says. */
-export async function sendToTelegram(tracks: ShareTrack | readonly ShareTrack[], withLyrics: boolean | null = null): Promise<void> {
-  const list = (Array.isArray(tracks) ? tracks : [tracks as ShareTrack]).filter((t) => t.nd_song_id || t.ref);
-  if (!list.length) return;
-  const st = await attempt(() => api.telegram());
-  if (!st) return;
-  if (!st.ready) openTelegramSetup(list, withLyrics);
-  else await deliverToTelegram(list, withLyrics);
-}

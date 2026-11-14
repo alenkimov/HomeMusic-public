@@ -10,7 +10,7 @@ import logging
 import os
 import shutil
 import uuid
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel
@@ -257,7 +257,3 @@ def staging_dir_for(kind: str, key: str | int) -> Path:
 
 def cleanup_dir(d: Path) -> None:
     shutil.rmtree(d, ignore_errors=True)
-
-
-def now_local_date() -> date:
-    return datetime.now().date()

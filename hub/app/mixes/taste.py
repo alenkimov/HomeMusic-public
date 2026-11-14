@@ -4,7 +4,7 @@
   30 s — up to +2 by how much of the rest was heard, rising slowly at first and steeply near the end (`skip_weight`);
   each × `0.5 ^ (days / 30)`. A download of the user's own weighs nothing: such a track is in the profile (`downloaded`,
   the stash, fallback seeds) with the score of its other events, 0 without them. ♥ that an import of another service
-  set don't count (`plays.imported_likes`).
+  set don't count (a like whose provenance is the import, `taste_math`).
 - A track is known by its catalog `ref` and/or its Navidrome song; `key` is `nd:<song>` when the library has it
   (the key of its audio vector), else the `ref`.
 - Seeds: up to `seeds` best tracks of the last 30 days, ≤ 2 of an artist; without such — own ♥ and downloads, the

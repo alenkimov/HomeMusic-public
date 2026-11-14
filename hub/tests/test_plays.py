@@ -421,10 +421,10 @@ async def test_navidrome_scrobbles_become_finishes_without_doubles(env):
     assert await sync_navidrome() == 0
 
 
-async def test_import_likes_do_not_count_unless_liked_again(env):
+async def test_user_events_by_age_and_kind(env):
     from app.db import session_scope
     from app.models import Import, User
-    from app.plays import imported_likes, user_events
+    from app.plays import user_events
 
     c = env["client"]
     async with session_scope() as s:
@@ -433,7 +433,6 @@ async def test_import_likes_do_not_count_unless_liked_again(env):
     await post(c, ev("like", nd_song_id="ndX"), ev("finish", ref="dz:100", at=datetime.now(UTC) - timedelta(days=40)),
                ev("skip", ref="dz:100", position_s=5))
     async with session_scope() as s:
-        assert await imported_likes(s, uid) == {"ndK", "ndZ"}
         assert [e.kind for e in await user_events(s, uid, days=30)] == ["like", "skip"]
         assert [e.kind for e in await user_events(s, uid, days=60, kinds=["finish", "skip"])] == ["finish", "skip"]
 
