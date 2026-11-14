@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { imageUrl } from './img';
 import { ofHiddenArtist } from './dislikes';
 import { keptInfo } from './offline';
 import { api, errorMessage, isAbort, listenStreamUrl } from '../api/client';
@@ -52,9 +53,11 @@ export interface ListenTrack {
   duration_s?: number | null;
 }
 
-/** The page of a credited artist of a playing track; null: the Hub knows neither a catalog nor a library one. */
-export const artistTo = (a: { ref?: string | null; nd?: string | null }): string | null =>
-  a.ref ? `/artist/${encodeURIComponent(a.ref)}` : a.nd ? `/lib/artist/${encodeURIComponent(a.nd)}` : null;
+/** The page of a credited artist of a playing track: the catalog's when the track says which (`ref`), the library's
+ * (`nd`), else the one found by the name (`pages/Artist.tsx`, `ArtistNamedPage`) — a wave, a recommendation or a
+ * line of the history names its artists and nothing more. Null: there is not even a name. */
+export const artistTo = (a: { name?: string | null; ref?: string | null; nd?: string | null }): string | null =>
+  a.ref ? `/artist/${encodeURIComponent(a.ref)}` : a.nd ? `/lib/artist/${encodeURIComponent(a.nd)}` : a.name?.trim() ? `/artist-named/${encodeURIComponent(a.name.trim())}` : null;
 
 /** off; all: the queue starts over after its end; one: the track plays again. */
 export type RepeatMode = 'off' | 'all' | 'one';
@@ -982,7 +985,7 @@ function mediaSession(track: ListenTrack) {
   ms.metadata = new MediaMetadata({
     title: track.title,
     artist: track.artist,
-    artwork: track.cover_url ? [{ src: track.cover_url, sizes: '500x500' }] : [],
+    artwork: track.cover_url ? [{ src: imageUrl(track.cover_url), sizes: '500x500' }] : [],
   });
   try {
     ms.setActionHandler('play', resume);

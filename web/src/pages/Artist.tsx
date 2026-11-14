@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import type { AlbumOut, ArtistPageOut } from '../api/types';
 import { ReleaseCard, TrackRow } from '../components/catalog';
@@ -9,7 +9,7 @@ import { startDownload } from '../lib/actions';
 import { setDisliked, useDisliked } from '../lib/dislikes';
 import { plural, tracksWord } from '../lib/format';
 import { useAsync, useRememberScrollX } from '../lib/hooks';
-import { Link, enc } from '../lib/router';
+import { Link, enc, navigate } from '../lib/router';
 import { copyText } from '../lib/share';
 import { toggleLike, useLiked } from '../lib/stars';
 import { confirmDialog, toast } from '../lib/ui';
@@ -45,6 +45,17 @@ function useLikedBy(name: string | undefined, ref: string | undefined): number {
     const want = name.trim().toLocaleLowerCase('ru');
     return (liked.data?.songs ?? []).filter((t) => (!!ref && (t.artist_ref === ref || !!t.artist_refs?.includes(ref))) || (t.artists?.length ? t.artists : [t.artist]).some((a) => a.trim().toLocaleLowerCase('ru') === want)).length;
   }, [liked.data, name, ref]);
+}
+
+/** An artist known by the name alone (`/artist-named/<name>`, from a player): the catalog's artist of that name
+ * takes the place of this page; when it has none, the search for the name does. */
+export function ArtistNamedPage({ name }: { name: string }) {
+  const res = useAsync((s) => api.artistNamed(name, s), [name]);
+  useEffect(() => {
+    if (res.data) navigate(res.data.ref ? `/artist/${enc(res.data.ref)}` : `/search?q=${enc(name)}`, { replace: true });
+  }, [res.data, name]);
+  if (res.error) return (<><PageHeader hero title={name} back="/search" /><ErrorState text={res.error} onRetry={() => res.reload()} /></>);
+  return (<><PageHeader hero title={name} back="/search" /><HeroSkeleton round buttons rows={10} /></>);
 }
 
 export function ArtistPage({ refId }: { refId: string }) {
@@ -114,7 +125,7 @@ export function ArtistPage({ refId }: { refId: string }) {
         cover={artist.picture_url}
         round
         title={artist.name}
-        sub={[artist.nb_fans ? `${artist.nb_fans.toLocaleString('ru-RU')} ${plural(artist.nb_fans, ['поклонник', 'поклонника', 'поклонников'])}` : null, releases.length ? `${releases.length} ${plural(releases.length, ['релиз', 'релиза', 'релизов'])}` : null].filter(Boolean).join(' · ')}
+        sub={[artist.nb_fans ? `${artist.nb_fans.toLocaleString('ru-RU')} ${plural(artist.nb_fans, ['поклонник', 'поклонника', 'поклонников'])} в Deezer` : null, releases.length ? `${releases.length} ${plural(releases.length, ['релиз', 'релиза', 'релизов'])}` : null].filter(Boolean).join(' · ')}
         tracks={hidden ? undefined : top}
         context="artist"
       />

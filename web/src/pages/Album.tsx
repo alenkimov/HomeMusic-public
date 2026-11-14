@@ -1,5 +1,5 @@
 import { Icon } from '../components/Icon';
-import { retryImage } from '../lib/img';
+import { imageUrl, retryImage } from '../lib/img';
 import { useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { TrackOut } from '../api/types';
@@ -122,7 +122,7 @@ export function AlbumPage({ refId }: { refId: string }) {
     <div>
       <div className="relative">
         <div className="absolute inset-0 overflow-hidden">
-          {album.cover_url && <img src={album.cover_small_url || album.cover_url} alt="" onError={retryImage} className="h-full w-full scale-125 object-cover opacity-40 blur-3xl" referrerPolicy="no-referrer" />}
+          {album.cover_url && <img src={imageUrl(album.cover_small_url || album.cover_url)} alt="" onError={retryImage} className="h-full w-full scale-125 object-cover opacity-40 blur-3xl" referrerPolicy="no-referrer" />}
           <div className="absolute inset-0 bg-gradient-to-b from-transparent via-bg/50 to-bg" />
         </div>
         <Bar overlay />

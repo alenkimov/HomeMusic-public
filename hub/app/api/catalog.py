@@ -71,6 +71,15 @@ async def artist(ref: str, user: User = Depends(current_user), s: AsyncSession =
     )
 
 
+@router.get("/artist-named")
+async def artist_named(name: str, user: User = Depends(current_user)) -> dict[str, str | None]:
+    """The catalog's artist of this very name — where only a name is known (a track playing from a list that does
+    not say who its artists are). `ref` null: the catalog has nobody called so."""
+    from app.api.medialib import _in_catalog
+
+    return {"ref": await _in_catalog(name)}
+
+
 DISCOGRAPHY_PARALLEL = 4  # releases asked of the catalog at once (each is kept by the catalog's own cache after)
 
 

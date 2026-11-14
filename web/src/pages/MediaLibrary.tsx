@@ -1,5 +1,5 @@
 import { Children, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { retryImage } from '../lib/img';
+import { imageUrl, retryImage } from '../lib/img';
 import { ArtistPage } from './Artist';
 import { api } from '../api/client';
 import type { NdAlbumOut, NdArtistOut, NdSongOut, TrackOut } from '../api/types';
@@ -200,7 +200,7 @@ export function Hero({ cover, round, title, sub, right, kicker, art, tracks, con
   // it reaches up under the bar with «back»
   const light = (
     <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 -top-20 bottom-0 -z-10 overflow-hidden [mask-image:linear-gradient(black_35%,transparent)]">
-      {cover ? <img src={cover} alt="" referrerPolicy="no-referrer" onError={retryImage} className="h-full w-full scale-150 object-cover opacity-50 blur-3xl" /> : <div className="h-full w-full bg-accent/25" />}
+      {cover ? <img key={cover} src={imageUrl(cover)} alt="" referrerPolicy="no-referrer" onError={retryImage} className="h-full w-full scale-150 object-cover opacity-50 blur-3xl" /> : <div className="h-full w-full bg-accent/25" />}
     </div>
   );
   if (desktop)

@@ -23,7 +23,7 @@ from typing import Any, TypeVar
 import httpx
 from pydantic import BaseModel
 
-from app.catalog.cache import cached
+from app.catalog.cache import cache_delete, cached
 from app.catalog.models import (
     ArtistPage,
     CatalogAlbum,
@@ -345,7 +345,15 @@ class DeezerClient:
             data = await self._get(f"artist/{id_}/top", {"limit": limit})
             return [map_track(x) for x in data.get("data") or []]
 
-        return await self._cached_list(f"dz:artist_top:{id_}:{limit}", self.cfg.ttl_artist_s, CatalogTrack, produce)
+        # an empty answer is not kept: the catalog gives one now and then for an artist who has tracks, and a kept
+        # one left the artist's page without «Популярное» for a week
+        key = f"dz:artist_top:{id_}:{limit}"
+        for _ in range(2):
+            top = await self._cached_list(key, self.cfg.ttl_artist_s, CatalogTrack, produce)
+            if top:
+                return top
+            await cache_delete(key)
+        return []
 
     async def get_artist_radio(self, id_: str | int) -> list[CatalogTrack]:
         """The artist's radio: ~50 tracks of the artist and similar ones (mixes)."""

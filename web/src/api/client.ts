@@ -333,6 +333,8 @@ export const api = {
   playsHistory: (q: { offset?: number; limit?: number; show?: string; q?: string }, signal?: AbortSignal) =>
     request<HistoryOut>('GET', withQuery('/api/plays/history', q), { signal }),
   forgetListen: (uid: string) => request<OkOut>('DELETE', withQuery('/api/plays/history', { uid })),
+  /** The catalog's artist of this very name (`ref` null: nobody is called so). */
+  artistNamed: (name: string, signal?: AbortSignal) => request<{ ref: string | null }>('GET', `/api/catalog/artist-named?name=${enc(name)}`, { signal }),
   /** Every release of an artist with its tracks (the first asking of a long one takes seconds). */
   discography: (ref: string, signal?: AbortSignal) => request<DiscographyOut>('GET', `/api/catalog/artist/${enc(ref)}/discography`, { signal }),
   /** How a track's file came to the library: the journal of its download. */

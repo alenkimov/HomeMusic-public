@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from 'react';
 import { useDesktop } from '../lib/desktop';
-import { retryImage } from '../lib/img';
+import { imageUrl, retryImage } from '../lib/img';
 import { goBack } from '../lib/router';
 import { downloadStatusLabel, percent } from '../lib/format';
 import type { OwnedStatus } from '../api/types';
@@ -286,6 +286,7 @@ export function Cover({
   className?: string;
   icon?: IconName;
 }) {
+  src = imageUrl(src);
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [src]);
   const style = size ? { width: size, height: size } : undefined;
@@ -299,6 +300,7 @@ export function Cover({
   }
   return (
     <img
+      key={src}
       src={src}
       alt={alt}
       loading="lazy"

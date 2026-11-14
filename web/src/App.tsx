@@ -27,7 +27,7 @@ import { InsightsOverviewPage } from './pages/insights/Overview';
 import { MixDetailPage, WaveDetailPage } from './pages/insights/Recs';
 import { TrackWeightPage } from './pages/insights/Track';
 import { AlbumPage } from './pages/Album';
-import { ArtistPage } from './pages/Artist';
+import { ArtistNamedPage, ArtistPage } from './pages/Artist';
 import { AssistantChatsPage, AssistantPage } from './pages/Assistant';
 import { AssistantTaskPage } from './pages/AssistantTask';
 import { setAssistantAccount } from './pages/AssistantChat';
@@ -95,6 +95,7 @@ const ROUTES: RouteDef[] = [
   ['/search', 'search', (_, r) => <SearchPage initialQuery={r.query.get('q') ?? ''} initialTab={searchTab(r.query.get('tab'))} />],
   ['/artist/:ref/discography', 'search', (p) => <DiscographyPage key={p.ref} refId={p.ref} />],
   ['/artist/:ref', 'search', (p) => <ArtistPage key={p.ref} refId={p.ref} />],
+  ['/artist-named/:name', 'search', (p) => <ArtistNamedPage key={p.name} name={p.name} />],
   ['/album/:ref', 'search', (p) => <AlbumPage key={p.ref} refId={p.ref} />],
   ['/mix/:id', 'library', (p) => <ForYouPage key={`mix:${p.id}`} kind="mix" mix={Number(p.id)} />],
   // «Микс дня» by its name: no mix has the number 0, so the page opens today's
