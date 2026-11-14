@@ -183,3 +183,36 @@ async def test_postcheck_duration_mismatch(media: Path) -> None:
     assert res.ok is False
     assert res.reason and "Длительность 0:14" in res.reason and "0:20" in res.reason
     assert (await postcheck(media / "gap.flac", 16, 3, 0.7)).ok is True  # within tolerance
+
+
+# --------------------------------------------------------------------------- what a file sounds like
+
+
+@pytest.fixture(scope="session")
+def noise(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """25 s of white noise as files: an honest 320, a 128, and a "320" and a FLAC made of the 128."""
+    if FFMPEG is None or FFPROBE is None:
+        pytest.skip("ffmpeg/ffprobe not installed")
+    d = tmp_path_factory.mktemp("noise")
+    src = ["-f", "lavfi", "-i", "anoisesrc=d=25:c=white:a=0.3:r=44100"]
+    _ffmpeg(*src, "-c:a", "libmp3lame", "-b:a", "320k", str(d / "real320.mp3"))
+    # the cut is asked for: ffmpeg's encoder leaves white noise its whole band at any bitrate, where the encoders
+    # that made the files of a real library cut at ~16 kHz (the thresholds were set by such files)
+    _ffmpeg(*src, "-c:a", "libmp3lame", "-b:a", "128k", "-cutoff", "16000", str(d / "real128.mp3"))
+    _ffmpeg("-i", str(d / "real128.mp3"), "-c:a", "libmp3lame", "-b:a", "320k", str(d / "blown320.mp3"))
+    _ffmpeg("-i", str(d / "real128.mp3"), "-c:a", "flac", str(d / "blown.flac"))
+    return d
+
+
+async def test_a_file_blown_up_from_a_poorer_one_is_told_by_its_spectrum(noise: Path, media: Path):
+    from app.library.probe import postcheck, probe, sounds_like
+
+    assert await sounds_like(noise / "real320.mp3", await probe(noise / "real320.mp3")) is None  # the whole band is there
+    assert await sounds_like(noise / "real128.mp3", await probe(noise / "real128.mp3")) == 128
+    # an honest 128 is what it says; the same sound called 320 or FLAC is not
+    assert (await postcheck(noise / "real128.mp3", 25)).blown_from_kbps is None
+    assert (await postcheck(noise / "real320.mp3", 25)).blown_from_kbps is None
+    assert (await postcheck(noise / "blown320.mp3", 25)).blown_from_kbps == 128
+    assert (await postcheck(noise / "blown.flac", 25)).blown_from_kbps == 128
+    # a file too short to tell says nothing (a 440 Hz tone has no top at all)
+    assert (await postcheck(media / "sine.flac", 3)).blown_from_kbps is None

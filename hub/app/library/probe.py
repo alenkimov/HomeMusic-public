@@ -40,6 +40,9 @@ class PostcheckResult(BaseModel):
     warnings: list[str] = []
     info: ProbeInfo | None = None
     silences: list[tuple[float, float]] = []
+    # what the file sounds like when that is less than it says (`sounds_like`): 128 or 192 kbps; None — as it says,
+    # or not told
+    blown_from_kbps: int | None = None
 
 
 def ffprobe_bin() -> str:
@@ -161,6 +164,52 @@ async def detect_silences(
     return parse_silencedetect(text)
 
 
+SPECTRUM_S = 45  # of the middle of the track are listened to
+SPECTRUM_MIN_S = 20  # a shorter file tells nothing
+# how much quieter than the whole the sound above 16.5 and above 19 kHz is when the encoder cut it there (dB). In a
+# library of real files: an MP3 of 128 has −87 above 16.5 kHz and AAC of 128 −70…−77, where an honest 160…320 has
+# −30…−53; an MP3 of 160…192 has −85…−105 above 19 kHz, where a 320 has −35…−62.
+CUT_16K_DB = -65.0
+CUT_19K_DB = -75.0
+BLOWN_STEP = 64  # a file says this much more than it sounds like: it was made of a poorer one
+
+_RMS_RE = re.compile(r"Parsed_astats_(\d+).*RMS level dB:\s*(-?[\d.]+|-inf)")
+
+
+async def sounds_like(path: Path | str, info: ProbeInfo, timeout: float = 90) -> int | None:
+    """The bitrate the file's sound is worth, by where its spectrum ends: 128 (nothing above ~16 kHz), 192 (nothing
+    above ~19 kHz) or None — the whole band is there, or it cannot be told (a short file, a low sample rate, a
+    failure). Lossy encoders cut the top of the band, the more the lower the bitrate, and no re-encoding brings it
+    back: a "320" or a FLAC with nothing above 16 kHz was made of a 128. An estimate, not a proof — a quiet old
+    recording may have no top either."""
+    if info.duration_s < SPECTRUM_MIN_S or (info.sample_rate or 0) < 40000:
+        return None
+    start = max(0.0, info.duration_s / 2 - SPECTRUM_S / 2)
+    stats = "astats=measure_perchannel=none:measure_overall=RMS_level"
+    graph = ("[0:a]aformat=channel_layouts=mono,asplit=3[a][b][c];"
+             f"[a]{stats}[oa];"
+             f"[b]firequalizer=gain_entry='entry(16300,-140);entry(16700,0)',{stats}[ob];"
+             f"[c]firequalizer=gain_entry='entry(18800,-140);entry(19200,0)',{stats}[oc]")
+    try:
+        code, _, err = await _run(
+            ffmpeg_bin(), "-hide_banner", "-nostats", "-nostdin", "-ss", f"{start:.1f}", "-t", str(SPECTRUM_S),
+            "-i", str(path), "-vn", "-filter_complex", graph,
+            "-map", "[oa]", "-f", "null", "-", "-map", "[ob]", "-f", "null", "-", "-map", "[oc]", "-f", "null", "-",
+            timeout=timeout)
+    except (ProbeError, TimeoutError) as e:
+        log.warning("spectrum of %s not measured: %s", path, e)
+        return None
+    found = sorted((int(n), v) for n, v in _RMS_RE.findall(err.decode("utf-8", "replace")))
+    if code != 0 or len(found) != 3 or found[0][1] == "-inf":
+        return None
+    whole, above16, above19 = (float("-inf") if v == "-inf" else float(v) for _, v in found)
+    if above16 - whole < CUT_16K_DB:
+        return 128
+    if above19 - whole < CUT_19K_DB:
+        return 192
+    return None
+
+
 def middle_silences(
     silences: list[tuple[float, float]], duration: float, edge_s: float = 5
 ) -> list[tuple[float, float]]:
@@ -213,4 +262,6 @@ async def postcheck(
         log.warning("silencedetect failed for %s: %s", path, e)
     for start, end in found:
         warnings.append(f"Возможно, запикано: тишина {_fmt_secs(end - start)} с на {fmt_ts(start)}")
-    return PostcheckResult(ok=True, warnings=warnings, info=info, silences=found)
+    like = await sounds_like(path, info)
+    blown = like if like and (info.bitrate_kbps or 0) >= like + BLOWN_STEP else None
+    return PostcheckResult(ok=True, warnings=warnings, info=info, silences=found, blown_from_kbps=blown)

@@ -489,6 +489,8 @@ async def try_candidates(item_id: int, user_id: int, q: TrackQuery, meta: dict[s
     to the imported track's warnings."""
     pcfg = get_settings().cfg
     last_reason = ""
+    # a file that says more than it sounds like (made of a poorer one) waits: another may be the real thing
+    spare: tuple[Candidate, Path, Any] | None = None
     for cand in cands:
         provider = svc.providers.get(cand.provider)
         if provider is None:
@@ -520,8 +522,25 @@ async def try_candidates(item_id: int, user_id: int, q: TrackQuery, meta: dict[s
             path.unlink(missing_ok=True)
             await step(item_id, "bad", f"Не подошёл: {check.reason}", cand)
             continue
+        if check.blown_from_kbps:
+            said = check.info.bitrate_kbps if check.info else cand.bitrate_kbps
+            await step(item_id, "warn", f"Отложен: заявлено {said} кбит/с, а по звуку около {check.blown_from_kbps}", cand)
+            if spare is None:
+                spare = (cand, path, check)
+            else:
+                path.unlink(missing_ok=True)
+            continue
+        if spare is not None:
+            spare[1].unlink(missing_ok=True)
         bitrate = f", {cand.bitrate_kbps} кбит/с" if cand.bitrate_kbps else ""
         await step(item_id, "ok", f"Выбран: совпадение {cand.score:.2f}{bitrate}; проверка после скачивания пройдена", cand)
+        await import_downloaded(item_id, user_id, q, meta, cand, path, check, force, warning=warning)
+        return True, ""
+    if spare is not None:
+        cand, path, check = spare
+        said = check.info.bitrate_kbps if check.info else cand.bitrate_kbps
+        check.warnings = [*check.warnings, f"Заявлено {said} кбит/с, по звуку около {check.blown_from_kbps}: файл сделан из худшего"]
+        await step(item_id, "warn", "Выбран: лучше не нашлось — беру отложенный, с пометкой о качестве", cand)
         await import_downloaded(item_id, user_id, q, meta, cand, path, check, force, warning=warning)
         return True, ""
     return False, last_reason
