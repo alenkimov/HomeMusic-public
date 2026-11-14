@@ -3,12 +3,16 @@ the Hub instead of Navidrome gets the library as ever, and with it what only the
 
 Every call goes on to Navidrome as it came, with the app's own sign-in, and its answer comes back untouched. A few
 are the Hub's own:
-- `search3` / `search2`: after the library's songs come the catalog's ones the library has not got;
+- `search3` / `search2`: after the library's songs come the catalog's ones the library has not got — and, in
+  `search3`, the catalog's albums and artists;
 - `stream` / `download`, `getSong`, `getCoverArt` of such a song: it plays at once, from the sources (`app/listen.py`);
-- `star` of such a song: it goes to «Любимое» and is downloaded (the way ♥ of the web app does it).
+- `getAlbum`, `getArtist` of the catalog's: the album with its tracks (the ones the library has under Navidrome's
+  ids), the artist with the releases;
+- `star` of such a song: it goes to «Любимое» and is downloaded (the way ♥ of the web app does it); of such an
+  album: the album is downloaded.
 
-A song of the catalog has an id of the Hub's own (`hm-…`: its catalog ref); once it is downloaded the library has
-it under Navidrome's id. The listener is told by the app's sign-in: the same name and password as in the Hub (a
+What is the catalog's has an id of the Hub's own — `hms-…` a song, `hma-…` an album, `hmr-…` an artist: its catalog
+ref, and what it is (a ref alone does not say). Once a song is downloaded the library has it under Navidrome's id. The listener is told by the app's sign-in: the same name and password as in the Hub (a
 Subsonic token is checked against the password the Hub keeps). An account the Hub does not know gets Navidrome alone.
 """
 
@@ -31,10 +35,10 @@ from sqlalchemy import select
 from starlette.background import BackgroundTask
 
 from app import listen
-from app.catalog.models import CatalogTrack, split_ref
+from app.catalog.models import CatalogAlbum, CatalogArtist, CatalogTrack, split_ref
 from app.config import get_settings
 from app.db import session_scope
-from app.library.owned import annotate_tracks
+from app.library.owned import annotate_albums, annotate_tracks
 from app.models import User
 from app.net import make_client
 from app.security import decrypt
@@ -43,42 +47,59 @@ from app.services import svc
 router = APIRouter(tags=["subsonic"])
 log = logging.getLogger(__name__)
 
-PREFIX = "hm-"
+PREFIX = "hm"
+SONG, ALBUM, ARTIST = "s", "a", "r"
 SEARCH_LIMIT = 25
+SEARCH_ROW = 10  # albums and artists of the catalog a search adds
 SEARCH_TIMEOUT_S = 6  # the catalog is asked this long; the library's own answer never waits longer
 KNOWN_MAX = 5000
 PASSED = ("content-type", "content-length", "content-range", "accept-ranges", "etag", "last-modified", "cache-control",
           "content-disposition", "x-content-duration")
 # calls that name a song and can do without the catalog's one: an empty answer of their kind
 EMPTY = {"getLyrics": {"lyrics": {}}, "getLyricsBySongId": {"lyricsList": {}}, "getSimilarSongs": {"similarSongs": {}},
-         "getSimilarSongs2": {"similarSongs2": {}}, "scrobble": {}, "setRating": {}, "unstar": {}}
+         "getSimilarSongs2": {"similarSongs2": {}}, "scrobble": {}, "setRating": {}, "unstar": {},
+         "getArtistInfo": {"artistInfo": {}}, "getArtistInfo2": {"artistInfo2": {}}, "getAlbumInfo": {"albumInfo": {}},
+         "getAlbumInfo2": {"albumInfo": {}}}
 
-_known: OrderedDict[str, CatalogTrack] = OrderedDict()  # catalog songs shown lately, by their ref
+# what of the catalog was shown lately, by its ref: the next call about it need not ask the catalog again
+_known: OrderedDict[str, CatalogTrack] = OrderedDict()
+_albums: OrderedDict[str, CatalogAlbum] = OrderedDict()
+_artists: OrderedDict[str, CatalogArtist] = OrderedDict()
 _nd: httpx.AsyncClient | None = None
 
 
-def ext_id(ref: str) -> str:
-    return PREFIX + base64.urlsafe_b64encode(ref.encode()).decode().rstrip("=")
+def ext_id(ref: str, kind: str = SONG) -> str:
+    return f"{PREFIX}{kind}-" + base64.urlsafe_b64encode(ref.encode()).decode().rstrip("=")
 
 
-def ext_ref(id_: str | None) -> str | None:
-    """The catalog ref of a song id of the Hub's own; None for Navidrome's ids."""
-    if not id_ or not id_.startswith(PREFIX):
+def ext_of(id_: str | None) -> tuple[str, str] | None:
+    """(what it is, its catalog ref) of an id of the Hub's own; None for Navidrome's ids."""
+    if not id_ or len(id_) < 5 or not id_.startswith(PREFIX) or id_[3] != "-" or id_[2] not in (SONG, ALBUM, ARTIST):
         return None
-    raw = id_[len(PREFIX):]
+    raw = id_[4:]
     try:
         ref = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode()
         split_ref(ref)
     except Exception:
         return None
-    return ref
+    return id_[2], ref
+
+
+def ext_ref(id_: str | None, kind: str = SONG) -> str | None:
+    """The catalog ref of a song (an album, an artist) id of the Hub's own; None for anything else."""
+    got = ext_of(id_)
+    return got[1] if got and got[0] == kind else None
+
+
+def _keep_known(cache: OrderedDict, ref: str, value: Any) -> None:
+    cache[ref] = value
+    cache.move_to_end(ref)
+    while len(cache) > KNOWN_MAX:
+        cache.popitem(last=False)
 
 
 def _remember(t: CatalogTrack) -> None:
-    _known[t.ref] = t
-    _known.move_to_end(t.ref)
-    while len(_known) > KNOWN_MAX:
-        _known.popitem(last=False)
+    _keep_known(_known, t.ref, t)
 
 
 def song(t: CatalogTrack) -> dict[str, Any]:
@@ -97,7 +118,67 @@ def song(t: CatalogTrack) -> dict[str, Any]:
         out["track"] = t.track_no
     if t.release_date:
         out["year"] = t.release_date.year
+    if t.album_ref:
+        out["albumId"] = ext_id(t.album_ref, ALBUM)
+    if t.artist_ref:
+        out["artistId"] = ext_id(t.artist_ref, ARTIST)
     return out
+
+
+def album(a: CatalogAlbum) -> dict[str, Any]:
+    """A catalog album as Subsonic's `AlbumID3`."""
+    _keep_known(_albums, a.ref, a)
+    id_ = ext_id(a.ref, ALBUM)
+    out: dict[str, Any] = {"id": id_, "name": a.title, "artist": a.artist, "coverArt": id_,
+                           "songCount": a.nb_tracks or len(a.tracks or []),
+                           "duration": sum(t.duration_s or 0 for t in a.tracks or [])}
+    if a.artist_ref:
+        out["artistId"] = ext_id(a.artist_ref, ARTIST)
+    if year := a.year or (a.release_date.year if a.release_date else None):
+        out["year"] = year
+    if a.genre:
+        out["genre"] = a.genre
+    return out
+
+
+def artist(a: CatalogArtist) -> dict[str, Any]:
+    """A catalog artist as Subsonic's `ArtistID3`."""
+    _keep_known(_artists, a.ref, a)
+    id_ = ext_id(a.ref, ARTIST)
+    return {"id": id_, "name": a.name, "coverArt": id_, "albumCount": a.nb_albums or 0}
+
+
+async def _album(ref: str, user: User, fmt: str | None) -> Response:
+    """The album with its tracks: the ones the library has go under Navidrome's ids — they play from the library,
+    and a ♥ on them is Navidrome's."""
+    from app.api.catalog import get_album
+
+    try:
+        a = await get_album(ref)
+    except Exception as e:
+        log.warning("subsonic: the catalog does not give the album %s: %r", ref, e)
+        return _error(fmt, 70, "Альбом не найден в каталоге")
+    async with session_scope() as s:
+        tracks = await annotate_tracks(s, a.tracks or [], user.id)
+    songs = []
+    for t in tracks:
+        entry = song(t)
+        if t.owned and t.nd_song_id:
+            entry["id"] = t.nd_song_id
+        songs.append(entry)
+    return _ok(fmt, album={**album(a), "songCount": len(songs), "song": songs})
+
+
+async def _artist(ref: str, fmt: str | None) -> Response:
+    from app.api.catalog import get_artist_page
+
+    try:
+        page = await get_artist_page(ref)
+    except Exception as e:
+        log.warning("subsonic: the catalog does not give the artist %s: %r", ref, e)
+        return _error(fmt, 70, "Исполнитель не найден в каталоге")
+    albums = [album(a) for a in page.albums]
+    return _ok(fmt, artist={**artist(page.artist), "albumCount": len(albums), "album": albums})
 
 
 async def _track(ref: str) -> CatalogTrack | None:
@@ -261,6 +342,22 @@ async def _search(endpoint: str, params: list[tuple[str, str]], user: User, fmt:
             box["song"] = list(box.get("song") or []) + [song(t) for t in found if not t.owned]
         except Exception as e:  # the catalog is away: the library's own answer goes as it is
             log.warning("subsonic: the catalog search failed: %r", e)
+    # the catalog's albums and artists, for the apps that browse by tags (`search3`); the first page only
+    wants = (_int(params, "albumCount", 20) > 0 and _int(params, "albumOffset", 0) == 0,
+             _int(params, "artistCount", 20) > 0 and _int(params, "artistOffset", 0) == 0)
+    if resp.get("status") == "ok" and q and endpoint == "search3" and any(wants) and svc.deezer is not None:
+        try:
+            more = await asyncio.wait_for(svc.deezer.search(q, kinds=("artist", "album"), limit=SEARCH_ROW), SEARCH_TIMEOUT_S)
+            box = resp.setdefault("searchResult3", {})
+            if wants[0] and more.albums:
+                async with session_scope() as s:
+                    albums = await annotate_albums(s, more.albums, user.id)
+                box["album"] = list(box.get("album") or []) + [album(a) for a in albums if a.owned_status != "full"]
+            if wants[1] and more.artists:
+                have = {str(x.get("name") or "").casefold() for x in box.get("artist") or []}
+                box["artist"] = list(box.get("artist") or []) + [artist(a) for a in more.artists if a.name.casefold() not in have]
+        except Exception as e:
+            log.warning("subsonic: the catalog search (albums, artists) failed: %r", e)
     return _render(fmt, resp)
 
 
@@ -283,10 +380,34 @@ async def _play(request: Request, ref: str, user: User, fmt: str | None) -> Resp
                              background=BackgroundTask(m.close) if m.close else None)
 
 
-async def _cover(ref: str, params: list[tuple[str, str]]) -> Response:
-    t = await _track(ref)
-    size = _int(params, "size", 0)
-    url = t and ((t.cover_small_url if 0 < size <= 300 else None) or t.cover_url or t.cover_small_url)
+async def _cover(kind: str, ref: str, params: list[tuple[str, str]]) -> Response:
+    small = 0 < _int(params, "size", 0) <= 300
+    url: str | None = None
+    if kind == SONG:
+        t = await _track(ref)
+        url = t and ((t.cover_small_url if small else None) or t.cover_url or t.cover_small_url)
+    elif kind == ALBUM:
+        a = _albums.get(ref)
+        if a is None:
+            from app.api.catalog import get_album
+
+            try:
+                a = await get_album(ref)
+                _keep_known(_albums, ref, a)
+            except Exception:
+                a = None
+        url = a and ((a.cover_small_url if small else None) or a.cover_url or a.cover_small_url)
+    else:
+        r = _artists.get(ref)
+        if r is None:
+            from app.api.catalog import get_artist_page
+
+            try:
+                r = (await get_artist_page(ref)).artist
+                _keep_known(_artists, ref, r)
+            except Exception:
+                r = None
+        url = r and ((r.picture_small_url if small else None) or r.picture_url or r.picture_small_url)
     if not url:
         return Response(status_code=404)
     try:
@@ -301,8 +422,8 @@ async def _cover(ref: str, params: list[tuple[str, str]]) -> Response:
                     headers={"cache-control": "public, max-age=86400"})
 
 
-async def _keep(refs: list[str], user: User) -> None:
-    """♥ of catalog songs: «Любимое» gets them and they are downloaded."""
+async def _keep(refs: list[str], albums: list[str], user: User) -> None:
+    """♥ of the catalog's: «Любимое» gets the songs and they are downloaded; an album is downloaded whole."""
     from app import playlists
     from app.api.downloads import create_batch
     from app.api.schemas import DownloadIn
@@ -310,8 +431,11 @@ async def _keep(refs: list[str], user: User) -> None:
 
     async with session_scope() as s:
         user = await s.get(User, user.id)
-        liked = await playlists.liked(s, user.id)
-        await create_batch(s, user, DownloadIn(track_refs=refs, playlist_id=str(liked.id)), origin="catalog")
+        if refs:
+            liked = await playlists.liked(s, user.id)
+            await create_batch(s, user, DownloadIn(track_refs=refs, playlist_id=str(liked.id)), origin="catalog")
+        for ref in albums:
+            await create_batch(s, user, DownloadIn(album_ref=ref), origin="catalog")
     notify()
 
 
@@ -320,7 +444,7 @@ async def rest(endpoint: str, request: Request) -> Response:
     endpoint = endpoint.removesuffix(".view")
     params = await _params(request)
     fmt = _one(params, "f")
-    refs = {v: ext_ref(v) for k, v in params if v.startswith(PREFIX)}
+    refs = {v: ext_of(v) for k, v in params if v.startswith(PREFIX)}
     ext = [r for r in refs.values() if r]
     searching = endpoint in ("search3", "search2")
     if not ext and not searching:
@@ -332,17 +456,23 @@ async def rest(endpoint: str, request: Request) -> Response:
     if searching:
         return await _search(endpoint, params, user, fmt)
 
-    ref = ext_ref(_one(params, "id"))
+    of = ext_of(_one(params, "id"))
+    ref = of[1] if of and of[0] == SONG else None
     if endpoint in ("stream", "download") and ref:
         return await _play(request, ref, user, fmt)
-    if endpoint == "getCoverArt" and ref:
-        return await _cover(ref, params)
+    if endpoint == "getCoverArt" and of:
+        return await _cover(of[0], of[1], params)
     if endpoint == "getSong" and ref:
         t = await _track(ref)
         return _ok(fmt, song=song(t)) if t else _error(fmt, 70, "Трек не найден в каталоге")
+    if endpoint == "getAlbum" and of and of[0] == ALBUM:
+        return await _album(of[1], user, fmt)
+    if endpoint == "getArtist" and of and of[0] == ARTIST:
+        return await _artist(of[1], fmt)
     if endpoint == "star":
         try:
-            await _keep(list(dict.fromkeys(ext)), user)
+            await _keep(list(dict.fromkeys(r for k, r in ext if k == SONG)),
+                        list(dict.fromkeys(r for k, r in ext if k == ALBUM)), user)
         except Exception as e:
             log.warning("subsonic: could not keep %s: %r", ext, e)
             return _error(fmt, 0, "Не удалось добавить трек в «Любимое»")

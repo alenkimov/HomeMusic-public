@@ -50,17 +50,20 @@ async def env(hub_env):
                 yield {"client": client, "calls": calls}
 
 
-def ext(ref: str = "dz:100") -> str:
+def ext(ref: str = "dz:100", kind: str = "s") -> str:
     from app.api.subsonic import ext_id
 
-    return ext_id(ref)
+    return ext_id(ref, kind)
 
 
 def test_ids_of_catalog_songs_are_told_from_the_library():
-    from app.api.subsonic import ext_ref
+    from app.api.subsonic import ext_of, ext_ref
 
-    assert ext_ref(ext("dz:100")) == "dz:100" and ext("dz:100").startswith("hm-")
-    assert ext_ref("nd1") is None and ext_ref("hm-!!!") is None and ext_ref(None) is None
+    assert ext_ref(ext("dz:100")) == "dz:100" and ext("dz:100").startswith("hms-")
+    assert ext_ref("nd1") is None and ext_ref("hms-!!!") is None and ext_ref(None) is None
+    # the same ref is a song, an album or an artist: the id says which
+    assert ext_of(ext("dz:10", "a")) == ("a", "dz:10") and ext_of(ext("dz:1", "r")) == ("r", "dz:1")
+    assert ext_ref(ext("dz:10", "a")) is None and ext_ref(ext("dz:10", "a"), "a") == "dz:10"
 
 
 async def test_calls_go_on_to_navidrome_as_they_came(env):
@@ -83,6 +86,10 @@ async def test_search_adds_the_catalog_after_the_library(env):
     songs = r.json()["subsonic-response"]["searchResult3"]["song"]
     assert songs[0] == LIB_SONG and songs[1]["id"] == ext() and songs[1]["title"] == "Группа крови"
     assert songs[1]["coverArt"] == ext() and songs[1]["duration"] == 245 and len(songs) == 6
+    assert songs[1]["albumId"] == ext("dz:10", "a")  # the song leads to its album
+    albums = r.json()["subsonic-response"]["searchResult3"]["album"]
+    assert albums == [{"id": ext("dz:10", "a"), "name": "Группа крови", "artist": "Кино", "coverArt": ext("dz:10", "a"),
+                       "songCount": 1, "duration": 245, "year": 1988}]
 
     # XML is what an app gets unless it asks for JSON
     r = await c.get("/rest/search3.view", params={**AUTH, "query": "кино"})
@@ -146,3 +153,30 @@ async def test_a_catalog_song_shows_plays_and_is_kept(env, monkeypatch):
     assert r.json()["subsonic-response"]["error"]["code"] == 70
     r = await c.get("/rest/stream", params={**AUTH, "p": "wrong", "f": "json", "id": ext()})
     assert r.json()["subsonic-response"]["error"]["code"] == 40
+
+
+async def test_a_catalog_album_opens_with_its_tracks_and_is_kept(env):
+    from app.api.subsonic import artist
+    from app.catalog.models import CatalogArtist
+    from app.db import session_scope
+    from app.models import Job
+
+    c = env["client"]
+    r = await c.get("/rest/getAlbum", params={**AUTH, "f": "json", "id": ext("dz:10", "a")})
+    got = r.json()["subsonic-response"]["album"]
+    assert (got["name"], got["artist"], got["songCount"]) == ("Группа крови", "Кино", 1)
+    assert got["song"][0]["id"] == ext() and got["song"][0]["title"] == "Группа крови"
+    r = await c.get("/rest/getCoverArt", params={**AUTH, "id": ext("dz:10", "a")})
+    assert r.content == b"jpg"
+
+    # ♥ of the album: it is downloaded whole
+    r = await c.get("/rest/star", params={**AUTH, "f": "json", "albumId": ext("dz:10", "a")})
+    assert r.json()["subsonic-response"]["status"] == "ok"
+    async with session_scope() as s:
+        job = (await s.execute(select(Job).where(Job.kind == "expand_batch"))).scalar_one()
+        assert job.payload_json["album_refs"] == ["dz:10"] and job.payload_json["track_refs"] == []
+
+    assert artist(CatalogArtist(ref="dz:1", source="dz", id="1", name="Кино", nb_albums=12)) == {
+        "id": ext("dz:1", "r"), "name": "Кино", "coverArt": ext("dz:1", "r"), "albumCount": 12}
+    r = await c.get("/rest/getArtistInfo2", params={**AUTH, "f": "json", "id": ext("dz:1", "r")})
+    assert r.json()["subsonic-response"]["artistInfo2"] == {}
