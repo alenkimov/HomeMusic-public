@@ -200,7 +200,7 @@ function TrackMenu({ track, extra, inPlayer, lean, noTags, onClose }: { track: M
           <MenuItem
             icon="user"
             active={artistDisliked}
-            label={artistDisliked ? `Убрать «Не нравится» с исполнителя` : 'Не нравится исполнитель'}
+            label={artistDisliked ? `Убрать «Не нравится» с исполнителя` : 'Не включать исполнителя'}
             hint={track.artist}
             onClick={() => toggle(artist, artistDisliked)}
           />

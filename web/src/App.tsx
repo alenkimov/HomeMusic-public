@@ -43,8 +43,11 @@ import { LyricsSettingsPage } from './pages/LyricsSettings';
 import { ArtistsPage, LikedPage, NdAlbumPage, NdAlbumsPage, NdArtistPage, PlaylistPage, SelectionPage } from './pages/MediaLibrary';
 import { TagsPage } from './pages/Tags';
 import { FileJournalPage } from './pages/FileJournal';
+import { DiscographyPage } from './pages/Discography';
+import { HiddenPage } from './pages/Hidden';
 import { HistoryPage } from './pages/History';
 import { OfflinePage } from './pages/Offline';
+import { refreshDislikes, resetDislikes } from './lib/dislikes';
 import { forgetAccount, initOffline } from './lib/offline';
 import { ForYouPage } from './pages/ForYou';
 import { TastePage } from './pages/Mix';
@@ -73,6 +76,7 @@ const STANDALONE_ROUTES: RouteDef[] = [
   ['/tags', 'library', () => <TagsPage />],
   ['/stats', 'more', () => <StatsPage />],
   ['/history', 'more', () => <HistoryPage />],
+  ['/hidden', 'more', () => <HiddenPage />],
   ['/offline', 'more', () => <OfflinePage />],
   ['/releases', 'more', () => <ReleasesPage />],
   ['/discoveries', 'library', () => <ForYouPage key="weekly" kind="weekly" />],
@@ -89,6 +93,7 @@ const START = STANDALONE ? '/home' : '/search';
 const ROUTES: RouteDef[] = [
   ...(STANDALONE ? STANDALONE_ROUTES : []),
   ['/search', 'search', (_, r) => <SearchPage initialQuery={r.query.get('q') ?? ''} initialTab={searchTab(r.query.get('tab'))} />],
+  ['/artist/:ref/discography', 'search', (p) => <DiscographyPage key={p.ref} refId={p.ref} />],
   ['/artist/:ref', 'search', (p) => <ArtistPage key={p.ref} refId={p.ref} />],
   ['/album/:ref', 'search', (p) => <AlbumPage key={p.ref} refId={p.ref} />],
   ['/mix/:id', 'library', (p) => <ForYouPage key={`mix:${p.id}`} kind="mix" mix={Number(p.id)} />],
@@ -208,6 +213,11 @@ export function App() {
   useEffect(() => {
     void initOffline();
   }, []);
+  // whom the user does not listen to: the player needs it from the start, to go past their tracks
+  const uid = me?.id;
+  useEffect(() => {
+    if (uid != null) void refreshDislikes(true);
+  }, [uid]);
   const logout = useCallback(async () => {
     try {
       await api.logout();
@@ -218,6 +228,7 @@ export function App() {
     stopListening();
     forgetAccount(); // what was kept on the device for this account, and what its pages read
     resetStars();
+    resetDislikes();
     resetInPlaylists();
     resetReleases();
     updateSession(null);

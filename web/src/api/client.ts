@@ -39,6 +39,7 @@ import type {
   MeOut,
   MixSettingsIn,
   MixSettingsOut,
+  DiscographyOut,
   FileJournalOut,
   HistoryOut,
   ForYouItem,
@@ -332,6 +333,8 @@ export const api = {
   playsHistory: (q: { offset?: number; limit?: number; show?: string; q?: string }, signal?: AbortSignal) =>
     request<HistoryOut>('GET', withQuery('/api/plays/history', q), { signal }),
   forgetListen: (uid: string) => request<OkOut>('DELETE', withQuery('/api/plays/history', { uid })),
+  /** Every release of an artist with its tracks (the first asking of a long one takes seconds). */
+  discography: (ref: string, signal?: AbortSignal) => request<DiscographyOut>('GET', `/api/catalog/artist/${enc(ref)}/discography`, { signal }),
   /** How a track's file came to the library: the journal of its download. */
   fileJournal: (trackId: number, signal?: AbortSignal) => request<FileJournalOut>('GET', `/api/library/tracks/${trackId}/journal`, { signal }),
   /** «Для вас»: the lists the Hub makes by itself, and one of them as its page shows it. */

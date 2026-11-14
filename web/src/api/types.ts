@@ -657,7 +657,15 @@ export interface NdArtistOut {
   starred: boolean;
 }
 
+/** Everything an artist released, newest first, each release with its tracks. */
+export interface DiscographyOut {
+  artist: CatalogArtist;
+  albums: AlbumOut[];
+}
+
 export interface NdArtistPageOut {
+  /** the same artist in the catalog, when it has one of this very name */
+  catalog_ref?: string | null;
   artist: NdArtistOut;
   albums: NdAlbumOut[];
 }

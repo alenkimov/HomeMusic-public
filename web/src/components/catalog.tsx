@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useOfHiddenArtist } from '../lib/dislikes';
 import { KeptMark, useUnreachable } from './Offline';
 import { FileInfo } from './FileInfo';
 import type { AlbumOut, CatalogArtist, TrackOut } from '../api/types';
@@ -211,7 +212,10 @@ export function TrackRow({
   const likeTarget = { targetType: 'track' as const, trackId: track.library_track_id, songId: track.owned ? track.nd_song_id : null, ref: track.ref, data: { ...track } };
   const liked = useLiked(likeTarget);
   const kept = useInPlaylists(tagKey(track)) || liked; // the row's button shows ♥ or ✓
-  const unreachable = useUnreachable(track.ref); // no network, and not kept on the device: it cannot play now
+  // no network and not kept on the device, or of an artist the user does not listen to: it does not play by itself
+  const offline = useUnreachable(track.ref);
+  const hiddenArtist = useOfHiddenArtist(track);
+  const unreachable = offline || hiddenArtist;
   const artistLine = track.artists?.length ? track.artists.join(', ') : track.artist;
   const menuTrack: MenuTrack = {
     title: track.title,

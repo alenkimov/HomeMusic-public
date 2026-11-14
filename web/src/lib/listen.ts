@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { ofHiddenArtist } from './dislikes';
 import { keptInfo } from './offline';
 import { api, errorMessage, isAbort, listenStreamUrl } from '../api/client';
 import type { LaunchOrigin, ListenOut } from '../api/types';
@@ -354,9 +355,10 @@ function el(): HTMLAudioElement {
   // the same element plays on: it was unlocked by the first tap, so the next track may start without one
   a.addEventListener('ended', () => {
     reportEnd(true);
+    const after = ahead(state.index);
     if (state.repeat === 'one') start(state.queue, state.index, true);
-    else if (hasNext(state)) start(state.queue, state.index + 1, true);
-    else if (state.repeat === 'all' && !onWave()) start(state.queue, 0, true);
+    else if (after < state.queue.length) start(state.queue, after, true);
+    else if (state.repeat === 'all' && !onWave() && ahead(-1) < state.queue.length) start(state.queue, ahead(-1), true);
     else set({ phase: 'ended' });
   });
   a.addEventListener('error', () => {
@@ -856,15 +858,25 @@ export const hasPrev = (s: ListenState) => s.index > 0;
 
 /** Plays the next track of the queue; false at its end. */
 export function next(): boolean {
-  if (hasNext(state)) start(state.queue, state.index + 1);
-  else if (state.repeat === 'all' && state.track && !onWave()) start(state.queue, 0);
+  const after = ahead(state.index);
+  if (after < state.queue.length) start(state.queue, after);
+  else if (state.repeat === 'all' && state.track && !onWave() && ahead(-1) < state.queue.length) start(state.queue, ahead(-1));
   else return false;
   return true;
 }
 
+/** The place of the queue the player goes to from `from` by itself (`step` 1: on, −1: back): the tracks of an artist
+ * the user does not listen to (`lib/dislikes.ts`) are passed. Such a track plays only when it is tapped. Past the
+ * end of the queue (or before its start) when there is none. */
+function ahead(from: number, step: 1 | -1 = 1): number {
+  let i = from + step;
+  while (i >= 0 && i < state.queue.length && ofHiddenArtist(state.queue[i])) i += step;
+  return i;
+}
+
 /** ⏮: back to the start of the track, or (near its start) the previous track. */
 export function prev() {
-  if (hasPrev(state) && (state.position < RESTART_AFTER_S || state.phase === 'error')) start(state.queue, state.index - 1);
+  if (hasPrev(state) && ahead(state.index, -1) >= 0 && (state.position < RESTART_AFTER_S || state.phase === 'error')) start(state.queue, ahead(state.index, -1));
   else if (state.track) {
     seek(0);
     if (state.phase === 'ended' || state.phase === 'paused') resume();

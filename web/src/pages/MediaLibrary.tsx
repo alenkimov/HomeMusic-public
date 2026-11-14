@@ -1,4 +1,5 @@
 import { Children, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ArtistPage } from './Artist';
 import { api } from '../api/client';
 import type { NdAlbumOut, NdArtistOut, NdSongOut, TrackOut } from '../api/types';
 import { playAll, TrackRow, TrackTableHeader, type ListSort } from '../components/catalog';
@@ -252,8 +253,19 @@ export function LikedPage() {
       window.removeEventListener('hm:hub-favorite', changed);
     };
   }, [res.reload]);
-  const songs = useMemo(() => res.data?.songs ?? [], [res.data]);
+  // «Вам нравится» of an artist's page (`/liked?artist=<name>&ref=<ref>`): the liked tracks that artist is on
+  const route = useRoute();
+  const by = route.query.get('artist');
+  const byRef = route.query.get('ref');
+  const songs = useMemo(() => {
+    const all = res.data?.songs ?? [];
+    if (!by) return all;
+    const want = by.trim().toLocaleLowerCase('ru');
+    return all.filter((t) => (!!byRef && (t.artist_ref === byRef || !!t.artist_refs?.includes(byRef))) || (t.artists?.length ? t.artists : [t.artist]).some((a) => a.trim().toLocaleLowerCase('ru') === want));
+  }, [res.data, by, byRef]);
   const length = useMemo(() => songs.reduce((sum, t) => sum + (t.duration_s ?? 0), 0), [songs]);
+  const title = by ? `Вам нравится · ${by}` : 'Любимое';
+  const back = by ? (byRef ? `/artist/${enc(byRef)}` : '/library') : '/library';
   const search = useListSearch(songs);
   const [sort, setSort] = useState<ListSort>(null);
   const [filter, setFilter] = useState<TagFilter>({});
@@ -265,11 +277,11 @@ export function LikedPage() {
   return (
     <div>
       {saving && <SaveSelection scope="liked" filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`)} />}
-      <ListBar title="Любимое" back="/library" tracks={playing} context="liked" offline={{ key: 'liked', to: '/liked', tracks: songs }} search={songs.length ? search : undefined} tags={songs.length ? { songIds, filter, onChange: setFilter, onSave: () => setSaving(true), count: shown ? shown.length : songs.length } : undefined} />
+      <ListBar title={title} back={back} tracks={playing} context="liked" offline={by ? undefined : { key: 'liked', to: '/liked', tracks: songs }} search={songs.length ? search : undefined} tags={songs.length ? { songIds, filter, onChange: setFilter, onSave: () => setSaving(true), count: shown ? shown.length : songs.length } : undefined} />
       {res.data && !search.alone && (
         <Hero
-          kicker="Плейлист"
-          title="Любимое"
+          kicker={by ? 'Из «Любимого»' : 'Плейлист'}
+          title={title}
           art={
             <div className="flex h-full w-full items-center justify-center bg-accent/20 text-accent">
               <Icon name="heart" size={84} filled />
@@ -499,6 +511,8 @@ export function NdArtistPage({ id }: { id: string }) {
   if (res.loading) return (<><PageHeader hero title="Исполнитель" back="/artists" /><SkeletonRows /></>);
   if (!res.data) return (<><PageHeader hero title="Исполнитель" back="/artists" /><ErrorState text={res.error ?? 'Исполнитель не найден'} onRetry={() => res.reload()} /></>);
   const { artist, albums } = res.data;
+  // the catalog knows this artist: their page is the catalog's (the popular tracks, the whole discography)
+  if (res.data.catalog_ref) return <ArtistPage refId={res.data.catalog_ref} />;
   return (
     <div>
       <PageHeader

@@ -253,3 +253,18 @@ def test_offline_hypotheses_do_not_change_online_m4(hypothesis):
 def test_timezone_aware_input_is_normalized_to_utc():
     p = profile(event(at=NOW.replace(tzinfo=UTC)), now=NOW.replace(tzinfo=UTC))
     assert p.now == NOW and p.tracks["dz:1"].score == 2
+
+
+def test_an_artist_not_listened_to_is_any_credited_one():
+    """«Не включать этого исполнителя»: a track is theirs where they are the main artist and where they only feature —
+    known by the catalog ref, and by the name where a track carries none."""
+    p = profile(event("start", "start"))
+    p.disliked_artist_refs.add("dz:666")
+    p.disliked_artists.add(artist_key("Нелюбимый"))
+    ask = dict(ref="dz:77", nd_song_id=None)
+    assert p.disliked(**ask, artist="Нелюбимый", artist_ref=None)
+    assert p.disliked(**ask, artist="Другой", artist_ref="dz:666")
+    assert p.disliked(**ask, artist="Другой", artist_ref="dz:1", artist_refs=["dz:1", "dz:666"])
+    assert p.disliked(**ask, artist="Другой", artist_ref=None, artists=["Другой", "нелюбимый"])
+    assert not p.disliked(**ask, artist="Другой", artist_ref="dz:1", artists=["Другой", "Третий"], artist_refs=["dz:1", "dz:2"])
+    assert not p.disliked(**ask, artist="Другой", artist_ref=None, artists=None, artist_refs=None)
