@@ -44,6 +44,8 @@ import { ArtistsPage, LikedPage, NdAlbumPage, NdAlbumsPage, NdArtistPage, Playli
 import { TagsPage } from './pages/Tags';
 import { FileJournalPage } from './pages/FileJournal';
 import { HistoryPage } from './pages/History';
+import { OfflinePage } from './pages/Offline';
+import { forgetAccount, initOffline } from './lib/offline';
 import { ForYouPage } from './pages/ForYou';
 import { TastePage } from './pages/Mix';
 import { MorePage } from './pages/More';
@@ -71,6 +73,7 @@ const STANDALONE_ROUTES: RouteDef[] = [
   ['/tags', 'library', () => <TagsPage />],
   ['/stats', 'more', () => <StatsPage />],
   ['/history', 'more', () => <HistoryPage />],
+  ['/offline', 'more', () => <OfflinePage />],
   ['/releases', 'more', () => <ReleasesPage />],
   ['/discoveries', 'library', () => <ForYouPage key="weekly" kind="weekly" />],
   ['/listenbrainz', 'more', () => <ListenBrainzPage />],
@@ -201,6 +204,10 @@ export function App() {
     if (me && !resolved) navigate(START, { replace: true });
   }, [me, resolved]);
 
+  // what is kept on the device is read once, and what was not fetched to the end goes on
+  useEffect(() => {
+    void initOffline();
+  }, []);
   const logout = useCallback(async () => {
     try {
       await api.logout();
@@ -209,6 +216,7 @@ export function App() {
     }
     invalidateCache();
     stopListening();
+    forgetAccount(); // what was kept on the device for this account, and what its pages read
     resetStars();
     resetInPlaylists();
     resetReleases();

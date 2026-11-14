@@ -1,8 +1,19 @@
-/* HomeMusic service worker: app shell cache, Web Share Target, notification clicks.
-   Never caches /api/*. BUILD_ID is stamped by vite.config.ts at build time. */
+/* HomeMusic service worker: app shell cache, Web Share Target, notification clicks — and what plays and shows without
+   the network (`src/lib/offline.ts`): the audio kept for offline, the lists and covers read lately.
+   BUILD_ID is stamped by vite.config.ts at build time. */
 const BUILD_ID = '__BUILD_ID__';
 const SHELL = `hm-shell-${BUILD_ID}`;
 const ASSETS = 'hm-assets-v1'; // hashed file names: safe to keep across builds
+// Kept across builds, and filled by the page (`src/lib/offline.ts`) as well as here:
+const AUDIO = 'hm-audio-v1'; // tracks kept for offline, by `/api/listen/stream?ref=<ref>`
+const API = 'hm-api-v1'; // the last answer of the Hub to what a page reads: shown when the Hub cannot be reached
+const IMG = 'hm-img-v1'; // covers
+/* What a page reads to draw the library: kept as last answered, for when there is no network. Not what must be live
+   (downloads, the search of the catalog, events) nor what is asked once (the assistant, the admin's pages). */
+const KEPT = ['/api/auth/me', '/api/playlists', '/api/nd/', '/api/for-you', '/api/tags', '/api/starred', '/api/stats/counts',
+  '/api/lyrics', '/api/mixes/today', '/api/plays/history'];
+const NOT_KEPT = ['/api/lyrics/candidates', '/api/lyrics/search', '/api/lyrics/probe', '/api/lyrics/sources', '/api/lyrics/settings', '/api/lyrics/translators'];
+const audioKey = (ref) => `${self.location.origin}/api/listen/stream?ref=${encodeURIComponent(ref)}`;
 const SHELL_URLS = ['/', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/badge-96.png'];
 
 // Same layout as src/lib/shareStore.ts
@@ -32,7 +43,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
-      const keep = new Set([SHELL, ASSETS]);
+      const keep = new Set([SHELL, ASSETS, AUDIO, API, IMG]);
       for (const key of await caches.keys()) if (!keep.has(key)) await caches.delete(key);
       await self.clients.claim();
     })(),
@@ -49,7 +60,16 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (req.method !== 'GET') return;
-  if (url.pathname.startsWith('/api/') || url.pathname === '/healthz' || url.pathname.startsWith('/app/')) return;
+  if (url.pathname === '/api/listen/stream') {
+    event.respondWith(audio(req, url));
+    return;
+  }
+  if (url.pathname.startsWith('/api/')) {
+    if (/\/cover(\/|$)/.test(url.pathname)) event.respondWith(staleWhileRevalidate(req, IMG));
+    else if (KEPT.some((x) => url.pathname.startsWith(x)) && !NOT_KEPT.some((x) => url.pathname.startsWith(x))) event.respondWith(networkFirstApi(req));
+    return;
+  }
+  if (url.pathname === '/healthz' || url.pathname.startsWith('/app/')) return;
 
   if (url.pathname.startsWith('/assets/')) {
     event.respondWith(cacheFirst(req, ASSETS));
@@ -97,6 +117,47 @@ async function staleWhileRevalidate(req, cacheName) {
     .catch(() => hit);
   return hit || net;
 }
+
+/* A track kept for offline plays from this device, with or without the network; any other goes to the Hub. A player
+   asks for a part of the file (`Range`): it gets that part (206), cut from the copy kept whole. */
+async function audio(req, url) {
+  const ref = url.searchParams.get('ref');
+  const hit = ref ? await (await caches.open(AUDIO)).match(audioKey(ref)) : null;
+  if (!hit) return fetch(req);
+  const blob = await hit.blob();
+  const size = blob.size;
+  const type = hit.headers.get('content-type') || 'audio/mpeg';
+  const base = { 'content-type': type, 'accept-ranges': 'bytes', 'cache-control': 'no-store', 'x-homemusic-offline': '1' };
+  const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get('range') || '');
+  if (!m || (!m[1] && !m[2])) return new Response(blob, { status: 200, headers: { ...base, 'content-length': String(size) } });
+  let start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2]));
+  let end = m[1] && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+  if (start >= size || start > end) return new Response(null, { status: 416, headers: { ...base, 'content-range': `bytes */${size}` } });
+  return new Response(blob.slice(start, end + 1, type), {
+    status: 206,
+    headers: { ...base, 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': String(end - start + 1) },
+  });
+}
+
+/* What a page reads of the library: the Hub's answer, and a copy of it kept; when the Hub cannot be reached — the
+   copy, so the lists read before open without the network. */
+async function networkFirstApi(req) {
+  const cache = await caches.open(API);
+  try {
+    const res = await fetch(req);
+    if (res.ok && (res.headers.get('content-type') || '').includes('json')) cache.put(req.url, res.clone());
+    return res;
+  } catch (e) {
+    const hit = await cache.match(req.url);
+    if (hit) return hit;
+    throw e;
+  }
+}
+
+// The page says when the account leaves: what was read for it is not shown to the next one.
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'hm-forget') event.waitUntil(Promise.all([caches.delete(API), caches.delete(AUDIO)]));
+});
 
 // --- Web Share Target ------------------------------------------------------------------------------
 

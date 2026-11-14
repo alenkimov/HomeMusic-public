@@ -156,6 +156,7 @@ export function ForYouPage({ kind, mix }: { kind: string; mix?: number }) {
         search={tracks.length ? search : undefined}
         tags={tracks.length ? { songIds, filter, onChange: setFilter, count: list.length } : undefined}
         extra={extra}
+        offline={mix === undefined && issue === null ? { key: `foryou:${kind}`, to: kind === 'mix' ? '/mix' : kind === 'weekly' ? '/discoveries' : `/auto/${kind}`, tracks } : undefined}
       />
       {!search.alone && (
         <Hero

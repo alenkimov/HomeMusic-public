@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { keptInfo } from './offline';
 import { api, errorMessage, isAbort, listenStreamUrl } from '../api/client';
 import type { LaunchOrigin, ListenOut } from '../api/types';
 import { startDownload } from './actions';
@@ -394,7 +395,13 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
   // the Hub goes on with what it has begun
   for (const p of prefetching.values()) p.ctl.abort();
   prefetching.clear();
-  api.listen(track.ref, ctl.signal).then(
+  // a track kept on the device (`lib/offline.ts`) plays from it: when the Hub cannot be asked, what it said of the
+  // file when the track was kept is shown
+  api.listen(track.ref, ctl.signal).catch((e: unknown) => {
+    const kept = isAbort(e) ? null : keptInfo(track.ref);
+    if (!kept) throw e;
+    return kept;
+  }).then(
     (info) => {
       if (resolving !== ctl) return;
       set({ info, duration: info.kind === 'preview' ? (info.duration_s ?? 30) : state.duration });

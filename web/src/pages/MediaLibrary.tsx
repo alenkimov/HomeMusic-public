@@ -265,7 +265,7 @@ export function LikedPage() {
   return (
     <div>
       {saving && <SaveSelection scope="liked" filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`)} />}
-      <ListBar title="Любимое" back="/library" tracks={playing} context="liked" search={songs.length ? search : undefined} tags={songs.length ? { songIds, filter, onChange: setFilter, onSave: () => setSaving(true), count: shown ? shown.length : songs.length } : undefined} />
+      <ListBar title="Любимое" back="/library" tracks={playing} context="liked" offline={{ key: 'liked', to: '/liked', tracks: songs }} search={songs.length ? search : undefined} tags={songs.length ? { songIds, filter, onChange: setFilter, onSave: () => setSaving(true), count: shown ? shown.length : songs.length } : undefined} />
       {res.data && !search.alone && (
         <Hero
           kicker="Плейлист"
@@ -425,7 +425,7 @@ export function PlaylistPage({ id }: { id: string }) {
   const playing = inOrder(shown ? shown.map((f) => all[f.index]) : all, sort);
   return (
     <div>
-      <ListBar title={p.name} back="/library" tracks={playing} context="playlist" search={all.length ? search : undefined} tags={all.length ? { songIds, filter, onChange: setFilter, onSave: () => setSaving(true), count: shown ? shown.length : all.length } : undefined} />
+      <ListBar title={p.name} back="/library" tracks={playing} context="playlist" offline={{ key: `playlist:${id}`, to: `/playlist/${id}`, tracks: all }} search={all.length ? search : undefined} tags={all.length ? { songIds, filter, onChange: setFilter, onSave: () => setSaving(true), count: shown ? shown.length : all.length } : undefined} />
       {viewing && <CoverView src={cover} title={p.name} playlistId={id} own={ownCover(p.cover_url)} onClose={closeCover} />}
       {!search.alone && <Hero
         kicker="Плейлист"

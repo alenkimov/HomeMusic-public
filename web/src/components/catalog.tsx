@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { KeptMark, useUnreachable } from './Offline';
 import { FileInfo } from './FileInfo';
 import type { AlbumOut, CatalogArtist, TrackOut } from '../api/types';
 import { fmtAdded, fmtDuration, parseTime, recordTypeLabel, yearOf } from '../lib/format';
@@ -210,6 +211,7 @@ export function TrackRow({
   const likeTarget = { targetType: 'track' as const, trackId: track.library_track_id, songId: track.owned ? track.nd_song_id : null, ref: track.ref, data: { ...track } };
   const liked = useLiked(likeTarget);
   const kept = useInPlaylists(tagKey(track)) || liked; // the row's button shows ♥ or ✓
+  const unreachable = useUnreachable(track.ref); // no network, and not kept on the device: it cannot play now
   const artistLine = track.artists?.length ? track.artists.join(', ') : track.artist;
   const menuTrack: MenuTrack = {
     title: track.title,
@@ -273,6 +275,7 @@ export function TrackRow({
       <span className="block min-w-0 flex-1">
         <span className={cx('block truncate text-[15px]', titleColor)}>{track.title}</span>
         <span className="flex items-center gap-1.5 text-[13px] text-muted">
+          <KeptMark refId={track.ref} />
           {track.explicit && <ExplicitBadge />}
           <span className="truncate">{sub}</span>
         </span>
@@ -329,7 +332,7 @@ export function TrackRow({
           }}
           data-track-row
           aria-selected={selected}
-          className={cx('group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors', selected ? 'bg-accent/15 hover:bg-accent/20' : dragMark ? 'bg-accent/10' : 'hover:bg-fg/5 focus-within:bg-fg/5')}
+          className={cx('group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors', unreachable && 'opacity-40', selected ? 'bg-accent/15 hover:bg-accent/20' : dragMark ? 'bg-accent/10' : 'hover:bg-fg/5 focus-within:bg-fg/5')}
           style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration, added, tagCols, plays, cols.file) }}
         >
           {/* the number is the queue button: «в очередь» on hovering the row, green once the track is queued */}
@@ -370,6 +373,7 @@ export function TrackRow({
             <span className="block min-w-0 flex-1">
               {tap(cx('block max-w-full truncate text-left text-[15px]', titleColor), track.title)}
               <span className="flex items-center gap-1.5 text-[13px] text-muted">
+                <KeptMark refId={track.ref} />
                 {track.explicit && <ExplicitBadge />}
                 <span className="truncate">
                   {credits.map((a, i) => (
@@ -470,7 +474,7 @@ export function TrackRow({
           right={{ icon: 'queue', onAction: () => { addToQueue([menuTrack.listen as ListenTrack]); toast(`В очереди: «${track.title}»`, 'success'); } }}
           left={{ icon: 'plus', armedIcon: 'check', onAction: () => setPicking(true) }}
         >
-          <div className={cx('flex min-h-16 items-center gap-1 pl-4 pr-1', selected && 'bg-accent/15')}>
+          <div className={cx('flex min-h-16 items-center gap-1 pl-4 pr-1', selected && 'bg-accent/15', unreachable && 'opacity-40')}>
             {tap('flex min-w-0 flex-1 items-center gap-3 py-2 text-left', (
               <>
                 {lead(false)}
