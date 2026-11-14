@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { AlbumOut, ArtistPageOut, TrackOut } from '../api/types';
 import { ReleaseCard, TrackRow } from '../components/catalog';
@@ -212,11 +212,41 @@ export function ArtistPage({ refId }: { refId: string }) {
 
 /** The head of the page where the artist has a wide picture: the picture over the whole width, reaching up under
  * the bar with «back», the name in large over its darkened foot, what is known of the artist under the name, ▶ and
- * the shuffle beside it. The round photo is not shown then — it is the same person twice. */
+ * the shuffle beside it. The round photo is not shown then — it is the same person twice. The picture stands
+ * still while the page scrolls: the tracks go up over it, and it darkens as they do. */
 function Banner({ src, name, sub, tracks }: { src: string; name: string; sub: string; tracks?: readonly TrackOut[] }) {
+  const box = useRef<HTMLDivElement>(null);
+  // The picture stays where it is while the page goes up over it, and darkens as it is covered: it is moved down
+  // by as much as the page has scrolled (so it stands still in the window; the head's own edge cuts it from below),
+  // and a shade of the page's colour comes over it. Set on the element itself, a frame at a time — nothing is drawn
+  // anew by React while the page scrolls.
+  useEffect(() => {
+    const el = box.current;
+    if (!el || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let frame = 0;
+    const place = () => {
+      frame = 0;
+      const y = Math.max(0, window.scrollY);
+      const h = el.offsetHeight || 1;
+      if (y > h) return; // out of sight
+      el.style.setProperty('--y', `${y}px`);
+      el.style.setProperty('--shade', String(Math.min(1, y / (h * 0.7))));
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(place);
+    };
+    place();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(frame);
+    };
+  }, []);
   return (
-    <div className="relative isolate -mt-[calc(3.5rem+env(safe-area-inset-top))] flex h-[clamp(15rem,34vw,26rem)] items-end overflow-hidden">
-      <img src={src} alt="" className="absolute inset-0 -z-10 h-full w-full object-cover object-[center_25%]" />
+    <div ref={box} className="relative isolate -mt-[calc(3.5rem+env(safe-area-inset-top))] flex h-[clamp(15rem,34vw,26rem)] items-end overflow-hidden">
+      <img src={src} alt="" style={{ transform: 'translateY(var(--y, 0px))' }} className="absolute inset-0 -z-10 h-full w-full object-cover object-[center_25%] will-change-transform" />
+      {/* the shade that covers the picture as the page goes up */}
+      <div aria-hidden="true" style={{ opacity: 'var(--shade, 0)' }} className="absolute inset-0 -z-10 bg-bg" />
       <div aria-hidden="true" className="absolute inset-0 -z-10 bg-gradient-to-t from-bg via-bg/45 to-black/15" />
       <div className="flex w-full items-end gap-3 px-4 pb-4 lg:px-6 lg:pb-5">
         <div className="min-w-0 flex-1">
