@@ -126,13 +126,17 @@ export function ArtistPage({ refId }: { refId: string }) {
 
   return (
     <div className={hidden ? 'grayscale' : undefined}>
+      {/* the wide picture: before everything, so it stays at the top of the window while the page goes over it */}
+      {d.banner_url && <BannerPicture src={d.banner_url} />}
       <ListBar title={artist.name} back="/search" tracks={hidden ? undefined : top} context="artist" />
       {d.banner_url ? (
-        <Banner src={d.banner_url} name={artist.name} sub={facts} tracks={hidden ? undefined : top} />
+        <Banner name={artist.name} sub={facts} tracks={hidden ? undefined : top} />
       ) : (
         <Hero kicker="Исполнитель" cover={artist.picture_url} round title={artist.name} sub={facts} tracks={hidden ? undefined : top} context="artist" />
       )}
 
+      {/* what goes up over the picture has the page's own colour under it */}
+      <div className={d.banner_url ? 'relative z-[1] bg-bg' : undefined}>
       {hidden ? (
         <div className="mx-4 mb-3 rounded-2xl bg-danger/15 px-4 py-3 text-sm text-fg lg:mx-6">
           <p>Вы не слушаете этого исполнителя. Его треков нет в волне, миксах и открытиях, а в плейлистах они пропускаются.</p>
@@ -189,6 +193,8 @@ export function ArtistPage({ refId }: { refId: string }) {
 
       {releases.length > 0 && <Discography artistRef={artist.ref} releases={releases} />}
 
+      </div>
+
       <Sheet open={menu} onClose={() => setMenu(false)} title={artist.name}>
         <div className="-mx-1">
           {canWave() && item('wave', 'Волна по исполнителю', () => {
@@ -210,27 +216,23 @@ export function ArtistPage({ refId }: { refId: string }) {
   );
 }
 
-/** The head of the page where the artist has a wide picture: the picture over the whole width, reaching up under
- * the bar with «back», the name in large over its darkened foot, what is known of the artist under the name, ▶ and
- * the shuffle beside it. The round photo is not shown then — it is the same person twice. The picture stands
- * still while the page scrolls: the tracks go up over it, and it darkens as they do. */
-function Banner({ src, name, sub, tracks }: { src: string; name: string; sub: string; tracks?: readonly TrackOut[] }) {
+const BANNER_H = 'h-[clamp(15rem,34vw,26rem)]';
+
+/** The artist's wide picture, standing still: a place of no height that sticks to the top of the window, with the
+ * picture hanging from it. Nothing moves it — the page's own content, which has the page's colour under it, goes up
+ * over it (moved after every scroll instead, it lagged a frame behind and sprang). As the page covers it a shade of
+ * the page's colour comes over it too; that is set a frame at a time on the element, and a shade a frame late is
+ * not seen. */
+function BannerPicture({ src }: { src: string }) {
   const box = useRef<HTMLDivElement>(null);
-  // The picture stays where it is while the page goes up over it, and darkens as it is covered: it is moved down
-  // by as much as the page has scrolled (so it stands still in the window; the head's own edge cuts it from below),
-  // and a shade of the page's colour comes over it. Set on the element itself, a frame at a time — nothing is drawn
-  // anew by React while the page scrolls.
   useEffect(() => {
     const el = box.current;
-    if (!el || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (!el) return;
     let frame = 0;
     const place = () => {
       frame = 0;
-      const y = Math.max(0, window.scrollY);
       const h = el.offsetHeight || 1;
-      if (y > h) return; // out of sight
-      el.style.setProperty('--y', `${y}px`);
-      el.style.setProperty('--shade', String(Math.min(1, y / (h * 0.7))));
+      el.style.setProperty('--shade', String(Math.min(1, Math.max(0, window.scrollY) / (h * 0.7))));
     };
     const onScroll = () => {
       if (!frame) frame = requestAnimationFrame(place);
@@ -243,10 +245,21 @@ function Banner({ src, name, sub, tracks }: { src: string; name: string; sub: st
     };
   }, []);
   return (
-    <div ref={box} className="relative isolate -mt-[calc(3.5rem+env(safe-area-inset-top))] flex h-[clamp(15rem,34vw,26rem)] items-end overflow-hidden">
-      <img src={src} alt="" style={{ transform: 'translateY(var(--y, 0px))' }} className="absolute inset-0 -z-10 h-full w-full object-cover object-[center_25%] will-change-transform" />
-      {/* the shade that covers the picture as the page goes up */}
-      <div aria-hidden="true" style={{ opacity: 'var(--shade, 0)' }} className="absolute inset-0 -z-10 bg-bg" />
+    <div aria-hidden="true" className="pointer-events-none sticky top-(--page-top) z-0 h-0">
+      <div ref={box} className={cx('absolute inset-x-0 top-0 overflow-hidden', BANNER_H)}>
+        <img src={src} alt="" className="h-full w-full object-cover object-[center_25%]" />
+        <div style={{ opacity: 'var(--shade, 0)' }} className="absolute inset-0 bg-bg" />
+      </div>
+    </div>
+  );
+}
+
+/** The head of the page over that picture: as tall as it, reaching up under the bar with «back»; the name in large
+ * over its darkened foot, what is known of the artist under the name, ▶ and the shuffle beside it. The round photo
+ * is not shown then — it is the same person twice. */
+function Banner({ name, sub, tracks }: { name: string; sub: string; tracks?: readonly TrackOut[] }) {
+  return (
+    <div className={cx('relative isolate z-[1] -mt-[calc(3.5rem+env(safe-area-inset-top))] flex items-end', BANNER_H)}>
       <div aria-hidden="true" className="absolute inset-0 -z-10 bg-gradient-to-t from-bg via-bg/45 to-black/15" />
       <div className="flex w-full items-end gap-3 px-4 pb-4 lg:px-6 lg:pb-5">
         <div className="min-w-0 flex-1">
