@@ -83,6 +83,26 @@ async def of_catalog(s: AsyncSession, c: CatalogTrack, *, user_id: int | None = 
     return track
 
 
+async def fill_catalog(s: AsyncSession, tracks: Iterable[Track] | None = None, limit: int = 60) -> int:
+    """Tracks the catalog knows (`ref`) that were made before a track kept what the catalog says of it get it now:
+    who their artists are there, their album, their cover. `tracks`: these ones (an artist's page needs its few at
+    once); none: any that lack it, `limit` at a time. Returns how many were filled."""
+    from app.mixes.resolve import catalog_track
+
+    rows = [t for t in tracks if t.catalog is None and t.ref and t.ref.startswith("dz:")] if tracks is not None else list(
+        (await s.execute(select(Track).where(Track.catalog.is_(None), Track.ref.like("dz:%")).order_by(Track.id.desc())
+                         .limit(limit))).scalars())
+    n = 0
+    for t in rows[:limit]:
+        c = await catalog_track(t.ref)
+        if c is not None:
+            t.catalog = c.model_dump(mode="json")
+            n += 1
+    if n:
+        await s.flush()
+    return n
+
+
 async def has_file(s: AsyncSession, track_id: int) -> bool:
     return (await s.execute(select(TrackFile.id).where(TrackFile.track_id == track_id).limit(1))).first() is not None
 

@@ -692,8 +692,12 @@ class NdArtistOut(BaseModel):
 class NdArtistPageOut(BaseModel):
     artist: NdArtistOut
     albums: list[NdAlbumOut] = []
-    # the same artist in the catalog, when it has one of this very name: their page is the catalog's then
+    # the same artist in the catalog — by what the Hub knows of their tracks, else by the very name: their page is
+    # the catalog's then
     catalog_ref: str | None = None
+    # their tracks in the library (also where they are credited on somebody's album): the page of an artist the
+    # catalog does not know is drawn of these
+    tracks: list[NdSongOut] = []
 
 
 class NdLikedOut(BaseModel):

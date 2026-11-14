@@ -5,7 +5,6 @@ import { api } from '../api/client';
 import type { NdAlbumOut, NdArtistOut, NdSongOut, TrackOut } from '../api/types';
 import { playAll, TrackRow, TrackTableHeader, type ListSort } from '../components/catalog';
 import { Icon } from '../components/Icon';
-import { LikeButton } from '../components/LikeButton';
 import { ListBar } from '../components/ListBar';
 import { useListSearch, type Found } from '../components/ListSearch';
 import { CoverView, ownCover } from '../components/PlaylistMenu';
@@ -16,11 +15,12 @@ import { playCount, usePlayCounts } from '../lib/stats';
 import { useDesktop } from '../lib/desktop';
 import { useHubEvent } from '../lib/events';
 import { cyclePageShuffle, useListen } from '../lib/listen';
-import { useAsync } from '../lib/hooks';
+import { useAsync, useRememberScrollX } from '../lib/hooks';
 import { Link, enc, navigate, useRoute } from '../lib/router';
 import { filterActive, filterOfQuery, filterWords, passes, selectionsChanged, tagKey, useTags, type TagFilter } from '../lib/tags';
 import { attempt, confirmDialog } from '../lib/ui';
 import { useSmartForPage, useSmartPage, useSmartPossible } from '../lib/smartShuffle';
+import { toggleLike, useLiked } from '../lib/stars';
 import { canWave, seedKey, startWave, useWave } from '../lib/wave';
 
 /** The Navidrome library as a player shows it, for the PWA in a plain browser (`STANDALONE`): inside the app these
@@ -477,46 +477,92 @@ const albumsWord = (n: number) => {
   return `${n} ${w}`;
 };
 
+/** A library artist (`/lib/artist/<id>`). The Hub says who they are in the catalog — by its own records of their
+ * tracks, so a name spelt otherwise there («Mikhail Krug» for «Михаил Круг») is still the same person — and the page
+ * is then the catalog's (`pages/Artist.tsx`). An artist the catalog does not know (a friend's band, a file with a
+ * name of its own) has the same page drawn of the library: the round picture, «Подписаться», the wave, their tracks
+ * the library has and their albums in a row. */
 export function NdArtistPage({ id }: { id: string }) {
   const res = useAsync((s) => api.ndArtist(id, s), [id], true, `nd-artist:${id}`);
   const { starting } = useWave();
-  if (res.loading) return (<><PageHeader hero title="Исполнитель" back="/artists" /><HeroSkeleton round /></>);
-  if (!res.data) return (<><PageHeader hero title="Исполнитель" back="/artists" /><ErrorState text={res.error ?? 'Исполнитель не найден'} onRetry={() => res.reload()} /></>);
-  const { artist, albums } = res.data;
-  // the catalog knows this artist: their page is the catalog's (the popular tracks, the whole discography)
-  if (res.data.catalog_ref) return <ArtistPage refId={res.data.catalog_ref} />;
+  const d = res.data;
+  const target = { targetType: 'artist' as const, ndId: id, data: { name: d?.artist.name ?? '' } };
+  const followed = useLiked(target);
+  const [busy, setBusy] = useState(false);
+  const row = useRememberScrollX(`nd-artist:${id}`);
+  if (res.loading && !d) return (<><PageHeader hero title="Исполнитель" back="/artists" /><HeroSkeleton round buttons /></>);
+  if (!d) return (<><PageHeader hero title="Исполнитель" back="/artists" /><ErrorState text={res.error ?? 'Исполнитель не найден'} onRetry={() => res.reload()} /></>);
+  if (d.catalog_ref) return <ArtistPage refId={d.catalog_ref} />;
+  const { artist, albums } = d;
+  const tracks = d.tracks ?? [];
+  const follow = async () => {
+    setBusy(true);
+    try {
+      await toggleLike(target);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div>
-      <PageHeader
-        hero
-        title={artist.name}
-        back="/artists"
-        right={<LikeButton targetType="artist" ndId={artist.id} title={artist.name} data={{ name: artist.name }} />}
-      />
+      <ListBar title={artist.name} back="/artists" tracks={tracks} context="artist" />
       <Hero
         kicker="Исполнитель"
-        cover={artist.cover_url ?? albums[0]?.cover_url}
+        cover={artist.cover_url ?? albums[0]?.cover_url ?? tracks[0]?.cover_small_url}
         round
         title={artist.name}
-        sub={albumsWord(albums.length)}
-        right={
-          canWave() && (
-            <Button
-              variant="primary"
-              icon="wave"
-              busy={starting === seedKey({ nd_artist_id: artist.id })}
-              onClick={() => void startWave({ nd_artist_id: artist.id }, 'radio')}
-            >
-              Радио по исполнителю
-            </Button>
-          )
-        }
+        sub={[tracks.length ? tracksWord(tracks.length) : null, albums.length ? albumsWord(albums.length) : null, 'только в медиатеке'].filter(Boolean).join(' · ')}
+        tracks={tracks}
+        context="artist"
       />
-      <div className="grid grid-cols-2 gap-4 px-4 pb-4 sm:grid-cols-3">
-        {albums.map((a) => (
-          <NdAlbumCard key={a.id} album={a} showArtist={false} />
-        ))}
+      <div className="flex flex-wrap items-center gap-2 px-4 pb-3 lg:px-6">
+        <button
+          type="button"
+          onClick={() => void follow()}
+          disabled={busy}
+          aria-pressed={followed}
+          className={cx('flex h-9 items-center gap-1.5 rounded-full border px-4 text-sm font-semibold transition active:scale-95', followed ? 'border-accent text-accent' : 'border-fg/40 text-fg hover:border-fg')}
+        >
+          {busy ? <Spinner size={14} /> : followed && <Icon name="check" size={15} stroke={3} />}
+          {followed ? 'Вы подписаны' : 'Подписаться'}
+        </button>
+        {canWave() && (
+          <button
+            type="button"
+            disabled={starting === seedKey({ nd_artist_id: artist.id })}
+            onClick={() => void startWave({ nd_artist_id: artist.id }, 'radio')}
+            className="flex h-9 items-center gap-1.5 rounded-full border border-fg/40 px-4 text-sm font-semibold text-fg transition hover:border-fg active:scale-95 disabled:opacity-60"
+          >
+            <Icon name="wave" size={16} className="text-accent" />
+            Волна по исполнителю
+          </button>
+        )}
       </div>
+
+      {tracks.length > 0 && (
+        <section aria-label="Треки">
+          <h2 className="flex items-baseline gap-2 px-4 pb-1 pt-3 text-lg font-bold lg:px-6">
+            Треки
+            <span className="text-xs font-normal text-dim">в медиатеке</span>
+          </h2>
+          {tracks.map((t, i) => (
+            <TrackRow key={t.ref} track={t} number={i + 1} queue={tracks} />
+          ))}
+        </section>
+      )}
+      {albums.length > 0 && (
+        <section aria-label="Альбомы" className="pb-4">
+          <h2 className="px-4 pb-2 pt-5 text-lg font-bold lg:px-6">Альбомы</h2>
+          <div ref={row} className="no-scrollbar flex gap-4 overflow-x-auto px-4 pb-1 lg:px-6">
+            {albums.map((a) => (
+              <div key={a.id} className="w-36 shrink-0 lg:w-44">
+                <NdAlbumCard album={a} showArtist={false} />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+      {!tracks.length && !albums.length && <Empty icon="user" title="Здесь пока пусто" text="В медиатеке нет треков этого исполнителя." />}
     </div>
   );
 }

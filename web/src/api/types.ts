@@ -685,8 +685,10 @@ export interface DiscographyOut {
 }
 
 export interface NdArtistPageOut {
-  /** the same artist in the catalog, when it has one of this very name */
+  /** the same artist in the catalog: their page is the catalog's then */
   catalog_ref?: string | null;
+  /** their tracks in the library: what the page of an artist the catalog does not know is drawn of */
+  tracks?: NdSongOut[];
   artist: NdArtistOut;
   albums: NdAlbumOut[];
 }

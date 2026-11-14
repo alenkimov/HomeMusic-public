@@ -79,6 +79,10 @@ async def run_daily() -> None:
 
         async with session_scope() as s:  # what was written down of the tracks stirred out with those files
             await trash.purge(s, cfg.library.trash_days)
+        from app.library import tracks as registry
+
+        async with session_scope() as s:  # tracks made before a track kept the catalog's record of it
+            await registry.fill_catalog(s, limit=200)
         m = await asyncio.to_thread(purge_stale_uploads)
         c = await cache_purge_expired()
         e = await purge_email_codes()
