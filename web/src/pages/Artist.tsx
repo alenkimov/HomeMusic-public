@@ -110,17 +110,17 @@ export function ArtistPage({ refId }: { refId: string }) {
   const follow = async () => {
     setBusy('follow');
     try {
-      await toggleLike(target);
+      await toggleLike(target, true);
     } finally {
       setBusy(null);
     }
     setLeaving('said');
-    toast(`Вы подписаны: ${shownName}. Новые релизы появятся в «Релизах»`, 'success', { label: 'Отменить', run: () => void toggleLike(target) });
+    toast(`Вы подписаны: ${shownName}. Новые релизы появятся в «Релизах»`, 'success', { label: 'Отменить', run: () => void toggleLike(target, true) });
   };
   const unfollow = async () => {
     setMenu(false);
-    await toggleLike(target);
-    toast(`Вы отписались: ${shownName}`, 'info', { label: 'Вернуть', run: () => void toggleLike(target) });
+    await toggleLike(target, true);
+    toast(`Вы отписались: ${shownName}`, 'info', { label: 'Вернуть', run: () => void toggleLike(target, true) });
   };
   const downloadAll = async () => {
     setMenu(false);
