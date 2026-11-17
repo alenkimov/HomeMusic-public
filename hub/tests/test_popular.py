@@ -52,6 +52,13 @@ async def test_the_rest_of_popular_is_lastfms_and_the_artists_own(monkeypatch):
     assert [t.ref for t in await popular.more(artist, have)] == ["dz:3", "ym:9", "dz:6"]
     monkeypatch.setattr(popular, "svc", SimpleNamespace(deezer=SimpleNamespace(search_tracks=search_tracks)))
 
+    # how many listen to which, by the track's name: the first of a name Last.fm keeps twice
+    async def top(name):
+        return [{"name": "PPPP", "listeners": 243}, {"name": "pppp", "listeners": 5}, {"name": "LEMON", "listeners": None}]
+
+    monkeypatch.setattr(popular, "_top", top)
+    assert await popular.heard("TAK") == {popular.song("pppp"): 243}
+
     # the catalog's list is long enough: Last.fm is not asked
     asked.clear()
     assert await popular.more(artist, [track(str(i), f"t{i}") for i in range(10)]) == [] and asked == []

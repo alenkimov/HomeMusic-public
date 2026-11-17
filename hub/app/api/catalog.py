@@ -233,12 +233,16 @@ async def artist(ref: str, user: User = Depends(current_user), s: AsyncSession =
     async def found_banner() -> str | None:
         return own_banner if said else await banners.url_of(page.artist, [t.title for t in page.top_tracks] + [a.title for a in page.albums])
 
-    heard, extra, banner = await asyncio.gather(
-        popular.listeners(page.artist.name), popular.more(page.artist, page.top_tracks), found_banner())
+    heard, extra, banner, by_song = await asyncio.gather(
+        popular.listeners(page.artist.name), popular.more(page.artist, page.top_tracks), found_banner(),
+        popular.heard(page.artist.name))
+    # a song is among the most listened once: of its versions the preferred one
+    top = await versions.once(s, await annotate_tracks(s, [*page.top_tracks, *extra], user.id))
+    for t in top:
+        t.lastfm_listeners = by_song.get(popular.song(t.title))
     return ArtistPageOut(
         artist=page.artist,
-        # a song is among the most listened once: of its versions the preferred one
-        top_tracks=await versions.once(s, await annotate_tracks(s, [*page.top_tracks, *extra], user.id)),
+        top_tracks=top,
         lastfm_listeners=heard, top_from_lastfm=len(extra), banner_url=banner,
         albums=[a for a in albums if a.record_type == "album"],
         singles=[a for a in albums if a.record_type in ("single", "ep")],

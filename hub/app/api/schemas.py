@@ -441,6 +441,8 @@ class TrackOut(CatalogTrack):
     unknown: bool = False
     # in a list: when the track was added to it (a playlist, the likes); else when it came into the library
     added_at: datetime | None = None
+    # among an artist's most listened: how many listened to it on Last.fm (None: Last.fm does not say)
+    lastfm_listeners: int | None = None
 
 
 class ServiceLinkOut(BaseModel):

@@ -27,7 +27,7 @@ from app.services import svc
 log = logging.getLogger(__name__)
 
 WANT = 10  # popular tracks of an artist's page
-ASKED = 30  # of Last.fm's top looked through for the ones the catalog's list lacks
+ASKED = 50  # of Last.fm's top: looked through for the ones the catalog's list lacks, and for who listens to which
 PARALLEL = 4
 STATS_TTL_S = 7 * 86400
 
@@ -49,12 +49,40 @@ async def listeners(name: str) -> int | None:
         return None
 
 
-async def _top_names(name: str) -> list[str]:
-    async def produce() -> list[str]:
+async def _top(name: str) -> list[dict[str, Any]]:
+    """Last.fm's top of the artist, the most listened first: each track's name and how many listened to it."""
+    async def produce() -> list[dict[str, Any]]:
         body = await sources._lastfm("artist.getTopTracks", artist=name, limit=ASKED)
-        return [t["name"] for t in sources._as_list((body.get("toptracks") or {}).get("track")) if t.get("name")]
+        return [{"name": t["name"], "listeners": int(t["listeners"]) if str(t.get("listeners") or "").isdigit() else None}
+                for t in sources._as_list((body.get("toptracks") or {}).get("track")) if t.get("name")]
 
-    return await cached(f"lfm:artist_top:{sources._key(name)}", STATS_TTL_S, produce) or []
+    return await cached(f"lfm:artist_top2:{sources._key(name)}", STATS_TTL_S, produce) or []
+
+
+async def _top_names(name: str) -> list[str]:
+    return [t["name"] for t in await _top(name)]
+
+
+def song(title: str) -> str:
+    """A track's name as Last.fm's count of it is looked up by."""
+    return normalize_title(title).text
+
+
+async def heard(name: str) -> dict[str, int]:
+    """How many listened to each of the artist's most listened tracks on Last.fm (all time), by `song` of its name.
+    Empty: no key, no answer."""
+    if not sources.lastfm_configured() or not name.strip():
+        return {}
+    try:
+        top = await _top(name)
+    except Exception as e:
+        log.info("Last.fm top of %r: %r", name, e)
+        return {}
+    out: dict[str, int] = {}
+    for t in top:  # a name Last.fm keeps twice (another spelling of it) is its first, the most listened
+        if t.get("listeners"):
+            out.setdefault(song(t["name"]), t["listeners"])
+    return out
 
 
 def _same(a: str, b: str) -> bool:

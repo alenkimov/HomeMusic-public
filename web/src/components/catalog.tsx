@@ -5,7 +5,7 @@ import { useOfHiddenArtist } from '../lib/dislikes';
 import { KeptMark, useUnreachable } from './Offline';
 import { FileInfo } from './FileInfo';
 import type { AlbumOut, CatalogArtist, TrackOut } from '../api/types';
-import { fmtAdded, fmtDuration, parseTime, recordTypeLabel, yearOf } from '../lib/format';
+import { fmtAdded, fmtDuration, fmtNum, parseTime, recordTypeLabel, yearOf } from '../lib/format';
 import { useDesktop } from '../lib/desktop';
 import { addToQueue, downloadRef, listen, listenAll, shuffled, touchTrack, useListen, watchOnScreen, type ListenTrack } from '../lib/listen';
 import { canPlay, canPlayAll, playSongs, playTracks } from '../lib/player';
@@ -165,6 +165,12 @@ export function TrackRow({
   const waiting = phase === 'resolving' || phase === 'loading';
   const playing = phase === 'playing' || waiting;
   const rowRef = useRef<HTMLDivElement>(null);
+  // among an artist's most listened: how many listened to the track on Last.fm, after who it is by
+  const heard = track.lastfm_listeners ? (
+    <span className="shrink-0 whitespace-nowrap tabular-nums text-dim" title="Слушателей на Last.fm">
+      · {fmtNum(track.lastfm_listeners)} {plural(track.lastfm_listeners, ['слушатель', 'слушателя', 'слушателей'])}
+    </span>
+  ) : null;
   // on screen: the Hub picks the file in the background, so a tap starts at once
   useEffect(() => (rowRef.current && !track.owned && !track.unknown ? watchOnScreen(rowRef.current, track.ref) : undefined), [track.ref, track.owned, track.unknown]);
   const download = async () => {
@@ -218,6 +224,7 @@ export function TrackRow({
         <div className="flex items-center gap-1.5 text-[13px] text-muted">
           {track.explicit && <ExplicitBadge />}
           <span className="truncate">{sub}</span>
+          {heard}
         </div>
       </div>
       <span className="shrink-0 text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>
@@ -441,6 +448,7 @@ export function TrackRow({
                     </span>
                   ))}
                 </span>
+                {heard}
               </span>
             </span>
           </div>

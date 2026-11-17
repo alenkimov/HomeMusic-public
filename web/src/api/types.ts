@@ -169,6 +169,8 @@ export interface CatalogTrack {
   preview_url?: string | null;
   /** how much the track is listened to, as its catalog counts it (Deezer); none: the catalog does not say */
   rank?: number | null;
+  /** among an artist's most listened: how many listened to it on Last.fm */
+  lastfm_listeners?: number | null;
 }
 
 export interface CatalogAlbum {
