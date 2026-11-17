@@ -16,6 +16,7 @@ import { fmtLength, tracksWord } from '../lib/format';
 import { playCount, usePlayCounts } from '../lib/stats';
 import { useDesktop } from '../lib/desktop';
 import { useHubEvent } from '../lib/events';
+import { useListSort } from '../lib/listSort';
 import { cyclePageShuffle, useListen } from '../lib/listen';
 import { useAsync, useRememberScrollX } from '../lib/hooks';
 import { Link, enc, navigate, useRoute } from '../lib/router';
@@ -256,7 +257,7 @@ export function LikedPage() {
   const title = by ? `Вам нравится · ${by}` : 'Любимое';
   const back = by ? (byRef ? `/artist/${enc(byRef)}` : '/library') : '/library';
   const search = useListSearch(songs);
-  const [sort, setSort] = useState<ListSort>(null);
+  const [sort, setSort] = useListSort('liked');
   const [filter, setFilter] = useState<TagFilter>({});
   const [saving, setSaving] = useState(false);
   const shown = useShown(songs, search.found, filter);
@@ -319,7 +320,7 @@ export function SelectionPage({ id }: { id: string }) {
     [scope],
   );
   const [filter, setFilter] = useState<TagFilter>({});
-  const [sort, setSort] = useState<ListSort>(null);
+  const [sort, setSort] = useListSort(`selection:${id}`);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
   const saved = sel.data?.filter;
@@ -394,7 +395,7 @@ export function PlaylistPage({ id }: { id: string }) {
   // the playlist is the Hub's: every track stands in its place, whether the library has its file yet or not
   const all = useMemo(() => p?.tracks ?? [], [p]);
   const search = useListSearch(all);
-  const [sort, setSort] = useState<ListSort>(null);
+  const [sort, setSort] = useListSort(`playlist:${id}`);
   const [viewing, setViewing] = useState(false);
   const [filter, setFilter] = useState<TagFilter>({});
   const [saving, setSaving] = useState(false);

@@ -3,7 +3,7 @@ import { forYouOpened } from '../lib/forYou';
 import { imageUrl, retryImage } from '../lib/img';
 import { api } from '../api/client';
 import type { ForYouOut, MixMode, TrackOut } from '../api/types';
-import type { ListSort } from '../components/catalog';
+import { useListSort } from '../lib/listSort';
 import { Icon, type IconName } from '../components/Icon';
 import { BarWindow, ListBar } from '../components/ListBar';
 import { useListSearch } from '../components/ListSearch';
@@ -88,7 +88,7 @@ export function ForYouPage({ kind, mix }: { kind: string; mix?: number }) {
   const tracks = useMemo(() => d?.tracks ?? [], [d]);
   const search = useListSearch(tracks);
   const [filter, setFilter] = useState<TagFilter>({});
-  const [sort, setSort] = useState<ListSort>(null);
+  const [sort, setSort] = useListSort(`for-you:${kind}`);
   const shown = useShown(tracks, search.found, filter);
   const songIds = useMemo(() => tracks.map(tagKey), [tracks]);
   const title = d?.title ?? TITLES[kind] ?? 'Для вас';
