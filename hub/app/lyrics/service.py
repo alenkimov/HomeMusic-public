@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.catalog.models import split_ref
 from app.config import get_settings
 from app.db import session_scope
-from app.jobs.queue import enqueue, handler
+from app.jobs.queue import RetryLater, enqueue, handler
 from app.library.tracks import dz_id
 from app.lyrics import parse
 from app.lyrics.providers import ORDER, TITLES, Found, Query, ask
@@ -34,6 +34,11 @@ log = logging.getLogger(__name__)
 SETTINGS_KEY = "lyrics"
 SCAN_BATCH = 25
 SCAN_PAUSE_S = 0.4  # between tracks: the sources are free services, not to be hammered
+# The scan is the last of the background work (below a transfer, `queue.PRIORITY_IMPORT`): the words of a track wait
+# for the track. A transfer brings hundreds of tracks with no words yet — a scan that went before it would hold the
+# background workers for as long as it reads them all, and the transfer would stand still
+SCAN_PRIORITY = -20
+SCAN_WAIT_S = 30  # a scan met by another one running looks again after this
 DEFAULT_RETRY_DAYS = 7
 
 
@@ -292,7 +297,7 @@ async def enqueue_scan_once(s: AsyncSession, *, delay_s: float = 0, forced: bool
     """One queued scan at a time. `forced`: the admin asked for it (`on_add` off does not stop it)."""
     pending = (await s.execute(select(Job.id).where(Job.kind == "lyrics_scan", Job.status == "queued").limit(1))).scalar_one_or_none()
     if pending is None:
-        await enqueue(s, "lyrics_scan", {"forced": forced}, delay_s=delay_s, priority=-5)
+        await enqueue(s, "lyrics_scan", {"forced": forced}, delay_s=delay_s, priority=SCAN_PRIORITY)
 
 
 @handler("lyrics_scan")
@@ -302,6 +307,10 @@ async def handle_scan(job: Job) -> None:
     async with session_scope() as s:
         if not forced and not (await get_settings_row(s))["on_add"]:
             return
+        # one scan at a time: a second one (queued while the first read its batch) would read the same tracks beside
+        # it and hold one more worker. It waits its turn: what came while the first was reading is its to read
+        if (await s.execute(select(Job.id).where(Job.kind == "lyrics_scan", Job.status == "running", Job.id != job.id).limit(1))).scalar_one_or_none() is not None:
+            raise RetryLater(SCAN_WAIT_S, "another scan is running")
         ids = list((await s.execute(
             select(Track.id).outerjoin(Lyrics, Lyrics.track_id == Track.id).where(Lyrics.track_id.is_(None))
             .order_by(Track.id.desc()).limit(SCAN_BATCH))).scalars())

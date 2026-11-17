@@ -185,6 +185,29 @@ async def test_settings_order_and_the_background_scan(env):
     assert (await c.get("/api/lyrics/settings")).json()["stats"] == {"total": 2, "word": 0, "synced": 0, "plain": 2, "none": 0, "unchecked": 0}
 
 
+async def test_one_scan_at_a_time_and_after_a_transfer(env):
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.jobs.queue import PRIORITY_IMPORT, RetryLater
+    from app.models import Job
+    from app.lyrics import service
+
+    await add_track("nd1")
+    async with session_scope() as s:
+        await service.enqueue_scan_once(s)
+        first = (await s.execute(select(Job).where(Job.kind == "lyrics_scan"))).scalar_one()
+        first.status = "running"
+        assert first.priority < PRIORITY_IMPORT  # the words wait for the tracks a transfer brings
+    async with session_scope() as s:
+        await service.enqueue_scan_once(s)  # queued while the first reads: it waits its turn
+        second = (await s.execute(select(Job).where(Job.kind == "lyrics_scan", Job.status == "queued"))).scalar_one()
+        second.status = "running"
+    with pytest.raises(RetryLater):
+        await service.handle_scan(second)
+    assert not env["calls"]
+
+
 def test_the_language_of_a_text_is_told_by_its_letters():
     from app.lyrics.translate import detect
 
