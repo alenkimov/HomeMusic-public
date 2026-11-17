@@ -7,7 +7,7 @@ import { ListBar } from '../components/ListBar';
 import { ArtistLooksWindow } from '../components/ArtistLooks';
 import { ArtistServiceButtons } from '../components/ArtistSources';
 import { ArtistProjects, ArtistWindow, artistHint, useArtistCard } from '../components/ArtistNames';
-import { Button, ErrorState, HeroSkeleton, PageHeader, Sheet, Spinner, cx } from '../components/ui';
+import { Button, Empty, ErrorState, HeroSkeleton, PageHeader, Sheet, Spinner, cx } from '../components/ui';
 import { startDownload } from '../lib/actions';
 import { setDisliked, useDisliked } from '../lib/dislikes';
 import { plural, tracksWord } from '../lib/format';
@@ -100,6 +100,8 @@ export function ArtistPage({ refId }: { refId: string }) {
 
   const releases = [...d.albums, ...d.singles, ...d.compilations].sort((a, b) => (b.release_date ?? '').localeCompare(a.release_date ?? ''));
   const top = d.top_tracks.slice(0, POPULAR);
+  // whose list the first of them are: the catalog's that leads the page — Yandex's where the other has none
+  const topBy = top[0]?.ref.startsWith('ym:') ? 'Яндекс Музыке' : 'Deezer';
   // how many of them, at the end, are Last.fm's
   const lfm = Math.max(0, Math.min(d.top_from_lastfm ?? 0, top.length - (d.top_tracks.length - (d.top_from_lastfm ?? 0))));
 
@@ -184,7 +186,7 @@ export function ArtistPage({ refId }: { refId: string }) {
       <Banner name={shownName} photo={d.banner_url ? undefined : (photo ?? null)} />
 
       {/* what goes up over the picture has the page's own colour under it */}
-      <div className="relative z-[1] bg-bg">
+      <div className="relative z-[1] min-h-[60dvh] bg-bg">
       {hidden ? (
         <div className="mx-4 mb-3 rounded-2xl bg-danger/15 px-4 py-3 text-sm text-fg lg:mx-6">
           <p>Вы не слушаете этого исполнителя. Его треков нет в волне, миксах и открытиях, а в плейлистах они пропускаются.</p>
@@ -237,7 +239,7 @@ export function ArtistPage({ refId }: { refId: string }) {
           <h2 className="flex items-baseline gap-2 px-4 pb-1 pt-3 text-lg font-bold lg:px-6">
             Популярное
             {/* whose listens put them there: the catalog's own, and Last.fm's where the catalog's list is short */}
-            <span className="text-xs font-normal text-dim">{lfm >= top.length ? 'по Last.fm' : lfm > 0 ? `по Deezer, с ${top.length - lfm + 1}-го — по Last.fm` : 'по Deezer'}</span>
+            <span className="text-xs font-normal text-dim">{lfm >= top.length ? 'по Last.fm' : lfm > 0 ? `по ${topBy}, с ${top.length - lfm + 1}-го — по Last.fm` : `по ${topBy}`}</span>
           </h2>
           {/* a wide window: two columns, 1–5 and 6–10 — only where a row keeps room for its name, and only when
               there are tracks for two */}
@@ -258,6 +260,11 @@ export function ArtistPage({ refId }: { refId: string }) {
       )}
 
       {releases.length > 0 && <Discography artistRef={artist.ref} releases={releases} />}
+
+      {/* a name the catalogs know and no music of: said, not left as an empty page */}
+      {!hidden && top.length === 0 && releases.length === 0 && (
+        <Empty icon="note" title="Музыки в каталогах нет" text="Каталоги знают этого исполнителя по имени, но ни треков, ни релизов у них нет. Свои файлы можно загрузить в библиотеку." />
+      )}
 
       <Alike artistRef={artist.ref} />
 

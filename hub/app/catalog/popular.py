@@ -5,7 +5,9 @@ The catalog's «popular» is its own listeners' — and for an artist it hardly 
 heard on YouTube and Spotify) it gives three tracks, or one. Last.fm counts listens from everywhere, so where the
 catalog gives fewer than `WANT`, the rest is taken from Last.fm's top of the artist: each of its tracks is looked up
 in the catalog among this artist's own (so it plays, has a cover and is theirs, not a namesake's) and the ones found
-follow the catalog's, in Last.fm's order. The catalog's list is never replaced: its tracks are already the page's own.
+follow the catalog's, in Last.fm's order. A track the artist's own catalog lacks is looked for in Yandex, among the
+tracks that credit the artist by this very name: an artist of whom Deezer keeps an empty record has their most
+listened there. The catalog's list is never replaced: its tracks are already the page's own.
 Without a Last.fm key, or when it does not answer, the page is what the catalog said.
 """
 
@@ -63,7 +65,8 @@ async def more(artist: CatalogArtist, have: list[CatalogTrack]) -> list[CatalogT
     """Popular tracks of the artist to follow the catalog's `have`, up to `WANT` in all: Last.fm's top, each found
     in the catalog as this artist's own. Empty when the catalog's list is long enough or Last.fm has nothing."""
     need = WANT - len(have)
-    if need <= 0 or not sources.lastfm_configured() or svc.deezer is None:
+    yandex = getattr(svc, "yandex", None)
+    if need <= 0 or not sources.lastfm_configured() or (svc.deezer is None and yandex is None):
         return []
     try:
         names = await _top_names(artist.name)
@@ -73,16 +76,25 @@ async def more(artist: CatalogArtist, have: list[CatalogTrack]) -> list[CatalogT
     names = [n for n in names if not any(_same(n, t.title) for t in have)]
     gate = asyncio.Semaphore(PARALLEL)
 
+    async def asked(catalog: Any, title: str) -> list[CatalogTrack]:
+        try:
+            return await catalog.search_tracks(artist.name, title, limit=5)
+        except Exception as e:
+            log.info("popular: %r of %r not looked up: %r", title, artist.name, e)
+            return []
+
     async def find(title: str) -> CatalogTrack | None:
         async with gate:
-            try:
-                found = await svc.deezer.search_tracks(artist.name, title, limit=5)
-            except Exception as e:
-                log.info("popular: %r of %r not looked up: %r", title, artist.name, e)
-                return None
-        own = [t for t in found if t.artist_ref == artist.ref or artist.ref in (t.artist_refs or [])]
-        own = namesakes.own_tracks(artist.ref, own)  # not a namesake's release
-        return next((t for t in own if _same(t.title, title)), None)
+            found = await asked(svc.deezer, title) if svc.deezer is not None else []
+            own = [t for t in found if t.artist_ref == artist.ref or artist.ref in (t.artist_refs or [])]
+            own = namesakes.own_tracks(artist.ref, own)  # not a namesake's release
+            hit = next((t for t in own if _same(t.title, title)), None)
+            if hit is None and yandex is not None:
+                # another catalog has no record of this one's artist to tell their tracks by: theirs are the ones
+                # that credit this very name
+                hit = next((t for t in await asked(yandex, title) if _same(t.title, title)
+                            and sources._key(artist.name) in {sources._key(n) for n in [t.artist, *t.artists]}), None)
+            return hit
 
     out: list[CatalogTrack] = []
     seen = {t.ref for t in have}

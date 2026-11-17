@@ -61,7 +61,15 @@ async def _tie_yandex(s: AsyncSession, who: Any, page: ArtistPage) -> None:
     def names(p: ArtistPage) -> set[str]:  # without what is written after a name («… (prod. by …)»)
         return {artists.fold(split_suffix(x.title)[0]) for x in [*p.albums, *p.top_tracks]}
 
-    if names(page) & names(theirs):
+    mine = names(page)
+    if not mine and popular.sources.lastfm_configured():
+        # a record with no music (the catalog knows the name and nothing else) tells nobody apart: what the artist
+        # is listened to by — Last.fm's top of the name — does
+        try:
+            mine = {artists.fold(split_suffix(n)[0]) for n in await popular._top_names(who.name)}
+        except Exception as e:
+            log.info("artist %s: Last.fm's top not read: %r", page.artist.ref, e)
+    if mine & names(theirs):
         await artists.who(s, found.name, found.ref, "catalog")
 
 
@@ -75,8 +83,12 @@ async def whole_artist(s: AsyncSession, ref: str) -> tuple[ArtistPage, list[str]
 
     page = await get_artist_page(ref)
     who = await artists.who(s, page.artist.name, ref, "catalog")
+    # who the record is of is known from now on — and written before the catalogs are asked again: the database has
+    # one writer, and a page that waited for the network with a tie unwritten would keep every other write waiting
+    await s.commit()
     if who is not None:
         await _tie_yandex(s, who, page)
+        await s.commit()
     refs = [r for r in (await artists.profiles(s, who.id) if who is not None else []) if r != ref]
 
     async def other(r: str) -> ArtistPage | None:
@@ -107,16 +119,17 @@ async def whole_artist(s: AsyncSession, ref: str) -> tuple[ArtistPage, list[str]
             albums.append(a)
     # The most listened are the leading catalog's word (and Last.fm's after it, `popular.more`). Yandex's own list
     # is not added to another catalog's: it counts every track the artist is credited on — other people's tracks
-    # with them as a guest come first there — and has no number to set the two lists against each other by
+    # with them as a guest come first there — and has no number to set the two lists against each other by. Where
+    # the others have no list at all (a record with no music), Yandex's is the only word there is
+    others = any(p.top_tracks for p in pages if p.artist.source != "ym")
+    said = [p for p in pages if not (p.artist.source == "ym" and main.artist.source != "ym" and others)]
     top: dict[str, CatalogTrack] = {}
-    for p in pages:
-        if p.artist.source == "ym" and main.artist.source != "ym":
-            continue
+    for p in said:
         for t in p.top_tracks:
             top.setdefault(t.ref, t)
     tracks = list(top.values())
-    if len(pages) > 1:  # the most listened of them all, by the catalog's own count of it
-        tracks = sorted(tracks, key=lambda t: t.rank or 0, reverse=True)[:max(len(p.top_tracks) for p in pages if p.artist.source == main.artist.source)]
+    if len(said) > 1:  # the most listened of them all, by the catalog's own count of it
+        tracks = sorted(tracks, key=lambda t: t.rank or 0, reverse=True)[:max(len(p.top_tracks) for p in said)]
     fans = [p.artist.nb_fans for p in pages if p.artist.nb_fans and p.artist.source == main.artist.source]
     artist = main.artist.model_copy(update={"name": who.name if who is not None else main.artist.name,
                                              "nb_fans": sum(fans) if fans else main.artist.nb_fans})

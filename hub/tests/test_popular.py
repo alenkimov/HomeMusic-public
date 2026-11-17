@@ -41,6 +41,17 @@ async def test_the_rest_of_popular_is_lastfms_and_the_artists_own(monkeypatch):
     assert [t.title for t in got] == ["mochimochi", "LEMON"]  # Last.fm's order, without what the catalog gave
     assert "pppp" not in asked  # the catalog's own list has it already: not looked up
 
+    # what the artist's own catalog lacks is looked for in Yandex, among the tracks that credit this very name
+    def ym(id_, title, artists):
+        return CatalogTrack(ref=f"ym:{id_}", source="ym", id=id_, title=title, artist=artists[0], artists=artists, artist_ref="ym:1")
+
+    async def yandex_tracks(name, title, limit=5):
+        return {"Not in the catalog": [ym("9", "Not in the catalog", ["Somebody", "tak"])], "Smoke": [ym("8", "Smoke", ["Another"])]}.get(title, [])
+
+    monkeypatch.setattr(popular, "svc", SimpleNamespace(deezer=SimpleNamespace(search_tracks=search_tracks), yandex=SimpleNamespace(search_tracks=yandex_tracks)))
+    assert [t.ref for t in await popular.more(artist, have)] == ["dz:3", "ym:9", "dz:6"]
+    monkeypatch.setattr(popular, "svc", SimpleNamespace(deezer=SimpleNamespace(search_tracks=search_tracks)))
+
     # the catalog's list is long enough: Last.fm is not asked
     asked.clear()
     assert await popular.more(artist, [track(str(i), f"t{i}") for i in range(10)]) == [] and asked == []
