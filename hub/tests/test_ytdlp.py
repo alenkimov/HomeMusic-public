@@ -369,7 +369,7 @@ async def test_search_errors_raise_provider_error(monkeypatch: pytest.MonkeyPatc
         raise DownloadError("ERROR: network down")
 
     monkeypatch.setattr(p, "_extract", boom)
-    with pytest.raises(ProviderError):
+    with pytest.raises(ProviderError, match=r"^ERROR: network down$"):
         await p.search(TrackQuery(artist="a", title="b"))
 
 

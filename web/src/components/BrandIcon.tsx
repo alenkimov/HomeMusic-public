@@ -20,6 +20,8 @@ const BRANDS: Record<string, { color: string; d: string; box?: number; plate?: s
 
 export const hasBrand = (service: string): boolean => service in BRANDS;
 
+export const hasBrand = (service: string): boolean => Object.hasOwn(BRANDS, service);
+
 export function BrandIcon({ service, size = 22, className = '' }: { service: string; size?: number; className?: string }) {
   const b = BRANDS[service];
   if (!b) return null;

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { QualityRow } from '../api/types';
 import { Icon } from '../components/Icon';
+import { ServiceText } from '../components/ServiceBadge';
 import { Button, Cover, Empty, ErrorState, PageHeader, ProgressBar, SkeletonRows, cx } from '../components/ui';
 import { fmtDuration, providerLabel, tracksWord } from '../lib/format';
 import { useAsync, useInterval } from '../lib/hooks';
@@ -236,7 +237,7 @@ function RowState({ r }: { r: QualityRow }) {
   return (
     <span className="flex min-w-0 shrink items-center gap-2">
       <span className="hidden min-w-0 truncate text-[11px] text-dim sm:block" title={r.note ?? undefined}>
-        {r.state === 'kept' ? 'вы оставили свой файл' : r.note}
+        {r.state === 'kept' ? 'вы оставили свой файл' : r.note && <ServiceText text={r.note} />}
       </span>
       {pill(was, 'bg-fg/5 text-muted')}
     </span>

@@ -570,7 +570,7 @@ class YtdlpProvider:
                     raise _YoutubeRefusal(message) from None
                 if not self._js and ("challenge" in msg.lower() or "format is not available" in msg):
                     msg += " (no JS runtime found: install Deno 2.3+ or Node 22+)"
-                raise ProviderError(f"yt-dlp: {msg}") from e
+                raise ProviderError(msg) from e
 
     # ------------------------------------------------------------------ Provider API
 
