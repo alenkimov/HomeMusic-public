@@ -47,7 +47,7 @@ async def env(hub_env):
                 "content-type": "image/jpeg"}))
             async with app_client(app) as client:
                 calls.clear()
-                yield {"client": client, "calls": calls}
+                yield {"client": client, "calls": calls, "mock": mock}
 
 
 def ext(ref: str = "dz:100", kind: str = "s") -> str:
@@ -174,6 +174,68 @@ async def test_a_catalog_song_shows_plays_and_is_kept(env, monkeypatch):
     assert r.json()["subsonic-response"]["error"]["code"] == 70
     r = await c.get("/rest/stream", params={**AUTH, "p": "wrong", "f": "json", "id": ext()})
     assert r.json()["subsonic-response"]["error"]["code"] == 40
+
+
+@pytest.mark.parametrize("source", ["sp", "ym"])
+async def test_track_card_and_cover_work_with_empty_catalog_caches(env, monkeypatch, source):
+    from collections import OrderedDict
+    from unittest.mock import AsyncMock
+
+    from app.api import subsonic
+    from app.catalog.models import CatalogAlbum, CatalogTrack
+    from app.services import svc
+
+    cover_url = "https://covers.test/big.jpg"
+    track = CatalogTrack(ref=f"{source}:1", source=source, id="1", title="Песня", artist="Артист",
+                         album_ref=f"{source}:2", cover_url=cover_url if source == "sp" else None)
+    release = CatalogAlbum(ref=f"{source}:2", source=source, id="2", title="Альбом", artist=track.artist,
+                           cover_url=cover_url)
+    get_track = AsyncMock(return_value=track)
+    get_album = AsyncMock(return_value=release)
+    monkeypatch.setattr(svc, "deezer", None)
+    if source == "sp":
+        monkeypatch.setattr(svc, "spotify", SimpleNamespace(track=get_track, album=get_album, aclose=AsyncMock()))
+    else:
+        monkeypatch.setattr(svc, "yandex", SimpleNamespace(get_track=get_track, get_album=get_album))
+    monkeypatch.setattr(subsonic, "_known", OrderedDict())
+    monkeypatch.setattr(subsonic, "_albums", OrderedDict())
+    params = {**AUTH, "id": ext(track.ref)}
+
+    r = await env["client"].get("/rest/getCoverArt", params=params)
+    assert r.status_code == 200 and r.content == b"jpg"
+    get_track.assert_awaited_once_with("1")
+    if source == "ym":
+        get_album.assert_awaited_once_with("2")
+
+    subsonic._known.clear()
+    r = await env["client"].get("/rest/getSong", params={**params, "f": "json"})
+    assert r.json()["subsonic-response"]["song"]["title"] == track.title
+    assert get_track.await_count == 2
+
+
+async def test_hitmoz_track_card_and_cover_use_its_song_page(env, monkeypatch):
+    from collections import OrderedDict
+    from pathlib import Path
+    from unittest.mock import AsyncMock
+
+    from app.api import subsonic
+    from app.services import svc
+
+    html = (Path(__file__).parent / "fixtures" / "hitmoz" / "track_kino.html").read_text(encoding="utf-8")
+    fetch = AsyncMock(return_value=(html, "https://ru.hitmoz.org"))
+    monkeypatch.setattr(svc.hitmoz_catalog.provider, "fetch_page", fetch)
+    monkeypatch.setattr(subsonic, "_known", OrderedDict())
+    cover = env["mock"].get("https://statcore.hitmcdn.com/cover/8e4/70d/244792.jpg").mock(
+        return_value=httpx.Response(200, content=b"hitmoz-cover", headers={"content-type": "image/jpeg"}),
+    )
+    params = {**AUTH, "id": ext("hm:79436285")}
+
+    r = await env["client"].get("/rest/getCoverArt", params=params)
+    assert r.status_code == 200 and r.content == b"hitmoz-cover" and cover.called
+    subsonic._known.clear()
+    r = await env["client"].get("/rest/getSong", params={**params, "f": "json"})
+    assert r.json()["subsonic-response"]["song"]["title"] == "Группа крови"
+    fetch.assert_awaited_once_with("/song/79436285")
 
 
 async def test_a_catalog_album_opens_with_its_tracks_and_is_kept(env):

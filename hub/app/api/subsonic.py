@@ -189,16 +189,13 @@ async def _artist(ref: str, fmt: str | None) -> Response:
 async def _track(ref: str) -> CatalogTrack | None:
     if ref in _known:
         return _known[ref]
-    src, id_ = split_ref(ref)
-    if src == "dz" and svc.deezer is not None:
-        try:
-            t = await svc.deezer.get_track(id_)
-        except Exception as e:
-            log.warning("subsonic: the catalog does not give %s: %r", ref, e)
-            return None
-        _remember(t)
-        return t
-    return None
+    try:
+        t = await svc.track(ref)
+    except Exception as e:
+        log.warning("subsonic: the catalog does not give %s: %r", ref, e)
+        return None
+    _remember(t)
+    return t
 
 
 # --- what the app sent --------------------------------------------------------------------------------------
@@ -385,23 +382,27 @@ async def _play(request: Request, ref: str, user: User, fmt: str | None) -> Resp
                              background=BackgroundTask(m.close) if m.close else None)
 
 
+async def _album_cover(ref: str, small: bool) -> str | None:
+    a = _albums.get(ref)
+    if a is None or not (a.cover_url or a.cover_small_url):
+        try:
+            a = await svc.album(ref)
+        except Exception:
+            return None
+        _keep_known(_albums, ref, a)
+    return (a.cover_small_url if small else None) or a.cover_url or a.cover_small_url
+
+
 async def _cover(kind: str, ref: str, params: list[tuple[str, str]]) -> Response:
     small = 0 < _int(params, "size", 0) <= 300
     url: str | None = None
     if kind == SONG:
         t = await _track(ref)
         url = t and ((t.cover_small_url if small else None) or t.cover_url or t.cover_small_url)
+        if not url and t and t.album_ref:
+            url = await _album_cover(t.album_ref, small)
     elif kind == ALBUM:
-        a = _albums.get(ref)
-        if a is None:
-            from app.api.catalog import get_album
-
-            try:
-                a = await get_album(ref)
-                _keep_known(_albums, ref, a)
-            except Exception:
-                a = None
-        url = a and ((a.cover_small_url if small else None) or a.cover_url or a.cover_small_url)
+        url = await _album_cover(ref, small)
     else:
         r = _artists.get(ref)
         if r is None:

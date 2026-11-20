@@ -18,6 +18,7 @@ from app.providers.hitmoz import (
     parse_artist_page,
     parse_search_albums,
     parse_search_artists,
+    parse_track_page,
     yandex_size,
 )
 
@@ -189,3 +190,25 @@ class HitmozCatalog:
         album_id = str(album_id)
         data = await cached(f"hm:album:{album_id}", TTL_S, lambda: self._produce_album(album_id))
         return CatalogAlbum.model_validate(data)
+
+    async def get_track(self, track_id: str) -> CatalogTrack | None:
+        """Read a track directly from its Hitmoz song page."""
+        if not (track_id.isascii() and track_id.isdecimal()):
+            return None
+
+        async def produce() -> dict | None:
+            html, base = await self.provider.fetch_page(f"/song/{track_id}")
+            row = parse_track_page(html, base)
+            if not row["title"] or not row["artist"] or (row["id"] and row["id"] != track_id):
+                return None
+            artists = _split_artists(row["artist"]) or [row["artist"]]
+            return CatalogTrack(
+                ref=make_ref("hm", track_id), source="hm", id=track_id, title=row["title"],
+                artist=artists[0], artists=artists, artist_ref=make_ref("hm", row["artist_id"]) if row["artist_id"] else None,
+                duration_s=row["duration_s"], explicit=row["explicit"],
+                cover_url=yandex_size(row["cover_url"], COVER_SIZE),
+                cover_small_url=yandex_size(row["cover_url"], COVER_SMALL_SIZE),
+            ).model_dump(mode="json")
+
+        data = await cached(f"hm:track:{track_id}", TTL_S, produce)
+        return CatalogTrack.model_validate(data) if data is not None else None

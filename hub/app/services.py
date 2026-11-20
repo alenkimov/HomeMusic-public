@@ -111,6 +111,9 @@ class Services:
             return await self.yandex.get_track(id_)
         if src == "sp" and self.spotify is not None:
             return await self.spotify.track(id_)
+        if src == "hm" and self.hitmoz_catalog is not None:
+            if track := await self.hitmoz_catalog.get_track(id_):
+                return track
         raise CatalogNotFound(ref)
 
     def provider_order(self, q: TrackQuery, *, for_download: bool = False) -> list[Provider]:
