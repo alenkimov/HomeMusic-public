@@ -13,7 +13,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import AlbumOut, FileOut, TrackOut
-from app.catalog.models import CatalogAlbum, CatalogTrack, split_ref
+from app.catalog.models import CATALOGS, CatalogAlbum, CatalogTrack, split_ref
 from app.matching.normalize import fingerprint, normalize_artist, normalize_title
 from app.models import Album, DownloadItem, Track, TrackFile
 
@@ -139,7 +139,7 @@ async def annotate_tracks(
     if not tracks:
         return []
     isrcs = {t.isrc.upper() for t in tracks if t.isrc}
-    refs = {t.ref for t in tracks if t.source == "dz"}
+    refs = {t.ref for t in tracks if t.source in CATALOGS}
     fps = {fingerprint(t.artist, t.title) for t in tracks}
     rows = (
         await s.execute(
@@ -178,7 +178,7 @@ async def annotate_tracks(
                                  [r for t in tracks for r in (t.artist_ref, *(t.artist_refs or []))])
     out: list[TrackOut] = []
     for t in tracks:
-        hit = (t.isrc and by_isrc.get(t.isrc.upper())) or (t.source == "dz" and by_ref.get(t.ref)) or None
+        hit = (t.isrc and by_isrc.get(t.isrc.upper())) or (t.source in CATALOGS and by_ref.get(t.ref)) or None
         fp = fingerprint(t.artist, t.title)
         if hit is None:
             hit = next((r for r in by_fp.get(fp, []) if _duration_ok(r.duration_s, t.duration_s)), None)

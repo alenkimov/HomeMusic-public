@@ -171,6 +171,7 @@ async def update_item(item_id: int, **fields: Any) -> DownloadItem | None:
 def meta_from_catalog(t: CatalogTrack, album: CatalogAlbum | None = None) -> dict[str, Any]:
     m: dict[str, Any] = {
         "track_ref": t.ref,
+        "album_ref": album.ref if album is not None else t.album_ref,
         "artists": t.artists or [t.artist],
         "artist_refs": (t.artist_refs if t.artists else [t.artist_ref]) or [],
         "album": t.album_title,

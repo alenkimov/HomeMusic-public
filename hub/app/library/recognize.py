@@ -17,8 +17,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from itertools import zip_longest
+from time import monotonic
 from typing import Any
 
+from app.catalog import lookup
+from app.catalog.models import CatalogAlbum, CatalogArtist, CatalogTrack
 from app.config import get_settings
 from app.library.credits import main_artist
 from app.matching.normalize import has_cyrillic, normalize_artist, split_version, to_latin, version_kind
@@ -51,54 +55,78 @@ def single_album(album: str | None, title: str) -> bool:
 
 
 _JOINT = re.compile(r"\s+(?:&|x|X|и|and|vs\.?)\s+")
-RELEASES_MAX = 80  # of an artist's releases gone through, the newest first
-_released: dict[str, list[Any]] = {}  # an artist's name -> the tracks of their releases (for the Hub's run: a folder
-_RELEASED_KEPT = 400                  # of one artist's files asks once)
+RELEASES_MAX = 80  # album lookups per artist across the enabled catalogs
+_released: dict[tuple[str, tuple[str, ...]], tuple[float, list[CatalogTrack]]] = {}
+_RELEASED_KEPT = 400
 
 
-async def _released_by(line: str) -> list[Any]:
-    """The tracks of everything the file's first artist released, as the catalog lists it: the artist is found by
-    name (spelt either way: «LSP» is «ЛСП»), their releases are read a few at once. Nothing when the catalog has
-    no such artist, or does not answer."""
+async def _released_by(line: str) -> list[CatalogTrack]:
+    """Read a bounded part of the artist's releases across the available catalogs."""
     name = main_artist(line)
-    key = name.casefold()
-    if key in _released:
-        return _released[key]
-    out: list[Any] = []
-    try:
-        # a file may name two artists as one («Medoi The Maid & Lieath») where the catalog files the release under
-        # the first: the whole name is looked for, then its first part
-        names = list(dict.fromkeys([name, _JOINT.split(name)[0].strip()]))
-        artists: list[Any] = []
-        for one in names:
-            who = normalize_artist(one)
-            artists = [a for a in (await svc.deezer.search(_words(one), kinds=("artist",), limit=8)).artists
-                       if artist_sim(who, normalize_artist(a.name)) >= get_settings().cfg.matching.artist_min_ratio][:2]
-            if artists:
-                break
-        gate = asyncio.Semaphore(4)
+    sources = tuple(src for src in lookup.SOURCE_PRIORITY if lookup.source_available(f"{src}:"))
+    key = (name.casefold(), sources)
+    if (cached := _released.get(key)) and cached[0] > monotonic():
+        return cached[1]
+    if not sources:
+        return []
+    profiles: dict[str, list[CatalogArtist]] = {}
+    # A release may be filed under the first artist in a joint name.
+    for spelling in dict.fromkeys((name, _JOINT.split(name)[0].strip())):
+        try:
+            found = await lookup.search(_words(spelling), kinds=("artist",), limit=8)
+        except lookup.CatalogUnavailable:
+            continue
+        who = normalize_artist(spelling)
+        for src in sources:
+            if src in profiles:
+                continue
+            matches = [a for a in found.artists if a.source == src and
+                       artist_sim(who, normalize_artist(a.name)) >= get_settings().cfg.matching.artist_min_ratio]
+            if matches:
+                profiles[src] = matches[:2]
+        if len(profiles) == len(sources):
+            break
 
-        async def tracks(album: Any) -> list[Any]:
-            async with gate:
-                try:
-                    whole = await svc.deezer.get_album(album.id)
-                except Exception:
-                    return []
-            for t in whole.tracks or []:
-                _kinds[t.ref] = whole.record_type
-            return [t.model_copy(update={"album_title": t.album_title or whole.title, "album_ref": t.album_ref or whole.ref,
-                                         "album_artist": t.album_artist or whole.artist}) for t in (whole.tracks or [])]
+    async def albums_of(artist: CatalogArtist) -> tuple[list[CatalogAlbum], bool]:
+        try:
+            if artist.source == "sp" and svc.spotify is not None:
+                albums, partial, pending = await svc.spotify.discography(artist.id)
+                return albums, not (partial or pending)
+            if artist.source == "dz" and svc.deezer is not None:
+                return await svc.deezer.get_artist_albums(artist.id), True
+            return (await svc.artist_page(artist.ref)).albums, True
+        except Exception as error:
+            log.info("recognize: releases of %s not read: %r", artist.ref, error)
+            return [], False
 
-        for a in artists:
-            albums = (await svc.deezer.get_artist_albums(a.id))[:RELEASES_MAX]
-            for part in await asyncio.gather(*(tracks(x) for x in albums)):
-                out.extend(part)
-    except Exception as e:
-        log.info("recognize: releases of %s not read: %r", name, e)
-        return []  # not kept: asked again with the next file
-    if len(_released) >= _RELEASED_KEPT:
-        _released.pop(next(iter(_released)))
-    _released[key] = out
+    shelves = await asyncio.gather(*(albums_of(a) for src in sources for a in profiles.get(src, [])))
+    # Interleave shelves so a large discography in one catalog cannot exhaust the lookup budget.
+    albums = {album.ref: album for row in zip_longest(*(items for items, _ in shelves))
+              for album in row if album is not None}
+    gate = asyncio.Semaphore(4)
+
+    async def tracks_of(album: CatalogAlbum) -> list[CatalogTrack] | None:
+        async with gate:
+            try:
+                whole = album if album.tracks is not None else await svc.album(album.ref)
+            except Exception as error:
+                log.info("recognize: release %s not read: %r", album.ref, error)
+                return None
+        out = []
+        for t in whole.tracks or []:
+            _kinds[t.ref] = whole.record_type
+            out.append(t.model_copy(update={"album_title": t.album_title or whole.title,
+                                            "album_ref": t.album_ref or whole.ref,
+                                            "album_artist": t.album_artist or whole.artist}))
+        return out
+
+    parts = await asyncio.gather(*(tracks_of(a) for a in list(albums.values())[:RELEASES_MAX]))
+    out = [track for part in parts if part is not None for track in part]
+    if out and all(complete for _, complete in shelves) and None not in parts:
+        if key not in _released and len(_released) >= _RELEASED_KEPT:
+            _released.pop(next(iter(_released)))
+        ttl = 3600 if len(profiles) == len(sources) else 120
+        _released[key] = (monotonic() + ttl, out)
     return out
 
 
@@ -126,6 +154,7 @@ def _weigh(found: list[Any], artist: str, raw_title: str, album: str | None, dur
               if _theirs(t, sc, split_version(raw_title)[0] or raw_title, album, duration, cfg)]
     if not scored:
         return [], "not_found"
+    scored.sort(key=lambda row: (-row[1].total, lookup.SOURCE_PRIORITY.get(row[0].source, len(lookup.SOURCE_PRIORITY))))
     top = scored[0][0]
 
     def same_song(t: Any) -> bool:
@@ -220,7 +249,7 @@ async def of_file(tags: dict[str, Any], file_name: str, duration_s: float | None
     """{state: "found" | "doubt" | "none", why, meta}: `meta` — the record as a download carries it
     (`jobs.downloads.meta_from_catalog`), with its title and artist line."""
     artist, raw_title = names_of(tags, file_name)
-    if not artist or not raw_title or svc.deezer is None:
+    if not artist or not raw_title:
         return {"state": "none", "why": None, "meta": None}
     title, version = split_version(raw_title)
     duration = round(duration_s) if duration_s else None
@@ -244,8 +273,8 @@ async def of_file(tags: dict[str, Any], file_name: str, duration_s: float | None
     found, seen, failed, scored, verdict = [], set(), None, [], "not_found"
     for ask in dict.fromkeys(a for a in asks if a.strip()):
         try:
-            got, _ = await svc.deezer.search_track_page(ask, 0, 25 if ask == wanted else 10)
-        except Exception as e:
+            got, _ = await lookup.track_page(ask, 0, 25 if ask == wanted else 10)
+        except lookup.CatalogUnavailable as e:
             log.info("recognize: catalog search failed for %r: %r", ask, e)
             failed = e
             continue
@@ -257,22 +286,28 @@ async def of_file(tags: dict[str, Any], file_name: str, duration_s: float | None
         scored, verdict = _weigh(found, artist, raw_title, album, duration, version, cfg)
         if verdict == "auto":
             break
+    release_tracks = None
     if verdict != "auto":
         # the search did not settle it — it misses a good deal of what the catalog has. The artist's own releases
         # are gone through then: the song is looked for among everything they put out
-        more = [t for t in await _released_by(artist) if t.ref not in seen]
+        release_tracks = await _released_by(artist)
+        more = [t for t in release_tracks if t.ref not in seen]
         if more:
             found.extend(more)
+            seen.update(t.ref for t in more)
             scored, verdict = _weigh(found, artist, raw_title, album, duration, version, cfg)
     if verdict == "not_found":
         return {"state": "none", "why": "каталог не ответил" if failed and not found else None, "meta": None}
     top = _of_album(scored, release)
-    if not _same_name(top.album_title, release):
+    better_release_needed = not _same_name(top.album_title, release) if release else _release_rank(top) > _RANKS["album"]
+    if better_release_needed:
         # The record found stands on a release the file does not name — the search gives a song's single before its
         # album. The song's other releases are gone through, among everything the artist put out: the one the file
         # names is the file's; where it names none of them (no album in its tags, or one the catalog does not
         # know), an album is taken over a single — a song belongs with the album it came out on.
-        more = [t for t in await _released_by(artist) if t.ref not in seen]
+        if release_tracks is None:
+            release_tracks = await _released_by(artist)
+        more = [t for t in release_tracks if t.ref not in seen]
         again, verdict_again = scored, verdict
         if more:
             found.extend(more)
@@ -306,23 +341,34 @@ async def of_file(tags: dict[str, Any], file_name: str, duration_s: float | None
 async def of_ref(ref: str) -> dict[str, Any]:
     """The record the listener picked by hand: it is the file's, no doubt about it."""
     src, _, ident = ref.partition(":")
-    if src != "dz" or not ident or svc.deezer is None:
+    if src not in lookup.SOURCE_PRIORITY or not ident:
         raise ValueError("Каталог не знает такой записи")
-    return {"state": "found", "why": None, "meta": await meta_of(await svc.deezer.get_track(ident)), "by_hand": True}
+    return {"state": "found", "why": None, "meta": await meta_of(await svc.track(ref)), "by_hand": True}
 
 
 async def meta_of(t: Any) -> dict[str, Any]:
     from app.jobs.downloads import complete_meta, meta_from_catalog
 
-    # a record met in a list — a search, an album's tracks — names only its main artist: who else is credited
-    # is said by the track's own record, so that is what the meta is made of
-    if svc.deezer is not None and t.source == "dz":
-        try:
-            whole = await svc.deezer.get_track(t.id)
-            t = t.model_copy(update={"artists": whole.artists or t.artists, "artist_refs": whole.artist_refs or t.artist_refs})
-        except Exception as e:
-            log.info("recognize: credits of %s not read: %r", t.ref, e)
-    meta = await complete_meta(meta_from_catalog(t))
+    album = None
+    if t.source == "dz":
+        # The Deezer tracklist may only credit the main artist.
+        if svc.deezer is not None:
+            try:
+                whole = await svc.deezer.get_track(t.id)
+                t = t.model_copy(update={"artists": whole.artists or t.artists, "artist_refs": whole.artist_refs or t.artist_refs})
+            except Exception as error:
+                log.info("recognize: credits of %s not read: %r", t.ref, error)
+        meta = await complete_meta(meta_from_catalog(t))
+    else:
+        if t.album_ref:
+            try:
+                async with asyncio.timeout(10):
+                    album = await svc.album(t.album_ref)
+            except Exception as error:
+                log.info("recognize: release metadata of %s not read: %r", t.ref, error)
+            if album and (listed := next((row for row in album.tracks or [] if row.ref == t.ref), None)):
+                t = t.model_copy(update={"track_no": t.track_no or listed.track_no, "disc_no": t.disc_no or listed.disc_no})
+        meta = meta_from_catalog(t, album)
     meta["title"], meta["artist"] = t.title, t.artist
     meta["artists"] = t.artists or [t.artist]
     return meta

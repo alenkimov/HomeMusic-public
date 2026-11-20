@@ -25,7 +25,7 @@ from sqlalchemy import JSON, func, literal, or_, select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.catalog.models import CatalogTrack, split_ref
+from app.catalog.models import CATALOGS, CatalogTrack
 from app.config import get_settings
 from app.db import session_scope
 from app.jobs.queue import PRIORITY_IMPORT, enqueue, handler, notify
@@ -185,7 +185,7 @@ async def save(s: AsyncSession, user: User, built: builder.Built) -> Mix:
     await s.flush()
     for pos, c in enumerate(built.active + built.reserve):
         s.add(MixItem(mix_id=mix.id, position=pos, state="active" if pos < len(built.active) else "reserve",
-                      familiar=c.familiar, ref=c.track.ref if c.track.source == "dz" else None,
+                      familiar=c.familiar, ref=c.track.ref if c.track.source in CATALOGS else None,
                       nd_song_id=c.nd_song_id, track_id=c.library_track_id, generator=c.generator,
                       score=round(c.score, 4), features_json=c.features()))
     await s.flush()
@@ -207,7 +207,7 @@ async def save_weekly(user_id: int, picked: list[Any], *, issue_id: int, descrip
         await s.flush()
         for pos, c in enumerate(picked):
             s.add(MixItem(mix_id=mix.id, position=pos, state="active", familiar=False,
-                          ref=c.track.ref if c.track.source == "dz" else None, nd_song_id=c.nd_song_id,
+                          ref=c.track.ref if c.track.source in CATALOGS else None, nd_song_id=c.nd_song_id,
                           track_id=c.library_track_id, generator=c.generator, score=round(c.score, 4),
                           features_json=c.features()))
         mix_id = mix.id
@@ -229,14 +229,11 @@ async def queue_download(s: AsyncSession, mix: Mix, it: MixItem) -> None:
         it.downloaded_for_mix = bool((active.query_json or {}).get("mix")) and quiet(active.query_json)
         return
     t = CatalogTrack.model_validate((it.features_json or {}).get("track") or {})
-    from app.jobs.downloads import query_from_track
+    from app.jobs.downloads import meta_from_catalog, query_from_track
 
-    meta: dict[str, Any] = {"track_ref": it.ref, "artists": t.artists or [t.artist]}
-    src, id_ = split_ref(it.ref)
-    if src == "dz":
-        meta["deezer_track_id"] = id_
     item = DownloadItem(batch_id=mix.batch_id, user_id=mix.user_id, query_json={
-        "query": query_from_track(t).model_dump(), "meta": meta, "mix": {"id": mix.id, "item": it.id}})
+        "query": query_from_track(t).model_dump(), "meta": meta_from_catalog(t),
+        "mix": {"id": mix.id, "item": it.id}})
     s.add(item)
     await s.flush()
     await enqueue(s, "download_item", {"item_id": item.id}, priority=PRIORITY_MIX)

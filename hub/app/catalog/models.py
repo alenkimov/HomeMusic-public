@@ -13,8 +13,8 @@ from pydantic import BaseModel
 
 # "nd": a song only the library has (Navidrome id), no catalog record: mixes (`app.mixes`) list such songs too
 # "file": an exact provider file used as the first track of a wave, including songs absent from catalogs.
-Source = Literal["dz", "ym", "hm", "mb", "nd", "file"]
-CATALOGS = ("dz", "ym", "hm", "mb")  # the sources that are catalogs: a record of one names a song for good
+Source = Literal["dz", "ym", "sp", "hm", "mb", "nd", "file"]
+CATALOGS = ("dz", "ym", "sp", "hm", "mb")  # the sources that are catalogs: a record of one names a song for good
 RecordType = Literal["album", "single", "ep", "compile"]
 
 

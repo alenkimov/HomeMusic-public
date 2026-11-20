@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.catalog.hitmoz_catalog import HitmozCatalog
     from app.catalog.models import ArtistPage, CatalogAlbum, CatalogTrack
     from app.catalog.musicbrainz import MusicBrainzClient
+    from app.catalog.spotify import SpotifyCatalog
     from app.catalog.yandex_catalog import YandexCatalog
 
 log = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ class Services:
         self.hitmoz_catalog: HitmozCatalog | None = None
         self.yandex: YandexCatalog | None = None
         self.musicbrainz: MusicBrainzClient | None = None
+        self.spotify: SpotifyCatalog | None = None
 
     def start(self) -> None:
         from app.catalog.deezer import DeezerClient
@@ -78,6 +80,8 @@ class Services:
             return await self.yandex.get_artist(id_)
         if src == "hm" and self.hitmoz_catalog is not None:
             return await self.hitmoz_catalog.get_artist(id_)
+        if src == "sp" and self.spotify is not None:
+            return await self.spotify.artist_page(id_)
         raise CatalogNotFound(ref)
 
     async def album(self, ref: str, *, credited: bool = False) -> CatalogAlbum:
@@ -92,6 +96,8 @@ class Services:
             return await self.yandex.get_album(id_)
         if src == "hm" and self.hitmoz_catalog is not None:
             return await self.hitmoz_catalog.get_album(id_)
+        if src == "sp" and self.spotify is not None:
+            return await self.spotify.album(id_)
         raise CatalogNotFound(ref)
 
     async def track(self, ref: str) -> CatalogTrack:
@@ -103,6 +109,8 @@ class Services:
             return await self.deezer.get_track(id_)
         if src == "ym" and self.yandex is not None:
             return await self.yandex.get_track(id_)
+        if src == "sp" and self.spotify is not None:
+            return await self.spotify.track(id_)
         raise CatalogNotFound(ref)
 
     def provider_order(self, q: TrackQuery, *, for_download: bool = False) -> list[Provider]:

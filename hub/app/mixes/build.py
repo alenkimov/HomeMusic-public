@@ -28,7 +28,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
-from app.catalog.models import CatalogTrack, split_ref
+from app.catalog.models import CATALOGS, CatalogTrack, split_ref
 from app.config import get_settings
 from app.db import session_scope
 from app.matching.normalize import fingerprint, normalize_artist, split_version, version_kind
@@ -373,7 +373,7 @@ def merge(results: list[GenResult]) -> dict[str, Cand]:
             if c is None:
                 c = out[key] = Cand(track=t)
                 by_fp[fp] = key
-            elif c.track.source == "nd" and t.source == "dz":
+            elif c.track.source == "nd" and t.source in CATALOGS:
                 c.track = t  # the catalog record is the better one
             c.gens[r.name] = min(c.gens.get(r.name, pos), pos)
     return out
@@ -383,12 +383,12 @@ async def link_library(cands: dict[str, Cand]) -> None:
     """Which candidates the library has (its Navidrome song): those need no download."""
     from app.library.owned import annotate_tracks
 
-    dz = [c for c in cands.values() if c.track.source == "dz"]
+    tracks = [c for c in cands.values() if c.track.source in CATALOGS or c.track.ref.startswith("lib:")]
     async with session_scope() as s:
-        for c, o in zip(dz, await annotate_tracks(s, [c.track for c in dz]), strict=True):
+        for c, o in zip(tracks, await annotate_tracks(s, [c.track for c in tracks]), strict=True):
             if o.owned and o.nd_song_id:
                 c.nd_song_id, c.library_track_id = o.nd_song_id, o.library_track_id
-        nd = {c.track.id: c for c in cands.values() if c.track.source == "nd"}
+        nd = {c.track.id: c for c in cands.values() if c.track.ref.startswith("nd:")}
         if nd:
             for tid, song in (await s.execute(select(Track.id, Track.nd_song_id)
                                               .where(Track.nd_song_id.in_(list(nd))))).all():
@@ -407,7 +407,7 @@ async def link_library(cands: dict[str, Cand]) -> None:
 def keep_reason(c: Cand, p: Profile, cfg) -> str | None:
     """Return the first rejection reason, or None when kept; sets `familiar`."""
     t = c.track
-    ref = t.ref if t.source == "dz" else None
+    ref = t.ref if t.source in CATALOGS else None
     if p.disliked(ref=ref, nd_song_id=c.nd_song_id, artist=t.artist, artist_ref=t.artist_ref, artists=t.artists,
                   artist_refs=t.artist_refs):
         return "disliked"
@@ -471,7 +471,7 @@ def score(c: Cand, weights: dict[str, float], profile: Profile | None = None) ->
 def known_of(c: Cand, p: Profile) -> dict[str, Any] | None:
     """What the profile knew of a candidate when the mix was built (none: an unknown track)."""
     t = c.track
-    known = p.find(ref=t.ref if t.source == "dz" else None, nd_song_id=c.nd_song_id, fp=fingerprint(t.artist, t.title))
+    known = p.find(ref=t.ref if t.source in CATALOGS else None, nd_song_id=c.nd_song_id, fp=fingerprint(t.artist, t.title))
     if known is None:
         return None
     v2 = isinstance(p, V2Profile)
