@@ -1,9 +1,9 @@
 import { TrackTitle } from './TrackTitle';
 import { askForQueue } from '../lib/playerQueue';
 import { openTagsSheet, tagKey } from '../lib/tags';
-import { type CSSProperties } from 'react';
+import { useEffect, useRef, type CSSProperties } from 'react';
 import { fmtDuration } from '../lib/format';
-import { isUpload, artistTo, creditedOf, cycleRepeat, cycleShuffle, hasNext, hasPrev, next, prev, setVolume, toggle, useListen } from '../lib/listen';
+import { isUpload, artistTo, creditedOf, cycleRepeat, cycleShuffle, getListenState, hasNext, hasPrev, next, prev, setVolume, toggle, useListen } from '../lib/listen';
 import { useSeek } from '../lib/seek';
 import { Link, albumPath } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
@@ -34,6 +34,20 @@ export function DesktopPlayer() {
   const canNext = useListen((s) => hasNext(s) || (s.repeat === 'all' && !s.context.startsWith('wave:')));
   const canPrev = useListen(hasPrev);
   const { shownPos, aim, aimPct, range } = useSeek(position, duration);
+  const volumeControl = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const control = volumeControl.current;
+    if (!control) return;
+    const adjust = (event: WheelEvent) => {
+      if (!event.deltaY || event.ctrlKey) return;
+      event.preventDefault();
+      const percent = Math.round(getListenState().volume * 100);
+      setVolume((percent - Math.sign(event.deltaY) * 5) / 100);
+    };
+    control.addEventListener('wheel', adjust, { passive: false });
+    return () => control.removeEventListener('wheel', adjust);
+  }, []);
 
   const waiting = phase === 'resolving' || phase === 'loading';
   const playing = phase === 'playing' || waiting;
@@ -154,19 +168,21 @@ export function DesktopPlayer() {
           <Link to="/player" onClick={askForQueue} title="Очередь" aria-label="Очередь" className={cx('flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg', !track && 'pointer-events-none opacity-40')}>
             <Icon name="queue" size={20} />
           </Link>
-          <Icon name="volume" size={18} className="ml-1 shrink-0 text-muted" />
-          <input
-            type="range"
-            className="hm-range w-28 min-w-0"
-            aria-label="Громкость"
-            aria-valuetext={`${Math.round(volume * 100)}%`}
-            min={0}
-            max={100}
-            step={1}
-            value={Math.round(volume * 100)}
-            style={{ '--p': `${volume * 100}%` } as CSSProperties}
-            onChange={(e) => setVolume(Number(e.target.value) / 100)}
-          />
+          <div ref={volumeControl} className="-mx-1 flex h-11 min-w-0 items-center gap-1 px-2">
+            <Icon name="volume" size={18} className="shrink-0 text-muted" />
+            <input
+              type="range"
+              className="hm-range w-28 min-w-0"
+              aria-label="Громкость"
+              aria-valuetext={`${Math.round(volume * 100)}%`}
+              min={0}
+              max={100}
+              step={1}
+              value={Math.round(volume * 100)}
+              style={{ '--p': `${volume * 100}%` } as CSSProperties}
+              onChange={(e) => setVolume(Number(e.target.value) / 100)}
+            />
+          </div>
         </div>
       </div>
     </div>
