@@ -1576,9 +1576,8 @@ const KEEP_OFF = 'hm-upload-keep-off';
 /** «После загрузки»: where the imported tracks go besides the library — «Любимое», playlists, tags. The same icons
  * as the selection bar's and the same windows; what is chosen stands beside them and is taken off by its ✕. An
  * upload also has the playlist that keeps it together (`keepName`): on unless taken off, and put back by its chip.
- * `made`: what the transfer makes by itself — a playlist of each list brought over, ♥ for the liked ones — said here
- * so that it is no surprise; it has no ✕ (it goes with the list: untick the list to do without). */
-export function AfterImport({ made = [], count, like, onLike, playlists, onPlaylists, onPickPlaylists, tagIds, onTags, keepName, keep = false, onKeep, label = 'После загрузки', className = 'mx-4 mt-5' }: { made?: { name: string; liked?: boolean }[]; keepName?: string; keep?: boolean; onKeep?: (on: boolean) => void; label?: string; className?: string; count: number; like: boolean; onLike: (v: boolean) => void; playlists: { id: string; name: string }[]; onPlaylists: (list: { id: string; name: string }[]) => void; onPickPlaylists: () => void; tagIds: number[]; onTags: (ids: number[]) => void }) {
+ * `made`: the playlists created from the selected source collections. */
+export function AfterImport({ made = [], count, like, onLike, playlists, onPlaylists, onPickPlaylists, tagIds, onTags, keepName, keep = false, onKeep, label = 'После загрузки', className = 'mx-4 mt-5' }: { made?: { id: number; name: string }[]; keepName?: string; keep?: boolean; onKeep?: (on: boolean) => void; label?: string; className?: string; count: number; like: boolean; onLike: (v: boolean) => void; playlists: { id: string; name: string }[]; onPlaylists: (list: { id: string; name: string }[]) => void; onPickPlaylists: () => void; tagIds: number[]; onTags: (ids: number[]) => void }) {
   const tags = useTags();
   const picked = tagIds.map((id) => tags.byId.get(id)).filter((t) => !!t);
   const chip = 'flex min-w-0 items-center gap-1.5 rounded-full bg-fg/10 py-1 pl-3 pr-1 text-sm';
@@ -1598,12 +1597,12 @@ export function AfterImport({ made = [], count, like, onLike, playlists, onPlayl
       {nothing && <span className="text-xs text-dim">Только в библиотеку. Можно сразу добавить в «Любимое», плейлисты и поставить теги.</span>}
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         {made.map((m) => (
-          <span key={`${m.liked ? 'liked' : 'list'}:${m.name}`} className={cx(chip, 'pr-3')} title={m.liked ? 'Эти треки получат ♥ и попадут в «Любимое»' : `Плейлист «${m.name}» создастся сам — в нём будут все треки этого списка`}>
-            <Icon name={m.liked ? 'heart' : 'playlist'} size={14} filled={m.liked} className="shrink-0 text-accent" />
-            <span className="truncate">{m.liked ? 'Любимое' : `Плейлист «${m.name}»`}</span>
+          <span key={m.id} className={cx(chip, 'pr-3')} title={`Плейлист «${m.name}» создастся сам — в нём будут все треки этого списка`}>
+            <Icon name="playlist" size={14} className="shrink-0 text-accent" />
+            <span className="truncate">Плейлист «{m.name}»</span>
           </span>
         ))}
-        {like && !made.some((m) => m.liked) && (
+        {like && (
           <span className={chip}>
             <Icon name="heart" size={14} filled className="text-accent" />
             Любимое

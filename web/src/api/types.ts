@@ -1173,6 +1173,7 @@ export interface ImportStartIn {
   mode: ImportMode;
   download_albums?: boolean;
   keep_token?: boolean;
+  copy_likes?: boolean;
   /** «После переноса»: every transferred track, once the library has it, also gets a ♥ … */
   star?: boolean;
   /** … a place in these playlists … */

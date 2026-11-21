@@ -1484,7 +1484,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
     if (act === 'start') {
       const b = await readJson(req);
       const ids = new Set((b.collection_ids as number[]) ?? []);
-      for (const col of imp.colls) col.selected = ids.has(col.id);
+      for (const col of imp.colls) {
+        col.selected = ids.has(col.id);
+        if (col.selected && col.kind === 'likes' && b.copy_likes === false) col.kind = 'playlist';
+      }
       Object.assign(imp, { mode: b.mode ?? 'economy', keep_token: !!b.keep_token, download_albums: !!b.download_albums, started: Date.now() });
       emit('import', { id: imp.id, status: 'running' });
       setTimeout(() => emit('import', { id: imp.id, status: impStatus(imp) }), imp.mode === 'full' ? 26500 : 6500);

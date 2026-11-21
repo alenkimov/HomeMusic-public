@@ -1068,6 +1068,7 @@ class ImportStartIn(BaseModel):
     mode: ImportMode = "economy"
     download_albums: bool = False  # liked albums: download them whole (else only ★ the owned ones)
     keep_token: bool = False  # keep the sign-in for «Обновить»
+    copy_likes: bool = True  # false: bring the source's liked tracks as an ordinary playlist
     # «После переноса»: every track of the chosen likes and playlists, once the library has it, also gets…
     star: bool = False  # … a ♥
     playlist_ids: list[str] = Field(default_factory=list, max_length=50)  # … a place in these playlists

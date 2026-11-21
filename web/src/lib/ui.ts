@@ -81,7 +81,7 @@ export interface DialogState {
   body?: string;
   okLabel: string;
   cancelLabel: string;
-  danger: boolean;
+  danger: boolean | 'solid';
   resolve: (ok: boolean) => void;
 }
 
@@ -92,7 +92,7 @@ export function confirmDialog(opts: {
   body?: string;
   okLabel?: string;
   cancelLabel?: string;
-  danger?: boolean;
+  danger?: DialogState['danger'];
 }): Promise<boolean> {
   return new Promise((resolve) => {
     dialogStore.get()?.resolve(false);

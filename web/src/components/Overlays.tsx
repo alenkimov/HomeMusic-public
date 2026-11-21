@@ -76,7 +76,7 @@ export function Overlays() {
               <Button variant="ghost" onClick={() => dialog.resolve(false)}>
                 {dialog.cancelLabel}
               </Button>
-              <Button variant={dialog.danger ? 'danger' : 'primary'} onClick={() => dialog.resolve(true)} autoFocus>
+              <Button variant={dialog.danger === 'solid' ? 'danger-solid' : dialog.danger ? 'danger' : 'primary'} onClick={() => dialog.resolve(true)} autoFocus>
                 {dialog.okLabel}
               </Button>
             </div>

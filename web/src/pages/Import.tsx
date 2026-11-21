@@ -385,12 +385,25 @@ function VkAuthStep({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut
   );
 }
 
+async function deleteTransfer(imp: ImportOut, setBusy: (action: 'delete' | null) => void) {
+  setBusy('delete');
+  const draft = !imp.started_at;
+  const confirmed = await confirmDialog({
+    title: draft ? 'Удалить черновик переноса?' : 'Удалить перенос?',
+    body: draft ? 'Предварительный список и настройки этого переноса будут удалены.' : 'Запись о переносе будет удалена из истории.',
+    okLabel: 'Удалить перенос', danger: 'solid',
+  });
+  const removed = confirmed && await attempt(() => api.importDelete(imp.id));
+  setBusy(null);
+  if (removed) navigate(sourcePage(imp.source), { replace: true });
+}
+
 function Preview({ imp, onStarted }: { imp: ImportOut; onStarted: (r: ImportOut) => void }) {
   const [picked, setPicked] = useState<Set<number>>(() => new Set(imp.collections.filter((c) => c.selected && c.kind !== 'dislikes').map((c) => c.id)));
   const [mode, setMode] = useState<ImportMode>('economy');
   const [albums, setAlbums] = useState(false);
   const [keep, setKeep] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'start' | 'delete' | null>(null);
   const toggle = (cid: number, on: boolean) =>
     setPicked((prev) => {
       const next = new Set(prev);
@@ -412,26 +425,29 @@ function Preview({ imp, onStarted }: { imp: ImportOut; onStarted: (r: ImportOut)
   const albumsPicked = imp.collections.some((c) => c.kind === 'albums' && picked.has(c.id));
 
   // «После переноса»: what every transferred track also gets once the library has it
-  const [like, setLike] = useState(false);
+  const [favoriteChoice, setFavoriteChoice] = useState<boolean | null>(null);
   const [toPlaylists, setToPlaylists] = useState<{ id: string; name: string }[]>([]);
   const [tagIds, setTagIds] = useState<number[]>([]);
   const [plPicker, setPlPicker] = useState(false);
-  const moved = imp.collections.filter((c) => (c.kind === 'likes' || c.kind === 'playlist') && picked.has(c.id)).reduce((n, c) => n + c.count, 0);
-  // what the transfer makes by itself: a playlist of each list brought over, ♥ for the liked tracks
-  const made = imp.collections.filter((c) => (c.kind === 'likes' || c.kind === 'playlist') && picked.has(c.id)).map((c) => ({ name: c.title, liked: c.kind === 'likes' }));
+  const trackLists = imp.collections.filter((c) => (c.kind === 'likes' || c.kind === 'playlist') && picked.has(c.id));
+  const moved = trackLists.reduce((n, c) => n + c.count, 0);
+  const like = favoriteChoice ?? trackLists.some((c) => c.kind === 'likes');
+  const star = favoriteChoice === true && trackLists.some((c) => c.kind === 'playlist');
+  const setLike = (value: boolean) => { if (value !== like) setFavoriteChoice(value); };
+  const made = trackLists.filter((c) => c.kind === 'playlist' || !like).map((c) => ({ id: c.id, name: c.title }));
 
   const go = async () => {
-    setBusy(true);
+    setBusy('start');
     const r = await attempt(() =>
       api.importStart(imp.id, {
         collection_ids: [...picked], mode, download_albums: mode === 'full' && albums, keep_token: keep,
-        star: like, playlist_ids: toPlaylists.map((p) => p.id), tag_ids: tagIds,
+        copy_likes: like, star, playlist_ids: toPlaylists.map((p) => p.id), tag_ids: tagIds,
       }),
     );
-    setBusy(false);
+    setBusy(null);
     if (r) {
       onStarted(r);
-      toast(mode === 'economy' ? 'Переносим: плейлисты и ♥ появятся через минуту' : 'Переносим: загрузка пойдёт в фоне', 'success');
+      toast(mode === 'economy' ? 'Треки появятся по мере сопоставления' : 'Переносим: загрузка пойдёт в фоне', 'success');
     }
   };
 
@@ -456,7 +472,7 @@ function Preview({ imp, onStarted }: { imp: ImportOut; onStarted: (r: ImportOut)
       <SectionTitle>Как переносить</SectionTitle>
       <div className="mx-4 lg:mx-6 space-y-2">
         <ModeCard on={mode === 'economy'} onClick={() => setMode('economy')} title="Экономно" badge="рекомендуем">
-          Плейлисты и ♥ появятся сразу, со всеми треками — их можно слушать. На диск трек скачивается, когда вы его послушали.
+          Треки появятся в выбранных списках по мере сопоставления. Файл скачивается после прослушивания.
         </ModeCard>
         <ModeCard on={mode === 'full'} onClick={() => setMode('full')} title="Скачать всё">
           Около {tracksWord(est.tracks)}, ~{fmtSize(est.bytes)}
@@ -479,7 +495,7 @@ function Preview({ imp, onStarted }: { imp: ImportOut; onStarted: (r: ImportOut)
       {moved > 0 && (
         <>
           <AfterImport label="После переноса" className="mx-4 lg:mx-6 mt-4" made={made} count={moved} like={like} onLike={setLike} playlists={toPlaylists} onPlaylists={setToPlaylists} onPickPlaylists={() => setPlPicker(true)} tagIds={tagIds} onTags={setTagIds} />
-          {(like || toPlaylists.length > 0 || tagIds.length > 0) && (
+          {(star || toPlaylists.length > 0 || tagIds.length > 0) && (
             <p className="px-5 pt-1.5 text-xs text-dim lg:px-7">Трек получает это, когда попадает в библиотеку{mode === 'economy' ? ' — в режиме «Экономно» после того, как вы его послушали' : ''}.</p>
           )}
         </>
@@ -497,8 +513,11 @@ function Preview({ imp, onStarted }: { imp: ImportOut; onStarted: (r: ImportOut)
           }}
         />
       )}
-      <div className="px-4 lg:px-6 pt-4">
-        <Button variant="primary" block busy={busy} disabled={!picked.size || (mode === 'full' && lowSpace)} onClick={go}>
+      <div className="flex gap-2 px-4 pt-4 lg:px-6">
+        <Button variant="danger-solid" icon="trash" className="min-w-0 text-balance max-sm:px-3" busy={busy === 'delete'} disabled={!!busy} onClick={() => void deleteTransfer(imp, setBusy)}>
+          Удалить перенос
+        </Button>
+        <Button variant="primary" className="min-w-0 flex-1 max-sm:px-3" busy={busy === 'start'} disabled={!!busy || !picked.size || (mode === 'full' && lowSpace)} onClick={go}>
           Перенести
         </Button>
       </div>
@@ -539,10 +558,6 @@ function Progress({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) 
     const r = await attempt(fn, ok);
     setBusy(null);
     if (r) onChange(r);
-  };
-  const remove = async () => {
-    if (!(await confirmDialog({ title: 'Удалить перенос?', body: 'Музыка, ♥ и плейлисты останутся. Удалятся только этот отчёт и сохранённый вход в сервис.', okLabel: 'Удалить', danger: true }))) return;
-    if (await attempt(() => api.importDelete(imp.id))) navigate(sourcePage(imp.source), { replace: true });
   };
   const tracks = imp.collections.filter((c) => c.selected && (c.kind === 'likes' || c.kind === 'playlist'));
   const other = imp.collections.filter((c) => c.selected && (c.kind === 'albums' || c.kind === 'artists'));
@@ -617,7 +632,7 @@ function Progress({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) 
             Остановить перенос
           </Button>
         ) : (
-          <Button block variant="ghost" icon="trash" onClick={remove}>
+          <Button block variant="danger-solid" icon="trash" busy={busy === 'delete'} disabled={!!busy} onClick={() => void deleteTransfer(imp, setBusy)}>
             Удалить перенос
           </Button>
         )}

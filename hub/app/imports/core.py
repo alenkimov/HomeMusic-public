@@ -359,7 +359,8 @@ async def store_snapshot(s: AsyncSession, imp: Import, snap: Snapshot) -> int:
     for pos, sc in enumerate(snap.collections):
         coll = colls.get(sc.external_id)
         if coll is None:
-            coll = ImportCollection(import_id=imp.id, kind=sc.kind, external_id=sc.external_id, title=sc.title,
+            kind = "playlist" if sc.kind == "likes" and (imp.options_json or {}).get("copy_likes") is False else sc.kind
+            coll = ImportCollection(import_id=imp.id, kind=kind, external_id=sc.external_id, title=sc.title,
                                     selected=sc.selected)
             s.add(coll)
             await s.flush()
@@ -427,14 +428,17 @@ async def _fetch_failed(job: Job, exc: Exception) -> None:
 
 
 async def start(s: AsyncSession, imp: Import, *, collection_ids: list[int], mode: str, download_albums: bool,
-                keep_token: bool, extra: dict[str, Any] | None = None) -> None:
+                keep_token: bool, copy_likes: bool, extra: dict[str, Any] | None = None) -> None:
     if imp.status != "preview":
         raise PermanentError("Импорт уже запущен")
+    selected = set(collection_ids)
     for c in (await s.execute(select(ImportCollection).where(ImportCollection.import_id == imp.id))).scalars():
-        c.selected = c.id in collection_ids
+        c.selected = c.id in selected
+        if c.selected and c.kind == "likes" and not copy_likes:
+            c.kind = "playlist"
     imp.mode = mode
     imp.keep_token = keep_token
-    imp.options_json = {**(imp.options_json or {}), "download_albums": download_albums,
+    imp.options_json = {**(imp.options_json or {}), "download_albums": download_albums, "copy_likes": copy_likes,
                         "extra": extra or {}}  # «После переноса»: `apply.apply_extras`
     imp.status = "running"
     imp.started_at = utcnow()
