@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package spotify.collection.v2;
+
+message CollectionItem {
+  string uri = 1;
+  int64 added_at = 2;
+  bool is_removed = 3;
+}
+
+message PageRequest {
+  string username = 1;
+  string set = 2;
+  string pagination_token = 3;
+  int32 limit = 4;
+}
+
+message PageResponse {
+  repeated CollectionItem items = 1;
+  string next_page_token = 2;
+}

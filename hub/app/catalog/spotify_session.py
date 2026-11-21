@@ -21,6 +21,7 @@ from librespot.proto import Authentication_pb2 as authentication
 from librespot.proto import ExtensionKind_pb2 as extension
 from librespot.proto import Metadata_pb2 as metadata
 
+from app.catalog import spotify_collection_pb2
 from app.net import make_client
 
 PORT = 4381
@@ -29,6 +30,9 @@ _ID = r"[A-Za-z0-9]{22}"
 _TRACK_URI = re.compile(rf"spotify:track:({_ID})")
 _PLAYLIST_ID = re.compile(_ID)
 _CONTEXT_PATH = "/context-resolve/v1/"
+_COLLECTION_PATH = "/collection/v2/paging"
+_COLLECTION_MIME = "application/vnd.collection-v2.spotify.proto"
+_COLLECTION_PAGE_SIZE = 300
 _BATCH = 100
 
 
@@ -69,7 +73,7 @@ async def exchange(code: str, verifier: str) -> dict[str, Any]:
 
 
 async def check(secret: str, playlist_id: str | None) -> dict[str, Any]:
-    return await _run("check", {"secret": secret, "playlist_id": playlist_id})
+    return await _run("check", {"secret": secret, "playlist_id": playlist_id}, seconds=25 if playlist_id else 90)
 
 
 async def collection(secret: str, playlist_id: str | None) -> dict[str, Any]:
@@ -146,6 +150,33 @@ def _playlist(api: ApiClient, ident: str, first_only: bool) -> tuple[str, list[d
     return title, rows
 
 
+def _liked_rows(api: ApiClient, username: str) -> list[dict[str, Any]]:
+    """Read the saved library, including local entries omitted from the playback context."""
+    request = spotify_collection_pb2.PageRequest(username=username, set="collection", limit=_COLLECTION_PAGE_SIZE)
+    headers = {"Accept": _COLLECTION_MIME, "Content-Type": _COLLECTION_MIME}
+    visited = set()
+    saved = {}
+    while True:
+        with api.send("POST", _COLLECTION_PATH, headers, request.SerializeToString()) as response:
+            response.raise_for_status()
+            page = spotify_collection_pb2.PageResponse.FromString(response.content)
+        for item in page.items:
+            uri = item.uri
+            if not item.is_removed and (_TRACK_URI.fullmatch(uri) or (uri.startswith("spotify:local:") and _local(uri))):
+                saved.setdefault(uri, item.added_at)
+        token = page.next_page_token
+        if not token:
+            break
+        if token in visited:
+            raise SessionError()
+        visited.add(token)
+        request.pagination_token = token
+
+    # Collection pages do not guarantee the same ordering as the playback context.
+    return [{"uri": uri, "metadata": {"added_at": stamp or None}}
+            for uri, stamp in sorted(saved.items(), key=lambda item: item[1], reverse=True)]
+
+
 def _track(ident: str, song: metadata.Track) -> dict[str, Any]:
     names = [artist.name for artist in song.artist if artist.name]
     refs = [f"sp:{ArtistId.from_hex(a.gid.hex()).id()}" if a.gid else None for a in song.artist if a.name]
@@ -218,7 +249,7 @@ def _perform(session: Session, operation: str, payload: dict[str, Any]) -> dict[
         title, rows = _playlist(api, ident, operation == "check")
     else:
         title = "Любимые треки"
-        rows = _context(api, f"spotify:user:{quote(session.username(), safe='')}:collection")
+        rows = _liked_rows(api, session.username())
     if operation == "check":
         return {**account, "playlist": title if ident else None, "liked_read": None if ident else len(rows)}
     return {**account, "title": title, "tracks": _tracks(api, rows), "expected": len(rows)}
