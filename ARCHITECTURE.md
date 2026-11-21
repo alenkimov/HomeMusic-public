@@ -70,6 +70,12 @@ The web addresses a track by **`id`** (the Hub's) when the Hub knows it, else by
 action that takes a track (put into a playlist, tag, play, download) accepts either; given a ref it makes the
 Track first. Navidrome ids never leave the server.
 
+Artist pages use `artists.id`. Catalog profile references are kept in `artist_refs` and can still open the same
+page. Each release opened in the Hub has a `catalog_releases.id` independent of the current source or file
+availability. `catalog_release_refs` links confirmed catalog records to that release. A release may point to the
+library's album, whose UUID stays in the audio tags used by Navidrome. In ordinary search, unopened results
+keep their external references until opened.
+
 ## «Любимое»
 
 A playlist of `kind = liked`. Liking is adding to it, the ♥ of a track is «is in it». A like and an unlike are

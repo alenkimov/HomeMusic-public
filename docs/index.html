@@ -22,6 +22,7 @@
   main { width: 100%; max-width: 380px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 24px 20px 18px; text-align: center; }
   .cover { width: 148px; height: 148px; margin: 0 auto 16px; border-radius: 12px; background: var(--line) center/cover; display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 44px; }
   h1 { margin: 0; font-size: 19px; font-weight: 600; overflow-wrap: anywhere; }
+  .version { margin-left: 6px; border-radius: 999px; background: var(--line); padding: 2px 8px; color: var(--muted); font-size: 12px; vertical-align: middle; }
   .sub { margin: 4px 0 18px; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
   button, .btn { font: inherit; cursor: pointer; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--fg); padding: 10px 16px; text-decoration: none; display: inline-block; }
   .primary { width: 100%; background: var(--accent); border-color: var(--accent); color: var(--on); font-weight: 600; padding: 12px 16px; }
@@ -35,16 +36,24 @@
   .other { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
   .other p { margin: 0 0 10px; font-size: 12px; color: var(--dim); }
   .links { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
-  .links a { font-size: 13px; padding: 7px 13px; }
+  .links a { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 7px 13px; }
+  .links svg { width: 15px; height: 15px; flex: none; }
+  .service-icons { position: absolute; width: 0; height: 0; overflow: hidden; }
   footer { margin-top: 16px; font-size: 12px; color: var(--dim); }
   footer a { color: var(--muted); }
   [hidden] { display: none !important; }
 </style>
 </head>
 <body>
+<svg class="service-icons" aria-hidden="true">
+  <!-- The same service marks as web/src/components/BrandIcon.tsx. -->
+    <symbol id="service-spotify" viewBox="0 0 24 24"><path fill="#1ED760" d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" /></symbol>
+    <symbol id="service-deezer" viewBox="0 0 24 24"><path fill="#A238FF" d="M18.81 4.16v3.03H24V4.16h-5.19zM6.27 8.38v3.027h5.189V8.38h-5.19zm12.54 0v3.027H24V8.38h-5.19zM6.27 12.594v3.027h5.189v-3.027h-5.19zm6.271 0v3.027h5.19v-3.027h-5.19zm6.27 0v3.027H24v-3.027h-5.19zM0 16.81v3.029h5.19v-3.03H0zm6.27 0v3.029h5.189v-3.03h-5.19zm6.271 0v3.029h5.19v-3.03h-5.19zm6.27 0v3.029H24v-3.03h-5.19Z" /></symbol>
+    <symbol id="service-ytm" viewBox="0 0 24 24"><path fill="#FF0000" d="M12 0C5.376 0 0 5.376 0 12s5.376 12 12 12 12-5.376 12-12S18.624 0 12 0zm0 19.104c-3.924 0-7.104-3.18-7.104-7.104S8.076 4.896 12 4.896s7.104 3.18 7.104 7.104-3.18 7.104-7.104 7.104zm0-13.332c-3.432 0-6.228 2.796-6.228 6.228S8.568 18.228 12 18.228s6.228-2.796 6.228-6.228S15.432 5.772 12 5.772zM9.684 15.54V8.46L15.816 12l-6.132 3.54z" /></symbol>
+</svg>
 <main>
   <div class="cover" id="cover" aria-hidden="true">♪</div>
-  <h1 id="title">Трек</h1>
+  <h1><span id="title">Трек</span><span class="version" id="version" hidden></span></h1>
   <p class="sub" id="sub"></p>
 
   <div id="go" hidden>
@@ -72,7 +81,7 @@
 (function () {
   'use strict';
   var KEY = 'hm-server';
-  var FIELDS = ['dz', 'isrc', 'sp', 'a', 't', 'al'];
+  var FIELDS = ['dz', 'isrc', 'sp', 'a', 't', 'al', 'v'];
   var $ = function (id) { return document.getElementById(id); };
 
   // what stands after `#` (or `?`, for a link someone rewrote)
@@ -86,8 +95,10 @@
 
   function show() {
     $('title').textContent = track.t || 'Трек';
+    $('version').textContent = track.v || '';
+    $('version').hidden = !track.v;
     $('sub').textContent = [track.a, track.al].filter(Boolean).join(' · ');
-    if (track.t) document.title = (track.a ? track.a + ' — ' : '') + track.t + ' · HomeMusic';
+    if (track.t) document.title = (track.a ? track.a + ' — ' : '') + track.t + (track.v ? ' (' + track.v + ')' : '') + ' · HomeMusic';
   }
 
   function saved() {
@@ -146,17 +157,20 @@
   function otherLinks() {
     var out = [];
     var q = encodeURIComponent([track.a, track.t].filter(Boolean).join(' '));
-    if (track.sp) out.push(['Spotify', 'https://open.spotify.com/track/' + track.sp]);
-    if (track.dz) out.push(['Deezer', 'https://www.deezer.com/track/' + track.dz]);
-    if (q) out.push(['YouTube Music', 'https://music.youtube.com/search?q=' + q]);
-    if (track.sp) out.push(['Все площадки', 'https://song.link/s/' + track.sp]);
-    else if (track.dz) out.push(['Все площадки', 'https://song.link/d/' + track.dz]);
+    if (track.sp) out.push(['spotify', 'Spotify', 'https://open.spotify.com/track/' + track.sp]);
+    if (track.dz) out.push(['deezer', 'Deezer', 'https://www.deezer.com/track/' + track.dz]);
+    if (q) out.push(['ytm', 'YouTube Music', 'https://music.youtube.com/search?q=' + q]);
     var box = $('links');
     out.forEach(function (x) {
       var a = document.createElement('a');
       a.className = 'btn';
-      a.textContent = x[0];
-      a.href = x[1];
+      var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('aria-hidden', 'true');
+      var use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', '#service-' + x[0]);
+      svg.appendChild(use);
+      a.append(svg, x[1]);
+      a.href = x[2];
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
       box.appendChild(a);
