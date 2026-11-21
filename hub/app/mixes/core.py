@@ -21,8 +21,8 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import JSON, func, literal, or_, select
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy import JSON, literal, or_, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.catalog.models import CATALOGS, CatalogTrack
@@ -79,7 +79,7 @@ async def enqueue_build(s: AsyncSession, user_id: int, *, priority: int = PRIORI
     """One queued or running build per user. False: one is under way."""
     busy = select(Job.id).where(
         Job.kind == "mix_build", Job.status.in_(("queued", "running")),
-        func.json_extract(Job.payload_json, "$.user_id") == user_id).exists()
+        Job.payload_json["user_id"].as_integer() == user_id).exists()
     # checked and written in one statement: two requests at once (two taps, a tap and the daily schedule) cannot
     # both find none and both queue one
     row = select(literal("mix_build"), literal({"user_id": user_id}, type_=JSON), literal(priority), literal(3),
@@ -92,7 +92,7 @@ async def enqueue_build(s: AsyncSession, user_id: int, *, priority: int = PRIORI
 async def enqueue_sync(s: AsyncSession, mix_id: int, *, delay_s: float = SYNC_DELAY_S) -> None:
     pending = (await s.execute(select(Job.id).where(
         Job.kind == "mix_sync", Job.status == "queued",
-        func.json_extract(Job.payload_json, "$.mix_id") == mix_id).limit(1))).scalar_one_or_none()
+        Job.payload_json["mix_id"].as_integer() == mix_id).limit(1))).scalar_one_or_none()
     if pending is None:
         await enqueue(s, "mix_sync", {"mix_id": mix_id}, delay_s=delay_s, priority=PRIORITY_MIX)
 
@@ -223,7 +223,7 @@ async def queue_download(s: AsyncSession, mix: Mix, it: MixItem) -> None:
         return
     active = (await s.execute(select(DownloadItem).where(
         DownloadItem.status.in_(ACTIVE_STATUSES),
-        func.json_extract(DownloadItem.query_json, "$.meta.track_ref") == it.ref).limit(1))).scalar_one_or_none()
+        DownloadItem.query_json["meta"]["track_ref"].as_string() == it.ref).limit(1))).scalar_one_or_none()
     if active is not None:
         it.download_item_id = active.id
         it.downloaded_for_mix = bool((active.query_json or {}).get("mix")) and quiet(active.query_json)
@@ -348,7 +348,7 @@ async def close_previous(user_id: int, new_mix_id: int) -> None:
         if old:
             queued = (await s.execute(select(DownloadItem).where(
                 DownloadItem.status == "queued",
-                func.json_extract(DownloadItem.query_json, "$.mix.id").in_([m.id for m in old])))).scalars()
+                DownloadItem.query_json["mix"]["id"].as_integer().in_([m.id for m in old])))).scalars()
             for d in queued:
                 if quiet(d.query_json):
                     d.status = "cancelled"
@@ -360,7 +360,7 @@ async def pending_cleanup(user_id: int) -> list[int]:
     async with session_scope() as s:
         return list((await s.execute(select(Mix.id).join(MixItem, MixItem.mix_id == Mix.id).where(
             Mix.user_id == user_id, Mix.status == "closed", MixItem.downloaded_for_mix.is_(True),
-            func.json_extract(MixItem.features_json, "$.cleanup").is_(None)).distinct())).scalars())
+            MixItem.features_json["cleanup"].as_string().is_(None)).distinct())).scalars())
 
 
 async def _users_keep(users: list[User]) -> tuple[set[str], set[str]] | None:

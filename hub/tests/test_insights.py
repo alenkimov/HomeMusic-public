@@ -86,7 +86,7 @@ def write_config(tmp_path, text: str) -> None:
 
 
 @pytest.fixture
-async def hub(hub_env, db_file, tmp_path, monkeypatch):
+async def hub(hub_env, db_url, tmp_path, monkeypatch):
     """The app, its users (admin, anna, boris, qa — the QA account left out of the totals) and clients."""
     from app.api import insights
     from app.db import dispose, init_engine, session_scope
@@ -97,7 +97,7 @@ async def hub(hub_env, db_file, tmp_path, monkeypatch):
 
     write_config(tmp_path, "mixes:\n  taste_model: v2\nanalytics:\n  exclude_users: [qa]\n")
     monkeypatch.setattr(insights, "utcnow", lambda: NOW)
-    init_engine(db_file)  # no lifespan here: this test's own database
+    init_engine(db_url)  # no lifespan here: this test's own database
     tokens, ids = {}, {}
     async with session_scope() as s:
         for name in ("admin", "anna", "boris", "qa"):

@@ -1,4 +1,4 @@
-"""SQLite schema of the Hub (PLAN.md section 7)."""
+"""PostgreSQL schema of the Hub."""
 
 from __future__ import annotations
 
@@ -19,9 +19,11 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
     select,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, column_property, mapped_column, relationship
 
 
@@ -37,14 +39,14 @@ def naive(value: datetime | None) -> datetime | None:
 
 
 class Base(DeclarativeBase):
-    type_annotation_map = {dict[str, Any]: JSON, list[Any]: JSON}
+    type_annotation_map = {dict[str, Any]: JSONB, list[Any]: JSONB}
 
 
 class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    nd_username: Mapped[str] = mapped_column(String(128), unique=True)
+    nd_username: Mapped[str] = mapped_column(Text)
     nd_password_enc: Mapped[str] = mapped_column(Text)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -57,8 +59,13 @@ class User(Base):
     tg_with_lyrics: Mapped[bool] = mapped_column(Boolean, default=False)  # send the track's text with it by default
 
 
-# The account name follows Navidrome's SQLite collation.
-Index("uq_users_nd_username_nocase", User.nd_username.collate("NOCASE"), unique=True)
+# Match Navidrome's ASCII case folding.
+ND_USERNAME_KEY = func.lower(User.nd_username.collate("C"))
+Index("uq_users_nd_username_key", ND_USERNAME_KEY, unique=True)
+
+
+def nd_username_key(name: str) -> str:
+    return name.translate(str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"))
 
 
 class SearchHistory(Base):
@@ -178,7 +185,7 @@ class CatalogReleaseMatch(Base):
 
     ref: Mapped[str] = mapped_column(String(128), primary_key=True)
     group_ref: Mapped[str] = mapped_column(String(128), index=True)
-    album_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    album_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
     search_key: Mapped[str] = mapped_column(Text)
 
 
@@ -189,8 +196,8 @@ class CatalogRelease(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     album_id: Mapped[int | None] = mapped_column(ForeignKey("albums.id", ondelete="SET NULL"), index=True)
-    merged_into_id: Mapped[int | None] = mapped_column(ForeignKey("catalog_releases.id", ondelete="SET NULL"), index=True)
-    album_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    merged_into_id: Mapped[int | None] = mapped_column(ForeignKey("catalog_releases.id", ondelete="SET NULL", deferrable=True), index=True)
+    album_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 
 class CatalogReleaseRef(Base):
@@ -218,6 +225,7 @@ class Track(Base):
     year: Mapped[int | None] = mapped_column(Integer)
     genre: Mapped[str | None] = mapped_column(String(128))
     duration_s: Mapped[int | None] = mapped_column(Integer)
+    # Source order determines the spelling shown for equivalent genre labels.
     genre_sources: Mapped[dict[str, list[str]] | None] = mapped_column(JSON)
     genres_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
     isrc: Mapped[str | None] = mapped_column(String(16), index=True)
@@ -230,7 +238,7 @@ class Track(Base):
     fingerprint: Mapped[str] = mapped_column(String(1024))  # normalized "artist|title"
     # what the catalog said of the song when the track was made (a `CatalogTrack`): its cover, its album and
     # artists there. A track without a file is drawn from this; None — the catalog does not know the song
-    catalog: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    catalog: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     # a listener put its name right (app/library/edits.py): the lists the catalog answers show this name then
@@ -259,7 +267,7 @@ class TrackFile(Base):
     source_upload_date: Mapped[date | None] = mapped_column(Date)
     acquired_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     locked: Mapped[bool] = mapped_column(Boolean, default=False)
-    warnings: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    warnings: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     # the picture of its sound (app/library/acoustic.py): None — not drawn yet, empty — it could not be
     chroma: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
     added_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
@@ -279,7 +287,7 @@ class CatalogCache(Base):
     __tablename__ = "catalog_cache"
 
     key: Mapped[str] = mapped_column(String(512), primary_key=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     ttl_s: Mapped[int] = mapped_column(Integer)
 
@@ -306,21 +314,21 @@ class DownloadItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     batch_id: Mapped[int] = mapped_column(ForeignKey("download_batches.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    query_json: Mapped[dict[str, Any]] = mapped_column(JSON)  # TrackQuery + catalog refs (deezer ids, album info)
+    query_json: Mapped[dict[str, Any]] = mapped_column(JSONB)  # TrackQuery + catalog refs (deezer ids, album info)
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     progress: Mapped[float] = mapped_column(Float, default=0)
     provider: Mapped[str | None] = mapped_column(String(32))
-    chosen_candidate_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    search_sources_json: Mapped[dict[str, str] | None] = mapped_column(JSON)
-    candidates_json: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    chosen_candidate_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    search_sources_json: Mapped[dict[str, str] | None] = mapped_column(JSONB)
+    candidates_json: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     # the journal: its steps in order ({t, kind: info/ok/warn/bad, text, cand?}) — `jobs.downloads.step`
-    log_json: Mapped[list[Any]] = mapped_column(JSON, default=list, server_default="[]")
+    log_json: Mapped[list[Any]] = mapped_column(JSONB, default=list, server_default="[]")
     error: Mapped[str | None] = mapped_column(Text)
-    warnings: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    warnings: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id", ondelete="SET NULL"))
     force: Mapped[bool] = mapped_column(Boolean, default=False)  # explicit re-download (new file next to locked one)
     # taken off the «Загрузки» list by the user; the row stays: a playlist's order, an import and a mix lean on it
-    hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -331,7 +339,7 @@ class Job(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     kind: Mapped[str] = mapped_column(String(64))
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     status: Mapped[str] = mapped_column(String(16), default="queued")  # queued/running/done/failed
     # higher first; imports run below 0 (`queue.PRIORITY_IMPORT`) and never take every worker
     priority: Mapped[int] = mapped_column(Integer, default=0)
@@ -353,7 +361,7 @@ class Upload(Base):
     staging_path: Mapped[str] = mapped_column(String(1024))  # relative to staging/
     orig_name: Mapped[str] = mapped_column(String(512))
     size: Mapped[int] = mapped_column(Integer, default=0)
-    probed_tags_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    probed_tags_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     status: Mapped[str] = mapped_column(String(16), default="uploaded")  # uploaded/imported/failed/discarded
     error: Mapped[str | None] = mapped_column(Text)
     track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id", ondelete="SET NULL"))
@@ -378,7 +386,7 @@ class Upgrade(Base):
     # what is looked for: "better" — a better file of the track; "identify" — whether the track is the catalog's
     # record `meta_json` (a download's meta of it), told by the sound of that record's file
     kind: Mapped[str] = mapped_column(String(16), default="better")
-    meta_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    meta_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     staged_path: Mapped[str | None] = mapped_column(String(1024))  # relative to staging/
     codec: Mapped[str | None] = mapped_column(String(16))  # of the file found
     bitrate_kbps: Mapped[int | None] = mapped_column(Integer)
@@ -400,9 +408,9 @@ class AssistantTask(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     input_kind: Mapped[str] = mapped_column(String(16))  # images/link/text
-    input_ref: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # image paths / url / text
-    extraction_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    resolution_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    input_ref: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # image paths / url / text
+    extraction_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    resolution_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(String(24), default="queued")
     # queued/extracting/resolving/awaiting_confirmation/confirmed/done/failed
     confirm_token: Mapped[str | None] = mapped_column(String(64))
@@ -424,7 +432,7 @@ class AssistantChat(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(200), default="")
     # [{"role", "content", "images"?, "cost"?, "done"?, "proposal"?: {task_id, token, summary, actions, state}}]
-    messages: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    messages: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -435,10 +443,10 @@ class IntegrationConnection(Base):
     __tablename__ = "integration_connections"
     __table_args__ = (
         UniqueConstraint("provider", "owner_user_id", "subject"),
-        CheckConstraint("shared = 0 OR provider IN ('yandex', 'spotify', 'lastfm')"),
+        CheckConstraint("NOT shared OR provider IN ('yandex', 'spotify', 'lastfm')"),
         CheckConstraint("owner_user_id IS NOT NULL OR provider = 'lastfm' OR "
-                        "(provider = 'spotify' AND shared = 0 AND state = 'unclaimed')"),
-        Index("uq_integration_lastfm", "provider", unique=True, sqlite_where=text("provider = 'lastfm'")),
+                        "(provider = 'spotify' AND NOT shared AND state = 'unclaimed')"),
+        Index("uq_integration_lastfm", "provider", unique=True, postgresql_where=text("provider = 'lastfm'")),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -472,7 +480,7 @@ class IntegrationAuthAttempt(Base):
     shared: Mapped[bool] = mapped_column(Boolean, default=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     next_poll_at: Mapped[datetime | None] = mapped_column(DateTime)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
 
 class ListenBrainzSync(Base):
@@ -499,8 +507,8 @@ class Import(Base):
     connection_id: Mapped[int | None] = mapped_column(
         ForeignKey("integration_connections.id", ondelete="SET NULL"), index=True)
     keep_token: Mapped[bool] = mapped_column(Boolean, default=False)  # kept after the import for «Обновить»
-    auth_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # sign-in in progress (device code)
-    options_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # download_albums...
+    auth_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # sign-in in progress (device code)
+    options_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # download_albums...
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
@@ -523,7 +531,7 @@ class ImportCollection(Base):
     cover_url: Mapped[str | None] = mapped_column(String(1024))
     # a playlist of the service: the Hub's playlist made of it, and the track ids it has already been given
     playlist_id: Mapped[int | None] = mapped_column(ForeignKey("playlists.id", ondelete="SET NULL"))
-    given: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    given: Mapped[list[Any]] = mapped_column(JSONB, default=list)
 
 
 class ImportItem(Base):
@@ -537,7 +545,7 @@ class ImportItem(Base):
     collection_id: Mapped[int] = mapped_column(ForeignKey("import_collections.id", ondelete="CASCADE"), index=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
     external_id: Mapped[str] = mapped_column(String(128))
-    raw_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # artist, title, album, duration_s...
+    raw_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # artist, title, album, duration_s...
     ref: Mapped[str | None] = mapped_column(String(64))  # catalog track / album / artist
     match: Mapped[str | None] = mapped_column(String(16))  # owned/exact/probable/not_found
     score: Mapped[float | None] = mapped_column(Float)
@@ -590,14 +598,14 @@ class PlayEvent(Base):
     target_type: Mapped[str] = mapped_column(String(16), default="track", server_default="track")
     nd_album_id: Mapped[str | None] = mapped_column(String(64), index=True)
     nd_artist_id: Mapped[str | None] = mapped_column(String(64), index=True)
-    target_data: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    target_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     reverts_event_id: Mapped[str | None] = mapped_column(String(64))
-    mirror_pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    mirror_pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     playback_id: Mapped[str | None] = mapped_column(String(64))
     device_id: Mapped[str | None] = mapped_column(String(64))
     listened_ms: Mapped[int | None] = mapped_column()
-    track_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    superseded_scrobble: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    track_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    superseded_scrobble: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     position_s: Mapped[float | None] = mapped_column(Float)
     duration_s: Mapped[float | None] = mapped_column(Float)
     context: Mapped[str | None] = mapped_column(String(128))  # mix:<id>, wave:<session>, album, playlist, search...
@@ -622,8 +630,8 @@ class FavoriteSubject(Base):
     canonical_key: Mapped[str] = mapped_column(String(128))
     ref: Mapped[str | None] = mapped_column(String(64), index=True)
     nd_id: Mapped[str | None] = mapped_column(String(64), index=True)
-    aliases: Mapped[list[Any]] = mapped_column(JSON, default=list)
-    data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    aliases: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    data: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     enriched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -666,7 +674,7 @@ class MixSettings(Base):
     mix_hour: Mapped[int] = mapped_column(Integer, default=5)  # local time (`Settings.timezone`)
     nd_playlist_id: Mapped[str | None] = mapped_column(String(64))  # «Микс дня» in Navidrome: one id for good
     # onboarding: [{ref, name}] the user picked on «Что вы слушаете?» (a new user without history)
-    artists_json: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    artists_json: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     last_build_on: Mapped[date | None] = mapped_column(Date)  # local date of the last scheduled build attempt
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -688,7 +696,7 @@ class Mix(Base):
     nd_playlist_id: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(16), default="active")  # active/closed
     batch_id: Mapped[int | None] = mapped_column(ForeignKey("download_batches.id", ondelete="SET NULL"))
-    stats_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # generators, timings (the report)
+    stats_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # generators, timings (the report)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
@@ -701,7 +709,7 @@ class ForYouList(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     kind: Mapped[str] = mapped_column(String(16), primary_key=True)
     nd_playlist_id: Mapped[str | None] = mapped_column(String(64))
-    songs_json: Mapped[list[Any]] = mapped_column(JSON, default=list, server_default="[]")
+    songs_json: Mapped[list[Any]] = mapped_column(JSONB, default=list, server_default="[]")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
@@ -722,7 +730,7 @@ class MixItem(Base):
     generator: Mapped[str] = mapped_column(String(32))  # the strongest one: favorites/stash/ytm_radio/...
     score: Mapped[float] = mapped_column(Float, default=0)
     # the catalog track (`CatalogTrack`) and what scored it: generators, sim, popularity
-    features_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    features_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     downloaded_for_mix: Mapped[bool] = mapped_column(Boolean, default=False)
     download_item_id: Mapped[int | None] = mapped_column(ForeignKey("download_items.id", ondelete="SET NULL"),
                                                          index=True)
@@ -740,16 +748,16 @@ class WaveSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     mode: Mapped[str] = mapped_column(String(16), default="normal")  # normal/favorites/discover, as a mix's
-    seed_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)  # {ref|nd_song_id|artist_ref, title}: «по треку»
+    seed_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # {ref|nd_song_id|artist_ref, title}: «по треку»
     batch_id: Mapped[int | None] = mapped_column(ForeignKey("download_batches.id", ondelete="SET NULL"))
-    state_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    state_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     # analytics (INSIGHTS.md 6.2–6.3): where the wave was started, by what client, the raw request; a session the
     # app made again after a 404 names the old one (`origin` "restart"). Never read by the wave itself.
     origin: Mapped[str | None] = mapped_column(String(32))
     client: Mapped[str | None] = mapped_column(String(32))
     restart_of: Mapped[str | None] = mapped_column(String(32))
     taste_model: Mapped[str | None] = mapped_column(String(8))
-    request_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    request_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     next_calls: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # an old session's heavy state (pool, queue, played) was replaced by a summary: the row itself is kept
     cleared_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -774,8 +782,8 @@ class WaveItem(Base):
     artist: Mapped[str] = mapped_column(String(256), default="", server_default="")
     title: Mapped[str] = mapped_column(String(256), default="", server_default="")
     generator: Mapped[str] = mapped_column(String(32))  # `wave.top_generator`
-    gens: Mapped[dict[str, Any] | None] = mapped_column(JSON)  # generator -> best position in its list
-    familiar: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    gens: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # generator -> best position in its list
+    familiar: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     score: Mapped[float] = mapped_column(Float, default=0, server_default="0")
     sim: Mapped[float | None] = mapped_column(Float)
     value: Mapped[float | None] = mapped_column(Float)  # `wave.value` the pick ranked it by (none: the seed)
@@ -802,7 +810,7 @@ class SmartSession(Base):
     origin: Mapped[str | None] = mapped_column(String(32))
     client: Mapped[str | None] = mapped_column(String(32))
     next_calls: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    state_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    state_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
 
 class SmartItem(Base):
@@ -823,8 +831,8 @@ class SmartItem(Base):
     artist: Mapped[str] = mapped_column(String(256), default="", server_default="")
     title: Mapped[str] = mapped_column(String(256), default="", server_default="")
     generator: Mapped[str] = mapped_column(String(32))
-    gens: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    familiar: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    gens: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    familiar: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     score: Mapped[float] = mapped_column(Float, default=0, server_default="0")
     sim: Mapped[float | None] = mapped_column(Float)  # closeness by sound to the playlist's center
     value: Mapped[float | None] = mapped_column(Float)
@@ -858,7 +866,7 @@ class Lyrics(Base):
     kind: Mapped[str] = mapped_column(String(8), index=True)  # word/synced/plain/none (looked for, not found)
     source: Mapped[str | None] = mapped_column(String(16))  # file/lrclib/netease/ovh
     # [{"t": ms, "text": str, "end"?: ms, "words"?: [{"t": ms, "text": str}]}] — a timed text
-    lines_json: Mapped[list[Any] | None] = mapped_column(JSON)
+    lines_json: Mapped[list[Any] | None] = mapped_column(JSONB)
     plain: Mapped[str | None] = mapped_column(Text)  # a text without timings
     search_text: Mapped[str | None] = mapped_column(Text)  # the whole text, case-folded: the search inside lyrics
     offset_ms: Mapped[int] = mapped_column(Integer, default=0)  # the user's shift of the timings
@@ -905,7 +913,7 @@ class TelegramGroup(Base):
     """A chat where the shared bot was made an administrator."""
 
     __tablename__ = "telegram_groups"
-    __table_args__ = (UniqueConstraint("bot_id", "chat_id", name="uq_telegram_groups_chat"), {"sqlite_autoincrement": True})
+    __table_args__ = (UniqueConstraint("bot_id", "chat_id", name="uq_telegram_groups_chat"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     bot_id: Mapped[str] = mapped_column(String(32))
@@ -924,9 +932,9 @@ class LyricsTranslation(Base):
     track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
     lang: Mapped[str] = mapped_column(String(8), primary_key=True)  # ru/en/...
     provider: Mapped[str | None] = mapped_column(String(16))  # llm/google/mymemory
-    lines_json: Mapped[list[Any] | None] = mapped_column(JSON)  # line for line with the text it was made of
+    lines_json: Mapped[list[Any] | None] = mapped_column(JSONB)  # line for line with the text it was made of
     source_sig: Mapped[str | None] = mapped_column(String(40))  # of that text: another text makes it stale
-    edited_json: Mapped[list[Any] | None] = mapped_column(JSON)  # the lines a listener corrected by hand
+    edited_json: Mapped[list[Any] | None] = mapped_column(JSONB)  # the lines a listener corrected by hand
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -951,7 +959,7 @@ class Edit(Base):
     target_type: Mapped[str] = mapped_column(String(8))  # track / album
     target_id: Mapped[int] = mapped_column(Integer)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
-    changes_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    changes_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -978,7 +986,7 @@ class TrashedTrack(Base):
     title: Mapped[str] = mapped_column(String(512))
     artist: Mapped[str] = mapped_column(String(512))
     album: Mapped[str | None] = mapped_column(String(512))
-    data_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    data_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
     cover: Mapped[bytes | None] = mapped_column(LargeBinary)  # its own cover, if it had one
     deleted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     deleted_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -1049,7 +1057,7 @@ class TagSelection(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(128))
     scope: Mapped[str] = mapped_column(String(80))
-    filter_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # tag id / "untagged" -> yes / no
+    filter_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # tag id / "untagged" -> yes / no
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -1085,7 +1093,7 @@ class Playlist(Base):
     __table_args__ = (
         Index("ix_playlists_user", "user_id", "kind"),
         # «Любимое» and «Микс дня» are one per user: two requests at once cannot make two
-        Index("uq_playlists_one_of_a_kind", "user_id", "kind", unique=True, sqlite_where=text("kind IN ('liked', 'mix')")),
+        Index("uq_playlists_one_of_a_kind", "user_id", "kind", unique=True, postgresql_where=text("kind IN ('liked', 'mix')")),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -1093,7 +1101,7 @@ class Playlist(Base):
     kind: Mapped[str] = mapped_column(String(8), default="user")
     name: Mapped[str] = mapped_column(String(200))
     nd_playlist_id: Mapped[str | None] = mapped_column(String(64), index=True)
-    mirrored: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    mirrored: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     nd_cover: Mapped[str | None] = mapped_column(String(128))  # the picture Navidrome makes of the mirror's albums
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -1117,13 +1125,12 @@ class PlaybackQueueItem(Base):
     __table_args__ = (
         Index("ix_playback_queue_pending", "user_id", "finished_at", "position", "id"),
         UniqueConstraint("user_id", "source_key", name="uq_playback_queue_source"),
-        {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), index=True)
-    track: Mapped[dict[str, Any]] = mapped_column(JSON)
+    track: Mapped[dict[str, Any]] = mapped_column(JSONB)
     source_key: Mapped[str | None] = mapped_column(String(64))
     position: Mapped[int | None] = mapped_column(Integer)
     claim: Mapped[str | None] = mapped_column(String(64))
@@ -1141,8 +1148,8 @@ class DiscoveryIssue(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     week: Mapped[date] = mapped_column(Date)  # the Monday it is of, in the users' local time
-    tracks_json: Mapped[list[Any]] = mapped_column(JSON, default=list)  # CatalogTrack dumps, in order
-    stats_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    tracks_json: Mapped[list[Any]] = mapped_column(JSONB, default=list)  # CatalogTrack dumps, in order
+    stats_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -1168,7 +1175,7 @@ class ArtistRelease(Base):
     found_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     seen_at: Mapped[datetime | None] = mapped_column(DateTime)  # the user has opened the feed since
     # its tracks as the catalog gave them (`CatalogTrack`); None: not asked for yet
-    tracks_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON(none_as_null=True))
+    tracks_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB(none_as_null=True))
 
 
 class ArtistReleaseExclusion(Base):
@@ -1212,7 +1219,7 @@ class AppSetting(Base):
     __tablename__ = "app_settings"
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
-    value_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    value_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
 
 class Artist(Base):
@@ -1222,7 +1229,7 @@ class Artist(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(300))
-    merged_into_id: Mapped[int | None] = mapped_column(ForeignKey("artists.id"), index=True)
+    merged_into_id: Mapped[int | None] = mapped_column(ForeignKey("artists.id", deferrable=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -1248,7 +1255,7 @@ class ArtistRef(Base):
 
     ref: Mapped[str] = mapped_column(String(64), primary_key=True)
     artist_id: Mapped[int] = mapped_column(ForeignKey("artists.id", ondelete="CASCADE"), index=True)
-    page_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    page_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     tied_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

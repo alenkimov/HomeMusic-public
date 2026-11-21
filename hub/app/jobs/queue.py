@@ -1,4 +1,4 @@
-"""SQLite-backed job queue with an in-process asyncio worker pool.
+"""PostgreSQL-backed job queue with an in-process asyncio worker pool.
 
 - Jobs survive restarts: on startup every `running` job is put back to `queued`.
 - Claiming is atomic (single UPDATE ... RETURNING), so several workers never take the same job.
@@ -13,11 +13,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sqlite3
 import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import text, update
@@ -107,14 +106,16 @@ _CLAIMABLE = (
 
 
 async def _claim(worker_id: str) -> Job | None:
-    now = utcnow()
     async with session_scope() as s:
+        # Take the lock in a separate statement so the slot count sees the previous claim.
+        await s.execute(text("SELECT pg_advisory_xact_lock(7013422)"))
+        now = utcnow()
         row = (
             await s.execute(
                 text(
                     "UPDATE jobs SET status='running', locked_by=:w, locked_at=:now, attempts=attempts+1, updated_at=:now "
                     f"WHERE id = (SELECT id FROM jobs WHERE {_CLAIMABLE} AND run_after <= :now "
-                    "ORDER BY priority DESC, run_after, id LIMIT 1) RETURNING id"
+                    "ORDER BY priority DESC, run_after, id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id"
                 ),
                 {"w": worker_id, "now": now, "bg": background_slots()},
             )
@@ -150,7 +151,7 @@ async def _next_wakeup_in() -> float:
         ).first()
     if not row or row[0] is None:
         return 30.0
-    nxt = row[0] if isinstance(row[0], datetime) else datetime.fromisoformat(str(row[0]))
+    nxt = row[0]
     return max(0.05, min(30.0, (nxt - utcnow()).total_seconds()))
 
 
@@ -162,11 +163,8 @@ class _Result:
     failure: Exception | None = None
 
 
-def _sqlite_busy(exc: BaseException) -> bool:
-    if not isinstance(exc, OperationalError):
-        return False
-    code = getattr(exc.orig, "sqlite_errorcode", 0)
-    return (code & 0xff) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+def _retryable_write(exc: OperationalError) -> bool:
+    return getattr(exc.orig, "sqlstate", None) in {"40001", "40P01", "55P03"}
 
 
 async def _execute(job: Job) -> _Result:
@@ -207,7 +205,7 @@ async def _save_result(job: Job, result: _Result) -> None:
             await _finish(job.id, ok=result.ok, error=result.error, retry_in=result.retry_in)
             break
         except OperationalError as exc:
-            if attempt == 2 or not _sqlite_busy(exc):
+            if attempt == 2 or not _retryable_write(exc):
                 raise
             await asyncio.sleep(0.2 * 2**attempt)
     _wakeup.set()  # a background slot may be free now

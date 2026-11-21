@@ -29,14 +29,14 @@ def load(name: str) -> Any:
 
 
 @pytest.fixture
-async def db(hub_env, db_file: Path, monkeypatch: pytest.MonkeyPatch):
+async def db(hub_env, db_url: str, monkeypatch: pytest.MonkeyPatch):
     from app.db import dispose, init_engine
 
     monkeypatch.setenv("EMBEDDER_URL", EMBEDDER)
     from app.config import get_settings
 
     get_settings.cache_clear()
-    init_engine(db_file)
+    init_engine(db_url)
     yield
     await dispose()
 

@@ -20,8 +20,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from pydantic import ValidationError
-from sqlalchemy import delete, func, or_, select, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy import delete, or_, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import playback_queue
@@ -59,7 +59,7 @@ async def _song_of_ref(s: AsyncSession, ref: str) -> str | None:
         return nd
     # the download (any ref: hitmoz, a provider's file) or the import row that brought the file in
     by_download = (select(Track.nd_song_id).join(DownloadItem, DownloadItem.track_id == Track.id)
-                   .where(func.json_extract(DownloadItem.query_json, "$.meta.track_ref") == ref,
+                   .where(DownloadItem.query_json["meta"]["track_ref"].as_string() == ref,
                           Track.nd_song_id.is_not(None)).order_by(DownloadItem.id.desc()).limit(1))
     nd = (await s.execute(by_download)).scalar_one_or_none()
     if nd:
@@ -78,9 +78,9 @@ async def _ref_of_song(s: AsyncSession, nd_song_id: str) -> str | None:
     if t.ref:
         return t.ref
     ref = (await s.execute(
-        select(func.json_extract(DownloadItem.query_json, "$.meta.track_ref"))
+        select(DownloadItem.query_json["meta"]["track_ref"].as_string())
         .where(DownloadItem.track_id == t.id,
-               func.json_extract(DownloadItem.query_json, "$.meta.track_ref").is_not(None))
+               DownloadItem.query_json["meta"]["track_ref"].as_string().is_not(None))
         .order_by(DownloadItem.id.desc()).limit(1))).scalar_one_or_none()
     if ref:
         return str(ref)
@@ -111,7 +111,7 @@ class Ids:
                 self._songs[ref] = tr.nd_song_id
             if tr.nd_song_id in songs and ref and not self._refs[tr.nd_song_id]:
                 self._refs[tr.nd_song_id] = ref
-        for model, column in ((DownloadItem, func.json_extract(DownloadItem.query_json, "$.meta.track_ref")),
+        for model, column in ((DownloadItem, DownloadItem.query_json["meta"]["track_ref"].as_string()),
                               (ImportItem, ImportItem.ref)):
             rows = (await self.s.execute(select(column, Track.nd_song_id).join(Track, model.track_id == Track.id)
                 .where(or_(column.in_(refs), Track.nd_song_id.in_(songs)), Track.nd_song_id.is_not(None))
@@ -308,8 +308,8 @@ async def record_events(s: AsyncSession, user_id: int, raw: Iterable[Any], now: 
                       listened_ms=e.listened_ms, track_metadata=metadata, target_type=e.target_type, nd_album_id=e.nd_album_id,
                       nd_artist_id=e.nd_artist_id, target_data=e.target_data, reverts_event_id=e.reverts_event_id,
                       launch_id=e.launch_id, launch_origin=e.launch_origin, page=e.page)
-        res = await s.execute(sqlite_insert(PlayEvent).values(**values).on_conflict_do_nothing())
-        if not res.rowcount:  # a concurrent request stored it first
+        event_id = await s.scalar(insert(PlayEvent).values(**values).on_conflict_do_nothing().returning(PlayEvent.id))
+        if event_id is None:  # a concurrent request stored it first
             out.duplicates += 1
             continue
         out.accepted += 1
@@ -454,7 +454,7 @@ async def remove_dislikes(s: AsyncSession, user_id: int, *, ref: str | None = No
 async def dislike_event(s: AsyncSession, user_id: int, kind: str, *, ref: str | None, nd_song_id: str | None,
                         client: str, context: str | None = None, target_type: str = "track") -> None:
     """The `dislike`/`undislike` event of a track marked through `/api/dislikes` (the history keeps it too)."""
-    await s.execute(sqlite_insert(PlayEvent).values(
+    await s.execute(insert(PlayEvent).values(
         user_id=user_id, event_id=f"hub:{uuid.uuid4().hex}", ts=utcnow(), kind=kind, ref=ref, nd_song_id=nd_song_id,
         context=context, client=client, received_at=utcnow(), target_type=target_type))
 
@@ -493,12 +493,13 @@ async def import_scrobbles(user: User) -> int:
             ref, _ = await fill.complete(None, song)
             metadata = await _listening_metadata(s, PlayEventIn(event_id=f"nd:{sid}", ts=ts, kind="finish",
                                                                   ref=ref, nd_song_id=song, client="navidrome"), song)
-            res = await s.execute(sqlite_insert(PlayEvent).values(
+            event_id = await s.scalar(insert(PlayEvent).values(
                 user_id=user.id, event_id=f"nd:{sid}", ts=ts, kind="finish", ref=ref, nd_song_id=song,
                 duration_s=length.total_seconds() or None,
                 client="navidrome", received_at=utcnow(), track_metadata=metadata,
-                superseded_scrobble=superseded).on_conflict_do_nothing())
-            added += (res.rowcount or 0) if not superseded else 0
+                superseded_scrobble=superseded).on_conflict_do_nothing().returning(PlayEvent.id))
+            if event_id is not None and not superseded:
+                added += 1
         sync = await s.get(NavidromeSync, user.id)
         if sync is None:
             sync = NavidromeSync(user_id=user.id, last_scrobble_id=0)

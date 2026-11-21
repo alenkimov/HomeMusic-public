@@ -15,7 +15,7 @@ from typing import Any
 from app.catalog.models import CATALOGS
 
 from sqlalchemy import select
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import FavoriteTarget

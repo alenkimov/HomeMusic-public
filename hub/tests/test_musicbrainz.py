@@ -26,8 +26,8 @@ def load(name: str) -> Any:
 
 
 @pytest.fixture
-async def db(db_file: Path):
-    init_engine(db_file)
+async def db(db_url: str):
+    init_engine(db_url)
     yield
     await dispose()
 

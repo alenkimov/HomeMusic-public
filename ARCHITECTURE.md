@@ -125,9 +125,9 @@ One release, built in passes that each leave the tests green:
    stays Navidrome's is the file: a library file is streamed by the Navidrome song of that file, and a library
    song with no catalog record is still listed under the ref "nd:<song>", which the recommendations keep as its
    key. Albums and artists of the library are Navidrome's objects and are named by its ids)*
-6. What is left of 1.x deleted; the migrations of 1.x replaced by one that makes the 2.0 schema. *(done:
-   `migrations/versions` holds the one baseline, made of the models; a database of 1.x is refused with a plain
-   message)
+6. Hub persistence is PostgreSQL. Revision `30a000000001` creates the schema on a fresh database. The one-time
+   SQLite import is a separate command. It keeps row identities, validates constraints, and resets the sequences
+   above the copied IDs. Navidrome, the embedder and the music files retain their separate storage.
 
 After the passes: `favorite_subjects` keeps only albums and artists (a catalog ref and a Navidrome id seen to be
 one). What a track is called — its id, its ref, the song of each of its files — is read from the library

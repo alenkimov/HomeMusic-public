@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from sqlalchemy import func, or_, select
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy import or_, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.catalog.identity import same_recording
@@ -162,7 +162,7 @@ async def fill_catalog(s: AsyncSession, tracks: Iterable[Track] | None = None, l
     rows = [t for t in tracks if lacks(t)] if tracks is not None else list(
         (await s.execute(select(Track).where(
             or_(*(Track.ref.like(f"{source}:%") for source in CATALOGS)),
-            or_(Track.catalog.is_(None), func.json_extract(Track.catalog, "$.artist_ref").is_(None)))
+            or_(Track.catalog.is_(None), Track.catalog["artist_ref"].as_string().is_(None)))
             .order_by(Track.id.desc()).limit(limit))).scalars())
     filled: list[Track] = []
     for t in rows[:limit]:

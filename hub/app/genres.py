@@ -7,7 +7,7 @@ import logging
 from datetime import timedelta
 
 from sqlalchemy import and_, or_, select
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert
 
 from app import tags
 from app.catalog import release_matches

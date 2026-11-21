@@ -12,8 +12,8 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from mutagen import MutagenError
 from PIL import Image
-from sqlalchemy import delete, select
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import listen
@@ -96,7 +96,7 @@ async def remember_search(body: SearchRecentIn, user: User = Depends(current_use
     """A result was opened, or a query asked for with Enter: it goes to the top of «Недавнее» (once — the same
     thing again only moves up)."""
     key = f"q:{body.title.casefold()}" if body.kind == "query" else f"{body.kind}:{body.ref}"
-    # Start with a write: concurrent devices serialize their upsert and pruning in SQLite.
+    await s.execute(select(func.pg_advisory_xact_lock(7013424, user.id)))
     stmt = insert(SearchHistory).values(
         user_id=user.id, key=key, kind=body.kind, title=body.title, subtitle=body.subtitle or None, ref=body.ref,
         cover_url=body.cover_url, link=body.link, searched_at=utcnow()
@@ -119,6 +119,7 @@ async def remember_search(body: SearchRecentIn, user: User = Depends(current_use
 async def clear_search_history(key: str | None = Query(None, max_length=1024), user: User = Depends(current_user),
                                s: AsyncSession = Depends(get_session, scope="function")):
     """All of «Недавнее», or the one line `key`."""
+    await s.execute(select(func.pg_advisory_xact_lock(7013424, user.id)))
     gone = delete(SearchHistory).where(SearchHistory.user_id == user.id)
     await s.execute(gone if key is None else gone.where(SearchHistory.key == key))
     await s.commit()

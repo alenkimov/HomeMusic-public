@@ -148,7 +148,7 @@ async def user_detail(user_id: int, _: User = Depends(admin_user), s: AsyncSessi
     nd_users, counts = await asyncio.gather(_nd_users(), _nd_counts(user))
     nd = next((u for u in nd_users if str(u.get("userName", "")).lower() == user.nd_username.lower()), None)
     stats = (await _stats(s, [user.id])).get(user.id, {})
-    month = func.strftime("%Y-%m", AiUsage.created_at)
+    month = func.to_char(AiUsage.created_at, "YYYY-MM")
     months = [AiMonthOut(month=m, cost_usd=round(c or 0, 6), requests=n) for m, c, n in await s.execute(
         select(month, func.sum(AiUsage.cost_usd), func.count(AiUsage.id))
         .where(AiUsage.user_id == user.id).group_by(month).order_by(month.desc()).limit(12))]

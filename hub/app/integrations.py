@@ -1,7 +1,7 @@
 """Storage and ownership rules for the Hub's service credentials."""
 
 from sqlalchemy import delete, select
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import session_scope
@@ -109,8 +109,9 @@ async def lastfm_key() -> str | None:
 async def move_lastfm_from_env(key: str) -> None:
     """One-time transfer. Disconnecting Last.fm must not resurrect an old environment key."""
     async with session_scope() as s:
-        marker = await s.execute(insert(AppSetting).values(key="lastfm_key_moved").on_conflict_do_nothing())
-        if not marker.rowcount:
+        marker = await s.scalar(insert(AppSetting).values(key="lastfm_key_moved")
+                                .on_conflict_do_nothing().returning(AppSetting.key))
+        if marker is None:
             return
         if key.strip() and await lastfm_connection(s) is None:
             row = await save(s, provider="lastfm", owner_id=None, secret=key.strip())

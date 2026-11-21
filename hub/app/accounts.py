@@ -22,7 +22,7 @@ from app.config import get_settings
 from app.db import session_scope
 from app.google_auth import GoogleTokenError, verify_id_token
 from app.library.navidrome import AuthError, NavidromeAdmin, NavidromeUserExists
-from app.models import EmailCode, Invite, User, utcnow
+from app.models import ND_USERNAME_KEY, EmailCode, Invite, User, nd_username_key, utcnow
 from app.security import decrypt
 
 log = logging.getLogger(__name__)
@@ -120,7 +120,7 @@ async def register(s: AsyncSession, code: str, username: str, password: str,
 
 
 async def _check_name_free(s: AsyncSession, username: str) -> None:
-    taken = await s.execute(select(User.id).where(User.nd_username.collate("NOCASE") == username))
+    taken = await s.execute(select(User.id).where(ND_USERNAME_KEY == nd_username_key(username)))
     if taken.first() is not None:
         raise HTTPException(409, "Это имя уже занято, выберите другое")
 

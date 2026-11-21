@@ -4,40 +4,36 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sqlite3
+import os
+import subprocess
+from tempfile import NamedTemporaryFile
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.config import get_settings
+from app.db import get_database_url
 
 log = logging.getLogger(__name__)
 
 KEEP_BACKUPS = 7
 
 
-def backup_hub_db() -> Path | None:
-    s = get_settings()
-    if not s.db_path.is_file():
-        return None
-    dest_dir = s.backups_dir / "hub"
+def backup_hub_db() -> Path:
+    dest_dir = get_settings().backups_dir / "hub"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"hub-{datetime.now():%Y%m%d}.sqlite3"
-    tmp = dest_dir / ".hub-backup.part"
-    # backup into the WSL2 filesystem first, then copy: SQLite file locking on the Windows mount is unreliable
-    local_tmp = s.data_dir / "backup.tmp.sqlite3"
-    src = sqlite3.connect(s.db_path)
+    dest = dest_dir / f"hub-{datetime.now():%Y%m%d}.dump"
+    database = get_database_url().set(drivername="postgresql")
+    target = database._replace(password=None).render_as_string()
+    env = os.environ | {"PGPASSWORD": database.password or ""}
+    with NamedTemporaryFile(dir=dest_dir, prefix=".hub-backup-", suffix=".part", delete=False) as file:
+        tmp = Path(file.name)
     try:
-        dst = sqlite3.connect(local_tmp)
-        try:
-            src.backup(dst)
-        finally:
-            dst.close()
+        subprocess.run(["pg_dump", "--format=custom", f"--dbname={target}", f"--file={tmp}"],
+                       env=env, check=True, timeout=3600)
+        tmp.replace(dest)
     finally:
-        src.close()
-    tmp.write_bytes(local_tmp.read_bytes())
-    tmp.replace(dest)
-    local_tmp.unlink(missing_ok=True)
-    for old in sorted(dest_dir.glob("hub-*.sqlite3"))[:-KEEP_BACKUPS]:
+        tmp.unlink(missing_ok=True)
+    for old in sorted(dest_dir.glob("hub-*.dump"))[:-KEEP_BACKUPS]:
         old.unlink(missing_ok=True)
     return dest
 

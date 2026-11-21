@@ -30,7 +30,7 @@ def setup_logging(level: str = "INFO") -> None:
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level.upper())
-    for noisy in ("httpx", "httpcore", "hpack", "aiosqlite", "sqlalchemy.engine", "multipart"):
+    for noisy in ("httpx", "httpcore", "hpack", "psycopg", "sqlalchemy.engine", "multipart"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         lg = logging.getLogger(name)

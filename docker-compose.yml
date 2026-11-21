@@ -42,6 +42,22 @@ services:
       - ${MUSIC_ROOT}/.backups/navidrome:/backups
     logging: *logging
 
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: homemusic
+      POSTGRES_USER: homemusic
+      POSTGRES_PASSWORD: ${HUB_DB_PASSWORD:?set HUB_DB_PASSWORD in .env}
+    volumes:
+      - hub-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "homemusic", "-d", "homemusic"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    logging: *logging
+
   hub:
     build:
       context: .
@@ -50,6 +66,8 @@ services:
     container_name: homemusic_hub
     restart: unless-stopped
     depends_on:
+      postgres:
+        condition: service_healthy
       navidrome:
         condition: service_started
       youtube-pot:
@@ -60,6 +78,7 @@ services:
     env_file: .env
     environment:
       MUSIC_ROOT: /music
+      DATABASE_PASSWORD: ${HUB_DB_PASSWORD:?set HUB_DB_PASSWORD in .env}
       DATA_DIR: /data
       CONFIG_FILE: /config/config.yaml
       NAVIDROME_URL: http://navidrome:4533
@@ -189,6 +208,7 @@ services:
     logging: *logging
 
 volumes:
+  hub-postgres:
   caddy-data:
   caddy-config:
   # SQLite databases live on the WSL2 ext4 disk, not on the Windows bind mount (locking/WAL are unreliable there).

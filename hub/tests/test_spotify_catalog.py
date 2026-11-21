@@ -12,8 +12,8 @@ from app.models import CatalogCache
 
 
 @pytest.fixture
-async def catalog(db_file):
-    db.init_engine(db_file)
+async def catalog(db_url):
+    db.init_engine(db_url)
     client = SpotifyCatalog()
     try:
         yield client

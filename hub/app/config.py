@@ -145,6 +145,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
 
     music_root: Path = Path("/music")
+    database_url: str = ""
+    database_password: str = ""
     data_dir: Path = Path("/data")
     config_file: Path = Path("/config/config.yaml")
     static_dir: Path = Path(__file__).parent / "static"
@@ -229,10 +231,6 @@ class Settings(BaseSettings):
     @property
     def backups_dir(self) -> Path:
         return self.music_root / ".backups"
-
-    @property
-    def db_path(self) -> Path:
-        return self.data_dir / "hub.sqlite3"
 
     @property
     def proxy_hosts(self) -> set[str]:

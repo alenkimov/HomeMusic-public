@@ -551,7 +551,7 @@ async def track_journal(track_id: int, user: User = Depends(current_user),
         raise HTTPException(404, "Трек не найден")
     f = await current_file(s, t.id)
     item = (await s.execute(select(DownloadItem).where(
-        DownloadItem.track_id == t.id, func.json_array_length(DownloadItem.log_json) > 0)
+        DownloadItem.track_id == t.id, func.jsonb_array_length(DownloadItem.log_json) > 0)
         .order_by(DownloadItem.id.desc()).limit(1))).scalar_one_or_none()
     file = file_out(f) if f else None
     if file:

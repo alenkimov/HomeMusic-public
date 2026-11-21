@@ -104,7 +104,7 @@ async def stats(s: AsyncSession, imp: Import, colls: list[ImportCollection]) -> 
             out.not_found += 1
     for status, n in (await s.execute(
         select(DownloadItem.status, func.count(DownloadItem.id))
-        .where(func.json_extract(DownloadItem.query_json, "$.import.id") == imp.id)
+        .where(DownloadItem.query_json["import"]["id"].as_integer() == imp.id)
         .group_by(DownloadItem.status))).all():
         if status == "done":
             out.done += n
@@ -199,7 +199,7 @@ async def enqueue_once(s: AsyncSession, kind: str, import_id: int, *, delay_s: f
     """One queued job of this kind per import (a batch of downloads coming in asks for one rewrite)."""
     pending = (await s.execute(
         select(Job.id).where(Job.kind == kind, Job.status == "queued",
-                             func.json_extract(Job.payload_json, "$.import_id") == import_id).limit(1)
+                             Job.payload_json["import_id"].as_integer() == import_id).limit(1)
     )).scalar_one_or_none()
     if pending is None:
         await enqueue(s, kind, {"import_id": import_id}, delay_s=delay_s, priority=PRIORITY_IMPORT)
@@ -208,13 +208,13 @@ async def enqueue_once(s: AsyncSession, kind: str, import_id: int, *, delay_s: f
 def _active_transfer_jobs():
     return select(Job.id).where(Job.kind.in_(("import_fetch", "import_resolve", "import_finish")),
                                 Job.status.in_(("queued", "running")),
-                                func.json_extract(Job.payload_json, "$.import_id") == Import.id).exists()
+                                Job.payload_json["import_id"].as_integer() == Import.id).exists()
 
 
 async def resume_orphaned() -> int:
     """Repair a running transfer whose matching or finishing chain was interrupted."""
     # Select and insert in one statement so a concurrent worker cannot advance the chain between them.
-    orphaned = select(literal("import_resolve"), func.json_object("import_id", Import.id), literal(PRIORITY_IMPORT),
+    orphaned = select(literal("import_resolve"), func.jsonb_build_object("import_id", Import.id), literal(PRIORITY_IMPORT),
                       literal(utcnow()), literal(get_settings().cfg.jobs.max_attempts)).where(
         Import.status == "running", ~_active_transfer_jobs())
     async with session_scope() as s:

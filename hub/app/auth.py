@@ -6,13 +6,13 @@ from datetime import timedelta
 
 from fastapi import Depends, HTTPException, Request, Response
 from sqlalchemy import delete
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import get_session
 from app.library.navidrome import AuthError, NavidromeClient
-from app.models import Session, User, utcnow
+from app.models import ND_USERNAME_KEY, Session, User, utcnow
 from app.security import decrypt, encrypt, hash_token, new_token
 
 COOKIE = "hm_session"
@@ -37,7 +37,7 @@ async def login(s: AsyncSession, username: str, password: str) -> tuple[User, st
     statement = insert(User).values(nd_username=canonical or username, nd_password_enc=password_enc,
                                     is_admin=is_admin, last_seen_at=now)
     user = (await s.scalars(statement.on_conflict_do_update(
-        index_elements=[User.nd_username.collate("NOCASE")],
+        index_elements=[ND_USERNAME_KEY],
         set_={"nd_username": canonical or User.nd_username, "nd_password_enc": password_enc,
               "is_admin": is_admin, "last_seen_at": now},
     ).returning(User), execution_options={"populate_existing": True})).one()

@@ -13,8 +13,8 @@ from app.models import AssistantDailyUsage, User
 
 
 @pytest.fixture
-async def users(hub_env, db_file):
-    db.init_engine(db_file)
+async def users(hub_env, db_url):
+    db.init_engine(db_url)
     async with db.session_scope() as s:
         ordinary = User(nd_username="member", nd_password_enc="unused", is_admin=False)
         other = User(nd_username="other", nd_password_enc="unused", is_admin=False)
@@ -65,12 +65,12 @@ async def test_allowance_resets_at_local_midnight(users, monkeypatch, zone, befo
         assert (row.day, row.messages) == (expected_day, 1)
 
 
-async def test_reservation_survives_failed_work_and_engine_restart(users, db_file):
+async def test_reservation_survives_failed_work_and_engine_restart(users, db_url):
     with pytest.raises(RuntimeError):
         async with db.session_scope() as s:
             await limits.reserve_message(s, users[0])
             raise RuntimeError("model failed after admission")
     await db.dispose()
-    db.init_engine(db_file)
+    db.init_engine(db_url)
     async with db.session_scope() as s:
         assert (await s.scalars(select(AssistantDailyUsage))).one().messages == 1

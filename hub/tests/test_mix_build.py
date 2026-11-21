@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 from itertools import pairwise
-from pathlib import Path
 
 import httpx
 import pytest
@@ -177,10 +176,10 @@ def test_stash_and_favorites() -> None:
 
 
 @pytest.fixture
-async def db(hub_env, db_file: Path):
+async def db(hub_env, db_url: str):
     from app.db import dispose, init_engine
 
-    init_engine(db_file)
+    init_engine(db_url)
     yield
     await dispose()
 

@@ -113,7 +113,7 @@ async def with_journal(s: AsyncSession, track_ids: list[int]) -> set[int]:
     out: set[int] = set()
     for i in range(0, len(track_ids), 500):
         out.update((await s.execute(select(DownloadItem.track_id).where(
-            DownloadItem.track_id.in_(track_ids[i:i + 500]), func.json_array_length(DownloadItem.log_json) > 0)
+            DownloadItem.track_id.in_(track_ids[i:i + 500]), func.jsonb_array_length(DownloadItem.log_json) > 0)
             .distinct())).scalars())
     return out
 

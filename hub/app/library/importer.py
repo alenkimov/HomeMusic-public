@@ -247,9 +247,7 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec, *, require_m
         spec.genre = file_genres[0]
     ref = spec.ref or dz_ref(spec.deezer_track_id)
     met = await by_ref(s, ref)
-    # The library is taken before anything is written: SQLite has one writer, and a filing that wrote first (an
-    # artist the Hub did not know) and then waited for the library would keep the database from the very filing that
-    # has the library and waits to write — each waiting for the other until one of them gives up
+    # Take the filesystem lock before acquiring database write locks for the import.
     async with library_lock:
         if require_missing and spec.track_id is not None and await current_file(s, spec.track_id) is not None:
             raise TrackAlreadyFiled()

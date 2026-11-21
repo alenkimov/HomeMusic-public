@@ -1,59 +1,18 @@
-import json
-import sqlite3
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import respx
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import select
 
 from app import integrations, security
 from app.api import integrations as integration_api
-from app.db import run_migrations, session_scope
+from app.db import session_scope
 from app.models import IntegrationAuthAttempt, IntegrationCredential, User
 from tests.support import app_client
 
 BASE = "/api/integrations"
-
-
-def test_migration_preserves_personal_sessions_and_discards_server_spotify_session(tmp_path):
-    db_file = tmp_path / "upgrade.sqlite"
-    cfg = Config("alembic.ini")
-    cfg.attributes["configure_logger"] = False
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_file.as_posix()}")
-    command.upgrade(cfg, "20a000000029")
-    with sqlite3.connect(db_file) as db:
-        db.execute("""
-            INSERT INTO users(id, nd_username, nd_password_enc, is_admin, created_at, lb_user, lb_token_enc, lb_sent_until,
-                              tg_with_lyrics)
-            VALUES (1, 'owner', '', 1, '2026-11-20', 'listener', 'lb-encrypted', '2026-11-19', 0)
-        """)
-        db.executemany("""
-            INSERT INTO imports (id, user_id, source, method, status, mode, account, token_enc, keep_token,
-                                 auth_json, options_json, created_at, updated_at)
-            VALUES (?, 1, ?, 'token', 'done', 'economy', 'account', ?, ?, '{}', '{}', '2026-11-20', '2026-11-20')
-        """, [(1, "yandex", "ym-encrypted", 1), (2, "vk", "vk-encrypted", 0)])
-        db.execute("INSERT INTO app_settings VALUES ('spotify_account', ?)",
-                   (json.dumps({"cookie_enc": "sp-encrypted"}),))
-
-    run_migrations(db_file)
-    with sqlite3.connect(db_file) as db:
-        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert db.execute("""
-            SELECT provider, owner_user_id, retained, shared, state, encrypted
-            FROM integration_connections JOIN integration_credentials ON connection_id = id ORDER BY provider
-        """).fetchall() == [
-            ("listenbrainz", 1, 1, 0, "connected", "lb-encrypted"),
-            ("vk", 1, 0, 0, "connected", "vk-encrypted"),
-            ("yandex", 1, 1, 0, "connected", "ym-encrypted"),
-        ]
-        assert db.execute("SELECT 1 FROM app_settings WHERE key = 'spotify_account'").fetchone() is None
-        assert db.execute("SELECT sent_until FROM listenbrainz_sync").fetchall() == [("2026-11-19",)]
-        assert db.execute("SELECT source FROM imports JOIN integration_connections ON connection_id = integration_connections.id"
-                          " WHERE source = provider ORDER BY source").fetchall() == [("vk",), ("yandex",)]
 
 
 async def test_connections_and_private_imports_are_scoped_to_the_owner(hub_env, monkeypatch):

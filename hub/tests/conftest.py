@@ -1,42 +1,59 @@
-"""Shared fixtures: a migrated DB template and the Hub's test environment (fakes and helpers: support.py).
-
-Alembic migrations take ~0.5 s, so they run once per session (once per xdist worker) into a template file;
-each test gets its own copy of that file.
-"""
+"""Shared PostgreSQL fixtures and the Hub's isolated test environment."""
 
 from __future__ import annotations
 
-import shutil
+import os
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from uuid import uuid4
 
+import psycopg
 import pytest
 from cryptography.fernet import Fernet
+from psycopg import sql
+from sqlalchemy import URL
 
+from app.db import get_database_url, run_migrations
 from tests.support import ND
 
 
+@contextmanager
+def temporary_database(server: URL, template: str | None = None) -> Iterator[URL]:
+    """Allocate a database with a unique name that this fixture owns."""
+    database = f"hm_test_{uuid4().hex}"
+    name = sql.Identifier(database)
+    connection = server.set(drivername="postgresql").render_as_string(hide_password=False)
+    with psycopg.connect(connection, autocommit=True) as admin:
+        create = sql.SQL("CREATE DATABASE {}").format(name)
+        if template is not None:
+            create += sql.SQL(" TEMPLATE {}").format(sql.Identifier(template))
+        admin.execute(create)
+        try:
+            yield server.set(database=database)
+        finally:
+            admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(name))
+
+
 @pytest.fixture(scope="session")
-def migrated_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """The Hub's DB at alembic head; copy it, never open it."""
-    from app.db import run_migrations
-
-    path = tmp_path_factory.mktemp("db-template") / "hub.sqlite3"
-    run_migrations(path)
-    return path
-
-
-@pytest.fixture
-def db_file(migrated_db: Path, tmp_path: Path) -> Path:
-    """A fresh migrated DB of this test's own."""
-    path = tmp_path / "data" / "hub.sqlite3"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(migrated_db, path)
-    return path
+def postgres_template() -> Iterator[URL]:
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        pytest.fail("Set TEST_DATABASE_URL to a disposable PostgreSQL server with permission to create databases")
+    with temporary_database(get_database_url(url)) as template:
+        run_migrations(template)
+        yield template
 
 
 @pytest.fixture
-def hub_env(db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+def db_url(postgres_template: URL) -> Iterator[str]:
+    server = get_database_url(os.environ["TEST_DATABASE_URL"])
+    with temporary_database(server, postgres_template.database) as database:
+        yield database.render_as_string(hide_password=False)
+
+
+@pytest.fixture
+def hub_env(db_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Settings for create_app(): temp folders, a fake Navidrome, no background workers, no waiting.
 
     Yields the music root. Module caches that outlive a test are cleared before and after it.
@@ -49,7 +66,8 @@ def hub_env(db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> I
 
     monkeypatch.setattr(SpotifyCatalog, "_open", offline_spotify)
     monkeypatch.setenv("MUSIC_ROOT", str(music))
-    monkeypatch.setenv("DATA_DIR", str(db_file.parent))
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("CONFIG_FILE", str(tmp_path / "none.yaml"))
     monkeypatch.setenv("NAVIDROME_URL", ND)
     monkeypatch.setenv("NAVIDROME_ADMIN_USER", "admin")

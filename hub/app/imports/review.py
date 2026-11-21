@@ -1,12 +1,12 @@
 """Probable matches awaiting the listener's confirmation."""
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import literal, or_, select, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import ImportReviewOut, TrackOut
 from app.models import Import, ImportCollection, ImportItem
 
-_REVIEWED = "$.match_reviewed"
 _REVIEWABLE = ("done", "waiting", "failed")
 
 
@@ -23,7 +23,7 @@ async def annotate(s: AsyncSession, user_id: int, tracks: list[TrackOut]) -> Non
     if not ids:
         return
     pending = ((ImportItem.match == "probable") & ImportItem.status.in_(_REVIEWABLE)
-               & func.json_extract(ImportItem.raw_json, _REVIEWED).is_(None))
+               & ImportItem.raw_json["match_reviewed"].as_boolean().is_(None))
     rows = await s.execute(
         _items(user_id).where(
             ImportItem.track_id.in_(ids),
@@ -56,5 +56,5 @@ async def acknowledge(s: AsyncSession, user_id: int, item_id: int, *, track_id: 
     same = query.with_only_columns(ImportItem.id).where(
         Import.source == source, ImportItem.external_id == item.external_id, ImportItem.track_id == item.track_id)
     await s.execute(update(ImportItem).where(ImportItem.id.in_(same))
-                    .values(raw_json=func.json_set(ImportItem.raw_json, _REVIEWED, 1)))
+                    .values(raw_json=ImportItem.raw_json.concat(literal({"match_reviewed": True}, JSONB))))
     return True

@@ -23,7 +23,7 @@ import time
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.catalog.models import CatalogTrack, split_ref
 from app.config import get_settings
@@ -250,7 +250,7 @@ async def handle_build(job: Job) -> None:
 async def building(s, user_id: int) -> bool:
     return (await s.execute(select(Job.id).where(
         Job.kind == JOB, Job.status.in_(("queued", "running")),
-        func.json_extract(Job.payload_json, "$.user_id") == user_id).limit(1))).scalar_one_or_none() is not None
+        Job.payload_json["user_id"].as_integer() == user_id).limit(1))).scalar_one_or_none() is not None
 
 
 async def enqueue_build(s, user_id: int) -> bool:

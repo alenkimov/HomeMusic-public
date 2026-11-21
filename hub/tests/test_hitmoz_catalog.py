@@ -1,4 +1,4 @@
-"""hitmoz catalog: artist/album pages -> catalog models, cached in a temp SQLite DB (respx, no network)."""
+"""hitmoz catalog: artist/album pages -> catalog models, cached in a temporary PostgreSQL database (respx, no network)."""
 
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ def fx(name: str) -> str:
 
 
 @pytest.fixture
-async def catalog(db_file):
-    init_engine(db_file)
+async def catalog(db_url):
+    init_engine(db_url)
     client = httpx.AsyncClient(follow_redirects=True)
     provider = HitmozProvider(HitmozCfg(rate_per_sec=1000), client=client)
     provider.base_delay = 0.01

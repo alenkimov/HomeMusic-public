@@ -16,7 +16,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from sqlalchemy import select, text
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.library.tracks import current_file, dz_id
@@ -33,35 +33,30 @@ YOUTUBE_ID = re.compile(r"(?:youtube\.com/watch\?(?:.*&)?v=|youtu\.be/)([\w-]{11
 
 # Copy provider IDs from matched import rows. Local tracks have synthetic IDs and no catalog link.
 FROM_IMPORTS = """
-insert or ignore into track_links (track_id, service, external_id, created_at)
+insert into track_links (track_id, service, external_id, created_at)
 select it.track_id, i.source, it.external_id, :now
 from import_items it join imports i on i.id = it.import_id join import_collections c on c.id = it.collection_id
-where it.track_id is not null and c.kind in ('likes', 'playlist', 'dislikes') and instr(it.external_id, ':') = 0
+where it.track_id is not null and c.kind in ('likes', 'playlist', 'dislikes') and strpos(it.external_id, ':') = 0
 """
 # A service id that is surely a catalog track the library has.
 FROM_SOURCE_MAP = """
-insert or ignore into track_links (track_id, service, external_id, created_at)
+insert into track_links (track_id, service, external_id, created_at)
 select t.id, m.source, m.external_id, :now
 from source_map m join tracks t on m.ref = t.ref
 where m.kind = 'track' and m.match = 'exact' and t.ref is not null
 """
 
 
-def stamp() -> str:
-    """Now, the way SQLAlchemy writes a DateTime into SQLite."""
-    return utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
-
-
 async def collect(s: AsyncSession, track_id: int | None = None) -> None:
     """Copy the service ids the Hub has come across to the tracks (to one track, or to all). An id a track has
     already stays."""
-    params: dict[str, Any] = {"now": stamp()}
+    params: dict[str, Any] = {"now": utcnow()}
     only_imports = only_map = ""
     if track_id is not None:
         params["t"] = track_id
         only_imports, only_map = " and it.track_id = :t", " and t.id = :t"
-    await s.execute(text(FROM_IMPORTS + only_imports), params)
-    await s.execute(text(FROM_SOURCE_MAP + only_map), params)
+    await s.execute(text(FROM_IMPORTS + only_imports + " on conflict do nothing"), params)
+    await s.execute(text(FROM_SOURCE_MAP + only_map + " on conflict do nothing"), params)
 
 
 def open_url(*, deezer: str | None = None, isrc: str | None = None, spotify: str | None = None,

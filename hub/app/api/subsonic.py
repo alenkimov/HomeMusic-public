@@ -45,7 +45,7 @@ from app.catalog.models import CatalogAlbum, CatalogArtist, CatalogTrack, split_
 from app.config import get_settings
 from app.db import session_scope
 from app.library.owned import annotate_albums, annotate_tracks
-from app.models import User
+from app.models import ND_USERNAME_KEY, User, nd_username_key
 from app.net import make_client
 from app.security import decrypt
 from app.services import svc
@@ -219,7 +219,7 @@ async def _listener(params: list[tuple[str, str]]) -> User | None:
     if not name:
         return None
     async with session_scope() as s:
-        user = (await s.execute(select(User).where(User.nd_username.collate("NOCASE") == name))).scalar_one_or_none()
+        user = (await s.execute(select(User).where(ND_USERNAME_KEY == nd_username_key(name)))).scalar_one_or_none()
     if user is None or not user.nd_password_enc:
         return None
     try:

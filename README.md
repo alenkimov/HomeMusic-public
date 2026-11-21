@@ -346,7 +346,7 @@ docker compose restart tunnel
 curl http://localhost:8080/healthz
 ```
 
-- Бэкапы: база Хаба — `B:\Music\.backups\hub\` (каждый день в 4:00, 7 копий), база Navidrome —
+- Бэкапы: база Хаба — архивы PostgreSQL `hub-ГГГГММДД.dump` в `B:\Music\.backups\hub\` (каждый день в 4:00, 7 копий), база Navidrome —
   `B:\Music\.backups\navidrome\` (в 4:30, 7 копий).
 - Удалённое из Хаба лежит в `B:\Music\.trash\<дата>\` 30 дней.
 - ID треков Navidrome стабильны: Хаб пишет в файлы теги `HOMEMUSIC_TRACK_ID` / `HOMEMUSIC_ALBUM_ID`, из них Navidrome
@@ -360,6 +360,34 @@ curl http://localhost:8080/healthz
   записи, а при их недоступности сообщает об ошибке. ИИ-провайдер — `.env` (`LLM_BASE_URL`, `LLM_MODEL`;
   запасной вариант — Ollama `qwen3-vl:8b`).
 - Оценка распознавания скриншотов — [eval/README.md](eval/README.md).
+
+### Переход Хаба на PostgreSQL
+
+При новой установке задайте случайный `HUB_DB_PASSWORD` в `.env`. Compose запустит PostgreSQL во внутренней сети,
+а Хаб сам применит стартовую миграцию. Для запуска без Compose можно задать `DATABASE_URL` с PostgreSQL DSN.
+
+Для существующей библиотеки сохраните прежний образ Хаба и конфигурацию Compose для отката. Старый Хаб нужно
+остановить до создания финального снимка его базы. Импорт принимает целостный снимок `/data/hub.sqlite3`
+со схемой `20a000000034`. Если рядом с базой остался WAL, сделайте снимок через `sqlite3.Connection.backup()`,
+чтобы включить данные из журнала.
+
+Из PowerShell:
+
+```powershell
+docker compose build hub
+docker compose up -d --wait postgres
+docker compose stop hub
+# Сохраните финальный снимок SQLite в hub.sqlite3 в текущей папке.
+docker compose run --rm --no-deps hub python -c "from app.db import run_migrations; run_migrations()"
+docker compose run --rm --no-deps -v "${PWD}/hub.sqlite3:/snapshot/hub.sqlite3:ro" hub python -m scripts.import_sqlite /snapshot/hub.sqlite3
+docker compose up -d --wait hub
+```
+
+Импорт работает одной транзакцией и требует пустую PostgreSQL-схему `30a000000001`. Он сверяет количество
+строк по таблицам, сохраняет идентификаторы и продолжает нумерацию с прежних значений. Сохраните `HUB_SECRET_KEY`
+из прежней установки для зашифрованных сессий и интеграций. Музыкальные файлы, Navidrome и embedder
+продолжают использовать свои тома. Для отката остановите новый Хаб и запустите прежний образ
+со старой конфигурацией и исходной базой. Записи, сделанные после переключения, останутся в PostgreSQL.
 
 ## Сервис `embedder` (звуковые векторы для миксов)
 
@@ -395,6 +423,14 @@ curl http://localhost:8080/healthz
 
 ## Разработка
 
+Тестам Хаба нужна отдельная PostgreSQL с правом создавать базы. Тесты создают и удаляют свои временные базы.
+Например, из PowerShell:
+
+```powershell
+docker run --rm -d --name homemusic-test-postgres -p 127.0.0.1:54329:5432 -e POSTGRES_PASSWORD=dev-test postgres:17-alpine
+$env:TEST_DATABASE_URL = 'postgresql://postgres:dev-test@localhost:54329/postgres'
+```
+
 ```
 cd hub
 uv sync
@@ -405,9 +441,12 @@ npm install
 npm run dev                         # PWA на :5173 с прокси на :8080
 ```
 
-Тесты, которым нужен ffmpeg (теги, проверка файлов, полный сценарий), — в образе Хаба (`docker compose build hub`, затем `docker image prune -f`), из cmd:
+Тесты с ffmpeg можно запустить в образе Хаба, подключив его к тестовому PostgreSQL в отдельной Docker-сети
+и передав адрес через `TEST_DATABASE_URL`. Из cmd:
 ```
-docker run --rm -v homemusic-test-venv:/tmp/venv -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e UV_LINK_MODE=copy -e PYTHONDONTWRITEBYTECODE= -v "%cd%\hub:/src" -w /src homemusic-hub:local bash -c "uv sync -q --frozen && uv run --no-sync pytest -q -p no:cacheprovider -n 6"
+docker network create homemusic-tests
+docker network connect homemusic-tests homemusic-test-postgres
+docker run --rm --network homemusic-tests -e TEST_DATABASE_URL=postgresql://postgres:dev-test@homemusic-test-postgres:5432/postgres -v "%cd%\hub:/src" -w /src -e UV_PROJECT_ENVIRONMENT=/tmp/test-venv homemusic-hub:local bash -c "uv sync -q --frozen && uv run --no-sync pytest -q -n 6"
 ```
 
 

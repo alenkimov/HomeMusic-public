@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import mkdtemp
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import listen
@@ -75,7 +75,7 @@ async def join_active(s: AsyncSession, user: User, refs: list[str], *, playlists
     if changed:
         await s.execute(update(Job).where(
             Job.kind == "download_item", Job.status == "queued", Job.priority < 0,
-            func.json_extract(Job.payload_json, "$.item_id").in_([i.id for i in changed])).values(priority=0))
+            Job.payload_json["item_id"].as_integer().in_([i.id for i in changed])).values(priority=0))
         await s.flush()
         links = await item_links(s, changed)
         for item in changed:

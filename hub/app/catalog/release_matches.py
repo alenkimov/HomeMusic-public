@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 from PIL import Image, ImageOps
 from sqlalchemy import or_, select
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.catalog import registry

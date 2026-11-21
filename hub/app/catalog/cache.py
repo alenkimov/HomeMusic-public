@@ -7,7 +7,7 @@ from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import delete, select
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert
 
 from app.db import session_scope
 from app.models import CatalogCache, utcnow

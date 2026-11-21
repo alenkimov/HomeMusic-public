@@ -15,7 +15,7 @@ import asyncio
 import logging
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import playlists
@@ -54,7 +54,7 @@ async def enqueue_mirror(s: AsyncSession, playlist_id: int, *, delay_s: float = 
     """Ask for the playlist to be mirrored soon (once, however many changes are made meanwhile)."""
     waiting = (await s.execute(select(Job.id).where(
         Job.kind == JOB, Job.status == "queued",
-        func.json_extract(Job.payload_json, "$.playlist_id") == playlist_id).limit(1))).first()
+        Job.payload_json["playlist_id"].as_integer() == playlist_id).limit(1))).first()
     if waiting is None:
         await enqueue(s, JOB, {"playlist_id": playlist_id}, delay_s=delay_s, max_attempts=3)
 

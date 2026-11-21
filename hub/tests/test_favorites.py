@@ -95,9 +95,9 @@ def test_invalid_typed_target_is_rejected(payload):
 
 
 @pytest.fixture
-async def ledger(db_file):
+async def ledger(db_url):
     from app.db import dispose, init_engine, session_scope
-    init_engine(db_file)
+    init_engine(db_url)
     async with session_scope() as s:
         user = User(nd_username="qa", nd_password_enc="unused")
         other = User(nd_username="other", nd_password_enc="unused")

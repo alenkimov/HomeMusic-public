@@ -1,11 +1,13 @@
 """Readonly replay contracts: no application startup and no current-state leakage."""
-import hashlib
 import json
-import sqlite3
+import psycopg
 from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
+from psycopg.types.json import Jsonb
+
+from app.db import get_database_url
 
 from app.mixes.evaluate import auc, bootstrap_days, evaluate, main, outcomes, read_snapshot, readonly_db
 from app.mixes.taste_math import calculate_baseline, calculate_profile
@@ -19,20 +21,34 @@ def ev(eid, kind="finish", ref="dz:1", at=NOW, **kwargs):
     return TasteEvent(1, eid, at, kind, ref, received_at=kwargs.pop("received_at", at), **kwargs)
 
 
-def seed_db(path, events):
-    with sqlite3.connect(path) as c:
+def _connect(url):
+    return psycopg.connect(get_database_url(url).set(drivername="postgresql").render_as_string(hide_password=False))
+
+
+def seed_db(url, events):
+    with _connect(url) as c:
+        for user_id in {event.user_id for event in events}:
+            c.execute(
+                "INSERT INTO users (id, nd_username, nd_password_enc, is_admin, created_at, tg_with_lyrics) "
+                "VALUES (%s, %s, '', false, %s, false)",
+                (user_id, f"user-{user_id}", NOW),
+            )
         for e in events:
             c.execute("INSERT INTO play_events (user_id,event_id,ts,kind,ref,client,received_at,target_data,context,position_s) "
-                      "VALUES (?,?,?,?,?,?,?,?,?,?)", (e.user_id, e.event_id, e.ts.isoformat(" "), e.kind, e.ref,
-                        e.client, (e.received_at or e.ts).isoformat(" "), json.dumps(e.target_data), e.context, e.position_s))
+                      "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (e.user_id, e.event_id, e.ts, e.kind, e.ref,
+                        e.client, e.received_at or e.ts, Jsonb(e.target_data), e.context, e.position_s))
 
 
-def test_readonly_connection_rejects_write_and_cli_does_not_change_database(db_file, tmp_path, monkeypatch):
-    seed_db(db_file, [ev("finish")])
-    before = hashlib.sha256(db_file.read_bytes()).hexdigest()
-    with readonly_db(db_file) as c:
-        assert c.execute("PRAGMA query_only").fetchone()[0] == 1
-        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+def test_readonly_connection_rejects_write_and_cli_does_not_change_database(db_url, tmp_path, monkeypatch):
+    seed_db(db_url, [ev("finish")])
+    with readonly_db(db_url) as c:
+        before = c.execute("SELECT * FROM play_events").fetchall()
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    from app.config import get_settings
+    get_settings.cache_clear()
+    with readonly_db(db_url) as c:
+        assert c.execute("SHOW transaction_read_only").fetchone()["transaction_read_only"] == "on"
+        with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
             c.execute("DELETE FROM play_events")
     # Any accidental lifecycle/network path fails immediately.
     import app.db
@@ -41,29 +57,31 @@ def test_readonly_connection_rejects_write_and_cli_does_not_change_database(db_f
     monkeypatch.setattr(app.db, "run_migrations", lambda *a, **kw: pytest.fail("migration startup"))
     monkeypatch.setattr(app.mixes.taste, "_catalog_info", lambda *a, **kw: pytest.fail("network enrichment"))
     output = tmp_path / "result.json"
-    args = ["--db", str(db_file), "--until", NOW.isoformat(), "--user-id", "1", "--model", "v2", "--seed", "42",
+    args = ["--until", NOW.isoformat(), "--user-id", "1", "--model", "v2", "--seed", "42",
             "--timezone", "Europe/Moscow", "--output", str(output)]
     assert main(args) == 0
     first = output.read_bytes()
     assert main(args) == 0 and output.read_bytes() == first
-    assert hashlib.sha256(db_file.read_bytes()).hexdigest() == before
+    with readonly_db(db_url) as c:
+        assert c.execute("SELECT * FROM play_events").fetchall() == before
+    get_settings.cache_clear()
     result = json.loads(first)
     assert result["vectors"]["status"] == "missing_historical_snapshot"
     assert result["quality"]["selected"]["auc"] is None
     assert result["quality"]["selected"]["reason"] == "need_finish_and_earlyskip_classes"
 
 
-def test_history_ignores_current_mutable_state_and_limits_occurred_available(db_file):
-    seed_db(db_file, [ev("own", "like", at=NOW - timedelta(days=1)),
+def test_history_ignores_current_mutable_state_and_limits_occurred_available(db_url):
+    seed_db(db_url, [ev("own", "like", at=NOW - timedelta(days=1)),
         ev("future", ref="dz:future", at=NOW + timedelta(seconds=1)),
         ev("delayed", ref="dz:delayed", at=NOW - timedelta(days=1), received_at=NOW + timedelta(days=1)),
         ev("debug", ref="dz:debug", client="app/2-debug"), replace(ev("other"), user_id=2)])
-    with sqlite3.connect(db_file) as c:
-        c.execute("INSERT INTO dislikes (user_id,ref,source,created_at) VALUES (1,'dz:future-state','pwa',?)",
-                  ((NOW - timedelta(days=1)).isoformat(" "),))
-        c.execute("INSERT INTO mix_settings (user_id,mode,mix_hour,artists_json,updated_at) VALUES (1,'normal',5,?,?)",
-                  (json.dumps([{"ref": "dz:future-artist", "name": "Future"}]), NOW.isoformat(" ")))
-    with readonly_db(db_file) as c:
+    with _connect(db_url) as c:
+        c.execute("INSERT INTO dislikes (user_id,ref,source,created_at) VALUES (1,'dz:future-state','pwa',%s)",
+                  (NOW - timedelta(days=1),))
+        c.execute("INSERT INTO mix_settings (user_id,mode,mix_hour,artists_json,updated_at) VALUES (1,'normal',5,%s,%s)",
+                  (Jsonb([{"ref": "dz:future-artist", "name": "Future"}]), NOW))
+    with readonly_db(db_url) as c:
         snapshot = read_snapshot(c, user_id=1, until=NOW)
     available = calculate_profile(snapshot, now=NOW, timezone="UTC", mode="available-at")
     occurred = calculate_profile(snapshot, now=NOW, timezone="UTC", mode="occurred-at")
@@ -119,14 +137,14 @@ def test_online_configuration_rejects_offline_hypotheses():
         MixesCfg(taste_model="P1")
 
 
-async def test_online_v2_adapter_loads_batches_without_network_or_writes(db_file, monkeypatch):
+async def test_online_v2_adapter_loads_batches_without_network_or_writes(db_url, monkeypatch):
     from sqlalchemy import event as sql_event
 
     from app.db import dispose, init_engine, session_scope
     from app.mixes.taste import build_profile
     from app.models import Album, PlayEvent, User
 
-    engine = init_engine(db_file)
+    engine = init_engine(db_url)
     try:
         async with session_scope() as s:
             user = User(nd_username="taste-test", nd_password_enc="unused")

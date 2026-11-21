@@ -29,7 +29,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from sqlalchemy import delete, or_, select, update
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.library.credits import split_artists

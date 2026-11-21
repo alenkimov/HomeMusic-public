@@ -7,7 +7,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select, update
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.events import bus
@@ -76,7 +76,12 @@ async def entries(s: AsyncSession, user_id: int) -> list[QueueEntry]:
             for row in await s.scalars(_ordered(user_id))]
 
 
+async def _lock_order(s: AsyncSession, user_id: int) -> None:
+    await s.execute(select(func.pg_advisory_xact_lock(7013423, user_id)))
+
+
 async def append(s: AsyncSession, user_id: int, tracks: list[QueueTrack], *, source_key: str | None = None) -> int:
+    await _lock_order(s, user_id)
     await s.execute(delete(PlaybackQueueItem).where(
         PlaybackQueueItem.user_id == user_id, PlaybackQueueItem.finished_at < utcnow() - timedelta(days=2)))
     requested = [int(t.ref[4:]) if t.ref.startswith("lib:") else t.library_track_id for t in tracks]
@@ -102,6 +107,7 @@ async def append(s: AsyncSession, user_id: int, tracks: list[QueueTrack], *, sou
 
 
 async def remove(s: AsyncSession, user_id: int, ids: list[int]) -> int:
+    await _lock_order(s, user_id)
     statement = update(PlaybackQueueItem).where(
         *_pending(user_id), PlaybackQueueItem.id.in_(ids)).values(finished_at=utcnow()).returning(PlaybackQueueItem.id)
     return len((await s.scalars(statement)).all())
@@ -110,14 +116,11 @@ async def remove(s: AsyncSession, user_id: int, ids: list[int]) -> int:
 async def move(s: AsyncSession, user_id: int, entry_id: int, before_id: int | None) -> bool:
     if entry_id == before_id:
         return False
-    # Acquire the SQLite writer before reading the order so a concurrent append is never overwritten.
-    locked = await s.scalar(update(PlaybackQueueItem).where(
-        *_pending(user_id), PlaybackQueueItem.id == entry_id).values(position=PlaybackQueueItem.position)
-        .returning(PlaybackQueueItem.id))
-    if locked is None:
-        return False
+    await _lock_order(s, user_id)
     rows = list(await s.scalars(_ordered(user_id)))
-    source = next(row for row in rows if row.id == entry_id)
+    source = next((row for row in rows if row.id == entry_id), None)
+    if source is None:
+        return False
     rows.remove(source)
     at = len(rows) if before_id is None else next((i for i, row in enumerate(rows) if row.id == before_id), -1)
     if at < 0:
@@ -145,6 +148,7 @@ async def release(s: AsyncSession, user_id: int, entry_id: int, token: str) -> N
 
 
 async def finish(s: AsyncSession, user_id: int, entry_id: int, token: str) -> bool:
+    await _lock_order(s, user_id)
     result = await s.scalar(update(PlaybackQueueItem).where(
         *_pending(user_id), PlaybackQueueItem.id == entry_id, PlaybackQueueItem.claim == token,
     ).values(finished_at=utcnow()).returning(PlaybackQueueItem.id))

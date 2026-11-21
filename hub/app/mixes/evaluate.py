@@ -9,7 +9,6 @@ import argparse
 import json
 import math
 import random
-import sqlite3
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import replace
@@ -17,6 +16,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import psycopg
+from psycopg.rows import dict_row
+from sqlalchemy import URL
+
+from app.db import get_database_url
 from app.mixes.taste_math import (
     EXPERIMENTS,
     V2Profile,
@@ -34,15 +38,11 @@ def parse_time(value: str) -> datetime:
 
 
 @contextmanager
-def readonly_db(path: Path):
-    """No init_engine: that path enables WAL and creates files/migrations."""
-    connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
-    try:
-        connection.execute("PRAGMA query_only=ON")
-        connection.row_factory = sqlite3.Row
+def readonly_db(url: str | URL | None = None):
+    database = get_database_url(url).set(drivername="postgresql")
+    with psycopg.connect(database.render_as_string(hide_password=False), row_factory=dict_row) as connection:
+        connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         yield connection
-    finally:
-        connection.close()
 
 
 def read_snapshot(connection, *, user_id: int, until: datetime,
@@ -56,19 +56,17 @@ def read_snapshot(connection, *, user_id: int, until: datetime,
     fields = TasteEvent.__dataclass_fields__
     events = []
     missing_received = False
-    for row in connection.execute("SELECT * FROM play_events WHERE user_id = ?", (user_id,)):
+    for row in connection.execute("SELECT * FROM play_events WHERE user_id = %s", (user_id,)):
         data = {k: row[k] for k in row.keys() if k in fields}
-        data["ts"] = parse_time(data["ts"])
+        data["ts"] = utc(data["ts"])
         if data["ts"] > utc(until):
             continue
         if data.get("received_at"):
-            data["received_at"] = parse_time(data["received_at"])
+            data["received_at"] = utc(data["received_at"])
         else:
             # Unknown availability cannot honestly be substituted by occurred-at time.
             missing_received = True
             data["received_at"] = datetime.max
-        if isinstance(data.get("target_data"), str):
-            data["target_data"] = json.loads(data["target_data"])
         events.append(TasteEvent(**data))
     limitations = ["Historical state before journal coverage is incomplete; unjournalled removals are unknown.",
         "Current likes/dislikes, onboarding, downloads, aliases and metadata were not imported into the past.",
@@ -218,7 +216,6 @@ def evaluate(snapshot: TasteSnapshot, *, until: datetime, timezone: str, model: 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--until", type=parse_time, required=True, help="UTC ISO timestamp")
     parser.add_argument("--user-id", type=int, required=True)
     parser.add_argument("--model", choices=("v1", "v2", *EXPERIMENTS), required=True)
@@ -228,13 +225,7 @@ def main(argv=None) -> int:
     parser.add_argument("--mode", choices=("occurred-at", "available-at"), default="available-at")
     parser.add_argument("--exclude-user-id", type=int, action="append", default=[], help="explicit known QA ids")
     args = parser.parse_args(argv)
-    database = args.db.resolve()
-    output = args.output.resolve()
-    if (output in {database, Path(str(database) + "-wal"), Path(str(database) + "-shm"),
-                   Path(str(database) + "-journal")} or
-            (output.exists() and database.exists() and output.samefile(database))):
-        parser.error("output must not overwrite the source database")
-    with readonly_db(args.db) as connection:
+    with readonly_db() as connection:
         snapshot = read_snapshot(connection, user_id=args.user_id, until=args.until,
                                  excluded_user_ids=frozenset(args.exclude_user_id))
     result = evaluate(snapshot, until=args.until, timezone=args.timezone, model=args.model, seed=args.seed,

@@ -35,7 +35,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import JSON, func, or_, select, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.catalog.models import CatalogTrack, split_ref
@@ -798,7 +798,7 @@ async def _download(sid: str, rt: Runtime, x: Played) -> None:
     async with session_scope() as s:
         active = (await s.execute(select(DownloadItem.id).where(
             DownloadItem.status.in_(ACTIVE_STATUSES),
-            func.json_extract(DownloadItem.query_json, "$.meta.track_ref") == x.ref).limit(1))).scalar_one_or_none()
+            DownloadItem.query_json["meta"]["track_ref"].as_string() == x.ref).limit(1))).scalar_one_or_none()
         if active is not None:
             return
         from app.library.owned import find_owned
@@ -1180,7 +1180,7 @@ async def save_items(s: AsyncSession, sid: str, user_id: int, tracks: list[build
         if ref not in have:
             have.add(ref)
             nxt += 1
-    q = sqlite_insert(WaveItem).values(rows)
+    q = insert(WaveItem).values(rows)
     await s.execute(q.on_conflict_do_update(index_elements=["session_id", "ref"], set_={
         "handed_count": WaveItem.handed_count + 1, "last_handed_at": q.excluded.last_handed_at,
         "score": q.excluded.score, "sim": q.excluded.sim, "value": q.excluded.value}))

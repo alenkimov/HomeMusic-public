@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import sqlite3
 from pathlib import Path
 
 import pytest
+from psycopg.errors import DeadlockDetected
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 
@@ -16,13 +16,13 @@ from app.models import Job
 
 
 @pytest.fixture
-async def db(db_file: Path, monkeypatch: pytest.MonkeyPatch):
+async def db(db_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from app import config
 
-    monkeypatch.setenv("CONFIG_FILE", str(db_file.parent / "none.yaml"))
+    monkeypatch.setenv("CONFIG_FILE", str(tmp_path / "none.yaml"))
     config.get_settings.cache_clear()
     config.get_settings().cfg.jobs.workers = 3
-    init_engine(db_file)
+    init_engine(db_url)
     yield
     await dispose()
     config.get_settings.cache_clear()
@@ -54,6 +54,16 @@ async def test_background_work_leaves_a_worker_for_the_user(db):
     assert await queue._next_wakeup_in() == 30.0
     await _add("listen")
     assert await _claimed() == "listen"
+
+
+async def test_parallel_claims_keep_a_slot_for_urgent_work(db):
+    for _ in range(5):
+        await _add("background", queue.PRIORITY_IMPORT)
+    urgent = await _add("urgent")
+    claimed = await asyncio.gather(*(queue._claim(f"worker-{i}") for i in range(5)))
+    ids = [job.id for job in claimed if job is not None]
+    assert len(set(ids)) == len(ids) == 3
+    assert urgent in ids
 
 
 async def test_background_job_runs_with_background_network_priority(db):
@@ -96,9 +106,7 @@ async def test_worker_keeps_going_when_it_cannot_save_a_result(db, monkeypatch):
 
     async def locked_until_worker_moves_on(job_id, **kwargs):
         if job_id == first and not second_started.is_set():
-            error = sqlite3.OperationalError("database is locked")
-            error.sqlite_errorcode = sqlite3.SQLITE_BUSY
-            raise OperationalError("UPDATE jobs", {}, error)
+            raise OperationalError("UPDATE jobs", {}, DeadlockDetected())
         await real_finish(job_id, **kwargs)
         if job_id == first:
             first_saved.set()

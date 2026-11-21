@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from datetime import datetime
 
 from sqlalchemy import delete, func, select
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Playlist, PlaylistItem, Track, TrackFile, utcnow
@@ -89,12 +89,17 @@ async def track_ids(s: AsyncSession, playlist_id: int) -> list[int]:
                                  .order_by(PlaylistItem.position, PlaylistItem.id))).scalars())
 
 
+async def lock(s: AsyncSession, playlist_id: int) -> None:
+    await s.execute(select(Playlist.id).where(Playlist.id == playlist_id).with_for_update(key_share=True))
+
+
 async def add(s: AsyncSession, p: Playlist, tracks: Iterable[int], *, at: datetime | None = None,
               again: bool = False, first: bool = False) -> list[int]:
     """Put tracks into the playlist, in the order given: after the last one, or — `first` — before the first (a
     like goes on top of «Любимое»). A track that is in it already is left where it is unless `again`. `at`: when
     they were added, if not now (an import brings the dates of the service). Returns the tracks that went in."""
     want = list(dict.fromkeys(tracks)) if not again else list(tracks)
+    await lock(s, p.id)
     if not again:
         there = set(await track_ids(s, p.id))
         want = [t for t in want if t not in there]
@@ -116,6 +121,7 @@ async def remove_items(s: AsyncSession, p: Playlist, item_ids: Iterable[int]) ->
     ids = list(item_ids)
     if not ids:
         return 0
+    await lock(s, p.id)
     res = await s.execute(delete(PlaylistItem).where(PlaylistItem.playlist_id == p.id, PlaylistItem.id.in_(ids)))
     if res.rowcount:
         p.updated_at = utcnow()
@@ -127,6 +133,7 @@ async def remove_tracks(s: AsyncSession, p: Playlist, tracks: Iterable[int]) -> 
     ids = list(tracks)
     if not ids:
         return 0
+    await lock(s, p.id)
     res = await s.execute(delete(PlaylistItem).where(PlaylistItem.playlist_id == p.id, PlaylistItem.track_id.in_(ids)))
     if res.rowcount:
         p.updated_at = utcnow()
@@ -135,6 +142,7 @@ async def remove_tracks(s: AsyncSession, p: Playlist, tracks: Iterable[int]) -> 
 
 async def reorder(s: AsyncSession, p: Playlist, item_ids: list[int]) -> None:
     """The playlist in a new order: the items named first, in that order, then the rest as they stood."""
+    await lock(s, p.id)
     rows = {i.id: i for i, _ in await items(s, p.id)}
     order = [i for i in dict.fromkeys(item_ids) if i in rows] + [i for i in rows if i not in set(item_ids)]
     for position, item_id in enumerate(order):

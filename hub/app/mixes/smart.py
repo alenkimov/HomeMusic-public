@@ -29,7 +29,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.dialects.postgresql import insert
 
 from app.catalog.models import CatalogTrack
 from app.config import get_settings
@@ -398,7 +398,7 @@ async def _save_items(rt: SmartRuntime, picked: list[tuple[int, build.Cand, floa
                          generator=wave.top_generator(c)[:32], gens=dict(c.gens), familiar=c.familiar, score=c.score,
                          sim=rt.psim.get(c.key), value=v, state="handed")
                     for i, (k, c, v) in enumerate(picked)]
-            await s.execute(sqlite_insert(SmartItem).values(rows).on_conflict_do_nothing(
+            await s.execute(insert(SmartItem).values(rows).on_conflict_do_nothing(
                 index_elements=["session_id", "ref"]))
     except Exception:
         log.exception("smart %s: handed out tracks not recorded", rt.sid)
@@ -582,7 +582,7 @@ async def hide(user: User, sid: str, ref: str | None, nd_song_id: str | None) ->
     item = await _item(sid, ref, nd_song_id)
     async with rt.lock:
         async with session_scope() as s:
-            await s.execute(sqlite_insert(SmartHidden).values(
+            await s.execute(insert(SmartHidden).values(
                 user_id=user.id, context=rt.context, fingerprint=item.fingerprint, ref=item.ref,
                 nd_song_id=item.nd_song_id, artist=item.artist, title=item.title, created_at=utcnow())
                 .on_conflict_do_nothing(index_elements=["user_id", "context", "fingerprint"]))

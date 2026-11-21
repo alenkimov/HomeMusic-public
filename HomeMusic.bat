@@ -65,7 +65,7 @@ goto done
 :stop
 echo HomeMusic работает.
 set ACTIVE=0
-for /f %%n in ('docker exec homemusic_hub python -c "import sqlite3;c=sqlite3.connect('file:/data/hub.sqlite3?mode=ro',uri=True);print(c.execute('select count(*) from download_items where status in (?,?,?,?,?)',('queued','searching','downloading','tagging','importing')).fetchone()[0])" 2^>nul') do set ACTIVE=%%n
+for /f %%n in ('docker exec homemusic_hub python -c "from app.db import get_database_url;from sqlalchemy import create_engine;c=create_engine(get_database_url()).connect();print(c.exec_driver_sql('SELECT count(*) FROM download_items WHERE status IN '+repr(('queued','searching','downloading','tagging','importing'))).scalar_one())" 2^>nul') do set ACTIVE=%%n
 if not "%ACTIVE%"=="0" echo Загрузок в очереди: %ACTIVE%. Они продолжатся после включения.
 choice /c YN /m "Выключить HomeMusic (у пользователей пропадёт музыка)?"
 if errorlevel 2 (

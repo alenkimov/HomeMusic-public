@@ -72,7 +72,7 @@ async def settings_out(s: AsyncSession, user_id: int) -> MixSettingsOut:
 async def _building(s: AsyncSession, user_id: int) -> bool:
     return (await s.execute(select(Job.id).where(
         Job.kind == "mix_build", Job.status.in_(("queued", "running")),
-        func.json_extract(Job.payload_json, "$.user_id") == user_id).limit(1))).scalar_one_or_none() is not None
+        Job.payload_json["user_id"].as_integer() == user_id).limit(1))).scalar_one_or_none() is not None
 
 
 @router.get("/api/mixes/today", response_model=MixTodayOut)

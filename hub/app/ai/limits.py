@@ -5,7 +5,7 @@ from math import ceil
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -25,7 +25,7 @@ async def reserve_message(s: AsyncSession, user: User) -> None:
     """Atomically consume and commit an accepted request, including ones whose later AI work fails.
 
     Call after input/ownership validation and before adding tasks or invoking the model.
-    Committing here releases SQLite's write lock before slow model/network work starts.
+    Committing here releases the counter's row lock before slow model/network work starts.
     """
     if user.is_admin:
         return

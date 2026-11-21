@@ -16,7 +16,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from sqlalchemy import delete, select, update
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -219,7 +219,7 @@ async def _reply(bot: Bot, chat_id: int, text: str) -> None:
 
 def track_button_data(track: Track, action: str) -> str:
     key = f"{action}:{track.id}"
-    # Bind the button to this recording even if SQLite later reuses its row ID.
+    # Bind the button to this recording even after a database restore.
     message = f"telegram:{key}:{track.created_at.isoformat()}"
     signature = hmac.digest(get_settings().hub_secret_key.encode("ascii"), message.encode("ascii"), "sha256")
     return f"{key}:{signature[:16].hex()}"

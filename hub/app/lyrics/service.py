@@ -273,7 +273,7 @@ async def search(s: AsyncSession, q: str, limit: int = 300) -> list[dict[str, An
     # instr, not LIKE: the words are looked for as they are, `%` and `_` included
     rows = (await s.execute(
         select(Lyrics, Track.nd_song_id, Track.ref).join(Track, Track.id == Lyrics.track_id)
-        .where(func.instr(Lyrics.search_text, needle) > 0).limit(limit))).all()
+        .where(func.strpos(Lyrics.search_text, needle) > 0).limit(limit))).all()
     out = []
     for row, nd_song_id, ref in rows:
         text = parse.plain_of(row.lines_json, row.plain)

@@ -23,7 +23,7 @@ from typing import Any, BinaryIO
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.listening_summary import listened_threshold_ms
