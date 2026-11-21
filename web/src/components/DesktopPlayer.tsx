@@ -8,6 +8,7 @@ import { useSeek } from '../lib/seek';
 import { Link, albumPath } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
 import { PlayLine } from './FileInfo';
+import { PlaybackDevicesButton } from './PlaybackDevices';
 import { ChoosePlaybackFile } from './FindFile';
 import { Icon } from './Icon';
 import { SaveButton } from './PlaylistsButton';
@@ -166,6 +167,7 @@ export function DesktopPlayer() {
               className="!h-9 !w-9 text-muted hover:text-fg"
             />
           )}
+          <PlaybackDevicesButton />
           <Link to="/player" onClick={askForQueue} title="Очередь" aria-label="Очередь" className={cx('flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg', !track && !hasManual && 'pointer-events-none opacity-40')}>
             <Icon name="queue" size={20} />
           </Link>

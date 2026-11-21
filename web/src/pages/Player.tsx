@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
 import { LikeButton } from '../components/LikeButton';
+import { PlaybackDevicesButton } from '../components/PlaybackDevices';
 import { Lyrics } from '../components/Lyrics';
 import { SaveButton } from '../components/PlaylistsButton';
 import { TrackMenuButton } from '../components/TrackMenu';
@@ -312,6 +313,7 @@ export function PlayerPage() {
         <ChoosePlaybackFile />
         <div className="flex items-center">
           {!isUpload(track) && <IconButton icon="share" label="Поделиться" onClick={() => openShare({ title: track.title, artist: track.artist, ref: track.ref, nd_song_id: info?.nd_song_id })} className="text-muted" />}
+          <PlaybackDevicesButton />
           <IconButton icon="queue" label={queueOpen ? 'Скрыть очередь' : 'Очередь'} aria-pressed={queueOpen} onClick={() => setQueueOpen((v) => !v)} className={queueOpen ? '!text-accent' : 'text-muted'} />
         </div>
       </div>

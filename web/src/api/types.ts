@@ -1550,6 +1550,7 @@ export interface HubEventMap {
   search_history: Record<string, never>;
   genres: Record<string, never>;
   playback_queue: Record<string, never>;
+  playback_devices: Record<string, never>;
   ping: Record<string, never>;
   /** Pseudo event: the stream (re)connected after a drop; refetch state. */
   reconnect: Record<string, never>;

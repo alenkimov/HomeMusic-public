@@ -200,6 +200,8 @@ let audio: HTMLAudioElement | null = null;
 /** The page player's `<audio>` (null until the first track): `lib/waveAudio.ts` reads its loudness. */
 export const listenAudio = (): HTMLAudioElement | null => audio;
 let pendingSeek = 0;
+let pendingPosition: (() => number) | null = null;
+let seekRevision = 0;
 let resolving: { controller: AbortController; pending: boolean; retryMedia: boolean } | null = null;
 let autoAdvanceOnFailure = false;
 /** How many tracks of the queue are loaded ahead (`prefetchNext`): the next one whole, the rest only their start. */
@@ -362,6 +364,10 @@ function el(): HTMLAudioElement {
   const sync = () =>
     set({ position: pendingSeek || a.currentTime, duration: Number.isFinite(a.duration) && a.duration > 0 ? a.duration : state.duration });
   a.addEventListener('loadedmetadata', () => {
+    if (pendingPosition) {
+      pendingSeek = pendingPosition();
+      pendingPosition = null;
+    }
     if (pendingSeek > 0) {
       a.currentTime = Number.isFinite(a.duration) ? Math.min(pendingSeek, Math.max(0, a.duration - 0.1)) : pendingSeek;
       pendingSeek = 0;
@@ -441,7 +447,7 @@ function play(a: HTMLAudioElement) {
 }
 
 /** `auto`: reached by the previous track ending; a track that can't be played is then skipped. */
-function start(queue: readonly ListenTrack[], index: number, auto = false, position = 0, autoplay = true, claim?: ManualClaim) {
+function start(queue: readonly ListenTrack[], index: number, auto = false, position: number | (() => number) = 0, autoplay = true, claim?: ManualClaim) {
   const track = queue[index];
   cancelManualOpening();
   if (claim || track !== state.track) {
@@ -464,10 +470,12 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
   const ctl = new AbortController();
   const resolution = { controller: ctl, pending: true, retryMedia: false };
   resolving = resolution;
+  refreshed = null;
   autoAdvanceOnFailure = auto;
-  pendingSeek = position;
+  pendingPosition = typeof position === 'function' ? position : null;
+  pendingSeek = typeof position === 'function' ? position() : position;
   set({ track, queue, index, context: listContext, page: listPage, phase: autoplay ? 'resolving' : 'paused', info: null,
-    error: null, position, duration: track.duration_s ?? 0,
+    error: null, position: pendingSeek, duration: track.duration_s ?? 0,
     ...(claim ? { manualQueue: state.manualQueue.filter((entry) => entry.id !== claim.id) } : {}) });
   const ref = playbackRef(track);
   a.src = listenStreamUrl(ref);
@@ -498,6 +506,7 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
         if (state.phase === 'error' || resolving !== resolution) return;
       }
       updateMediaTitle();
+      if (state.phase === 'playing') refreshInfo();
       reportStart();
       prefetchNext();
     },
@@ -787,6 +796,43 @@ interface SavedSession {
   /** Indices retain object identity, including duplicate tracks, after JSON serialization. */
   originalOrder: number[] | null;
   smart?: boolean;
+}
+
+export type PlaybackSnapshot = Pick<SavedSession, 'queue' | 'index' | 'context' | 'position' | 'autoplay' | 'shuffle' | 'repeat' | 'originalOrder'> &
+  Required<Pick<SavedSession, 'page' | 'smart'>>;
+
+export function snapshotForTransfer() {
+  const { track, queue, index, context, page, phase, shuffle, smart, repeat } = state;
+  if (!track || queue.some(isUpload) || !['playing', 'paused'].includes(phase)
+    || (activeManual && !activeManual.started)) return null;
+  const revision = seekRevision;
+  const autoplay = phase === 'playing';
+  const snapshot: PlaybackSnapshot = {
+    queue: [...queue], index, context, page, autoplay, shuffle, smart, repeat,
+    position: pendingSeek || audio?.currentTime || 0,
+    originalOrder: unshuffled?.map((item) => queue.indexOf(item)).filter((i) => i >= 0) ?? null,
+  };
+  const isCurrent = () => state.queue === queue && state.index === index && state.track === track
+    && state.shuffle === shuffle && state.repeat === repeat && state.smart === smart && seekRevision === revision
+    && (autoplay ? state.phase === 'playing' || state.phase === 'loading' : state.phase === 'paused');
+  return { snapshot, isCurrent };
+}
+
+export function startTransferredPlayback(snapshot: PlaybackSnapshot, position: () => number) {
+  failedManualEntries.clear();
+  smartHooks?.end();
+  unshuffled = snapshot.originalOrder?.map((i) => snapshot.queue[i]) ?? null;
+  listContext = snapshot.context;
+  listPage = snapshot.page;
+  listLaunch = newLaunch(listContext);
+  set({ shuffle: snapshot.shuffle, smart: snapshot.smart, repeat: snapshot.repeat });
+  start(snapshot.queue, snapshot.index, false, position, snapshot.autoplay);
+  smartHooks?.restored();
+}
+
+export function finishOutgoingPlayback() {
+  reportEnd(false, false, true);
+  stopListening();
 }
 
 function persistListening(force = false) {
@@ -1216,6 +1262,8 @@ export function setVolume(volume: number) {
 
 export function seek(seconds: number) {
   if (!audio || !Number.isFinite(seconds)) return;
+  seekRevision++;
+  pendingPosition = null;
   if (audio.readyState === HTMLMediaElement.HAVE_NOTHING) pendingSeek = Math.max(0, seconds);
   else { pendingSeek = 0; audio.currentTime = seconds; }
   set({ position: seconds });
@@ -1232,6 +1280,7 @@ export function stopListening() {
   for (const p of prefetching.values()) p.ctl.abort();
   prefetching.clear();
   pendingSeek = 0;
+  pendingPosition = null;
   if (audio) {
     audio.pause();
     audio.removeAttribute('src');

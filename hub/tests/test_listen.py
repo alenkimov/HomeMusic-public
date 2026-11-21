@@ -178,12 +178,43 @@ async def test_file_that_does_not_open_moves_to_the_next(env):
     r = await c.get("/api/listen", params={"ref": "dz:100"})
     assert r.status_code == 200, r.text
     assert r.json()["provider"] == "hitmoz"
-    # none of its files opens: the Hub picks again, opening each file before taking it
+    # none of its files opens: take the saved source without repeating the catalog search
     r = await c.get(r.json()["stream_url"], headers={"Range": "bytes=0-9"})
     assert r.status_code == 206 and r.content == AUDIO[:10]
     r = await c.get("/api/listen", params={"ref": "dz:100"})
     assert (r.json()["provider"], r.json()["page_url"]) == ("hitmos_fm", "https://hitmos_fm.test/song/7")
-    assert hm.searched == 2 and fm.searched == 2
+    assert hm.searched == fm.searched == 1
+
+
+async def test_a_source_that_returns_no_audio_uses_saved_recording_after_restart(env):
+    from app import listen
+
+    c, hm, fm = env["client"], env["hm"], env["fm"]
+    hm.cands = [cand("1", "https://cdn.test/empty.mp3")]
+    fm.cands = [cand("7", "https://cdn.test/good.mp3", provider="hitmos_fm")]
+    env["mock"].route(host="cdn.test", path="/empty.mp3").mock(
+        return_value=httpx.Response(200, content=b"", headers={"content-type": "audio/mpeg"}))
+    result = (await c.get("/api/listen", params={"ref": "dz:100"})).json()
+    assert result["provider"] == "hitmoz"
+    if task := listen._source_lookups.get("dz:100"):
+        await task
+    await listen.reset()
+    hm.cands = fm.cands = []
+    r = await c.get(result["stream_url"], headers={"Range": "bytes=0-9"})
+    assert r.status_code == 206 and r.content == AUDIO[:10]
+    assert r.headers["x-homemusic-source"] == "hitmos_fm"
+    assert hm.searched == fm.searched == 1
+
+
+def test_saved_sources_require_the_same_edition_and_length():
+    from app.listen import _same_recording
+    from app.providers.base import TrackQuery
+
+    q = TrackQuery(artist="Кино", title="Группа крови", duration_s=245)
+    candidate = cand("7", "https://cdn.test/good.mp3", provider="hitmos_fm")
+    assert _same_recording(q, candidate)
+    assert not _same_recording(q, candidate.model_copy(update={"title": "Группа крови (Live)"}))
+    assert not _same_recording(q, candidate.model_copy(update={"duration_s": 240}))
 
 
 async def test_all_sources_are_searched_at_once(env):

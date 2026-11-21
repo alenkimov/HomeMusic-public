@@ -70,8 +70,13 @@ function persistWave() {
 /** Continue the same server session, including events that were still awaiting acknowledgement. */
 export function restoreWave(account: number | null) {
   if (sessionAccount === account) return;
-  session = null;
   sessionAccount = account;
+  restorePlayerWave();
+}
+
+export function restorePlayerWave() {
+  session = null;
+  const account = sessionAccount;
   const st = getListenState();
   if (account !== null && !canPlayAll() && st.track && st.context.startsWith('wave:')) {
     const id = st.context.slice('wave:'.length);
@@ -227,6 +232,7 @@ function end() {
 subscribeListening(() => {
   const s = session;
   const st = getListenState();
+  if (s && !st.track) return end();
   // A quick skip can exhaust the queue without producing a playback start event.
   if (!s || st.context !== s.context || !st.track || st.track.queued || st.track === s.refillAt
     || st.index + 1 < st.queue.length) return;

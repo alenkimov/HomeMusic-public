@@ -6,6 +6,7 @@ import { ApiError, UNAUTHORIZED_EVENT, api, errorMessage, isAbort, setApiAccount
 import { clearAccountMessages, toastError } from './lib/ui';
 import type { MeOut } from './api/types';
 import { DesktopPlayer } from './components/DesktopPlayer';
+import { PlaybackTransferOffer } from './components/PlaybackDevices';
 import { MiniPlayer, PlayerSpacer } from './components/MiniPlayer';
 import { Sidebar } from './components/Sidebar';
 import { closeAccountOverlays, Overlays } from './components/Overlays';
@@ -16,6 +17,7 @@ import { useDesktop } from './lib/desktop';
 import { STANDALONE } from './lib/embedded';
 import { hubEvents } from './lib/events';
 import { restoreListening, stopListening, watchManualQueue } from './lib/listen';
+import { watchPlaybackDevices } from './lib/playbackDevices';
 import { restoreWave } from './lib/wave';
 import { resetInPlaylists } from './lib/inPlaylists';
 import { resetReleases } from './lib/releases';
@@ -280,6 +282,7 @@ export function App() {
   // whom the user does not listen to: the player needs it from the start, to go past their tracks
   const uid = me?.id;
   useEffect(() => uid != null ? watchManualQueue() : undefined, [uid]);
+  useEffect(() => uid != null && STANDALONE ? watchPlaybackDevices() : undefined, [uid]);
   useVersionLabelsSync(uid);
   useEffect(() => {
     if (uid != null) void refreshDislikes(true);
@@ -357,6 +360,7 @@ export function App() {
           </>
         ))}
       {!fullPlayer && <SelectionBar />}
+      <PlaybackTransferOffer />
       <Overlays />
     </SessionContext.Provider>
   );

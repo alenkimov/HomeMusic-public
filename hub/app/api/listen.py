@@ -97,6 +97,8 @@ async def stream(ref: str, request: Request, q: str | None = None, user: User = 
 
         await listened(user.id, ref)  # a track of an economy import is downloaded once listened to
     variant = {"X-HomeMusic-Listen-Kind": m.choice.kind}
+    if m.choice.candidate is not None:
+        variant["X-HomeMusic-Source"] = m.choice.candidate.provider
     if m.variant:
         variant["X-HomeMusic-Variant"] = m.variant
     if m.path is not None:
