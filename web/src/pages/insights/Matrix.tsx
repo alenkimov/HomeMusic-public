@@ -1,3 +1,4 @@
+import { TrackTitle } from '../../components/TrackTitle';
 import { useEffect, useState } from 'react';
 import { insightsApi, type MatrixOut } from '../../api/insights';
 import { WeightCell } from '../../components/charts/Weight';
@@ -83,7 +84,7 @@ export function TasteMatrixPage() {
               rowKey={(r) => r.key}
               empty="Ничего не нашлось"
               cols={[
-                { label: by === 'artist' ? 'Исполнитель' : 'Трек', cell: (r) => (by === 'artist' ? r.artist : [r.artist, r.title].filter(Boolean).join(' — ')) },
+                { label: by === 'artist' ? 'Исполнитель' : 'Трек', cell: (r) => (by === 'artist' ? r.artist : <TrackTitle title={[r.artist, r.title].filter(Boolean).join(' — ')} track={{ ref: r.key }} />) },
                 ...d.users.map((u) => ({
                   label: u.username,
                   align: 'right' as const,

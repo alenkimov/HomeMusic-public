@@ -1,3 +1,4 @@
+import { TrackTitle } from '../components/TrackTitle';
 import { useEffect, useMemo } from 'react';
 import { api } from '../api/client';
 import type { NamesakeOut } from '../api/types';
@@ -98,7 +99,7 @@ export function HiddenPage() {
                   {/* a track of the library has its cover by its id; one known by the catalog alone has none kept */}
                   <Cover src={d.nd_song_id ? `/api/nd/cover/${enc(d.nd_song_id)}?size=96` : null} size={40} alt="" />
                   <span className="min-w-0 flex-1 py-2">
-                    <span className="block truncate">{d.title || 'Трек'}</span>
+                    <span className="block truncate"><TrackTitle title={d.title || 'Трек'} track={d} /></span>
                     {d.artist && <span className="block truncate text-[13px] text-muted">{d.artist}</span>}
                   </span>
                   <Button small variant="ghost" onClick={() => void setDisliked({ track_id: d.track_id, ref: d.ref, nd_song_id: d.nd_song_id, artist: d.artist, title: d.title }, false)}>

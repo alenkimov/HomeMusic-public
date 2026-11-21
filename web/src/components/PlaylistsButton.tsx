@@ -1,3 +1,4 @@
+import { TrackTitle } from './TrackTitle';
 import { tagKey } from '../lib/tags';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
@@ -200,7 +201,7 @@ export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_
   const plan = [into.length ? `добавить в ${into.length}` : '', out.length ? `убрать из ${out.length}` : ''].filter(Boolean).join(', ');
 
   return (
-    <Sheet open onClose={onClose} title={track.title} footer={<Footer text={plan || 'Изменений нет'} busy={busy} onClose={onClose} onDone={() => void save()} />}>
+    <Sheet open onClose={onClose} title={<TrackTitle title={track.title} track={{ ...track, track_id: track.key ? Number(track.key) : undefined }} />} footer={<Footer text={plan || 'Изменений нет'} busy={busy} onClose={onClose} onDone={() => void save()} />}>
       {!rows ? (
         <Loading />
       ) : (

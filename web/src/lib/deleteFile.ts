@@ -1,3 +1,4 @@
+import { titleWithVersion } from './versionLabels';
 import { api } from '../api/client';
 import { plural, tracksWord } from './format';
 import { setLikes } from './stars';
@@ -11,7 +12,7 @@ import { attempt, confirmDialog, toast } from './ui';
 export async function deleteFile(t: { library_track_id: number; title: string; artist: string }): Promise<void> {
   const k = await attempt(() => api.trackKeeping(t.library_track_id));
   if (!k) return;
-  const name = `«${t.title}» — ${t.artist}`;
+  const name = `«${titleWithVersion(t.title, t)}» — ${t.artist}`;
   const people = (n: number) => `${n} ${plural(n, ['слушателя', 'слушателей', 'слушателей'])}`;
   if (!k.can_delete) {
     const lists = k.mine.map((p) => (p.liked ? '«Любимого»' : `«${p.name}»`)).join(', ');

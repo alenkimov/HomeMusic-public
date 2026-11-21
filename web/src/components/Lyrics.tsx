@@ -6,6 +6,7 @@ import { seek, useListen } from '../lib/listen';
 import { KIND_LABEL, activeLine, breakAt, setLyricsLook, setTranslatePrefs, useLyricsLook, useTranslatePrefs, type LyricsLine, type LyricsLook, type LyricsOut, type LyricsReading, type LyricsTranslation, type LyricsTranslators, type TranslatePrefs } from '../lib/lyrics';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 import { Icon } from './Icon';
+import { ServiceBadge } from './ServiceBadge';
 import { Button, Checkbox, IconButton, Loading, Sheet, Spinner, cx } from './ui';
 
 const STEP_MS = 250;
@@ -170,7 +171,7 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
 
   const footer = (
     <div className="flex shrink-0 flex-wrap items-center justify-center gap-x-1 gap-y-1 pt-2 text-xs text-muted">
-      {data.kind !== 'none' && <span className="px-2">{data.source_title} · {KIND_LABEL[data.kind]}</span>}
+      {data.kind !== 'none' && <span className="px-2"><ServiceBadge service={data.source} label={data.source_title} /> · {KIND_LABEL[data.kind]}</span>}
       {timed && (
         <span className="flex items-center" title="Если текст спешит или отстаёт">
           <IconButton icon="minus" size={16} label="Текст раньше на четверть секунды" onClick={() => shift(-STEP_MS)} className="!h-8 !w-8 text-muted" />
@@ -476,7 +477,7 @@ function TranslateSheet({ trackId, prefs, tr, busy, error, original, onForce, on
               <span className="text-warn">{error}</span>
             ) : tr?.status === 'ready' ? (
               <span className="text-muted">
-                Перевёл: {tr.provider_title ?? tr.provider}
+                Перевёл: <ServiceBadge service={tr.provider} label={tr.provider_title} />
                 {tr.detected ? ` · с языка: ${name(tr.detected)}` : ''}
                 {tr.edited.length ? ` · исправлено строк: ${tr.edited.length}` : ''}
               </span>
@@ -512,7 +513,7 @@ function TranslateSheet({ trackId, prefs, tr, busy, error, original, onForce, on
               Перевести заново:
               {(info?.providers ?? []).filter((x) => x.on && (x.id !== 'llm' || info?.llm)).map((x) => (
                 <Button key={x.id} small busy={redoing === x.id} disabled={!!redoing} onClick={() => void redo(x.id)}>
-                  {x.title}
+                  <ServiceBadge service={x.id} label={x.title} />
                 </Button>
               ))}
               <Button small icon="edit" onClick={() => setEditing((v) => !v)}>
@@ -633,7 +634,7 @@ function Variants({ trackId, current, onClose, onPicked }: { trackId: number; cu
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline gap-x-2">
-                      <span className="text-sm font-semibold">{r.title}</span>
+                      <ServiceBadge service={r.id} label={r.title} className="text-sm font-semibold" />
                       {r.id === current && <span className="text-xs text-accent">сейчас</span>}
                       <span className="text-xs tabular-nums text-muted">
                         {!a

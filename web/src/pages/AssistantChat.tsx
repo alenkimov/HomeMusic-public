@@ -1,8 +1,9 @@
+import { TrackTitle } from '../components/TrackTitle';
 // Free chat with the assistant (stage 3.8): POST /api/assistant/chat with the whole visible history.
 // The assistant changes ♥, playlists and downloads itself (`done`); deleting asks for a tap here.
 // The Hub saves every turn into a chat (`/api/assistant/chats`): the open chat lives in the route (`?chat=<id>`)
 // and in a store here, so a reply that comes after leaving the screen is not lost.
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { api, errorMessage } from '../api/client';
 import type { ChatAction, ChatMessage, SavedChatMessage } from '../api/types';
 import { Icon } from '../components/Icon';
@@ -152,13 +153,13 @@ export function startChatWith(text: string, images: File[] = [], replace = true)
 
 const fmtCost = (c?: number) => (c ? `$${c < 0.01 ? c.toFixed(4) : c.toFixed(3)}` : '');
 
-function describe(a: ChatAction): string {
+function describe(a: ChatAction): ReactNode {
   switch (a.type) {
     case 'delete_playlist':
       return `Удалить плейлист «${a.name || a.playlist_id}»`;
     case 'delete_library_tracks': {
       const more = a.titles.length > 5 ? ` и ещё ${a.titles.length - 5}` : '';
-      return `Удалить из библиотеки ${tracksWord(a.titles.length)}: ${a.titles.slice(0, 5).join('; ')}${more}`;
+      return <>Удалить из библиотеки {tracksWord(a.titles.length)}: {a.titles.slice(0, 5).map((title, i) => <span key={a.track_ids[i]}>{i > 0 && '; '}<TrackTitle title={title} track={{ track_id: a.track_ids[i] }} /></span>)}{more}</>;
     }
     default:
       return JSON.stringify(a);

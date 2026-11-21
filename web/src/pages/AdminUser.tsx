@@ -1,7 +1,9 @@
+import { TrackTitle } from '../components/TrackTitle';
 import type { ReactNode } from 'react';
 import { api } from '../api/client';
 import type { AdminUserDetailOut } from '../api/types';
 import { ErrorState, Loading, PageHeader, SectionTitle, Segmented } from '../components/ui';
+import { ServiceBadge } from '../components/ServiceBadge';
 import { setQuery } from '../lib/insights';
 import { useRoute } from '../lib/router';
 import { ListeningTab } from './insights/Listening';
@@ -94,7 +96,7 @@ function OverviewTab({ u }: { u: AdminUserDetailOut }) {
         <Row k="Аккаунт в Хабе с" v={fmtDate(u.created_at)} />
         <Row k="Последний раз в Хабе" v={fmtWhen(u.last_seen_at) || '—'} />
         <Row k="Последний раз в плеере" v={fmtWhen(u.player_seen_at) || '—'} />
-        <Row k="Google" v={u.google_email || 'не привязан'} />
+        <Row k={<ServiceBadge service="google" />} v={u.google_email || 'не привязан'} />
         <Row k="Последний запрос к ИИ" v={fmtWhen(u.ai_last_at) || '—'} />
       </dl>
 
@@ -135,7 +137,7 @@ function OverviewTab({ u }: { u: AdminUserDetailOut }) {
             {u.recent_downloads.map((d, i) => (
               <li key={i} className="flex min-h-12 items-center gap-3 border-b border-line/60 px-4 py-2 last:border-0">
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate">{d.title || '—'}</span>
+                  <span className="block truncate"><TrackTitle title={d.title || '—'} track={d} /></span>
                   <span className="block truncate text-xs text-muted">
                     {d.artist} · {fmtWhen(d.created_at)}
                   </span>
@@ -150,7 +152,7 @@ function OverviewTab({ u }: { u: AdminUserDetailOut }) {
   );
 }
 
-function Row({ k, v }: { k: string; v: ReactNode }) {
+function Row({ k, v }: { k: ReactNode; v: ReactNode }) {
   return (
     <div className="flex min-h-11 items-center gap-3 border-b border-line/60 px-4 py-2 last:border-0">
       <dt className="flex-1 text-muted">{k}</dt>

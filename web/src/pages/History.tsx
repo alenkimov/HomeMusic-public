@@ -1,3 +1,4 @@
+import { TrackTitle } from '../components/TrackTitle';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { HistoryItem, HistoryOut } from '../api/types';
@@ -139,7 +140,7 @@ export function HistoryPage() {
               <span className="flex min-w-0 items-center gap-3">
                 <Cover src={x.track?.cover_small_url || x.track?.cover_url} size={desktop ? 36 : 44} alt="" />
                 <span className="min-w-0">
-                  <span className={cx('block truncate', desktop ? 'text-sm' : 'text-[15px]', on && 'text-accent')}>{x.title}</span>
+                  <span className={cx('block truncate', desktop ? 'text-sm' : 'text-[15px]', on && 'text-accent')}><TrackTitle title={x.title} track={x.track ?? x} /></span>
                   <span className="block truncate text-xs text-muted">
                     {x.artist}
                     {!desktop && from && <> · {from}</>}
