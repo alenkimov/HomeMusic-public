@@ -12,6 +12,7 @@ import httpx
 import pytest
 import respx
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramUnauthorizedError
+from aiogram.types import Update
 
 from tests.support import app_client, filed_track
 
@@ -40,6 +41,7 @@ class FakeBot:
 
     async def get_updates(self, **kw):
         self._check()
+        self.state["allowed_updates"] = kw["allowed_updates"]
         return [item for item in self.state.get("updates", []) if item.update_id >= (kw.get("offset") or 0)]
 
     async def send_audio(self, **kw):
@@ -51,6 +53,9 @@ class FakeBot:
 
     async def send_message(self, **kw):
         self.state.setdefault("messages", []).append(kw)
+
+    async def answer_callback_query(self, **kw):
+        self.state.setdefault("callback_answers", []).append(kw)
 
     async def get_chat(self, chat_id, **kw):
         if chat_id > 0:
@@ -69,7 +74,7 @@ class FakeBot:
 
 
 def message(chat_id: int, kind: str = "private", *, text: str = "", sender: int | None = None, **chat):
-    return SimpleNamespace(update_id=next(UPDATES), my_chat_member=None, message=SimpleNamespace(
+    return SimpleNamespace(update_id=next(UPDATES), my_chat_member=None, callback_query=None, message=SimpleNamespace(
         chat=SimpleNamespace(id=chat_id, type=kind, **{"first_name": None, "last_name": None, "username": None, **chat}),
         from_user=SimpleNamespace(id=sender if sender is not None else chat_id, is_bot=False),
         text=text, migrate_to_chat_id=None))
@@ -81,15 +86,15 @@ def membership(status: str, **rights):
 
 def member(chat_id: int, kind: str, status: str, *, title: str = "Друзья", **rights):
     chat = SimpleNamespace(id=chat_id, type=kind, title=title, first_name=None, last_name=None, username=None)
-    return SimpleNamespace(update_id=next(UPDATES), message=None, my_chat_member=SimpleNamespace(
+    return SimpleNamespace(update_id=next(UPDATES), message=None, callback_query=None, my_chat_member=SimpleNamespace(
         chat=chat, new_chat_member=membership(status, **rights)))
 
 
 @pytest.fixture
 async def env(hub_env, monkeypatch):
     from app import telegram, telegram_chats
-    from app.main import create_app
     from app.config import get_settings
+    from app.main import create_app
 
     state: dict = {}
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
@@ -169,15 +174,17 @@ async def test_link_send_and_disconnect(env):
     assert state["sent"][-1]["caption"] == "<blockquote expandable>Тёплое место\n&lt;но&gt;</blockquote>"
     assert len(state["profile_checks"]) == checks
     assert state["sent"][-1]["parse_mode"] == "HTML"
-    assert state["sent"][-1]["reply_markup"] is None
+    [[heart]] = state["sent"][-1]["reply_markup"].inline_keyboard
+    assert heart.text == "❤️" and heart.callback_data
     state["usernames"][42] = "alen_new"
     r = await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "with_lyrics": True})
     assert r.status_code == 200, r.text
     assert state["sent"][-1]["caption"] == "От @alen_new\n\n<blockquote expandable>Тёплое место\n&lt;но&gt;</blockquote>"
     # the track's «HomeMusic» link as a button under the audio, when asked for
     assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "with_link": True})).status_code == 200
-    [[button]] = state["sent"][-1]["reply_markup"].inline_keyboard
-    assert button.text == "Открыть в HomeMusic" and button.url.startswith("https://alenkimov.github.io/HomeMusic-public/#")
+    [[button, heart]] = state["sent"][-1]["reply_markup"].inline_keyboard
+    assert button.text == "Открыть" and button.url.startswith("https://alenkimov.github.io/HomeMusic-public/#")
+    assert heart.text == "❤️" and 1 <= len(heart.callback_data.encode("utf-8")) <= 64
     assert (await c.put("/api/telegram/prefs", json={"with_lyrics": True})).json()["with_lyrics"] is True
     assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1"})).json()["lyrics"] is True
     assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "with_lyrics": False})).json()["lyrics"] is False
@@ -193,6 +200,52 @@ async def test_link_send_and_disconnect(env):
     assert (await c.get("/api/telegram/chats")).json() == []
 
 
+async def test_a_shared_audio_heart_adds_to_the_clickers_own_favorites(env):
+    c, state = env["client"], env["state"]
+    await add_track(env["music"], "nd1")
+    await pair(c, state, 42)
+    state["updates"].append(member(-100, "supergroup", "administrator"))
+    state["members"] = {(-100, BOT_ID): membership("administrator"), (-100, 42): membership("member"),
+                        (-100, 9): membership("member")}
+    chats = await c.post("/api/telegram/chats/refresh")
+    assert chats.status_code == 200, chats.text
+    group = next(row["id"] for row in chats.json() if row["kind"] == "supergroup")
+    sent = await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "chat": group,
+                                                   "with_link": True, "anonymous": True})
+    assert sent.status_code == 200, sent.text
+    [[_, heart]] = state["sent"][-1]["reply_markup"].inline_keyboard
+
+    async def press(sender: int, data: str) -> str:
+        update_id = next(UPDATES)
+        state["updates"].append(Update.model_validate({
+            "update_id": update_id,
+            "callback_query": {"id": str(update_id), "chat_instance": "group",
+                               "from": {"id": sender, "is_bot": False, "first_name": "Listener"},
+                               "message": {"message_id": 7, "date": 0, "chat": {"id": -100, "type": "supergroup"}},
+                               "data": data},
+        }))
+        assert (await c.post("/api/telegram/check")).status_code == 200
+        answer = state["callback_answers"][-1]
+        assert answer["callback_query_id"] == str(update_id)
+        return answer["text"]
+
+    async with app_client(env["app"], login=("other", "password")) as other:
+        await pair(other, state, 9)
+        messages_before = len(state["messages"])
+        tampered = heart.callback_data[:-1] + ("0" if heart.callback_data[-1] != "0" else "1")
+        assert "Подключите Telegram" in await press(999, heart.callback_data)
+        assert await press(9, tampered) == "Этот трек недоступен"
+        assert await press(9, heart.callback_data) == "Добавлено в Любимое"
+        assert (await c.get("/api/nd/liked")).json()["songs"] == []
+        assert [t["nd_song_id"] for t in (await other.get("/api/nd/liked")).json()["songs"]] == ["nd1"]
+
+        assert await press(9, heart.callback_data) == "Уже в Любимом"
+        assert await press(42, heart.callback_data) == "Добавлено в Любимое"
+        assert [t["nd_song_id"] for t in (await c.get("/api/nd/liked")).json()["songs"]] == ["nd1"]
+        assert "callback_query" in state["allowed_updates"]
+        assert len(state["messages"]) == messages_before
+
+
 async def test_shared_bot_can_be_disabled(env, monkeypatch):
     from app.config import get_settings
 
@@ -204,12 +257,14 @@ async def test_shared_bot_can_be_disabled(env, monkeypatch):
 
 
 async def test_link_is_private_expiring_and_single_use(env):
-    c, state = env["client"], env["state"]
     from datetime import timedelta
+
     from sqlalchemy import update
+
     from app.db import session_scope
     from app.models import TelegramAccount, utcnow
 
+    c, state = env["client"], env["state"]
     code = await code_for(c)
     state["updates"] = [message(-100, "group", sender=42, text=f"/start {code}")]
     assert not (await c.post("/api/telegram/check")).json()["ready"]

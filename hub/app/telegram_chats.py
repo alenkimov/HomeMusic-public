@@ -1,9 +1,10 @@
-"""Private account pairing, group discovery and membership checks for the shared bot."""
+"""Account pairing, group membership and personal favorites for the shared bot."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import io
 import logging
 import re
@@ -13,22 +14,25 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app import telegram
+from app import favorites, telegram
+from app.api.schemas import FavoriteTarget
 from app.config import get_settings
 from app.db import session_scope
-from app.models import TelegramAccount, TelegramGroup, utcnow
+from app.events import bus
+from app.models import Playlist, PlaylistItem, TelegramAccount, TelegramGroup, Track, User, utcnow
 
 log = logging.getLogger(__name__)
 GROUP_KINDS = ("group", "supergroup", "channel")
 POLL_S = 25
 _LINK_TTL = timedelta(minutes=15)
 _LINK = re.compile(r"hm_[A-Za-z0-9_-]{32}")
+_FAVORITE = re.compile(r"like:([1-9][0-9]{0,18}):[a-f0-9]{32}")
 _TG_ERRORS = (TelegramAPIError, TimeoutError, OSError)
 _offsets: dict[str, int] = {}
 _poll_lock = asyncio.Lock()
@@ -213,12 +217,64 @@ async def _reply(bot: Bot, chat_id: int, text: str) -> None:
         log.info("telegram: could not reply to a private message")
 
 
+def favorite_data(track: Track) -> str:
+    action = f"like:{track.id}"
+    # Bind the button to this recording even if SQLite later reuses its row ID.
+    message = f"telegram:{action}:{track.created_at.isoformat()}"
+    signature = hmac.digest(get_settings().hub_secret_key.encode("ascii"), message.encode("ascii"), "sha256")
+    return f"{action}:{signature[:16].hex()}"
+
+
+async def _like(s: AsyncSession, shared: telegram.SharedBot, query: CallbackQuery) -> tuple[int | None, str]:
+    data = query.data or ""
+    match = _FAVORITE.fullmatch(data)
+    if not match or query.from_user.is_bot or int(match[1]) > 2**63 - 1:
+        return None, "Кнопка недоступна"
+    user = await s.scalar(select(User).join(TelegramAccount, TelegramAccount.user_id == User.id).where(
+        TelegramAccount.bot_id == shared.id, TelegramAccount.telegram_id == str(query.from_user.id)))
+    if user is None:
+        return None, "Подключите Telegram в HomeMusic → Меню → Telegram бот"
+    track = await s.get(Track, int(match[1]))
+    if track is None or not hmac.compare_digest(data, favorite_data(track)):
+        return None, "Этот трек недоступен"
+
+    liked = select(PlaylistItem.id).join(Playlist).where(
+        Playlist.user_id == user.id, Playlist.kind == "liked", PlaylistItem.track_id == track.id)
+    if await s.scalar(select(liked.exists())):
+        return None, "Уже в Любимом"
+    await favorites.command(s, user, [FavoriteTarget(track_id=track.id)], liked=True,
+                            operation=f"tg:{query.id}", client="telegram")
+    await favorites.project_liked(s, user.id)
+    return user.id, "Добавлено в Любимое"
+
+
+async def _answer_favorite(shared: telegram.SharedBot, bot: Bot, query: CallbackQuery) -> None:
+    try:
+        async with session_scope() as s:
+            user_id, text = await _like(s, shared, query)
+    except Exception as exc:
+        log.warning("telegram: could not add a favorite: %s", type(exc).__name__)
+        text = "Не удалось добавить в Любимое. Попробуйте ещё раз"
+    else:
+        if user_id is not None:
+            bus.publish(user_id, "library", {"kind": "starred"})
+    try:
+        await bot.answer_callback_query(callback_query_id=query.id, text=text, request_timeout=5)
+    except _TG_ERRORS:
+        log.info("telegram: could not answer favorite button")
+
+
 async def _read(shared: telegram.SharedBot, bot: Bot, wait: int) -> None:
     updates = await bot.get_updates(offset=_offsets.get(shared.id), timeout=wait, limit=100,
-                                    allowed_updates=["message", "my_chat_member"], request_timeout=wait + 15)
+                                    allowed_updates=["message", "my_chat_member", "callback_query"],
+                                    request_timeout=wait + 15)
     for item in updates:
-        async with session_scope() as s:
-            reply = await _apply(s, shared, bot, item)
+        reply = None
+        if query := item.callback_query:
+            await _answer_favorite(shared, bot, query)
+        else:
+            async with session_scope() as s:
+                reply = await _apply(s, shared, bot, item)
         _offsets[shared.id] = item.update_id + 1
         if reply:
             await _reply(bot, *reply)

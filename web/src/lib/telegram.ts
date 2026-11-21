@@ -65,7 +65,7 @@ let sending = false;
  * `chat`: one of the bot's chats; none — the private chat with the user. */
 const LINK_KEY = 'hm-share-link';
 
-/** «С кнопкой „Открыть в HomeMusic“»: the track's link under the audio the bot sends (on until switched off). */
+/** «С кнопкой „Открыть“»: the track's link under the audio the bot sends (on until switched off). */
 export function shareWithLink(): boolean {
   try {
     return localStorage.getItem(LINK_KEY) !== '0';

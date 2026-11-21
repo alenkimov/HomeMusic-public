@@ -232,7 +232,8 @@ async def send(body: TelegramSendIn, user: User = Depends(current_user),
     try:
         await telegram.send_audio(bot.token, target, path, filename=f"{name}{path.suffix}",
                                   title=display_title, performer=track.artist, duration_s=track.duration_s, cover=cover,
-                                  lyrics=text, link=link, sender_id=None if body.anonymous else int(sender_id))
+                                  lyrics=text, link=link, favorite_data=telegram_chats.favorite_data(track),
+                                  sender_id=None if body.anonymous else int(sender_id))
     except telegram.TelegramError as e:
         raise HTTPException(502, str(e)) from e
     return TelegramSentOut(title=track.title, version_label=version_label, light=is_light, lyrics=bool(text))

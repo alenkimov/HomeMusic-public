@@ -121,12 +121,12 @@ function Body({ tracks }: { tracks: readonly ShareTrack[] }) {
             </label>
             <label className="flex cursor-pointer items-center justify-between gap-3 px-4 py-2 text-sm">
               <span>
-                С кнопкой «Открыть в HomeMusic»
+                С кнопкой «Открыть»
                 <span className="block text-xs text-muted">Получатель найдёт трек на своём сервере</span>
               </span>
               <Checkbox
                 checked={withLink}
-                label="С кнопкой «Открыть в HomeMusic»"
+                label="С кнопкой «Открыть»"
                 onChange={(v) => {
                   setWithLink(v);
                   setShareWithLink(v);
