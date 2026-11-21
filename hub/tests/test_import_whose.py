@@ -82,8 +82,10 @@ async def test_a_row_with_no_record_kept_leaves_who_it_is_by_to_the_catalog(env)
     async with db.session_scope() as s:
         assert await apply.queue_track(s, await s.get(Import, imp_id), await s.get(ImportItem, item_id), "playlist")
     async with db.session_scope() as s:
-        qj = (await s.get(DownloadItem, (await s.get(ImportItem, item_id)).download_item_id)).query_json
-    assert qj["meta"] == {"track_ref": "dz:7", "deezer_track_id": "7"}
+        row = await s.get(ImportItem, item_id)
+        qj = (await s.get(DownloadItem, row.download_item_id)).query_json
+        assert row.track_id is not None
+        assert qj["meta"] == {"track_ref": "dz:7", "deezer_track_id": "7", "track_id": row.track_id}
 
 
 async def test_the_track_of_a_row_is_named_by_the_catalog(env):

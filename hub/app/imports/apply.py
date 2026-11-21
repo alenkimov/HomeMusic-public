@@ -177,6 +177,9 @@ async def queue_track(s: AsyncSession, imp: Import, it: ImportItem, kind: str, *
             meta["deezer_track_id"] = id_  # who it is by, the catalog says when the download asks it (`complete_meta`)
         elif raw.get("artists"):
             meta["artists"] = raw["artists"]  # no catalog keeps a record of it: the service's names are all there is
+    if (track := await track_of(s, it, imp.user_id)) is not None:
+        it.track_id = track.id
+        meta["track_id"] = track.id
     qj: dict[str, Any] = {"query": q.model_dump(), "meta": meta, "import": {"id": imp.id, "item": it.id}}
     dl = await new_download(s, imp, qj, priority)
     it.download_item_id, it.status = dl.id, "queued"
@@ -438,33 +441,48 @@ async def sync_likes(s: AsyncSession, imp: Import) -> None:
 
 
 async def apply_extras(s: AsyncSession, imp: Import) -> None:
-    """«После переноса» (`options_json["extra"]`): the tracks of the chosen likes and playlists that the library has
-    now get what was asked for them all — a ♥, a place in other playlists, tags. Each track once (`raw_json["extra"]`),
-    as it arrives: an «Экономно» import brings a track when it is listened to."""
+    """Give resolved tracks their selected destinations. Apply tags when the transfer item is done."""
     extra = (imp.options_json or {}).get("extra") or {}
     star, playlist_ids, tag_ids = bool(extra.get("star")), list(extra.get("playlist_ids") or []), list(extra.get("tag_ids") or [])
-    if not (star or playlist_ids or tag_ids):
+    has_destinations = star or bool(playlist_ids)
+    if not (has_destinations or tag_ids):
         return
-    items = [i for i in (await s.execute(
-        select(ImportItem).join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
-        .where(ImportItem.import_id == imp.id, ImportItem.status == "done", ImportItem.track_id.is_not(None),
-               ImportCollection.kind.in_(("likes", "playlist")), ImportCollection.selected.is_(True))
-        .order_by(ImportCollection.id, ImportItem.position))).scalars() if not (i.raw_json or {}).get("extra")]
-    ready = items  # the library has them: what is asked is the track's own, as for a file the user uploaded
     user = await s.get(User, imp.user_id)
-    if not ready or user is None:
+    if user is None:
         return
-    track_ids = list(dict.fromkeys(i.track_id for i in ready))
-    try:
-        if tag_ids:
-            from app import tags
+    items = (await s.scalars(
+        select(ImportItem).join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
+        .where(ImportItem.import_id == imp.id, ImportItem.status.not_in(("pending", "skipped")),
+               ImportCollection.kind.in_(("likes", "playlist")), ImportCollection.selected.is_(True))
+        .order_by(ImportCollection.id, ImportItem.position))).all()
+    placed_ids = {i.track_id for i in items if (i.raw_json or {}).get("extra") or (i.raw_json or {}).get("extra_placed")}
+    to_place = []
+    to_tag = []
+    for item in items:
+        raw = item.raw_json or {}
+        if raw.get("extra"):
+            continue
+        place_now = has_destinations and not raw.get("extra_placed")
+        tag_now = bool(tag_ids) and item.status == "done"
+        if not (place_now or tag_now):
+            continue
+        if item.track_id is None:
+            track = await track_of(s, item, imp.user_id)
+            if track is None:
+                continue
+            item.track_id = track.id
+        if place_now:
+            to_place.append(item)
+        if tag_now:
+            to_tag.append(item)
 
-            await tags.assign_tracks(s, imp.user_id, track_ids, tag_ids)
-        if playlist_ids:
+    track_ids = list(dict.fromkeys(i.track_id for i in to_place if i.track_id not in placed_ids))
+    try:
+        if playlist_ids and track_ids:
             from app.jobs.downloads import into_playlists
 
             await into_playlists(s, imp.user_id, playlist_ids, track_ids)
-        if star:
+        if star and track_ids:
             from app.api.schemas import FavoriteTarget
             from app.favorites import command
 
@@ -472,13 +490,21 @@ async def apply_extras(s: AsyncSession, imp: Import) -> None:
             # the track's own: Navidrome gets the ♥ once its scan has found the file (`deliver_pending`)
             await command(s, user, [FavoriteTarget(track_id=t) for t in track_ids], liked=True, client="hub",
                           context="import")
+        # Keep track of placement separately while tags are waiting on a file.
+        marker = "extra_placed" if tag_ids else "extra"
+        for item in to_place:
+            item.raw_json = {**(item.raw_json or {}), marker: True}
+        if to_tag:
+            from app import tags
+
+            await tags.assign_tracks(s, imp.user_id, list(dict.fromkeys(i.track_id for i in to_tag)), tag_ids)
+            for item in to_tag:
+                item.raw_json = {**(item.raw_json or {}), "extra": True}
     except Exception as e:  # the next settling of the import tries these tracks again
         log.warning("import %s: extras: %r", imp.id, e)
         return
-    for i in ready:
-        i.raw_json = {**(i.raw_json or {}), "extra": True}
-    await s.flush()
-    if star or playlist_ids:
+    if track_ids:
+        await s.flush()
         from app.events import bus
 
         bus.publish(imp.user_id, "library", {"kind": "playlist", "playlist_id": playlist_ids[0] if playlist_ids else None,

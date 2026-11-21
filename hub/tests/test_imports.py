@@ -310,24 +310,30 @@ async def test_what_waits_shows_in_its_playlist_and_extras_follow_the_tracks(env
     # the song the catalog does not know stands in its place too: a track known by its name alone
     assert await playlist_tracks(c, "Дорога") == [("Группа крови", None), ("Город золотой", "ndA"), ("Нет такого", None), ("Осень", "ndB")]
 
-    # «После переноса»: what the library has got its place in the other playlist (once), its tag and its ♥
-    assert await playlist_tracks(c, "Моё") == [("Осень", "ndB"), ("Город золотой", "ndA")]
-    tags = await by_songs((await c.get("/api/tags")).json()["map"])
+    # Extra playlists get resolved tracks even before they have files.
+    assert await playlist_tracks(c, "Моё") == [("Осень", "ndB"), ("Группа крови", None), ("Город золотой", "ndA"), ("Нет такого", None)]
+    rows = (await c.get(f"/api/playlists/{mine}")).json()["tracks"]
+    waiting_id = rows[1]["library_track_id"]
+    tag_map = (await c.get("/api/tags")).json()["map"]
+    assert tag not in tag_map.get(str(waiting_id), [])
+    tags = await by_songs(tag_map)
     assert tag in tags["ndA"] and tag in tags["ndB"]
     assert {"ndA", "ndB"} <= set(state["stars"])
+    assert (await c.post(f"/api/playlists/{mine}/remove", json={"indexes": [3]})).status_code == 200
 
     # the track that waited gets its file: it gets the same; nothing is done twice
     await c.post("/api/plays/events", json={"events": [{
         "event_id": "s1", "ts": "2026-10-23T10:00:00Z", "kind": "start", "ref": "dz:100", "client": "app/1.6.0"}]})
     [dl] = (await c.get("/api/downloads")).json()
     track_id = await add_library_track(KROVI, "ndC")
+    assert track_id == waiting_id
     async with session_scope() as s:
         item = await s.get(DownloadItem, dl["id"])
         item.status, item.track_id = "done", track_id
         await imports_done(s, [item])
     await run_imports()
     assert await playlist_tracks(c, "Дорога") == [("Группа крови", "ndC"), ("Город золотой", "ndA"), ("Нет такого", None), ("Осень", "ndB")]
-    assert await playlist_tracks(c, "Моё") == [("Осень", "ndB"), ("Город золотой", "ndA"), ("Группа крови", "ndC")]
+    assert await playlist_tracks(c, "Моё") == [("Осень", "ndB"), ("Группа крови", "ndC"), ("Город золотой", "ndA")]
     assert tag in (await by_songs((await c.get("/api/tags")).json()["map"]))["ndC"] and "ndC" in state["stars"]
 
 
@@ -349,10 +355,15 @@ async def test_likes_are_downloaded_from_the_oldest(env):
 
 
 async def test_full_import_downloads_in_the_background(env):
+    from app.db import session_scope
+    from app.models import DownloadItem
+
     c = env["client"]
     imp = await prepared(c)
+    destination = (await c.post("/api/playlists", json={"name": "Копия"})).json()["id"]
     r = await c.post(f"/api/imports/{imp['id']}/start", json={
-        "collection_ids": [x["id"] for x in imp["collections"]], "mode": "full", "keep_token": True})
+        "collection_ids": [x["id"] for x in imp["collections"]], "mode": "full", "keep_token": True,
+        "playlist_ids": [destination]})
     assert r.status_code == 200, r.text
     await run_imports()
     imp = (await c.get(f"/api/imports/{imp['id']}")).json()
@@ -361,8 +372,14 @@ async def test_full_import_downloads_in_the_background(env):
     # Группа крови is in likes and in the playlist: one download, below the user's work, not shown as a download
     [job] = await jobs("download_item")
     assert job.priority < 0
+    copy = (await c.get(f"/api/playlists/{destination}")).json()["tracks"]
+    waiting = next(track for track in copy if track["title"] == "Группа крови")
+    assert waiting["nd_song_id"] is None
     [dl] = (await c.get("/api/downloads")).json()
     assert dl["quiet"] and dl["import_id"] == imp["id"]
+    async with session_scope() as s:
+        download = await s.get(DownloadItem, dl["id"])
+        assert download.query_json["meta"]["track_id"] == waiting["library_track_id"]
     assert {x["download_item_id"] for x in await items(c, imp) if x["title"] == "Группа крови" and x["kind"] == "track"} == {dl["id"]}
     assert imp["stats"]["downloading"] == 1
     # the liked album is only matched (download_albums is off), the playlist exists already
