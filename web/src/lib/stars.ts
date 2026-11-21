@@ -132,13 +132,20 @@ function apiTarget(t: LikeTarget): FavoriteTarget {
  * A request per track, all sent together, queued up at the Hub's single database writer and took every connection
  * it has — the whole service stood still. The hearts still change together, at once. Returns how many changed. */
 export async function setLikes(list: readonly LikeTarget[], liked: boolean): Promise<number> {
+  const generation = epoch;
   const todo = list.filter((t) => typeOf(t) === 'track' && isLiked(t) !== liked && aliases(t)[0] && !aliases(t).some((a) => busy.has(a)));
   if (!todo.length) return 0;
-  if (!(await typedFavoritesSupported())) {  // an old Hub: one by one, as before
-    for (const t of todo) await toggleLike(t, true);
-    return todo.length;
+  const typed = await typedFavoritesSupported();
+  if (generation !== epoch) return 0;
+  if (!typed) {  // an old Hub: one by one, as before
+    let done = 0;
+    for (const t of todo) {
+      if (generation !== epoch) break;
+      await toggleLike(t, true);
+      done++;
+    }
+    return done;
   }
-  const generation = epoch;
   const before = todo.map((t) => local.get(aliases(t)[0]));
   for (const t of todo) for (const a of aliases(t)) busy.add(a);
   const operation = newEventId();
@@ -160,8 +167,10 @@ export async function setLikes(list: readonly LikeTarget[], liked: boolean): Pro
     // the liked ones the library has not got are downloaded, as with a single ♥ — in one batch
     const refs = liked && STANDALONE ? todo.filter((t) => !!t.ref && !t.ref.startsWith('nd:') && !apiTarget(t).nd_song_id).map((t) => t.ref!) : [];
     for (let i = 0; i < refs.length; i += 200) {
+      if (generation !== epoch) return done;
       const part = refs.slice(i, i + 200);
-      if (await api.download({ track_refs: part }).then((r) => r.queued > 0 || r.expanding, () => false)) part.forEach(markQueued);
+      const fetching = await api.download({ track_refs: part }).then((r) => r.queued > 0 || r.expanding, () => false);
+      if (fetching && generation === epoch) part.forEach(markQueued);
     }
   } catch (e) {
     if (generation !== epoch) return done;
@@ -172,8 +181,11 @@ export async function setLikes(list: readonly LikeTarget[], liked: boolean): Pro
     });
     toastError(e);
   } finally {
-    for (const t of todo) for (const a of aliases(t)) busy.delete(a);
-    if (generation === epoch) { emit(); void refreshStars(true); }
+    if (generation === epoch) {
+      for (const t of todo) for (const a of aliases(t)) busy.delete(a);
+      emit();
+      void refreshStars(true);
+    }
   }
   return done;
 }
@@ -222,6 +234,7 @@ export async function toggleLike(t: LikeTarget, quiet = false, change?: () => vo
     const fetching = STANDALONE && typed && liked && typeOf(t) === 'track' && !!t.ref && !t.ref.startsWith('nd:') && !apiTarget(t).nd_song_id
       ? await api.download({ track_refs: [t.ref] }).then((r) => r.queued > 0 || r.expanding, () => false)
       : false;
+    if (generation !== epoch) return;
     if (fetching && t.ref) markQueued(t.ref);
     const link: Toast['link'] = liked && change && typeOf(t) === 'track' ? { label: 'Изменить', run: change } : fetching ? { label: 'Загрузки', to: '/downloads' } : undefined;
     // an artist is followed, not put into «Любимое»
@@ -234,8 +247,11 @@ export async function toggleLike(t: LikeTarget, quiet = false, change?: () => vo
     emit();
     toastError(e);
   } finally {
-    for (const a of keys) busy.delete(a);
-    if (generation === epoch) { emit(); void refreshStars(true); }
+    if (generation === epoch) {
+      for (const a of keys) busy.delete(a);
+      emit();
+      void refreshStars(true);
+    }
   }
 }
 

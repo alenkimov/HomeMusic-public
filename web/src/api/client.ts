@@ -138,6 +138,29 @@ export class ApiError extends Error {
 /** Fired when the server answers 401: the app switches to the login screen. */
 export const UNAUTHORIZED_EVENT = 'hm:unauthorized';
 
+let apiAccount: number | null = null;
+let apiSession = new AbortController();
+
+/** The lifetime of work started by the current account, including multi-request actions. */
+export const apiSessionSignal = (): AbortSignal => apiSession.signal;
+
+export function setApiAccount(account: number | null) {
+  if (account === apiAccount) return;
+  apiAccount = account;
+  const old = apiSession;
+  apiSession = new AbortController();
+  cache.clear();
+  old.abort();
+}
+
+function requestSignal(signal?: AbortSignal): AbortSignal {
+  return signal ? AbortSignal.any([apiSession.signal, signal]) : apiSession.signal;
+}
+
+function accountHeaders(accept: string): Record<string, string> {
+  return apiAccount == null ? { Accept: accept } : { Accept: accept, 'X-HomeMusic-Account': String(apiAccount) };
+}
+
 function onUnauthorized(path: string) {
   if (!path.startsWith('/api/auth/login') && !path.startsWith('/api/auth/register') && !path.startsWith('/api/auth/email/')) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
 }
@@ -160,13 +183,14 @@ function detailToMessage(detail: unknown, status: number): string {
   return `Ошибка ${status}`;
 }
 
-async function errorFromResponse(res: Response): Promise<ApiError> {
+async function errorFromResponse(res: Response, signal: AbortSignal): Promise<ApiError> {
   let detail: unknown;
   try {
     detail = ((await res.json()) as { detail?: unknown }).detail;
   } catch {
     /* not JSON */
   }
+  signal.throwIfAborted();
   return new ApiError(res.status, detailToMessage(detail, res.status));
 }
 
@@ -189,7 +213,8 @@ interface RequestOpts {
 }
 
 export async function request<T>(method: string, path: string, opts: RequestOpts = {}): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
+  const signal = requestSignal(opts.signal);
+  const headers = accountHeaders('application/json');
   let body: BodyInit | undefined;
   if (opts.json !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -199,17 +224,24 @@ export async function request<T>(method: string, path: string, opts: RequestOpts
   }
   let res: Response;
   try {
-    res = await fetch(path, { method, headers, body, credentials: 'include', signal: opts.signal });
+    res = await fetch(path, { method, headers, body, credentials: 'include', signal });
   } catch (e) {
+    signal.throwIfAborted();
     if ((e as Error).name === 'AbortError') throw e;
     throw new ApiError(0, 'Нет связи с сервером');
   }
-  if (res.status === 401) onUnauthorized(path);
-  if (!res.ok) throw await errorFromResponse(res);
+  signal.throwIfAborted();
+  if (!res.ok) {
+    const error = await errorFromResponse(res, signal);
+    if (res.status === 401) onUnauthorized(path);
+    throw error;
+  }
   if (res.status === 204) return undefined as T;
   const ct = res.headers.get('content-type') ?? '';
   if (!ct.includes('json')) return undefined as T;
-  return (await res.json()) as T;
+  const data = await res.json() as T;
+  signal.throwIfAborted();
+  return data;
 }
 
 // Short-lived cache for GET pages (back navigation feels instant).
@@ -217,9 +249,12 @@ const cache = new Map<string, { at: number; data: unknown }>();
 const CACHE_TTL = 3 * 60 * 1000;
 
 export async function cachedGet<T>(path: string, signal?: AbortSignal, fresh = false): Promise<T> {
+  const session = requestSignal(signal);
+  session.throwIfAborted();
   const hit = cache.get(path);
   if (!fresh && hit && Date.now() - hit.at < CACHE_TTL) return hit.data as T;
   const data = await request<T>('GET', path, { signal });
+  session.throwIfAborted();
   cache.set(path, { at: Date.now(), data });
   return data;
 }
@@ -241,13 +276,18 @@ async function progressRequest<T>(path: string, signal: AbortSignal, opts: {
 }): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, { credentials: 'include', signal, headers: { Accept: 'application/x-ndjson' } });
+    response = await fetch(path, { credentials: 'include', signal, headers: accountHeaders('application/x-ndjson') });
   } catch (e) {
+    signal.throwIfAborted();
     if (isAbort(e)) throw e;
     throw new ApiError(0, 'Нет связи с сервером');
   }
-  if (response.status === 401) onUnauthorized(path);
-  if (!response.ok) throw await errorFromResponse(response);
+  signal.throwIfAborted();
+  if (!response.ok) {
+    const error = await errorFromResponse(response, signal);
+    if (response.status === 401) onUnauthorized(path);
+    throw error;
+  }
   if (!response.body || !response.headers.get('content-type')?.includes('application/x-ndjson')) {
     throw new ApiError(502, opts.unavailable);
   }
@@ -258,6 +298,7 @@ async function progressRequest<T>(path: string, signal: AbortSignal, opts: {
   try {
     for (;;) {
       const { done, value } = await reader.read();
+      signal.throwIfAborted();
       if (done) throw new ApiError(502, opts.interrupted);
       buffer += decoder.decode(value, { stream: true });
       let next: number;
@@ -289,18 +330,23 @@ async function progressRequest<T>(path: string, signal: AbortSignal, opts: {
 async function catalogPage<T>(path: string, title: string, signal?: AbortSignal, fresh = false,
   onSources?: (sources: SourceStatus[]) => void): Promise<T> {
   if (!signal || !onSources) return cachedGet<T>(path, signal, fresh);
+  const session = requestSignal(signal);
+  session.throwIfAborted();
   const hit = fresh ? undefined : peekCache<T>(path);
   if (hit !== undefined) return hit;
-  const data = await progressRequest<T>(path, signal, {
+  const data = await progressRequest<T>(path, session, {
     onSources,
     unavailable: title,
     interrupted: 'Загрузка прервалась',
   });
+  session.throwIfAborted();
   cache.set(path, { at: Date.now(), data });
   return data;
 }
 
 async function searchLive(q: string, scope: SearchScope, update: (snapshot: SearchSnapshot) => void, signal: AbortSignal) {
+  const session = requestSignal(signal);
+  session.throwIfAborted();
   const path = withQuery('/api/search/stream', { q, scope });
   const hit = peekCache<SearchSnapshot>(path);
   if (hit) {
@@ -308,12 +354,13 @@ async function searchLive(q: string, scope: SearchScope, update: (snapshot: Sear
     return;
   }
   let snapshot: SearchSnapshot = { sources: [] };
-  const data = await progressRequest<LiveSearchResult>(path, signal, {
+  const data = await progressRequest<LiveSearchResult>(path, session, {
     onSources: (sources) => update(snapshot = { ...snapshot, sources }),
     onPartial: (data) => update(snapshot = { ...snapshot, data }),
     unavailable: 'Поиск недоступен',
     interrupted: 'Поиск прервался',
   });
+  session.throwIfAborted();
   snapshot = { ...snapshot, data };
   cache.set(path, { at: Date.now(), data: snapshot });
   update(snapshot);
@@ -327,15 +374,21 @@ export function uploadWithProgress<T>(
   signal?: AbortSignal,
   method = 'POST',
 ): Promise<T> {
+  const lifetime = requestSignal(signal);
   return new Promise<T>((resolve, reject) => {
+    lifetime.throwIfAborted();
     const xhr = new XMLHttpRequest();
     xhr.open(method, url);
     xhr.withCredentials = true;
-    xhr.setRequestHeader('Accept', 'application/json');
+    for (const [name, value] of Object.entries(accountHeaders('application/json'))) xhr.setRequestHeader(name, value);
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+      if (!lifetime.aborted && e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
     };
+    const abort = () => xhr.abort();
+    lifetime.addEventListener('abort', abort, { once: true });
+    xhr.onloadend = () => lifetime.removeEventListener('abort', abort);
     xhr.onload = () => {
+      if (lifetime.aborted) return reject(lifetime.reason);
       let data: unknown;
       try {
         data = xhr.responseText ? JSON.parse(xhr.responseText) : undefined;
@@ -350,9 +403,8 @@ export function uploadWithProgress<T>(
         reject(new ApiError(xhr.status, detailToMessage(detail, xhr.status)));
       }
     };
-    xhr.onerror = () => reject(new ApiError(0, 'Нет связи с сервером'));
-    xhr.onabort = () => reject(new DOMException('Aborted', 'AbortError'));
-    signal?.addEventListener('abort', () => xhr.abort());
+    xhr.onerror = () => reject(lifetime.aborted ? lifetime.reason : new ApiError(0, 'Нет связи с сервером'));
+    xhr.onabort = () => reject(lifetime.reason ?? new DOMException('Aborted', 'AbortError'));
     xhr.send(form);
   });
 }
@@ -428,11 +480,17 @@ export const api = {
   searchCovers: (q: string, album: boolean, signal?: AbortSignal) =>
     request<CoverSearchOut>('GET', withQuery('/api/search/covers', { q, album }), { signal }),
   coverImage: async (key: string, signal?: AbortSignal): Promise<{ file: File; info: CoverInfo }> => {
+    const lifetime = requestSignal(signal);
     const path = `/api/search/covers/${enc(key)}`;
-    const res = await fetch(path, { credentials: 'include', signal });
-    if (res.status === 401) onUnauthorized(path);
-    if (!res.ok) throw await errorFromResponse(res);
+    const res = await fetch(path, { credentials: 'include', signal: lifetime, headers: accountHeaders('image/*') });
+    lifetime.throwIfAborted();
+    if (!res.ok) {
+      const error = await errorFromResponse(res, lifetime);
+      if (res.status === 401) onUnauthorized(path);
+      throw error;
+    }
     const image = await res.blob();
+    lifetime.throwIfAborted();
     return {
       file: new File([image], 'cover', { type: image.type }),
       info: { w: Number(res.headers.get('X-Cover-Width')), h: Number(res.headers.get('X-Cover-Height')),
@@ -648,7 +706,8 @@ export const api = {
     return uploadWithProgress<UploadOut[]>('/api/uploads', form, onProgress, signal);
   },
   deleteUpload: (id: number) => request<OkOut>('DELETE', `/api/uploads/${id}`),
-  commitUploads: (payload: UploadCommitIn) => request<UploadCommitOut>('POST', '/api/uploads/commit', { json: payload }),
+  commitUploads: (payload: UploadCommitIn, signal?: AbortSignal) =>
+    request<UploadCommitOut>('POST', '/api/uploads/commit', { json: payload, signal }),
   /** What the catalog's picture of an uploaded file's record is: its size in pixels, its kind, its weight. */
   uploadCatalogCover: (id: number) => request<CoverInfo>('GET', `/api/uploads/${id}/catalog-cover`),
   /** Half a minute of the catalog's record an uploaded file was told to be: where it is heard from. */

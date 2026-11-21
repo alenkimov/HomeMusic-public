@@ -1,6 +1,6 @@
 // Global toasts and confirm dialogs (module-level stores, rendered by <Overlays/>).
 import { useSyncExternalStore } from 'react';
-import { errorMessage } from '../api/client';
+import { errorMessage, isAbort } from '../api/client';
 
 type Listener = () => void;
 
@@ -68,7 +68,7 @@ export function dismissToast(id: number) {
   toastStore.set(toastStore.get().filter((t) => t.id !== id));
 }
 
-export const toastError = (e: unknown) => toast(errorMessage(e), 'error');
+export const toastError = (e: unknown) => { if (!isAbort(e)) toast(errorMessage(e), 'error'); };
 
 export function useToasts() {
   return useSyncExternalStore(toastStore.subscribe, toastStore.get, toastStore.get);
@@ -86,6 +86,13 @@ export interface DialogState {
 }
 
 const dialogStore = createStore<DialogState | null>(null);
+
+export function clearAccountMessages() {
+  toastTimers.forEach((timer) => window.clearTimeout(timer));
+  toastTimers.clear();
+  toastStore.set([]);
+  dialogStore.get()?.resolve(false);
+}
 
 export function confirmDialog(opts: {
   title: string;

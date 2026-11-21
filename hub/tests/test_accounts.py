@@ -57,12 +57,14 @@ async def env(hub_env, monkeypatch):
     def subsonic(request: httpx.Request) -> httpx.Response:
         p = request.url.params
         ok = {"status": "ok", "version": "1.16.1"}
-        u = nd["users"].get(p.get("u", ""))
+        canonical = next((name for name in nd["users"] if name.lower() == p.get("u", "").lower()), None)
+        u = nd["users"].get(canonical)
         if u is None or hashlib.md5((u["password"] + p.get("s", "")).encode()).hexdigest() != p.get("t"):
             return httpx.Response(200, json={"subsonic-response": {"status": "failed", "error": {"code": 40, "message": "Wrong username or password"}}})
         ep = request.url.path.rsplit("/", 1)[-1]
         if ep == "getUser":
-            return httpx.Response(200, json={"subsonic-response": {**ok, "user": {"adminRole": u["isAdmin"]}}})
+            return httpx.Response(200, json={"subsonic-response": {
+                **ok, "user": {"username": canonical, "adminRole": u["isAdmin"]}}})
         if ep == "getStarred2":
             songs = [{"id": i} for i in nd["stars"].get(p["u"], [])]
             return httpx.Response(200, json={"subsonic-response": {**ok, "starred2": {"song": songs}}})
@@ -111,6 +113,33 @@ async def make_invite(admin: httpx.AsyncClient, note: str = "Анна") -> dict:
     r = await admin.post("/api/admin/invites", json={"note": note})
     assert r.status_code == 200, r.text
     return r.json()
+
+
+async def test_case_variants_share_one_hub_identity_and_subsonic_session(env):
+    async with env["client"]() as first, env["client"]() as second:
+        responses = await asyncio.gather(
+            first.post("/api/auth/login", json={"username": "BORIS", "password": "borispw"}),
+            second.post("/api/auth/login", json={"username": "BoRiS", "password": "borispw"}),
+        )
+        assert all(r.is_success for r in responses)
+        assert {r.json()["username"] for r in responses} == {"boris"}
+        assert responses[0].json()["id"] == responses[1].json()["id"]
+        salt = "test-salt"
+        token = hashlib.md5(("borispw" + salt).encode()).hexdigest()
+        subsonic = await first.get("/rest/ping", params={"u": "bORIS", "t": token, "s": salt, "f": "json"})
+        assert subsonic.json()["subsonic-response"]["status"] == "ok"
+
+
+async def test_old_page_cannot_write_or_sign_out_under_a_new_accounts_cookie(env):
+    old = (await env["admin"].get("/api/auth/me")).json()["id"]
+    async with env["client"]() as c:
+        assert (await c.post("/api/auth/login", json={"username": "boris", "password": "borispw"})).is_success
+        headers = {"X-HomeMusic-Account": str(old)}
+        stale = await c.post("/api/search/history", json={"title": "old account"}, headers=headers)
+        assert stale.status_code == 401
+        assert (await c.post("/api/auth/logout", headers=headers)).status_code == 401
+        assert (await c.get("/api/auth/me")).json()["username"] == "boris"
+        assert (await c.get("/api/search/history")).json()["items"] == []
 
 
 async def test_search_history_is_shared_between_sessions_and_isolated_between_accounts(env):

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import sqlite3
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 from app.db import dispose, init_engine, session_scope
 from app.jobs import queue
@@ -72,3 +76,99 @@ async def test_background_job_runs_with_background_network_priority(db):
         queue._handlers.pop("test_probe", None)
     assert seen == [(0, False), (queue.PRIORITY_IMPORT, True)]
     assert not in_background()  # the worker itself is back to the foreground
+
+
+async def test_worker_keeps_going_when_it_cannot_save_a_result(db, monkeypatch):
+    handled: list[int] = []
+    second_started = asyncio.Event()
+    first_saved = asyncio.Event()
+
+    async def handle(job):
+        handled.append(job.id)
+        if job.id == second:
+            second_started.set()
+
+    monkeypatch.setitem(queue._handlers, "recover_test", handle)
+    monkeypatch.setattr(queue, "RECOVERY_INTERVAL_S", 0.05)
+    first = await _add("recover_test")
+    second = await _add("recover_test")
+    real_finish = queue._finish
+
+    async def locked_until_worker_moves_on(job_id, **kwargs):
+        if job_id == first and not second_started.is_set():
+            error = sqlite3.OperationalError("database is locked")
+            error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+            raise OperationalError("UPDATE jobs", {}, error)
+        await real_finish(job_id, **kwargs)
+        if job_id == first:
+            first_saved.set()
+
+    monkeypatch.setattr(queue, "_finish", locked_until_worker_moves_on)
+    pool = queue.WorkerPool(1)
+    pool.start()
+    try:
+        await asyncio.wait_for(first_saved.wait(), timeout=5)
+    finally:
+        await pool.stop()
+    assert handled == [first, second]
+    async with session_scope() as s:
+        job = await s.get(Job, first)
+        assert (job.status, job.attempts, job.locked_by) == ("done", 1, None)
+
+
+async def test_only_transfers_with_a_broken_job_chain_are_resumed(db):
+    from app.imports.core import resume_orphaned
+    from app.models import Import, User
+
+    async with session_scope() as s:
+        user = User(nd_username="test", nd_password_enc="unused")
+        s.add(user)
+        await s.flush()
+        orphan, active, stopped = (
+            Import(user_id=user.id, source="spotify", method="profile", status=status)
+            for status in ("running", "running", "cancelled")
+        )
+        s.add_all([orphan, active, stopped])
+        await s.flush()
+        await queue.enqueue(s, "import_playlists", {"import_id": orphan.id})  # projection is not the transfer chain
+        await queue.enqueue(s, "import_finish", {"import_id": active.id})
+
+    assert sorted(await asyncio.gather(resume_orphaned(), resume_orphaned())) == [0, 1]
+    async with session_scope() as s:
+        [resumed] = list(await s.scalars(select(Job).where(Job.kind == "import_resolve")))
+        assert resumed.payload_json == {"import_id": orphan.id}
+        assert resumed.priority == queue.PRIORITY_IMPORT
+
+
+async def test_job_from_a_stopped_worker_is_reclaimed_while_other_workers_keep_their_claims(db, monkeypatch):
+    from collections import Counter
+
+    monkeypatch.setattr(queue, "RECOVERY_INTERVAL_S", 0.05)
+    interrupted = await _add("recover_test")
+    still_running = await _add("recover_test")
+    attempts: Counter[int] = Counter()
+    reattempted = asyncio.Event()
+    active = asyncio.Event()
+
+    async def execute(job):
+        attempts[job.id] += 1
+        if job.id == still_running:
+            active.set()
+            await asyncio.Future()
+        await active.wait()
+        if attempts[job.id] == 1:
+            raise RuntimeError("worker stopped unexpectedly")
+        reattempted.set()
+        return queue._Result(ok=True)
+
+    monkeypatch.setattr(queue, "_execute", execute)
+    pool = queue.WorkerPool(2)
+    pool.start()
+    try:
+        await asyncio.wait_for(reattempted.wait(), timeout=5)
+        assert attempts == {interrupted: 2, still_running: 1}
+        async with session_scope() as s:
+            job = await s.get(Job, still_running)
+            assert job.status == "running"
+    finally:
+        await pool.stop()

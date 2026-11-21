@@ -1,13 +1,14 @@
 import { useVersionLabelsSync } from './lib/versionLabels';
 import { setListeningAccount } from './lib/plays';
 import { forgetLast } from './lib/hooks';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { ApiError, UNAUTHORIZED_EVENT, api, errorMessage, invalidateCache } from './api/client';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { ApiError, UNAUTHORIZED_EVENT, api, errorMessage, isAbort, setApiAccount } from './api/client';
+import { clearAccountMessages, toastError } from './lib/ui';
 import type { MeOut } from './api/types';
 import { DesktopPlayer } from './components/DesktopPlayer';
 import { MiniPlayer, PlayerSpacer } from './components/MiniPlayer';
 import { Sidebar } from './components/Sidebar';
-import { Overlays } from './components/Overlays';
+import { closeAccountOverlays, Overlays } from './components/Overlays';
 import { SelectionBar } from './components/SelectionBar';
 import { TabBar, type Tab } from './components/TabBar';
 import { ErrorState, Spinner, cx } from './components/ui';
@@ -19,7 +20,10 @@ import { restoreWave } from './lib/wave';
 import { resetInPlaylists } from './lib/inPlaylists';
 import { resetReleases } from './lib/releases';
 import { resetStars } from './lib/stars';
-import { refreshLoadedTags } from './lib/tags';
+import { refreshLoadedTags, resetTags } from './lib/tags';
+import { resetPlayCounts } from './lib/stats';
+import { clearSelection } from './lib/selection';
+import { cancelDragAction } from './lib/dragAction';
 import { startNotificationWatcher, stopNotificationWatcher } from './lib/notify';
 import { SessionContext } from './lib/session';
 import { matchPath, navigate, useRoute, type Route } from './lib/router';
@@ -163,10 +167,34 @@ export function App() {
   const route = useRoute();
   // a computer: the sections and the playlists in a panel on the left, the player in a bar along the bottom
   const desktop = useDesktop();
+  const accountRef = useRef<number | null>(null);
+  const accountChannel = useRef<BroadcastChannel | null>(null);
 
   // who is signed in is told to what outlives a logout in the page's memory, before that user's screens are shown
   const updateSession = useCallback((next: MeOut | null) => {
-    setAssistantAccount(next?.id ?? null);
+    const account = next?.id ?? null;
+    if (accountRef.current !== account) {
+      if (accountRef.current != null) {
+        hubEvents.stop();
+        stopListening();
+        forgetLast();
+        forgetAccount();
+        resetStars();
+        resetDislikes();
+        resetInPlaylists();
+        resetReleases();
+        resetTags();
+        resetPlayCounts();
+        clearSelection();
+        cancelDragAction();
+        closeAccountOverlays();
+        clearAccountMessages();
+        for (const tab of Object.keys(lastByTab) as Tab[]) delete lastByTab[tab];
+      }
+      accountRef.current = account;
+      setApiAccount(account);
+      setAssistantAccount(account);
+    }
     setMe(next);
   }, []);
 
@@ -181,6 +209,7 @@ export function App() {
       .me()
       .then(updateSession)
       .catch((e) => {
+        if (isAbort(e)) return;
         if (e instanceof ApiError && e.status === 401) updateSession(null);
         else setBootError(errorMessage(e));
       });
@@ -189,15 +218,29 @@ export function App() {
   useEffect(boot, [boot]);
 
   useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return;
+    const channel = new BroadcastChannel('homemusic-account');
+    accountChannel.current = channel;
+    channel.onmessage = ({ data }) => {
+      if (data === accountRef.current) return;
+      updateSession(null);
+      boot();
+    };
+    return () => {
+      accountChannel.current = null;
+      channel.close();
+    };
+  }, [boot, updateSession]);
+
+  useEffect(() => {
     const account = me?.id ?? null;
     setListeningAccount(account);
     restoreListening(account);
     restoreWave(account);
-  }, [me]);
+  }, [me?.id]);
 
   useEffect(() => {
     const onUnauthorized = () => {
-      invalidateCache();
       updateSession(null);
     };
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
@@ -242,22 +285,18 @@ export function App() {
     if (uid != null) void refreshDislikes(true);
   }, [uid]);
   const logout = useCallback(async () => {
+    const account = accountRef.current;
     try {
       await api.logout();
-    } catch {
-      /* ignore: we drop the session anyway */
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 401)) toastError(e);
+      return;
     }
-    invalidateCache();
-    forgetLast();
-    stopListening();
-    forgetAccount(); // what was kept on the device for this account, and what its pages read
-    resetStars();
-    resetDislikes();
-    resetInPlaylists();
-    resetReleases();
+    if (accountRef.current != null && accountRef.current !== account) return;
     updateSession(null);
+    accountChannel.current?.postMessage(null);
     navigate(START, { replace: true });
-  }, []);
+  }, [updateSession]);
 
   if (me === undefined) {
     return (
@@ -278,7 +317,10 @@ export function App() {
   if (me === null) {
     return (
       <>
-        <LoginPage onLogin={updateSession} />
+        <LoginPage onLogin={(next) => {
+          updateSession(next);
+          accountChannel.current?.postMessage(next.id);
+        }} />
         <Overlays />
       </>
     );
@@ -290,7 +332,7 @@ export function App() {
   // a computer's page fills the panel unless its route says otherwise (`Width`); a phone's is a phone's column
   const width = !panel ? 'max-w-(--app-w)' : resolved?.width === 'text' ? 'max-w-(--app-w)' : resolved?.width === 'wide' ? 'max-w-6xl' : '';
   return (
-    <SessionContext.Provider value={{ me, logout, refresh }}>
+    <SessionContext.Provider key={me.id} value={{ me, logout, refresh }}>
       {/* a computer's page is a panel beside the side panel, and fills it unless its route makes it a column
           (`Width`); the frame over it keeps its corners round while the window scrolls under them */}
       <div className={cx(panel && 'pl-[calc(var(--side-w)+8px)] pr-2 pt-(--page-top)')}>

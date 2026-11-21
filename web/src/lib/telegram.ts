@@ -1,6 +1,6 @@
 import { titleWithVersion } from './versionLabels';
 import { useSyncExternalStore } from 'react';
-import { api, errorMessage } from '../api/client';
+import { api, apiSessionSignal, errorMessage } from '../api/client';
 import { tracksWord } from './format';
 import { attempt, toast } from './ui';
 
@@ -84,6 +84,7 @@ export function setShareWithLink(on: boolean) {
 
 export async function deliverToTelegram(tracks: readonly ShareTrack[], { withLyrics = null, anonymous = false, chat = null }: DeliveryOptions = {}): Promise<void> {
   if (!tracks.length) return;
+  const session = apiSessionSignal();
   const to = chat && chat.kind !== 'private' ? `в «${chat.title}»` : 'в Telegram';
   const chatId = chat?.kind === 'private' ? null : chat?.id ?? null;
   if (sending) return void toast('Предыдущая отправка в Telegram ещё идёт', 'info');
@@ -94,13 +95,14 @@ export async function deliverToTelegram(tracks: readonly ShareTrack[], { withLyr
     if (tracks.length === 1) {
       toast(`Отправляю ${to}: «${titleWithVersion(tracks[0].title, tracks[0])}»…`);
       const r = await attempt(() => send(tracks[0]));
-      if (r) toast(`Отправлено ${to}: «${titleWithVersion(r.title, tracks[0], r.version_label ?? undefined)}»${r.lyrics ? ' с текстом' : withLyrics ? ' (текста у трека нет)' : ''}${r.light ? ' — сжатая копия: файл больше 50 МБ' : ''}`, 'success');
+      if (r && !session.aborted) toast(`Отправлено ${to}: «${titleWithVersion(r.title, tracks[0], r.version_label ?? undefined)}»${r.lyrics ? ' с текстом' : withLyrics ? ' (текста у трека нет)' : ''}${r.light ? ' — сжатая копия: файл больше 50 МБ' : ''}`, 'success');
       return;
     }
     toast(`Отправляю ${to} ${tracksWord(tracks.length)} — это займёт время…`);
     let ok = 0;
     let firstError = '';
     for (const t of tracks) {
+      if (session.aborted) return;
       try {
         await send(t);
         ok++;
@@ -108,6 +110,7 @@ export async function deliverToTelegram(tracks: readonly ShareTrack[], { withLyr
         firstError ||= `«${titleWithVersion(t.title, t)}»: ${errorMessage(e)}`;
       }
     }
+    if (session.aborted) return;
     if (ok === tracks.length) toast(`Отправлено ${to}: ${tracksWord(ok)}`, 'success');
     else toast(`Отправлено ${ok} из ${tracks.length}. ${firstError}`, ok ? 'info' : 'error');
   } finally {

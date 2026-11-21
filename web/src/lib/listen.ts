@@ -178,7 +178,7 @@ function set(patch: Partial<ListenState>) {
   for (const fn of subscribers) fn();
 }
 
-function subscribe(fn: () => void) {
+export function subscribeListening(fn: () => void) {
   subscribers.add(fn);
   return () => {
     subscribers.delete(fn);
@@ -192,7 +192,7 @@ export const getListenState = (): ListenState => state;
 
 /** A slice of the listening state; `select` must return a primitive or a stored object (not a new one). */
 export function useListen<T>(select: (s: ListenState) => T): T {
-  return useSyncExternalStore(subscribe, () => select(state));
+  return useSyncExternalStore(subscribeListening, () => select(state));
 }
 
 let audio: HTMLAudioElement | null = null;
@@ -945,7 +945,7 @@ export function registerSmart(hooks: SmartHooks) {
 
 /** The smart shuffle chosen (the last choice of the button); `smart` of the state is whether the playing list has it. */
 export function useSmartChosen(): boolean {
-  return useSyncExternalStore(subscribe, () => smartChosen);
+  return useSyncExternalStore(subscribeListening, () => smartChosen);
 }
 
 /** The Hub did not answer or the session is over: the plain shuffle goes on. */

@@ -120,7 +120,7 @@ async def register(s: AsyncSession, code: str, username: str, password: str,
 
 
 async def _check_name_free(s: AsyncSession, username: str) -> None:
-    taken = await s.execute(select(User.id).where(func.lower(User.nd_username) == username.lower()))
+    taken = await s.execute(select(User.id).where(User.nd_username.collate("NOCASE") == username))
     if taken.first() is not None:
         raise HTTPException(409, "Это имя уже занято, выберите другое")
 

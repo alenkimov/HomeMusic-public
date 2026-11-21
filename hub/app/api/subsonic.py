@@ -219,7 +219,7 @@ async def _listener(params: list[tuple[str, str]]) -> User | None:
     if not name:
         return None
     async with session_scope() as s:
-        user = (await s.execute(select(User).where(User.nd_username == name))).scalar_one_or_none()
+        user = (await s.execute(select(User).where(User.nd_username.collate("NOCASE") == name))).scalar_one_or_none()
     if user is None or not user.nd_password_enc:
         return None
     try:

@@ -21,7 +21,7 @@ import shutil
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import case, delete, func, insert, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import integrations, links
@@ -203,6 +203,37 @@ async def enqueue_once(s: AsyncSession, kind: str, import_id: int, *, delay_s: f
     )).scalar_one_or_none()
     if pending is None:
         await enqueue(s, kind, {"import_id": import_id}, delay_s=delay_s, priority=PRIORITY_IMPORT)
+
+
+def _active_transfer_jobs():
+    return select(Job.id).where(Job.kind.in_(("import_fetch", "import_resolve", "import_finish")),
+                                Job.status.in_(("queued", "running")),
+                                func.json_extract(Job.payload_json, "$.import_id") == Import.id).exists()
+
+
+async def resume_orphaned() -> int:
+    """Repair a running transfer whose matching or finishing chain was interrupted."""
+    # Select and insert in one statement so a concurrent worker cannot advance the chain between them.
+    orphaned = select(literal("import_resolve"), func.json_object("import_id", Import.id), literal(PRIORITY_IMPORT),
+                      literal(utcnow()), literal(get_settings().cfg.jobs.max_attempts)).where(
+        Import.status == "running", ~_active_transfer_jobs())
+    async with session_scope() as s:
+        recovered = list(await s.scalars(insert(Job).from_select(
+            ["kind", "payload_json", "priority", "run_after", "max_attempts"], orphaned,
+        ).returning(Job.id)))
+    if recovered:
+        notify()
+    return len(recovered)
+
+
+async def recovery_loop() -> None:
+    while True:
+        await asyncio.sleep(60)
+        try:
+            if n := await resume_orphaned():
+                log.info("resumed %s interrupted transfers", n)
+        except Exception:
+            log.exception("checking for interrupted transfers failed")
 
 
 # --- creating an import ------------------------------------------------------------------------------------
@@ -472,6 +503,19 @@ async def handle_fetch(job: Job) -> None:
 @on_final_failure("import_fetch")
 async def _fetch_failed(job: Job, exc: Exception) -> None:
     await set_status(int(job.payload_json["import_id"]), "failed", error=f"Не удалось прочитать коллекцию: {exc}"[:500])
+
+
+@on_final_failure("import_resolve")
+@on_final_failure("import_finish")
+async def _transfer_failed(job: Job, exc: Exception) -> None:
+    async with session_scope() as s:
+        imp = await s.get(Import, int(job.payload_json["import_id"]))
+        if imp is None or imp.status != "running":
+            return
+        imp.status = "failed"
+        imp.error = "Перенос прервался после нескольких попыток"
+        imp.finished_at = utcnow()
+    publish(imp)
 
 
 # --- start, matching ----------------------------------------------------------------------------------------

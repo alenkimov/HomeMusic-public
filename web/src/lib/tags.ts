@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from 'react';
-import { api } from '../api/client';
+import { api, apiSessionSignal } from '../api/client';
 
 /** Tags of the library's tracks (hub `app/tags.py`): «Язык» and «Жанр» the Hub sets by itself, «Теги» are the
  * user's own. The whole of it — the tags and which song has which — is loaded once and kept here, so a list filters
@@ -50,7 +50,8 @@ interface State extends TagsData {
   byId: Map<number, Tag>;
 }
 
-let state: State = { groups: [], map: {}, genre_sources: {}, loaded: false, byId: new Map() };
+const emptyState = (): State => ({ groups: [], map: {}, genre_sources: {}, loaded: false, byId: new Map() });
+let state: State = emptyState();
 let loading: Promise<void> | null = null;
 const subs = new Set<() => void>();
 const subscribe = (cb: () => void) => {
@@ -64,13 +65,20 @@ export function setTagsData(data: TagsData) {
 }
 
 export function refreshTags(): Promise<void> {
+  const session = apiSessionSignal();
   loading ??= api
     .tags()
-    .then(setTagsData, () => undefined)
+    .then((data) => { if (!session.aborted) setTagsData(data); }, () => undefined)
     .finally(() => {
-      loading = null;
+      if (!session.aborted) loading = null;
     });
   return loading;
+}
+
+export function resetTags() {
+  state = emptyState();
+  loading = null;
+  subs.forEach((f) => f());
 }
 
 export function refreshLoadedTags() {

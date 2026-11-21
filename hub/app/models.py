@@ -57,6 +57,10 @@ class User(Base):
     tg_with_lyrics: Mapped[bool] = mapped_column(Boolean, default=False)  # send the track's text with it by default
 
 
+# The account name follows Navidrome's SQLite collation.
+Index("uq_users_nd_username_nocase", User.nd_username.collate("NOCASE"), unique=True)
+
+
 class SearchHistory(Base):
     """«Недавнее» of the search, shared by the account's browsers and the embedded app: what was opened from the
     results — a track, an album, an artist — and the queries asked for with Enter. What is merely typed is not kept."""

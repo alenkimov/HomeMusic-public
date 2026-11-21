@@ -16,6 +16,26 @@ import { OfflineBanner } from './Offline';
 import { PlaylistMenu } from './PlaylistMenu';
 import { TagsSheet } from './Tags';
 import { TelegramSetup } from './TelegramSetup';
+import { closeCoverPicker } from '../lib/coverPicker';
+import { closeFindFile } from '../lib/findFile';
+import { closePlaylistMenu } from '../lib/playlistMenu';
+import { closeShare } from '../lib/shareTrack';
+import { closeTagsSheet } from '../lib/tags';
+import { closeTelegramSetup } from '../lib/telegram';
+import { closeTrackEdit } from '../lib/trackEdit';
+import { closeVersions } from '../lib/versions';
+
+export function closeAccountOverlays() {
+  closeCoverPicker();
+  closeFindFile();
+  closePlaylistMenu();
+  closePlaylistsSheet();
+  closeShare();
+  closeTagsSheet();
+  closeTelegramSetup();
+  closeTrackEdit();
+  closeVersions();
+}
 
 /** Toast stack (above the tab bar) and the global confirm dialog. */
 export function Overlays() {

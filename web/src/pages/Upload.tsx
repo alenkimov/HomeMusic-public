@@ -1,7 +1,7 @@
 import { TrackTitle, VersionBadge } from '../components/TrackTitle';
 import { titleWithVersion, useVersionLabel, type VersionIdentity } from '../lib/versionLabels';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api, errorMessage, uploadCoverUrl } from '../api/client';
+import { api, apiSessionSignal, errorMessage, uploadCoverUrl } from '../api/client';
 import type { CoverInfo, TrackOut, UploadAlbumIn, UploadOut, UploadTrackIn } from '../api/types';
 import { Icon } from '../components/Icon';
 import { PlaylistsPick } from '../components/PlaylistsButton';
@@ -375,6 +375,7 @@ export function UploadPage() {
 
   const startUpload = useCallback(
     async (files: File[]) => {
+      const session = apiSessionSignal();
       const ok: File[] = [];
       let skipped = 0;
       for (const f of files) {
@@ -387,11 +388,14 @@ export function UploadPage() {
       setTransfers((prev) => [...prev, ...batch]);
       // Sequential: one slow mobile uplink is better used by one file at a time.
       for (const t of batch) {
+        if (session.aborted) return;
         try {
-          const res = await api.uploadFiles([t.file], (p) => setTransfers((prev) => prev.map((x) => (x.key === t.key ? { ...x, progress: p } : x))));
+          const res = await api.uploadFiles([t.file], (p) => setTransfers((prev) => prev.map((x) => (x.key === t.key ? { ...x, progress: p } : x))), session);
+          if (session.aborted) return;
           addUploads(res);
           setTransfers((prev) => prev.filter((x) => x.key !== t.key));
         } catch (e) {
+          if (session.aborted) return;
           setTransfers((prev) => prev.map((x) => (x.key === t.key ? { ...x, error: errorMessage(e) } : x)));
         }
       }
@@ -728,6 +732,7 @@ export function UploadPage() {
    * that lack a name stay on the page. Then the second step: the weak files are looked for anew there, and the
    * records that were only like their files are settled by the sound. */
   const commit = async () => {
+    const session = apiSessionSignal();
     const list = [...order.filter((u) => ready.includes(u)), ...ready.filter((u) => !order.includes(u))]; // an album's files together
     const albums = new Map([...all.groups.values()].map((g) => [g.key, albumIn(g)]));
     let imported = 0;
@@ -736,9 +741,11 @@ export function UploadPage() {
     const tracks: number[] = [];
     setMoving({ done: 0, of: list.length });
     for (let i = 0; i < list.length; i += CHUNK) {
+      if (session.aborted) return;
       const part = list.slice(i, i + CHUNK).map(trackIn);
       const res = await attempt(() =>
-        api.commitUploads({ tracks: part, albums: [...new Set(part.map((t) => t.album_key).filter((k): k is string => !!k))].map((k) => albums.get(k)!), playlist_ids: playlists.map((p) => p.id), star: like, tag_ids: tagIds, keep_in: keep ? keepName : null }));
+        api.commitUploads({ tracks: part, albums: [...new Set(part.map((t) => t.album_key).filter((k): k is string => !!k))].map((k) => albums.get(k)!), playlist_ids: playlists.map((p) => p.id), star: like, tag_ids: tagIds, keep_in: keep ? keepName : null }, session));
+      if (session.aborted) return;
       if (!res) break;
       imported += res.imported;
       weak += res.weak;
@@ -753,6 +760,7 @@ export function UploadPage() {
     const whole = imported === list.length && !toFill.length;
     if (weak || doubts) {
       if (weak) await attempt(() => api.qualityStart(tracks));
+      if (session.aborted) return;
       toast(`Перенесено: ${tracksWord(imported)}. Дальше — качество звука: ${[weak ? `слабых файлов ${weak}` : null, doubts ? `уточнить по звуку ${doubts}` : null].filter(Boolean).join(', ')}`, 'success');
       if (whole) navigate('/quality', { replace: true });
       return;

@@ -92,16 +92,20 @@ class HubEvents {
     const es = new EventSource('/api/events', { withCredentials: true });
     this.es = es;
     es.onopen = () => {
+      if (this.es !== es) return;
       this.retry = 0;
       this.setConnected(true);
       if (this.everOpened) this.emit('reconnect', {});
       this.everOpened = true;
     };
     for (const name of NAMED) {
-      es.addEventListener(name, (ev) => this.parseAndEmit(name, (ev as MessageEvent<string>).data));
+      es.addEventListener(name, (ev) => {
+        if (this.es === es) this.parseAndEmit(name, (ev as MessageEvent<string>).data);
+      });
     }
     // Unnamed messages: accept the envelope {"event": "...", "data": {...}} as well.
     es.onmessage = (ev: MessageEvent<string>) => {
+      if (this.es !== es) return;
       try {
         const msg = JSON.parse(ev.data) as { event?: unknown; data?: unknown };
         if (typeof msg.event === 'string') this.emit(msg.event, msg.data ?? {});
@@ -110,6 +114,7 @@ class HubEvents {
       }
     };
     es.onerror = () => {
+      if (this.es !== es) return;
       this.setConnected(false);
       if (es.readyState === EventSource.CLOSED && this.running) {
         // The browser gave up (HTTP error / 401): reconnect ourselves with backoff.

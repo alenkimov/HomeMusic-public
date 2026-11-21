@@ -10,7 +10,8 @@ after every action.
   lowers the artist and what sounds like the track (the embedder's vectors); a ♥ or a track played to its end adds
   its YouTube Music radio to the pool (`session_radio`) and raises what sounds like it. An artist plays at most once
   in 8 tracks; the mode keeps the familiar share of a mix.
-- The tracks the client still has ahead (`queued`) are picked again with the rest: the answer replaces them.
+- The tracks the client still has ahead (`queued`) are picked again with the rest. Offers removed from the queue
+  are excluded from new picks.
 - Sources answer at their own pace: a request waits for them `wave_wait_s`, what comes later joins the pool in the
   background (one lock per session). A pool running low is refilled from the radios of the next seeds.
 - Tracks play as a stream from the Hub (their files are prefetched); one played to its end is downloaded quietly,
@@ -104,6 +105,15 @@ def fp_of(c: build.Cand) -> str:
     return fingerprint(c.track.artist, c.track.title)
 
 
+def _recording_keys(c: build.Cand) -> set[str]:
+    keys = {f"name:{fp_of(c)}"}
+    if c.library_track_id is not None:
+        keys.add(f"lib:{c.library_track_id}")
+    if c.nd_song_id:
+        keys.add(f"nd:{c.nd_song_id}")
+    return keys
+
+
 @dataclass
 class Played:
     """A track of the session that started playing (the latest `HISTORY_MAX`)."""
@@ -127,7 +137,8 @@ class State:
     positive_weights: dict[str, float] = field(default_factory=dict)
     space: dict[str, Any] | None = None
     pool: dict[str, build.Cand] = field(default_factory=dict)  # by ref: not handed out
-    out: dict[str, build.Cand] = field(default_factory=dict)  # handed out, not started (the client's queue)
+    out: dict[str, build.Cand] = field(default_factory=dict)  # recent offers kept to attribute delayed play events
+    offered: set[str] = field(default_factory=set)  # tracks already offered in this session
     played: list[Played] = field(default_factory=list)
     heard: set[str] = field(default_factory=set)  # fingerprints of every track started: never again
     skips: dict[str, int] = field(default_factory=dict)  # artist key -> early skips in the session
@@ -145,7 +156,8 @@ class State:
         return {"version": self.version, "taste_model": self.taste_model, "seen": sorted(self.seen),
                 "signals": self.signals, "positive_weights": self.positive_weights, "space": self.space,
                 "pool": [cand_json(c) for c in self.pool.values()], "out": [cand_json(c) for c in self.out.values()],
-                "played": [p.__dict__ for p in self.played], "heard": sorted(self.heard), "skips": self.skips,
+                "offered": sorted(self.offered), "played": [p.__dict__ for p in self.played],
+                "heard": sorted(self.heard), "skips": self.skips,
                 "pos": self.pos, "neg": self.neg, "radios": self.radios, "seeds_used": self.seeds_used,
                 "started": self.started, "started_familiar": self.started_familiar, "downloads": self.downloads,
                 "gens": self.gens, "seed_artist": self.seed_artist}
@@ -163,6 +175,9 @@ class State:
                  heard=set(d.get("heard") or []), seed_artist=d.get("seed_artist"))
         st.pool = {c.track.ref: c for c in map(cand_of, d.get("pool") or [])}
         st.out = {c.track.ref: c for c in map(cand_of, d.get("out") or [])}
+        st.offered = set(d["offered"]) if "offered" in d else {
+            key for c in st.out.values() for key in _recording_keys(c)
+        }
         st.played = [Played(**p) for p in d.get("played") or []]
         return st
 
@@ -325,13 +340,14 @@ async def absorb(rt: Runtime, results: list[build.GenResult]) -> int:
             for g, pos in c.gens.items():
                 have.gens[g] = min(have.gens.get(g, pos), pos)
             have.score = build.score(have, weights(), p)
-        elif fp not in known:
+        elif fp not in known and f"name:{fp}" not in st.offered:
             fresh[c.track.ref] = c
     if not fresh:
         return 0
     await build.link_library(fresh)
     cfg = get_settings().cfg.mixes
-    kept = [c for c in fresh.values() if not (rt.blocked and rt.blocked(c)) and build.keep(c, p, cfg)]
+    kept = [c for c in fresh.values() if st.offered.isdisjoint(_recording_keys(c))
+            and not (rt.blocked and rt.blocked(c)) and build.keep(c, p, cfg)]
     if not isinstance(p, V2Profile):
         await _sound(p, kept)
     for c in kept:
@@ -581,13 +597,18 @@ def pick(st: State, p: Profile, mode: str, vectors: dict[str, list[float]], n: i
     `values` gets the `value` of every candidate ranked, by ref (the analytics of `wave_items`)."""
     pos = _weighted_center(st.positive_weights, vectors) if st.taste_model == "v2" else _center(st.pos, vectors)
     neg = None if st.taste_model == "v2" else _center(st.neg, vectors)
-    pool = [c for c in [*st.out.values(), *st.pool.values()] if c is not first and not _disliked(c, p)]
+    pool = [c for c in [*(st.out[ref] for ref in st.out if ref in queued), *st.pool.values()]
+            if c is not first and fp_of(c) not in st.heard and not _disliked(c, p)
+            and (c.track.ref in queued or st.offered.isdisjoint(_recording_keys(c)))]
     vals = {id(c): value(c, st, vectors, pos, neg, c.track.ref in queued) for c in pool}
     if values is not None:
         values.update((c.track.ref, vals[id(c)]) for c in pool)
     ranked = sorted(pool, key=lambda c: -vals[id(c)])
     share = build.MODES.get(mode, build.MODES["normal"])
     out: list[build.Cand] = [first] if first is not None else []
+    if first is not None:
+        keys = _recording_keys(first)
+        ranked = [c for c in ranked if keys.isdisjoint(_recording_keys(c))]
     recent = [x.artist for x in st.played]
     while len(out) < n and ranked:
         seq = recent + [c.artist for c in out]
@@ -600,7 +621,8 @@ def pick(st: State, p: Profile, mode: str, vectors: dict[str, list[float]], n: i
                 or next((c for c in ranked if not seq or c.artist != seq[-1]), None))
         if best is None:
             break
-        ranked.remove(best)
+        keys = _recording_keys(best)
+        ranked = [c for c in ranked if keys.isdisjoint(_recording_keys(c))]
         out.append(best)
     return out
 
@@ -611,15 +633,16 @@ def _disliked(c: build.Cand, p: Profile) -> bool:
                       artist_ref=t.artist_ref, artists=t.artists, artist_refs=t.artist_refs)
 
 
-async def _vectors(rt: Runtime) -> dict[str, list[float]]:
+async def _vectors(rt: Runtime, queued: set[str] | None = None) -> dict[str, list[float]]:
     """Vectors of the best candidates and of the session's likes and skips (asked once, missing ones again a minute
     later)."""
     st = rt.state
+    pending = st.out.values() if queued is None else (c for ref, c in st.out.items() if ref in queued)
+    candidates = [*pending, *st.pool.values()]
     if st.taste_model == "v2":
         from app.mixes.taste_select import geometry_scores
         p = rt.profile
         assert isinstance(p, V2Profile)
-        candidates = [*st.out.values(), *st.pool.values()]
         rt.vectors = await geometry_scores(p, candidates, [*st.pos, *st.neg])
         st.space = {"model": p.geometry.model, "space_id": p.geometry.space_id,
                     "dim": p.geometry.dim} if p.geometry else None
@@ -639,7 +662,7 @@ async def _vectors(rt: Runtime) -> dict[str, list[float]]:
         return rt.vectors
     if not embedder.configured() or not (st.pos or st.neg):
         return rt.vectors
-    best = sorted([*st.out.values(), *st.pool.values()], key=lambda c: -c.score)[:VECTORS_TOP]
+    best = sorted(candidates, key=lambda c: -c.score)[:VECTORS_TOP]
     now = time.monotonic()
     keys = [k for k in dict.fromkeys([*st.pos, *st.neg, *(c.key for c in best)])
             if k not in rt.vectors and rt.asked.get(k, 0) < now - ASK_AGAIN_S]
@@ -1072,8 +1095,7 @@ async def next_batch(user: User, sid: str, played: list[Any], queued: list[str])
 
 
 async def _hand_out(sid: str, rt: Runtime, queued: set[str], first: build.Cand | None = None) -> list[build.Cand]:
-    """Picks the next batch; it becomes the client's queue (the rest of the old one goes back to the pool). Their
-    files are picked by the Hub now."""
+    """Pick the next queue, keeping still-queued offers eligible. Remember the discarded offers for delayed events."""
     from app import listen
 
     assert rt.profile is not None
@@ -1086,12 +1108,14 @@ async def _hand_out(sid: str, rt: Runtime, queued: set[str], first: build.Cand |
                     del pool[ref]
         _session_weights(st, rt.profile)
     values: dict[str, float] = {}
-    tracks = pick(st, rt.profile, rt.mode, await _vectors(rt), queued=queued, first=first, values=values)
-    for ref in list(st.out):
-        st.pool[ref] = st.out.pop(ref)
+    tracks = pick(st, rt.profile, rt.mode, await _vectors(rt, queued), queued=queued, first=first, values=values)
     for c in tracks:
-        st.pool.pop(c.track.ref, None)
+        st.offered.update(_recording_keys(c))
+        st.out.pop(c.track.ref, None)
         st.out[c.track.ref] = c
+    st.pool = {ref: c for ref, c in st.pool.items() if st.offered.isdisjoint(_recording_keys(c))}
+    if len(st.out) > HISTORY_MAX:
+        st.out = dict(list(st.out.items())[-HISTORY_MAX:])
     await _save(sid, rt)
     try:  # its own transaction after the state's: a failure here never costs the wave its answer or its state
         async with session_scope() as s:
@@ -1110,7 +1134,7 @@ async def _hand_out(sid: str, rt: Runtime, queued: set[str], first: build.Cand |
 async def save_items(s: AsyncSession, sid: str, user_id: int, tracks: list[build.Cand],
                      values: dict[str, float], now: datetime | None = None) -> None:
     """What the wave handed out into `wave_items` (INSIGHTS.md 6.4): a track new to the session gets the next
-    position; one handed out again (it went back to the pool, or the client still has it queued) counts once more,
+    position; one handed out again because the client still has it queued counts once more,
     with its latest score, closeness and value."""
     if not tracks:
         return

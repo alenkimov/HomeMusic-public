@@ -134,7 +134,10 @@ def test_state_survives_its_json() -> None:
     assert back.dump() == st.dump() and back.pool["dz:1"].track == st.pool["dz:1"].track
 
 
-def test_the_pool_comes_from_the_seed_or_the_mix_generators() -> None:
+def test_the_pool_comes_from_the_seed_or_the_mix_generators(monkeypatch) -> None:
+    from app.services import svc
+
+    monkeypatch.setattr(svc, "deezer", FakeDeezer())
     p = profile()
     seed = tr(1)
 
@@ -332,14 +335,29 @@ async def test_the_answer_replaces_the_queue(env, monkeypatch) -> None:
     w = (await c.post("/api/wave/start", json={})).json()
     sid, refs = w["session_id"], [t["ref"] for t in w["tracks"]]
 
-    # the client dropped its queue (nothing ahead): the same best tracks come again
-    again = [t["ref"] for t in (await c.post(f"/api/wave/{sid}/next", json={})).json()["tracks"]]
-    # it plays the first; two of the rest still queued come back, first
+    # It plays the first, skips two before they start, and keeps the last two queued.
     played = (await c.post(f"/api/wave/{sid}/next", json={"played": [ev("start", refs[0])],
                                                         "queued": refs[3:]})).json()["tracks"]
 
-    assert again == refs
-    assert [t["ref"] for t in played][:2] == refs[3:] and refs[0] not in [t["ref"] for t in played]
+    next_refs = [t["ref"] for t in played]
+    assert next_refs[:2] == refs[3:] and set(next_refs).isdisjoint(refs[:3])
+    # Fast skips consumed the entire queue before any of the remaining tracks could start.
+    row = (await c.post(f"/api/wave/{sid}/next", json={"queued": []})).json()
+    assert row["tracks"] and {t["ref"] for t in row["tracks"]}.isdisjoint([*refs, *next_refs])
+
+
+def test_an_offered_track_is_not_repeated_under_a_different_catalog_name() -> None:
+    original = cand(1)
+    original.library_track_id = 100
+    alias = cand(2)
+    alias.library_track_id = 100
+    other = cand(3)
+    st = state(original, alias, other)
+    assert wave.pick(st, profile(), "normal", {}) == [original, other]
+    st.out[original.track.ref] = st.pool.pop(original.track.ref)
+    st.offered.update(wave._recording_keys(original))
+    restored = wave.State.load(st.dump())
+    assert [c.track.ref for c in wave.pick(restored, profile(), "normal", {})] == [other.track.ref]
 
 
 async def test_dislikes_during_the_wave_keep_tracks_and_artists_out(env, monkeypatch) -> None:

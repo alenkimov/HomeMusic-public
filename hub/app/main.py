@@ -71,7 +71,12 @@ async def lifespan(app: FastAPI):
 
         if n := await recover_unfiled():
             log.info("re-queued %s downloads whose file was never filed", n)
+        from app.imports.core import recovery_loop, resume_orphaned
+
+        if n := await resume_orphaned():
+            log.info("resumed %s interrupted transfers", n)
         pool.start()
+        tasks.append(asyncio.create_task(recovery_loop(), name="import-recovery"))
         tasks.append(asyncio.create_task(scheduler_loop(), name="scheduler"))
         tasks.append(asyncio.create_task(scrobbles_loop(), name="scrobbles"))
         tasks.append(asyncio.create_task(schedule_loop(), name="mixes"))

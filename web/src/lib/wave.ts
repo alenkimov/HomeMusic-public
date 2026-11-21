@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { ApiError, api } from '../api/client';
 import type { PlayEventIn, WaveOrigin, WaveOut, WaveSeedIn, WaveTrackOut } from '../api/types';
 import { EMBEDDED } from './embedded';
-import { getListenState, listenAll, replaceUpcoming, type ListenTrack } from './listen';
+import { getListenState, listenAll, replaceUpcoming, subscribeListening, type ListenTrack } from './listen';
 import { canPlayAll, canPlayWave, playWave } from './player';
 import { onPlayEvent } from './plays';
 import { navigate } from './router';
@@ -41,6 +41,7 @@ interface Session {
   inFlight: PlayEventIn[];
   busy: boolean;
   again: boolean;
+  refillAt?: ListenTrack;
 }
 
 let session: Session | null = null;
@@ -119,6 +120,8 @@ export function artistSeed(t: SeedTrack): WaveSeedIn | null {
 
 const listenTrack = (t: WaveTrackOut): ListenTrack => ({
   ref: t.ref,
+  nd_song_id: t.nd_song_id,
+  library_track_id: t.library_track_id,
   title: t.title,
   artist: t.artists?.length ? t.artists.join(', ') : t.artist,
   cover_url: t.cover_url,
@@ -192,8 +195,15 @@ async function ask() {
     const w = await api.waveNext(s.id, { played, queued });
     if (session !== s || getListenState().context !== s.context) return;
     remember(s, w);
-    if (w.tracks.length) replaceUpcoming(w.tracks.map(listenTrack));
-    else if (w.pending) setTimeout(() => void ask(), RETRY_MS);
+    const after = getListenState();
+    const stillQueued = new Set(after.queue.slice(after.index + 1).map((t) => t.ref));
+    const removed = new Set(queued.filter((ref) => !stillQueued.has(ref)));
+    const heard = new Set(after.queue.slice(0, after.index + 1).filter((t) => !t.queued).map((t) => t.ref));
+    const tracks = w.tracks.filter((t) => !removed.has(t.ref) && !heard.has(t.ref));
+    if (tracks.length) replaceUpcoming(tracks.map(listenTrack));
+    else if (w.pending || w.tracks.length) {
+      setTimeout(() => { if (session === s) void ask(); }, RETRY_MS);
+    }
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) {
       end(); // the session is over (a day without it): the queue plays out
@@ -213,6 +223,16 @@ function end() {
   session = null;
   emit();
 }
+
+subscribeListening(() => {
+  const s = session;
+  const st = getListenState();
+  // A quick skip can exhaust the queue without producing a playback start event.
+  if (!s || st.context !== s.context || !st.track || st.track.queued || st.track === s.refillAt
+    || st.index + 1 < st.queue.length) return;
+  s.refillAt = st.track;
+  queueMicrotask(() => { if (session === s && getListenState().context === s.context) void ask(); });
+});
 
 onPlayEvent((e) => {
   if (e.context === 'queue') return;

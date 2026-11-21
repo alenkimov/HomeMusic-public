@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from 'react';
-import { api } from '../api/client';
+import { api, apiSessionSignal } from '../api/client';
 
 /** «Статистика» (hub `app/stats.py`): what the user listened to. The page (`pages/Stats.tsx`) asks for a period;
  * the numbers of the «Прослушивания» column — every library song's listens in all the time — are kept here. */
@@ -89,10 +89,12 @@ const subs = new Set<() => void>();
 const FRESH_MS = 60_000;
 
 export function refreshPlayCounts(): Promise<void> {
+  const session = apiSessionSignal();
   loading ??= api
     .statsCounts()
     .then(
       (data) => {
+        if (session.aborted) return;
         counts = data;
         loaded = true;
         at = Date.now();
@@ -101,9 +103,16 @@ export function refreshPlayCounts(): Promise<void> {
       () => undefined,
     )
     .finally(() => {
-      loading = null;
+      if (!session.aborted) loading = null;
     });
   return loading;
+}
+
+export function resetPlayCounts() {
+  counts = {};
+  loaded = false;
+  loading = null;
+  subs.forEach((f) => f());
 }
 
 /** Navidrome song id -> listens; asked again when a list is opened a minute or more after the last time. */

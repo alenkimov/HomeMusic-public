@@ -13,12 +13,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sqlite3
 import traceback
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import text, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -33,6 +36,7 @@ _handlers: dict[str, Handler] = {}
 _wakeup = asyncio.Event()
 
 PRIORITY_IMPORT = -10
+RECOVERY_INTERVAL_S = 5
 
 
 class PermanentError(Exception):
@@ -150,19 +154,33 @@ async def _next_wakeup_in() -> float:
     return max(0.05, min(30.0, (nxt - utcnow()).total_seconds()))
 
 
-async def run_job(job: Job) -> None:
+@dataclass(frozen=True)
+class _Result:
+    ok: bool = False
+    error: str | None = None
+    retry_in: float | None = None
+    failure: Exception | None = None
+
+
+def _sqlite_busy(exc: BaseException) -> bool:
+    if not isinstance(exc, OperationalError):
+        return False
+    code = getattr(exc.orig, "sqlite_errorcode", 0)
+    return (code & 0xff) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+
+
+async def _execute(job: Job) -> _Result:
     fn = _handlers.get(job.kind)
     if fn is None:
-        await _finish(job.id, ok=False, error=f"no handler for {job.kind}")
-        return
+        return _Result(error=f"no handler for {job.kind}")
     token = _priority.set(Priority(background=True)) if (job.priority or 0) < 0 else None
     try:
         await fn(job)
     except RetryLater as e:
-        await _finish(job.id, ok=False, error=str(e), retry_in=e.delay_s)
+        return _Result(error=str(e), retry_in=e.delay_s)
     except PermanentError as e:
         log.warning("job %s (%s) failed permanently: %s", job.id, job.kind, e, extra={"job_id": job.id})
-        await _finish(job.id, ok=False, error=str(e))
+        return _Result(error=str(e))
     except asyncio.CancelledError:
         await asyncio.shield(_finish(job.id, ok=False, error="cancelled (shutdown)", retry_in=0))
         raise
@@ -172,23 +190,36 @@ async def run_job(job: Job) -> None:
             delay = min(600.0, 5 * 2 ** (job.attempts - 1))
             log.warning("job %s (%s) attempt %s failed: %r, retry in %ss", job.id, job.kind, job.attempts, e, delay,
                         extra={"job_id": job.id})
-            await _finish(job.id, ok=False, error=f"{e!r}\n{tb}", retry_in=delay)
-        else:
-            log.error("job %s (%s) failed after %s attempts: %r", job.id, job.kind, job.attempts, e,
-                      extra={"job_id": job.id})
-            await _finish(job.id, ok=False, error=f"{e!r}\n{tb}")
-            on_fail = _failure_hooks.get(job.kind)
-            if on_fail:
-                try:
-                    await on_fail(job, e)
-                except Exception:
-                    log.exception("failure hook for job %s crashed", job.id)
+            return _Result(error=f"{e!r}\n{tb}", retry_in=delay)
+        log.error("job %s (%s) failed after %s attempts: %r", job.id, job.kind, job.attempts, e,
+                  extra={"job_id": job.id})
+        return _Result(error=f"{e!r}\n{tb}", failure=e)
     else:
-        await _finish(job.id, ok=True)
+        return _Result(ok=True)
     finally:
         if token is not None:
             _priority.reset(token)
-        _wakeup.set()  # a background slot may be free now
+
+
+async def _save_result(job: Job, result: _Result) -> None:
+    for attempt in range(3):
+        try:
+            await _finish(job.id, ok=result.ok, error=result.error, retry_in=result.retry_in)
+            break
+        except OperationalError as exc:
+            if attempt == 2 or not _sqlite_busy(exc):
+                raise
+            await asyncio.sleep(0.2 * 2**attempt)
+    _wakeup.set()  # a background slot may be free now
+    if result.failure is not None and (on_fail := _failure_hooks.get(job.kind)):
+        try:
+            await on_fail(job, result.failure)
+        except Exception:
+            log.exception("failure hook for job %s crashed", job.id)
+
+
+async def run_job(job: Job) -> None:
+    await _save_result(job, await _execute(job))
 
 
 _failure_hooks: dict[str, Callable[[Job, Exception], Awaitable[None]]] = {}
@@ -209,6 +240,8 @@ class WorkerPool:
         self.n = n
         self._tasks: list[asyncio.Task] = []
         self._stopping = False
+        self._pending_results: dict[int, tuple[Job, _Result]] = {}
+        self._claimed: dict[int, Job] = {}
 
     async def _worker(self, idx: int) -> None:
         wid = f"{os.getpid()}-{idx}"
@@ -225,13 +258,53 @@ class WorkerPool:
                     await asyncio.wait_for(_wakeup.wait(), timeout=await _next_wakeup_in())
                 except TimeoutError:
                     pass
+                except Exception:
+                    log.exception("looking for the next job failed")
+                    await asyncio.sleep(2)
                 continue
             # let other idle workers look for more work too
             _wakeup.set()
-            await run_job(job)
+            self._claimed[idx] = job
+            result = await _execute(job)
+            try:
+                await _save_result(job, result)
+            except Exception:
+                # The handler returned. Retrying its result avoids re-running side effects or reclaiming a live job.
+                self._pending_results[job.id] = (job, result)
+                log.exception("job %s (%s): could not store its result yet", job.id, job.kind)
+            del self._claimed[idx]
+
+    async def _recover(self) -> None:
+        while not self._stopping:
+            await asyncio.sleep(RECOVERY_INTERVAL_S)
+            for idx, task in enumerate(self._tasks[:self.n]):
+                if not task.done():
+                    continue
+                if not task.cancelled():
+                    log.error("worker %s stopped", idx, exc_info=task.exception())
+                if job := self._claimed.get(idx):
+                    try:
+                        async with session_scope() as s:
+                            await s.execute(update(Job).where(
+                                Job.id == job.id, Job.status == "running", Job.locked_by == job.locked_by,
+                                Job.locked_at == job.locked_at,
+                            ).values(status="queued", locked_by=None, locked_at=None))
+                    except Exception:
+                        log.exception("could not re-queue job %s from a stopped worker", job.id)
+                        continue
+                    del self._claimed[idx]
+                self._tasks[idx] = asyncio.create_task(self._worker(idx), name=f"job-worker-{idx}")
+            for job, result in list(self._pending_results.values()):
+                try:
+                    await _save_result(job, result)
+                except Exception:
+                    log.exception("job %s (%s): result still pending", job.id, job.kind)
+                else:
+                    del self._pending_results[job.id]
 
     def start(self) -> None:
         self._tasks = [asyncio.create_task(self._worker(i), name=f"job-worker-{i}") for i in range(self.n)]
+        self._tasks.append(asyncio.create_task(self._recover(), name="job-recovery"))
 
     async def stop(self) -> None:
         self._stopping = True

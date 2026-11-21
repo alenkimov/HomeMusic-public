@@ -77,7 +77,8 @@ async function apply(kind: DragKind, tracks: SelTrack[]) {
   toast(n ? `Добавлено в «Любимое»: ${tracksWord(n)}` : 'Все эти треки уже где-то лежат', n ? 'success' : 'info');
 }
 
-function stop() {
+export function cancelDragAction() {
+  if (!drag) return;
   drag = null;
   document.body.style.userSelect = '';
   window.removeEventListener('mouseup', up, true);
@@ -89,7 +90,7 @@ function up(e: MouseEvent) {
   const d = drag;
   if (!d) return;
   const picked = range(d);
-  stop();
+  cancelDragAction();
   if (picked.length < 2) return; // a click
   if (!(e.target instanceof Element) || !e.target.closest('[data-track-row]')) return; // let go outside the list
   void apply(d.kind, picked);
@@ -98,12 +99,12 @@ function up(e: MouseEvent) {
 function key(e: KeyboardEvent) {
   if (e.key !== 'Escape' || !drag) return;
   e.stopPropagation();
-  stop();
+  cancelDragAction();
 }
 
 /** The mouse went down on a row's button. */
 export function beginDragAction(kind: 'like' | 'queue' | 'share' | 'tags', list: readonly SelTrack[], t: SelTrack) {
-  if (drag) stop();
+  cancelDragAction();
   const real: DragKind = kind === 'like' && kept(t) ? 'lists' : kind === 'queue' && queuedRefs().has(manualQueueKey(t.listen)) ? 'unqueue' : kind;
   drag = { kind: real, list, from: t.ref, to: t.ref };
   document.body.style.userSelect = 'none';
