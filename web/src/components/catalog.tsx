@@ -134,6 +134,7 @@ export function TrackRow({
   queue,
   menuExtra,
   index,
+  releaseFeed = false,
 }: {
   track: TrackOut & { nd_album_id?: string | null; nd_artist_id?: string | null; nd_artist_ids?: (string | null)[] };
   number?: number;
@@ -157,6 +158,8 @@ export function TrackRow({
   /** The row's place in its list, for the «#» column of the table on a computer (next to the cover; `number` is
    * drawn instead of the cover everywhere). */
   index?: number;
+  /** Compact rows with wrapped titles and duration inside the release feed. */
+  releaseFeed?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const dl = useListen((s) => s.downloads.get(track.ref));
@@ -282,7 +285,7 @@ export function TrackRow({
     ? { icon: 'x', label: 'Снять выделение', onClick: () => toggleSelected(asSel(track)) }
     : { icon: 'check', label: 'Выбрать', hint: 'Отметьте несколько треков, чтобы отправить их разом', onClick: () => toggleSelected(asSel(track)) };
   // a browser draws its own rows: a table on a computer, a row that is swiped aside on a phone
-  if (STANDALONE) {
+  if (STANDALONE || releaseFeed) {
     // known by its name alone — no file, no record of the catalog: the row is greyed and nothing of it plays; it is
     // liked, put into playlists and tagged like any other, and its menu offers to choose a file for it
     const unknown = !!track.unknown;
@@ -300,7 +303,7 @@ export function TrackRow({
           <span className="w-5 shrink-0 text-center text-sm tabular-nums text-dim">{number}</span>
           <span className="relative flex h-10 w-10 shrink-0 items-center justify-center">
             <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />
-            <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !waiting && 'opacity-0', hover && action && 'group-hover/track:opacity-100')}>
+            <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !waiting && !(releaseFeed && current) && 'opacity-0', hover && action && 'group-hover/track:opacity-100', releaseFeed && action && 'group-focus-within/track:opacity-100')}>
               {playMark}
             </span>
           </span>
@@ -315,19 +318,20 @@ export function TrackRow({
       ) : showCover ? (
         <span className="relative flex h-10 w-10 shrink-0 items-center justify-center">
           <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />
-          <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !waiting && 'opacity-0', hover && action && 'group-hover/track:opacity-100')}>
+          <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !waiting && !(releaseFeed && current) && 'opacity-0', hover && action && 'group-hover/track:opacity-100', releaseFeed && action && 'group-focus-within/track:opacity-100')}>
             {playMark}
           </span>
         </span>
       ) : null;
-    const names = (sub: string) => (
+    const names = (sub: ReactNode) => (
       <span className="block min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-1.5">
           {/* the track that is playing: on a phone the bars stand before its name (a computer has them in place of
               the row's number, where the row has one) */}
-          {current && (!desktop || (number ?? index) === undefined) && <PlayingBars on={phase === 'playing'} />}
-          <span className={cx('truncate text-[15px]', titleColor)}>{track.title}</span>
-          {(track.versions ?? 0) > 1 && (
+          {current && (!desktop || releaseFeed || (number ?? index) === undefined) && <PlayingBars on={phase === 'playing'} />}
+          {releaseFeed ? tap('min-w-0 line-clamp-2 wrap-anywhere text-left text-[15px] ' + titleColor, track.title) :
+            <span className={cx('truncate text-[15px]', titleColor)}>{track.title}</span>}
+          {!releaseFeed && (track.versions ?? 0) > 1 && (
             // the song has other recordings here: the mark opens them
             <button type="button" title="Другие версии этой песни" onClick={(e) => { e.preventDefault(); e.stopPropagation(); openVersions({ title: track.title, library_track_id: track.library_track_id, ref: track.ref, nd_song_id: track.nd_song_id }); }} className="shrink-0 rounded-full bg-info/20 px-1.5 text-[11px] leading-[1.35] text-info hover:bg-info/30">
               {track.versions} {plural(track.versions ?? 0, ['версия', 'версии', 'версий'])}
@@ -336,13 +340,13 @@ export function TrackRow({
         </span>
         <span className={cx('flex items-center gap-1.5 text-[13px]', unknown ? 'text-dim' : 'text-muted')}>
           <KeptMark refId={track.ref} />
-          {track.explicit && <ExplicitBadge />}
-          <span className="truncate">{sub}</span>
+          {!releaseFeed && track.explicit && <ExplicitBadge />}
+          <span className={releaseFeed ? 'line-clamp-2 min-w-0 wrap-anywhere' : 'truncate'}>{sub}</span>
         </span>
       </span>
     );
-    const tap = (className: string, children: ReactNode) =>
-      toAlbum ? (
+    const tap = (className: string, children: ReactNode, linkToAlbum = true) =>
+      toAlbum && linkToAlbum ? (
         <Link to={toAlbum} className={className}>{children}</Link>
       ) : action ? (
         <button type="button" onClick={action} onPointerDown={track.owned ? undefined : () => touchTrack(track.ref)} className={cx(className, 'cursor-pointer')} aria-label={playLabel}>
@@ -355,7 +359,23 @@ export function TrackRow({
     const marked = '!opacity-100'; // shown on every row the drag passes, in the accent colour
     const dragList = () => (queue?.length ? queue : [track]).map(asSel);
 
-    if (desktop) {
+    // Each credited artist opens its own catalog or library page.
+    const artistLinks = () => {
+      const credited = track.artists?.length ? track.artists : [track.artist];
+      return credited.map((name, i) => {
+        const ref = track.artist_refs?.[i] ?? (name === track.artist ? track.artist_ref : null);
+        const nd = track.nd_artist_ids?.[i] ?? (credited.length === 1 ? track.nd_artist_id : null);
+        const to = ref ? `/artist/${enc(ref)}` : nd ? `/lib/artist/${enc(nd)}` : null;
+        return (
+          <span key={`${name}:${i}`}>
+            {i > 0 && ', '}
+            {to ? <Link to={to} onClick={(e) => e.stopPropagation()} className="hover:text-fg hover:underline">{name}</Link> : name}
+          </span>
+        );
+      });
+    };
+
+    if (desktop && !releaseFeed) {
       const album = showAlbum && cols.album;
       const added = showAdded && cols.added;
       const plays = playsOf !== undefined || (showPlays && cols.plays);
@@ -373,13 +393,6 @@ export function TrackRow({
         );
       };
       const rowNumber = number ?? index;
-      // every credited artist opens its own page: the catalog's when the Hub knows the ref, else the library's
-      const credited = track.artists?.length ? track.artists : [track.artist];
-      const credits = credited.map((name, i) => {
-        const ref = track.artist_refs?.[i] ?? (name === track.artist ? track.artist_ref : null);
-        const nd = track.nd_artist_ids?.[i] ?? (credited.length === 1 ? track.nd_artist_id : null);
-        return { name, to: ref ? `/artist/${enc(ref)}` : nd ? `/lib/artist/${enc(nd)}` : null };
-      });
       const albumTo = track.album_ref ? `/album/${enc(track.album_ref)}` : track.nd_album_id ? `/lib/album/${enc(track.nd_album_id)}` : null;
       return (
         <div
@@ -436,18 +449,7 @@ export function TrackRow({
               <span className="flex items-center gap-1.5 text-[13px] text-muted">
                 <KeptMark refId={track.ref} />
                 {track.explicit && <ExplicitBadge />}
-                <span className="truncate">
-                  {credits.map((a, i) => (
-                    <span key={`${a.name}:${i}`}>
-                      {i > 0 && ', '}
-                      {a.to ? (
-                        <Link to={a.to} onClick={(e) => e.stopPropagation()} className="hover:text-fg hover:underline">{a.name}</Link>
-                      ) : (
-                        a.name
-                      )}
-                    </span>
-                  ))}
-                </span>
+                <span className="truncate">{artistLinks()}</span>
                 {heard}
               </span>
             </span>
@@ -531,13 +533,18 @@ export function TrackRow({
       ...(menuExtra ?? []),
     ];
     return (
-      <div ref={rowRef} onClickCapture={onPick} aria-selected={selected}>
+      <div ref={rowRef} onClickCapture={onPick} aria-selected={selected} data-track-row={releaseFeed || undefined}>
         <SwipeRow
           right={{ icon: 'queue', onAction: () => { if (unknown) return void toast('У трека нет файла: выберите его в меню', 'info'); addToQueue([menuTrack.listen as ListenTrack]); toast(`В очереди: «${track.title}»`, 'success'); } }}
           left={{ icon: 'plus', armedIcon: 'check', onAction: () => setPicking(true) }}
         >
-          <div className={cx('flex min-h-16 items-center gap-1 pl-4 pr-1', selected && 'bg-accent/15', unreachable && 'opacity-40', grey)}>
-            {tap('flex min-w-0 flex-1 items-center gap-3 py-2 text-left', (
+          <div className={cx('flex min-h-16 items-center', releaseFeed ? 'group/track min-w-0 gap-2 rounded-lg px-2 py-1 hover:bg-fg/5 focus-within:bg-fg/5' : 'gap-1 pl-4 pr-1', selected && 'bg-accent/15', unreachable && 'opacity-40', grey)}>
+            {releaseFeed ? (
+              <>
+                {tap('flex min-h-11 shrink-0 items-center gap-2 rounded-md', lead(desktop), false)}
+                {names(artistLinks())}
+              </>
+            ) : tap('flex min-w-0 flex-1 items-center gap-3 py-2 text-left', (
               <>
                 {lead(false)}
                 {names(artistLine)}
@@ -545,6 +552,7 @@ export function TrackRow({
             ))}
             {downloading && <span className="flex w-6 justify-center text-info" title="Скачивается"><Spinner size={14} /></span>}
             {selected && <Icon name="check" size={18} stroke={3} className="shrink-0 text-accent" />}
+            {releaseFeed && !unknown && track.duration_s != null && <span className="shrink-0 text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>}
             <span data-row-actions className="contents">
               <TrackMenuButton track={menuTrack} extra={extras} className="w-10" />
             </span>

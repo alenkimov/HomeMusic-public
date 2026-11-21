@@ -18,8 +18,6 @@ const BRANDS: Record<string, { color: string; d: string; box?: number; plate?: s
   listenbrainz: { color: '#353070', box: 40, plate: '#F4F1EA', d: 'M19.5 6 7.5 13v14l12 7Z', color2: '#EB743B', d2: 'M20.5 6l12 7v14l-12 7Z' },
 };
 
-export const hasBrand = (service: string): boolean => service in BRANDS;
-
 export const hasBrand = (service: string): boolean => Object.hasOwn(BRANDS, service);
 
 export function BrandIcon({ service, size = 22, className = '' }: { service: string; size?: number; className?: string }) {
