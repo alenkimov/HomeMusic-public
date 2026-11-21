@@ -6,6 +6,7 @@ const SHELL = `hm-shell-${BUILD_ID}`;
 const ASSETS = 'hm-assets-v1'; // hashed file names: safe to keep across builds
 // Kept across builds, and filled by the page (`src/lib/offline.ts`) as well as here:
 const AUDIO = 'hm-audio-v1'; // tracks kept for offline, by `/api/listen/stream?ref=<ref>`
+const WAVE_AUDIO = 'hm-wave-audio-v1'; // separate from manually saved lists
 const API = 'hm-api-v1'; // the last answer of the Hub to what a page reads: shown when the Hub cannot be reached
 const IMG = 'hm-img-v1'; // covers
 /* What a page reads to draw the library: kept as last answered, for when there is no network. Not what must be live
@@ -43,7 +44,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
-      const keep = new Set([SHELL, ASSETS, AUDIO, API, IMG]);
+      const keep = new Set([SHELL, ASSETS, AUDIO, WAVE_AUDIO, API, IMG]);
       for (const key of await caches.keys()) if (!keep.has(key)) await caches.delete(key);
       await self.clients.claim();
     })(),
@@ -122,7 +123,9 @@ async function staleWhileRevalidate(req, cacheName) {
    asks for a part of the file (`Range`): it gets that part (206), cut from the copy kept whole. */
 async function audio(req, url) {
   const ref = url.searchParams.get('ref');
-  const hit = ref ? await (await caches.open(AUDIO)).match(audioKey(ref)) : null;
+  const wave = url.searchParams.get('wave');
+  const reserved = wave ? await caches.match(url.href, { cacheName: WAVE_AUDIO }) : null;
+  const hit = reserved || (ref ? await (await caches.open(AUDIO)).match(audioKey(ref)) : null);
   if (!hit) return fetch(req);
   const blob = await hit.blob();
   const size = blob.size;

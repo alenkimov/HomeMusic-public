@@ -3,6 +3,7 @@ import { subscribeVersionLabels, titleWithVersion } from './versionLabels';
 import { imageUrl } from './img';
 import { ofHiddenArtist } from './dislikes';
 import { keptInfo } from './offline';
+import { OFFLINE_WAVE, waveAudio } from './offlineWave';
 import { ApiError, api, errorMessage, isAbort, listenStreamUrl } from '../api/client';
 import type { LaunchOrigin, ListenOut } from '../api/types';
 import { startDownload } from './actions';
@@ -477,8 +478,9 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
   set({ track, queue, index, context: listContext, page: listPage, phase: autoplay ? 'resolving' : 'paused', info: null,
     error: null, position: pendingSeek, duration: track.duration_s ?? 0,
     ...(claim ? { manualQueue: state.manualQueue.filter((entry) => entry.id !== claim.id) } : {}) });
-  const ref = playbackRef(track);
-  a.src = listenStreamUrl(ref);
+  const reserve = listContext.startsWith('wave:') ? waveAudio(track.ref) : null;
+  const ref = reserve ? track.ref : playbackRef(track);
+  a.src = reserve?.url ?? listenStreamUrl(ref);
   if (autoplay) play(a);
   else a.load();
   mediaSession(track);
@@ -488,7 +490,7 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
   prefetching.clear();
   // a track kept on the device (`lib/offline.ts`) plays from it: when the Hub cannot be asked, what it said of the
   // file when the track was kept is shown
-  api.listen(ref, ctl.signal).catch((e: unknown) => {
+  (reserve ? Promise.resolve(reserve.info) : api.listen(ref, ctl.signal)).catch((e: unknown) => {
     const kept = isAbort(e) ? null : keptInfo(track.ref);
     if (kept) return kept;
     if (e instanceof ApiError && e.status === 500 && !ctl.signal.aborted) {
@@ -526,6 +528,7 @@ let refreshed: string | null = null;
 function refreshInfo() {
   const track = state.track;
   if (!track || state.info?.kind !== 'full') return;
+  if (state.context.startsWith('wave:') && waveAudio(track.ref)) return;
   const ref = playbackRef(track);
   if (refreshed === ref) return;
   refreshed = ref;
@@ -543,14 +546,15 @@ function refreshInfo() {
 function prefetchNext() {
   // the tracks the queue plays next, the nearest first: the Hub opens their files now (opening a source is what
   // takes seconds) — the next one whole, the ones after it only their start, so skipping through them is instant
-  if (!state.track) return;
+  if (!state.track || !navigator.onLine || state.context === OFFLINE_WAVE) return;
   const ahead = state.manualQueue.filter((entry) => !failedManualEntries.has(entry.id)).slice(0, AHEAD).map((entry) => entry.track);
   for (let k = state.index + 1; ahead.length < AHEAD && k < state.queue.length; k++) ahead.push(state.queue[k]);
   if (!ahead.length && state.repeat === 'all' && !onWave()) {
     const first = state.queue.find((track) => !track.queued);
     if (first) ahead.push(first);
   }
-  const want = new Map(ahead.map((t, k) => [playbackRef(t), k === 0 ? 'whole' : 'head'] as const));
+  const want = new Map(ahead.flatMap((t, k) =>
+    state.context.startsWith('wave:') && waveAudio(t.ref) ? [] : [[playbackRef(t), k === 0 ? 'whole' : 'head'] as const]));
   for (const [ref, p] of prefetching) {
     if (want.get(ref) === p.how) want.delete(ref); // asked for already, and for as much
     else if (!want.has(ref)) {
@@ -644,7 +648,7 @@ function startList(track: ListenTrack, queue?: readonly ListenTrack[], context?:
   failedManualEntries.clear();
   listContext = context ?? routeContext();
   listPage = page ?? location.hash.replace(/^#/, '').split('?')[0];
-  listLaunch = newLaunch(listContext, origin);
+  listLaunch = newLaunch(listContext === OFFLINE_WAVE ? 'other' : listContext, origin);
   const list = queue?.some((t) => t.ref === track.ref) ? queue : [track];
   const at = list.findIndex((t) => t.ref === track.ref);
   smartHooks?.listStarted(listContext); // the previous list's smart session is over; this list may have its own
@@ -803,7 +807,7 @@ export type PlaybackSnapshot = Pick<SavedSession, 'queue' | 'index' | 'context' 
 
 export function snapshotForTransfer() {
   const { track, queue, index, context, page, phase, shuffle, smart, repeat } = state;
-  if (!track || queue.some(isUpload) || !['playing', 'paused'].includes(phase)
+  if (!track || context === OFFLINE_WAVE || queue.some(isUpload) || !['playing', 'paused'].includes(phase)
     || (activeManual && !activeManual.started)) return null;
   const revision = seekRevision;
   const autoplay = phase === 'playing';
@@ -1181,7 +1185,8 @@ export function replaceUpcoming(list: readonly ListenTrack[]) {
   else if (state.phase !== 'error') prefetchNext();
 }
 
-export const hasNext = (s: ListenState) => s.manualQueue.some((entry) => !failedManualEntries.has(entry.id)) || s.index + 1 < s.queue.length;
+export const hasNext = (s: ListenState) => s.index + 1 < s.queue.length ||
+  (navigator.onLine && s.context !== OFFLINE_WAVE && s.manualQueue.some((entry) => !failedManualEntries.has(entry.id)));
 export const hasPrev = (s: ListenState) => s.index > 0;
 
 /** Plays the next track of the queue; false at its end. */
@@ -1192,7 +1197,7 @@ export function next(): boolean {
 function advance(auto: boolean, wrap = true): boolean {
   if (manualOpening) return true;
   const entries = state.manualQueue.filter((entry) => !failedManualEntries.has(entry.id));
-  if (entries.length && sessionAccount !== null) {
+  if (entries.length && sessionAccount !== null && navigator.onLine && state.context !== OFFLINE_WAVE) {
     void openManualQueue(entries, auto, () => {
       if (!nextAutomatic(auto, wrap) && auto && state.phase !== 'error') set({ phase: 'ended' });
     });

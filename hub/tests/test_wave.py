@@ -270,6 +270,39 @@ async def test_nothing_to_start_from(env) -> None:
     assert r.status_code == 409, r.text
 
 
+async def test_offline_reserve_reads_the_personal_wave_without_consuming_it(env, monkeypatch) -> None:
+    from app.db import session_scope
+    from app.models import User, WaveSession
+
+    c, me = env["client"], env["admin"]
+    assert (await c.post("/api/wave/reserve", json={"limit": 10})).json() == []
+    await history(me)
+    fake_sources(monkeypatch, [tr(5000 + i) for i in range(30)])
+    first = (await c.post("/api/wave/start", json={})).json()
+    sid = first["session_id"]
+    exclude = first["tracks"][0]["ref"]
+    async with session_scope() as s:
+        original = (await s.get(WaveSession, sid)).state_json
+    prefetched = len(env["prefetched"])
+    for _ in range(2):
+        response = await c.post("/api/wave/reserve", json={"limit": 10, "session_id": sid, "exclude": [exclude]})
+        assert response.status_code == 200, response.text
+        refs = [t["ref"] for t in response.json()]
+        assert len(set(refs)) == 10 and exclude not in refs
+    assert len(env["prefetched"]) == prefetched
+    async with session_scope() as s:
+        row = await s.get(WaveSession, sid)
+        assert row.state_json == original and row.next_calls == 0
+        s.add(WaveSession(id="other-radio", user_id=me, seed_json={"ref": "dz:other"}, state_json=original))
+    # A more recent radio session does not take over the personal reserve.
+    response = await c.post("/api/wave/reserve", json={"limit": 10, "session_id": "other-radio", "exclude": [exclude]})
+    assert [t["ref"] for t in response.json()] == refs
+    other_id = await add_user("other")
+    async with session_scope() as s:
+        other = await s.get(User, other_id)
+        assert await wave.reserve(s, other, 10, set(), sid) == []
+
+
 async def test_a_wave_hands_out_five_and_learns_from_what_was_played(env, monkeypatch) -> None:
     from app.db import session_scope
     from app.library.owned import quiet

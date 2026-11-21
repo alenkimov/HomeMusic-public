@@ -60,6 +60,7 @@ import { HistoryPage } from './pages/History';
 import { OfflinePage } from './pages/Offline';
 import { refreshDislikes, resetDislikes } from './lib/dislikes';
 import { forgetAccount, initOffline } from './lib/offline';
+import { setOfflineWaveAccount } from './lib/offlineWave';
 import { ForYouPage } from './pages/ForYou';
 import { TastePage } from './pages/Mix';
 import { MorePage } from './pages/More';
@@ -195,6 +196,7 @@ export function App() {
       }
       accountRef.current = account;
       setApiAccount(account);
+      setOfflineWaveAccount(STANDALONE ? account : null);
       setAssistantAccount(account);
     }
     setMe(next);

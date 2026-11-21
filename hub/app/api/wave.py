@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import PlayEventsOut, WaveNextIn, WaveOut, WaveStartIn, WaveTrackOut
+from app.api.schemas import PlayEventsOut, WaveNextIn, WaveOut, WaveReserveIn, WaveStartIn, WaveTrackOut
 from app.auth import current_user
 from app.db import get_session
 from app.library.owned import annotate_tracks
@@ -64,3 +64,10 @@ async def next_(session_id: str, body: WaveNextIn, user: User = Depends(current_
     except wave.WaveError as e:
         raise HTTPException(e.status, str(e)) from e
     return await wave_out(s, b, user.id)
+
+
+@router.post("/reserve", response_model=list[WaveTrackOut])
+async def reserve(body: WaveReserveIn, user: User = Depends(current_user),
+                  s: AsyncSession = Depends(get_session, scope="function")):
+    cands = await wave.reserve(s, user, body.limit, set(body.exclude), body.session_id)
+    return await track_outs(s, cands, user.id)

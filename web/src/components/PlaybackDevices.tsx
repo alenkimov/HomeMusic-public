@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { STANDALONE } from '../lib/embedded';
 import { isUpload, useListen } from '../lib/listen';
+import { OFFLINE_WAVE } from '../lib/offlineWave';
 import { answerPlaybackTransfer, transferPlayback, usePlaybackDevices } from '../lib/playbackDevices';
 import { Icon } from './Icon';
 import { TrackTitle } from './TrackTitle';
@@ -8,7 +9,7 @@ import { Cover, IconButton, Sheet, Spinner } from './ui';
 
 export function PlaybackDevicesButton() {
   const [open, setOpen] = useState(false);
-  const available = useListen((state) => !!state.track && !isUpload(state.track)
+  const available = useListen((state) => !!state.track && state.context !== OFFLINE_WAVE && !isUpload(state.track)
     && (state.phase === 'playing' || state.phase === 'paused'));
   const { devices, connected, sending } = usePlaybackDevices();
   if (!STANDALONE) return null;

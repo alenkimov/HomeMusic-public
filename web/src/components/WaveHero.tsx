@@ -1,4 +1,6 @@
 import { toggle, useListen } from '../lib/listen';
+import { useOnline } from '../lib/offline';
+import { OFFLINE_WAVE, useWaveReserve } from '../lib/offlineWave';
 import { Link, navigate } from '../lib/router';
 import { tastePath, useNewcomer } from '../lib/taste';
 import { canWave, startWave, useWave } from '../lib/wave';
@@ -15,27 +17,39 @@ import { WaveGlow } from './WaveGlow';
  * A newcomer's wave has nothing to start from: the button says so and leads to «Кого вы слушаете?» — the wave
  * starts from there, once the artists are picked. */
 export function WaveHero() {
-  const { title, starting } = useWave();
+  const { title, starting, usingReserve } = useWave();
   const wave = useListen((s) => !!s.track && s.context.startsWith('wave:'));
+  const localWave = useListen((s) => s.context === OFFLINE_WAVE && !!s.track);
   const phase = useListen((s) => s.phase);
   const cover = useListen((s) => s.track?.cover_small_url ?? s.track?.cover_url ?? null);
   const newcomer = useNewcomer();
+  const online = useOnline();
+  const reserve = useWaveReserve();
   if (!canWave()) return null;
   const busy = starting === '';
-  const on = wave && title === 'Моя волна';
+  const own = localWave || (wave && title === 'Моя волна');
+  const on = own && phase !== 'ended';
   const playing = on && phase === 'playing';
   // wanted to play (loading the next track counts): the button then offers a pause
   const running = on && (playing || phase === 'loading' || phase === 'resolving');
   // The mask fades the canvas out toward its edges, whatever the blob does there.
   const fade = 'radial-gradient(closest-side, #000 72%, transparent 100%)';
-  const pick = newcomer && !on && !busy; // nothing to start from yet
-  const caption = busy ? 'busy' : running ? 'playing' : on ? 'paused' : pick ? 'pick' : 'idle';
+  const pick = online && newcomer && !own && !busy;
+  const offline = !online || usingReserve || localWave;
+  const caption = busy ? 'busy'
+    : offline && on ? 'offline-playing'
+    : !online && !reserve.ready ? 'offline-empty'
+    : !online ? 'offline-ready'
+    : running ? 'playing' : on ? 'paused' : pick ? 'pick' : 'idle';
   const captions: Array<[string, string]> = [
     ['idle', 'Бесконечный поток под ваш вкус'],
     ['pick', 'Выберите исполнителей, чтобы начать'],
     ['busy', 'Подбираем первые треки…'],
     ['playing', 'Играет — подстраивается под каждый пропуск и ♥'],
     ['paused', 'На паузе — продолжим с того же места'],
+    ['offline-playing', 'Офлайн-волна'],
+    ['offline-ready', 'Готова играть без сети'],
+    ['offline-empty', 'Запас треков для офлайна пуст'],
   ];
   const label = busy ? 'Моя волна: запускаем' : running ? 'Моя волна: пауза' : on ? 'Моя волна: продолжить' : pick ? 'Моя волна: выбрать исполнителей' : 'Моя волна: слушать';
 
@@ -64,16 +78,16 @@ export function WaveHero() {
       <button
           type="button"
           onClick={() => (on ? toggle() : pick ? navigate(tastePath('wave')) : void startWave(null, 'home_card'))}
-          disabled={starting !== null}
+          disabled={starting !== null || (!online && !on && !reserve.ready)}
           aria-label={label}
           className="absolute left-1/2 top-1/2 inline-flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-fg text-bg shadow-lg transition hover:scale-105 active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white disabled:opacity-90"
         >
           {busy ? <Spinner size={24} /> : running ? <Icon name="pause" size={24} stroke={3} /> : <Icon name="play" size={24} stroke={2.4} className="translate-x-px" />}
         </button>
       {/* whom the wave starts from can be looked at and changed (a newcomer is led there by the button itself) */}
-      {!newcomer && (
-        <Link to={tastePath()} className="absolute left-1/2 top-[calc(50%+48px)] -translate-x-1/2 whitespace-nowrap rounded-full px-3 py-1.5 text-[13px] text-white/70 transition hover:text-white" style={{ textShadow: '0 1px 10px rgba(0,0,0,.6)' }}>
-          Мои исполнители
+      {(!newcomer || !online) && (
+        <Link to={online ? tastePath() : '/offline'} className="absolute left-1/2 top-[calc(50%+48px)] -translate-x-1/2 whitespace-nowrap rounded-full px-3 py-1.5 text-[13px] text-white/70 transition hover:text-white" style={{ textShadow: '0 1px 10px rgba(0,0,0,.6)' }}>
+          {online ? 'Мои исполнители' : 'Офлайн'}
         </Link>
       )}
     </div>

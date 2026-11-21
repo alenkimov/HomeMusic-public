@@ -1486,6 +1486,12 @@ class WaveNextIn(BaseModel):
     queued: list[str] = Field(default_factory=list, max_length=50)
 
 
+class WaveReserveIn(BaseModel):
+    limit: int = Field(ge=1, le=60)
+    exclude: list[Annotated[str, Field(max_length=512)]] = Field(default_factory=list, max_length=200)
+    session_id: str | None = Field(default=None, max_length=32)
+
+
 class WaveTrackOut(TrackOut):
     """A track of the wave: the catalog track (`ref` "dz:…"; a song only the library has — `source` "nd", `ref`
     "nd:<song>") with the library state: `owned` + `nd_song_id` — play the library song, else stream `ref` from the

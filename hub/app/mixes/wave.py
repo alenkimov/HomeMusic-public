@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import JSON, func, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -633,6 +633,31 @@ def _disliked(c: build.Cand, p: Profile) -> bool:
                       artist_ref=t.artist_ref, artists=t.artists, artist_refs=t.artist_refs)
 
 
+async def reserve(s: AsyncSession, user: User, limit: int, exclude: set[str],
+                  session_id: str | None = None) -> list[build.Cand]:
+    """Preview the personal Wave's saved pool. Downloads leave its queue and history alone."""
+    personal = select(WaveSession).where(
+        WaveSession.user_id == user.id,
+        or_(WaveSession.seed_json.is_(None), WaveSession.seed_json == JSON.NULL),
+        WaveSession.cleared_at.is_(None),
+        WaveSession.updated_at >= utcnow() - KEEP,
+    )
+    row = await s.scalar(personal.where(WaveSession.id == session_id)) if session_id else None
+    if row is None:
+        row = await s.scalar(personal.order_by(WaveSession.updated_at.desc(), WaveSession.id.desc()).limit(1))
+    if row is None or not row.state_json:
+        return []
+    st = State.load(row.state_json)
+    for pool in (st.pool, st.out):
+        for ref, cand in list(pool.items()):
+            if ref in exclude or not exclude.isdisjoint(_recording_keys(cand)):
+                del pool[ref]
+    if not st.pool and not st.out:
+        return []
+    profile = await build_profile(s, user, model="v2")
+    return pick(st, profile, row.mode, {}, n=limit, queued=set(st.out))
+
+
 async def _vectors(rt: Runtime, queued: set[str] | None = None) -> dict[str, list[float]]:
     """Vectors of the best candidates and of the session's likes and skips (asked once, missing ones again a minute
     later)."""
@@ -1189,4 +1214,4 @@ def top_generator(c: build.Cand) -> str:
     return max(c.gens, key=lambda g: w.get(g, 0.5) / math.log2(c.gens[g] + 2)) if c.gens else "seed"
 
 
-__all__ = ["BATCH", "Batch", "WaveError", "generator_title", "next_batch", "reset", "settle", "start"]
+__all__ = ["BATCH", "Batch", "WaveError", "generator_title", "next_batch", "reserve", "reset", "settle", "start"]

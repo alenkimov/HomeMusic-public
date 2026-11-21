@@ -696,6 +696,8 @@ export const api = {
     request<SmartAddOut>('POST', `/api/smart-shuffle/${encodeURIComponent(id)}/add`, { json: body }),
   waveStart: (body: WaveStartIn) => request<WaveOut>('POST', '/api/wave/start', { json: body }),
   waveNext: (id: string, body: WaveNextIn) => request<WaveOut>('POST', `/api/wave/${encodeURIComponent(id)}/next`, { json: body }),
+  waveReserve: (body: { limit: number; exclude: string[]; session_id?: string }, signal: AbortSignal) =>
+    request<WaveOut['tracks']>('POST', '/api/wave/reserve', { json: body, signal }),
 
   // uploads
   uploads: (status = 'uploaded', signal?: AbortSignal) =>
