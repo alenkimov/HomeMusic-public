@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { ImportCollectionOut, ImportMode, ImportOut, ImportSource } from '../api/types';
 import { ServiceBadge, ServiceIcon, ServiceText } from '../components/ServiceBadge';
@@ -15,7 +15,7 @@ import { copyText } from '../lib/share';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 
 /** «Перенести музыку»: a user's collection from Yandex Music, VK («Моя музыка» and the playlists: a sign-in with the
- * login and the password, the code VK sends is typed here) or Spotify (files) — ♥, playlists in
+ * login and the password, the code VK sends is typed here) or Spotify (a saved account or a playlist link) — ♥, playlists in
  * their order, liked albums and artists. The Hub reads the lists only (no audio): sign-in by a code on ya.ru/device,
  * a token, or an open profile link. Economy (the default): playlists and ♥ at once from what the library has, the
  * rest plays from the sources and is downloaded once listened to; «Скачать всё» downloads everything in the
@@ -51,8 +51,6 @@ function statusLine(imp: ImportOut): string {
   }
 }
 
-const EXPORTIFY_URL = 'https://exportify.app/';
-
 const SOURCES: Record<ImportSource, { name: string; page: string; waits: string }> = {
   yandex: { name: 'Яндекс Музыка', page: 'Перенос из Яндекс Музыки', waits: 'Ждём входа в Яндекс' },
   vk: { name: 'ВКонтакте', page: 'Перенос из ВКонтакте', waits: 'Ждём код для входа в ВК' },
@@ -62,10 +60,7 @@ const SOURCES: Record<ImportSource, { name: string; page: string; waits: string 
 const sourceName = (source: ImportSource): string => SOURCES[source]?.name ?? source;
 
 function sourceTitle(imp: ImportOut): string {
-  const playlist = imp.method === 'link' || (imp.source === 'spotify' && imp.method === 'saved')
-    ? imp.collections.find((collection) => collection.kind === 'playlist' || collection.kind === 'likes') : undefined;
-  const title = playlist?.title || imp.account;
-  return `${sourceName(imp.source)}${title ? ` · ${title}` : ''}`;
+  return `${sourceName(imp.source)}${imp.title ? ` · ${imp.title}` : ''}`;
 }
 
 /** The page of the service a transfer is from: where «Назад» leads, and where one is started anew. */
@@ -122,11 +117,10 @@ export function ImportsPage({ from = null }: { from?: ImportSource | null }) {
   const res = useAsync((s) => api.imports(s), []);
   const past = (res.data ?? []).filter((imp) => !from || imp.source === from);
   useHubEvent('import', () => res.reload(true));
-  const [busy, setBusy] = useState<'device' | 'profile' | 'token' | 'csv' | 'vk' | 'vk-token' | 'spotify-link' | null>(null);
+  const [busy, setBusy] = useState<'device' | 'profile' | 'token' | 'vk' | 'vk-token' | 'spotify-link' | null>(null);
   const [vkLogin, setVkLogin] = useState('');
   const [vkPassword, setVkPassword] = useState('');
   const [vkToken, setVkToken] = useState('');
-  const csvRef = useRef<HTMLInputElement>(null);
   const [profile, setProfile] = useState('');
   const [token, setToken] = useState('');
   const [spotifyLink, setSpotifyLink] = useState('');
@@ -147,13 +141,6 @@ export function ImportsPage({ from = null }: { from?: ImportSource | null }) {
     if (!r) return;
     setVkPassword('');
     navigate(`/import/${r.id}`);
-  };
-
-  const startCsv = async (files: File[]) => {
-    setBusy('csv');
-    const r = await attempt(() => api.createImportCsv(files));
-    setBusy(null);
-    if (r) navigate(`/import/${r.id}`);
   };
 
   const startSpotify = async () => {
@@ -267,36 +254,6 @@ export function ImportsPage({ from = null }: { from?: ImportSource | null }) {
           Открыть предпросмотр
         </Button>
       </form>
-      <div className={cx('card mx-4 lg:mx-6 space-y-3 p-4', from && 'mt-3')}>
-        <p className="text-sm text-muted">Плейлисты и «Любимые треки» из файлов CSV. Подписка Premium не нужна.</p>
-        <ol className="list-decimal space-y-1 pl-5 text-sm text-muted">
-          <li>
-            Откройте{' '}
-            <a href={EXPORTIFY_URL} target="_blank" rel="noopener noreferrer" className="font-semibold text-accent underline">
-              exportify.app
-            </a>{' '}
-            <ServiceText text="и войдите в Spotify." />
-          </li>
-          <li>Нажмите Export у нужных плейлистов — скачаются файлы CSV.</li>
-          <li>Выберите эти файлы здесь. Один файл — один плейлист.</li>
-        </ol>
-        <input
-          ref={csvRef}
-          type="file"
-          multiple
-          accept=".csv,text/csv"
-          className="hidden"
-          onChange={(e) => {
-            const files = Array.from(e.target.files ?? []);
-            e.target.value = '';
-            if (files.length) void startCsv(files);
-          }}
-        />
-        <Button variant="primary" icon="upload" block busy={busy === 'csv'} disabled={!!busy} onClick={() => csvRef.current?.click()}>
-          Выбрать файлы CSV
-        </Button>
-        <p className="text-xs text-dim"><ServiceText text="Exportify — сторонний открытый сервис: вход идёт на сайте Spotify, Хаб получает только файл со списком треков." /></p>
-      </div>
       {!EMBEDDED && (
         <Link to="/stats" className="card mx-4 lg:mx-6 mt-3 flex items-center gap-3 p-4 hover:bg-hover">
           <ServiceIcon service="spotify" size={22} />
@@ -545,7 +502,7 @@ function Preview({ imp, onStarted }: { imp: ImportOut; onStarted: (r: ImportOut)
             Скачивать любимые альбомы целиком
           </label>
         )}
-        {imp.method !== 'profile' && imp.method !== 'csv' && imp.method !== 'link' && imp.method !== 'saved' && (
+        {imp.has_token && !imp.keep_token && (
           <label className="flex items-center gap-1 text-sm">
             <Checkbox checked={keep} onChange={setKeep} label="Запомнить вход" />
             <span className="min-w-0">Запомнить вход, чтобы потом подтянуть новое</span>
@@ -672,7 +629,7 @@ function Progress({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) 
           </Button>
         ) : (
           <div className="flex justify-center gap-2">
-            {(imp.has_token || imp.method === 'profile' || imp.method === 'link') && (
+            {imp.can_sync && (
               <Button icon="refresh" busy={busy === 'sync'} className="min-w-0 text-balance max-sm:px-3"
                 onClick={() => run('sync', () => api.importSync(imp.id), 'Повторное сканирование запущено')}>
                 Сканировать повторно

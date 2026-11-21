@@ -27,7 +27,6 @@ const SERVICES: Record<string, { name: string; aliases?: string[]; initials?: st
   mymemory: { name: 'MyMemory', initials: 'MM' },
   llm: { name: 'ИИ Хаба', initials: 'ИИ' },
   musicbrainz: { name: 'MusicBrainz' },
-  exportify: { name: 'Exportify', initials: 'EX' },
   homemusic: { name: 'HomeMusic' },
   catalog: { name: 'Каталог' },
   file: { name: 'Теги файла' },

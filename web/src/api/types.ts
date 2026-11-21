@@ -1189,7 +1189,7 @@ export interface ImportReviewOut {
   duration_s?: number | null;
   cover_url?: string | null;
 }
-export type ImportMethod = 'device' | 'token' | 'profile' | 'csv' | 'password' | 'link' | 'saved';
+export type ImportMethod = 'device' | 'token' | 'profile' | 'password' | 'link' | 'saved';
 export type ImportMode = 'economy' | 'full';
 export type ImportStatus = 'auth' | 'fetching' | 'preview' | 'running' | 'done' | 'failed' | 'cancelled';
 export type ImportCollectionKind = 'likes' | 'playlist' | 'albums' | 'artists' | 'dislikes';
@@ -1283,12 +1283,13 @@ export interface ImportCollectionOut {
 export interface ImportOut {
   id: number;
   source: ImportSource;
-  method: ImportMethod;
+  title: string | null;
   status: ImportStatus | string;
   mode: ImportMode;
   account?: string | null;
   has_token: boolean;
   keep_token: boolean;
+  can_sync: boolean;
   download_albums: boolean;
   /** sign-in in progress */
   auth?: ImportAuthOut | null;

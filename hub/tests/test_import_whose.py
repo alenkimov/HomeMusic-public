@@ -36,7 +36,7 @@ async def env(hub_env, monkeypatch):
             user = User(nd_username="qa", nd_password_enc=encrypt("qa-password"))
             s.add(user)
             await s.flush()
-            imp = Import(user_id=user.id, source="spotify", method="csv", mode="full", status="running")
+            imp = Import(user_id=user.id, source="spotify", method="link", mode="full", status="running")
             s.add(imp)
             await s.flush()
             coll = ImportCollection(import_id=imp.id, kind="playlist", external_id="p", title="p")

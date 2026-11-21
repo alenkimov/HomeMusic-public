@@ -31,8 +31,7 @@ URLS = {"spotify": "https://open.spotify.com/track/{}", "yandex": "https://music
 ORDER = ["spotify", "yandex", "ytm", "deezer", "youtube", "soundcloud"]
 YOUTUBE_ID = re.compile(r"(?:youtube\.com/watch\?(?:.*&)?v=|youtu\.be/)([\w-]{11})")
 
-# An import's row that is a library track: the row's id is the service's id of that track. Rows without one
-# (`isrc:…`, `name:…` of a CSV line that had no link) are not ids.
+# Copy provider IDs from matched import rows. Local tracks have synthetic IDs and no catalog link.
 FROM_IMPORTS = """
 insert or ignore into track_links (track_id, service, external_id, created_at)
 select it.track_id, i.source, it.external_id, :now

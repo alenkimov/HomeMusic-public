@@ -797,12 +797,6 @@ export const api = {
   importAccounts: (source: ImportSource, signal?: AbortSignal) => request<{ id: number; account: string | null }[]>('GET', `/api/imports/accounts/${source}`, { signal }),
   disconnectVk: (id: number) => request<OkOut>('DELETE', `/api/imports/accounts/${id}`),
   createImport: (body: ImportIn) => request<ImportOut>('POST', '/api/imports', { json: body }),
-  /** Spotify playlists exported to CSV by Exportify: one file is one playlist. */
-  createImportCsv: (files: File[]) => {
-    const form = new FormData();
-    for (const f of files) form.append('files', f);
-    return request<ImportOut>('POST', '/api/imports/csv', { form });
-  },
   /** What VK asked for at the sign-in: the code it sent, or what its captcha page answered with. */
   importAuth: (id: number, body: { code?: string; captcha?: string }) => request<ImportOut>('POST', `/api/imports/${id}/auth`, { json: body }),
   importGet: (id: number, signal?: AbortSignal) => request<ImportOut>('GET', `/api/imports/${id}`, { signal }),

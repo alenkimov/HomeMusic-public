@@ -48,13 +48,13 @@ async def test_ids_come_from_imports_and_the_source_map_and_stay(client):
     await add_track("c", source_url="https://ru.hitmoz.org/song/1")
     async with session_scope() as s:
         user = (await s.execute(select(User))).scalars().first()
-        imp = Import(user_id=user.id, source="spotify", method="csv", status="preview")
+        imp = Import(user_id=user.id, source="spotify", method="link", status="preview")
         s.add(imp)
         await s.flush()
-        coll = ImportCollection(import_id=imp.id, kind="playlist", external_id="csv:x", title="x")
+        coll = ImportCollection(import_id=imp.id, kind="playlist", external_id="37i9dQZF1DXcBWIGoYBM5M", title="x")
         s.add(coll)
         await s.flush()
-        for ext, track_id in (("4OJV0JNPCQ6M1n6JCtiZ9T", a), ("isrc:JPB600760301", b), ("5xAznC0k6LeMwmqA4qXdK3", None)):
+        for ext, track_id in (("4OJV0JNPCQ6M1n6JCtiZ9T", a), ("local:track", b), ("5xAznC0k6LeMwmqA4qXdK3", None)):
             s.add(ImportItem(import_id=imp.id, collection_id=coll.id, external_id=ext, track_id=track_id))
         s.add(SourceMap(source="yandex", kind="track", external_id="138601318", ref="dz:111", match="exact"))
         s.add(SourceMap(source="ytm", kind="track", external_id="3jXiv7C_PVE", ref="dz:111", match="probable"))
@@ -69,7 +69,7 @@ async def test_ids_come_from_imports_and_the_source_map_and_stay(client):
     assert r["links"][1]["title"] == "Яндекс Музыка"
     assert set(r) == {"links", "homemusic"}
 
-    # a CSV line without a Spotify link gives no id; the page a file is from is a link only where it is a service
+    # Local Spotify tracks have no catalog link. External audio pages are still tracked by service.
     r = (await client.get("/api/links", params={"nd_song_id": "b"})).json()
     assert r["links"] == [{"service": "soundcloud", "title": "SoundCloud", "url": "https://soundcloud.com/x/y"}]
     r = (await client.get("/api/links", params={"nd_song_id": "c"})).json()

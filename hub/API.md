@@ -482,6 +482,7 @@ Row statuses: `owned` (already in library), `auto` (confident, pre-selected), `c
 |---|---|---|
 | GET | `/api/imports` | `ImportOut[]` — the user's imports, newest first |
 | POST | `/api/imports` | `ImportIn {source: "yandex", method, token?, url?}` → `ImportOut`. `method`: `device` — sign-in by code: `status="auth"`, `auth {user_code, verification_url, expires_at}` (the user enters the code at ya.ru/device; the Hub waits for it, ~5 min); `token` — a Yandex Music token pasted by hand; `profile` — `url` of an open profile (`music.yandex.ru/users/<login>/…`) or the login, no sign-in. `400` bad link / empty token / Yandex refused the code |
+| POST | `/api/imports` | For Spotify use `{source: "spotify", method: "link", url}` for a public playlist or `{source: "spotify", method: "saved", connection_id, url?}` for a playlist on the connected account. Omit `url` to import its Liked Songs. |
 | GET | `/api/imports/{id}` | `ImportOut` |
 | GET | `/api/imports/{id}/items?collection_id=&status=&match=&offset=0&limit=200` | `ImportItemsOut {items: [ImportItemOut], total}` — rows in the service's order; `status`, `match` — comma lists (the report: `match=probable`, `match=not_found`, `status=failed`) |
 | POST | `/api/imports/{id}/start` | `ImportStartIn {collection_ids, mode, download_albums, keep_token}` → `ImportOut` (`409` unless `preview`) |
@@ -492,6 +493,8 @@ Row statuses: `owned` (already in library), `auto` (confident, pre-selected), `c
 | DELETE | `/api/imports/{id}` | → `{ok}`: forgets the import and its sign-in; music, ♥ and playlists stay |
 | POST | `/api/imports/items/{id}/pick` | → `ImportPickOut {download_item_id}`: a not found (or wrongly matched) track becomes a visible download by its names without the catalog match; the user picks the file on its page (`/api/downloads/{id}`, `needs_review`) |
 | POST | `/api/imports/items/{id}/skip` | → `{ok}`: the row is left out |
+
+`ImportOut.title` is the playlist or account name to display. `can_sync` indicates that a source link, open profile, or saved account is available to read again.
 
 `ImportOut.status`: `auth` (waiting for the code) → `fetching` → `preview` (choose what to move; `stats` counts distinct
 tracks of the likes and playlists: `owned`, `to_download`, `est_bytes` at 320 kbps, `free_bytes` of the music disk) →

@@ -150,9 +150,13 @@ async def import_out(s: AsyncSession, imp: Import) -> ImportOut:
     elif imp.status == "auth" and a.get("kind"):
         auth = ImportAuthOut(kind=a["kind"], hint=a.get("hint"), wrong=bool(a.get("wrong")),
                              verification_url=a.get("verification_url") or "", expires_at=a["expires_at"])
+    title = imp.account
+    if imp.method == "link" or (imp.source == "spotify" and imp.method == "saved"):
+        title = next((c.title for c in colls if c.kind in TRACK_KINDS and c.title), title)
+    has_token = imp.connection_id is not None
     return ImportOut(
-        id=imp.id, source=imp.source, method=imp.method, status=imp.status, mode=imp.mode, account=imp.account,
-        has_token=bool(imp.connection_id), keep_token=imp.keep_token,
+        id=imp.id, source=imp.source, title=title, status=imp.status, mode=imp.mode, account=imp.account,
+        has_token=has_token, keep_token=imp.keep_token, can_sync=has_token or imp.method in ("profile", "link"),
         download_albums=bool((imp.options_json or {}).get("download_albums")), auth=auth, error=imp.error,
         stats=await stats(s, imp, list(colls)),
         collections=[ImportCollectionOut(id=c.id, kind=c.kind, title=c.title, selected=c.selected,
@@ -319,16 +323,6 @@ async def create(s: AsyncSession, user_id: int, *, source: str, method: str, tok
     s.add(imp)
     await s.flush()
     await enqueue(s, "import_fetch", {"import_id": imp.id}, priority=PRIORITY_IMPORT)
-    return imp
-
-
-async def create_from_snapshot(s: AsyncSession, user_id: int, *, source: str, method: str, snap: Snapshot) -> Import:
-    """An import whose collection came with the request (a file): no sign-in, no fetch — straight to the preview."""
-    imp = Import(user_id=user_id, source=source, method=method, status="preview", account=snap.account,
-                 auth_json={}, options_json={})
-    s.add(imp)
-    await s.flush()
-    await store_snapshot(s, imp, snap)
     return imp
 
 
@@ -672,5 +666,5 @@ async def remove(s: AsyncSession, imp: Import) -> None:
     await s.delete(imp)
 
 
-__all__ = ["ACTIVE", "create", "create_from_snapshot", "download_all", "downloads_done", "import_out", "item_out", "listened",
+__all__ = ["ACTIVE", "create", "download_all", "downloads_done", "import_out", "item_out", "listened",
            "remove", "start"]

@@ -439,7 +439,7 @@ function newImport(method: string, account: string | null): Imp {
       else items.push({ ...base, kind: 'track', title: IMP_NAMES[k], album: 'Альбом ' + artist, duration_s: 160 + ((i * 29) % 140), cover_url: cover(IMP_NAMES[k]), ref: match === 'not_found' ? null : `dz:${1000 + (i % 8) * 100 + 1 + (i % 5)}`, match });
     }
   }
-  return { id, method, account, mode: 'economy', keep_token: false, download_albums: false, has_token: method !== 'profile', created: Date.now(), started: null, cancelled: false, colls, items, playlistIds: [], star: false };
+  return { id, method, account, mode: 'economy', keep_token: method === 'saved', download_albums: false, has_token: method !== 'profile' && method !== 'link', created: Date.now(), started: null, cancelled: false, colls, items, playlistIds: [], star: false };
 }
 
 function impStatus(m: Imp): string {
@@ -488,9 +488,11 @@ function impOut(m: Imp) {
   const count = (f: (o: Json) => boolean) => outs.filter(f).length;
   const toDownload = tracks.length - owned;
   const destinations = playlists.filter((p) => m.playlistIds.includes(p.id)).map((p) => ({ playlist_id: p.id, name: p.name }));
+  const account = m.account ?? (status === 'auth' ? null : 'owner.yandex');
   return {
-    id: m.id, source: 'yandex', method: m.method, status, mode: m.mode, account: m.account ?? (status === 'auth' ? null : 'owner.yandex'),
+    id: m.id, source: 'yandex', title: account, status, mode: m.mode, account,
     has_token: m.has_token, keep_token: m.keep_token, download_albums: m.download_albums,
+    can_sync: m.has_token || m.method === 'profile' || m.method === 'link',
     auth: status === 'auth' ? { user_code: 'hp5ukzu4', verification_url: 'https://ya.ru/device', expires_at: new Date(m.created + 300000).toISOString() } : null,
     error: null,
     destinations: m.started && (m.star || m.colls.some((c) => c.kind === 'likes' && c.selected))
@@ -1506,14 +1508,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
   if (p === '/api/imports' && m === 'GET') return send(res, 200, imps.map(impOut)), true;
   if (p === '/api/imports' && m === 'POST') {
     const b = await readJson(req);
+    const method = String(b.method ?? 'device');
+    if (!['device', 'profile', 'token', 'password', 'link', 'saved'].includes(method)) {
+      return send(res, 422, { detail: 'Неизвестный способ переноса' }), true;
+    }
     let account: string | null = null;
-    if (b.method === 'profile') {
+    if (method === 'profile') {
       const mm = String(b.url ?? '').match(/users\/([\w.-]+)/) ?? String(b.url ?? '').match(/^([\w.-]+)$/);
       if (!mm) return send(res, 400, { detail: 'Нужна ссылка на профиль: music.yandex.ru/users/<логин>/playlists/3' }), true;
       account = mm[1];
     }
-    if (b.method === 'token' && !String(b.token ?? '').trim()) return send(res, 400, { detail: 'Вставьте токен' }), true;
-    const imp = newImport(String(b.method ?? 'device'), account);
+    if (method === 'token' && !String(b.token ?? '').trim()) return send(res, 400, { detail: 'Вставьте токен' }), true;
+    const imp = newImport(method, account);
     imps.unshift(imp);
     return send(res, 200, impOut(imp)), true;
   }

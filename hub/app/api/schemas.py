@@ -1066,7 +1066,7 @@ class AssistantTextIn(BaseModel):
 # --- imports from music services ----------------------------------------------------------
 
 ImportSource = Literal["yandex", "spotify", "vk"]
-ImportMethod = Literal["device", "token", "profile", "csv", "password", "link", "saved"]
+ImportMethod = Literal["device", "token", "profile", "password", "link", "saved"]
 ImportMode = Literal["economy", "full"]
 
 
@@ -1136,13 +1136,14 @@ class ImportDestinationOut(BaseModel):
 class ImportOut(BaseModel):
     id: int
     source: ImportSource
-    method: ImportMethod
+    title: str | None = None
     # auth (waiting for the code) / fetching / preview (choose what to move) / running / done / failed / cancelled
     status: str
     mode: ImportMode
     account: str | None = None
     has_token: bool = False
     keep_token: bool = False
+    can_sync: bool = False
     download_albums: bool = False
     auth: ImportAuthOut | None = None
     error: str | None = None

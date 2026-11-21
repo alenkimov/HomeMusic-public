@@ -23,7 +23,7 @@ async def env(hub_env):
             user = User(nd_username="qa", nd_password_enc=encrypt("qa-password"))
             s.add(user)
             await s.flush()
-            imp = Import(user_id=user.id, source="spotify", method="csv", mode="full", status="running")
+            imp = Import(user_id=user.id, source="yandex", method="profile", mode="full", status="running")
             s.add(imp)
             await s.flush()
             colls = {}
