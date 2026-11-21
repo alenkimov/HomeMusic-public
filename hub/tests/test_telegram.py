@@ -174,7 +174,8 @@ async def test_link_send_and_disconnect(env):
     assert state["sent"][-1]["caption"] == "<blockquote expandable>Тёплое место\n&lt;но&gt;</blockquote>"
     assert len(state["profile_checks"]) == checks
     assert state["sent"][-1]["parse_mode"] == "HTML"
-    [[heart]] = state["sent"][-1]["reply_markup"].inline_keyboard
+    [[enqueue, heart]] = state["sent"][-1]["reply_markup"].inline_keyboard
+    assert enqueue.text == "В очередь" and enqueue.callback_data
     assert heart.text == "❤️" and heart.callback_data
     state["usernames"][42] = "alen_new"
     r = await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "with_lyrics": True})
@@ -182,8 +183,9 @@ async def test_link_send_and_disconnect(env):
     assert state["sent"][-1]["caption"] == "От @alen_new\n\n<blockquote expandable>Тёплое место\n&lt;но&gt;</blockquote>"
     # the track's «HomeMusic» link as a button under the audio, when asked for
     assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "with_link": True})).status_code == 200
-    [[button, heart]] = state["sent"][-1]["reply_markup"].inline_keyboard
+    [[enqueue, heart], [button]] = state["sent"][-1]["reply_markup"].inline_keyboard
     assert button.text == "Открыть" and button.url.startswith("https://alenkimov.github.io/HomeMusic-public/#")
+    assert enqueue.text == "В очередь" and 1 <= len(enqueue.callback_data.encode("utf-8")) <= 64
     assert heart.text == "❤️" and 1 <= len(heart.callback_data.encode("utf-8")) <= 64
     assert (await c.put("/api/telegram/prefs", json={"with_lyrics": True})).json()["with_lyrics"] is True
     assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1"})).json()["lyrics"] is True
@@ -200,7 +202,7 @@ async def test_link_send_and_disconnect(env):
     assert (await c.get("/api/telegram/chats")).json() == []
 
 
-async def test_a_shared_audio_heart_adds_to_the_clickers_own_favorites(env):
+async def test_a_shared_audio_buttons_update_the_clickers_own_account(env):
     c, state = env["client"], env["state"]
     await add_track(env["music"], "nd1")
     await pair(c, state, 42)
@@ -213,7 +215,7 @@ async def test_a_shared_audio_heart_adds_to_the_clickers_own_favorites(env):
     sent = await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "chat": group,
                                                    "with_link": True, "anonymous": True})
     assert sent.status_code == 200, sent.text
-    [[_, heart]] = state["sent"][-1]["reply_markup"].inline_keyboard
+    [[enqueue, heart], [_]] = state["sent"][-1]["reply_markup"].inline_keyboard
 
     async def press(sender: int, data: str) -> str:
         update_id = next(UPDATES)
@@ -232,6 +234,12 @@ async def test_a_shared_audio_heart_adds_to_the_clickers_own_favorites(env):
     async with app_client(env["app"], login=("other", "password")) as other:
         await pair(other, state, 9)
         messages_before = len(state["messages"])
+        assert "Подключите Telegram" in await press(999, enqueue.callback_data)
+        assert await press(9, enqueue.callback_data) == "Добавлено в очередь"
+        assert (await c.get("/api/playback/queue")).json() == []
+        [entry] = (await other.get("/api/playback/queue")).json()
+        assert entry["track"]["nd_song_id"] == "nd1"
+        assert entry["track"]["ref"] == f"lib:{entry['track']['library_track_id']}"
         tampered = heart.callback_data[:-1] + ("0" if heart.callback_data[-1] != "0" else "1")
         assert "Подключите Telegram" in await press(999, heart.callback_data)
         assert await press(9, tampered) == "Этот трек недоступен"

@@ -1,21 +1,16 @@
 import type { ReactNode } from 'react';
-import { addToQueue, removeFromQueue, useListen, type ListenTrack } from '../lib/listen';
+import { addToQueue, manualQueueKey, unqueue, useListen, type ListenTrack } from '../lib/listen';
 import { IconButton, cx } from './ui';
 
-/** The quick queue button of a track row of the table (a computer): a click puts the track at the end of the page
- * player's queue, one more click takes it out again. Only what the user queued by hand is marked
- * (`ListenTrack.queued`), not the rest of the list that plays. The row is a `group/track`: the button shows on
+/** Puts a track at the end of the account's manual queue, or takes it out again. The row is a
+ * `group/track`: the button shows on
  * hovering it, and always — green — once the track is queued. The playing track has it too: it can be queued to play
  * once more.
  * `instead`: what stands in its place while it is not shown — the row's number. `marked`: the button is shown
  * whatever the mouse is over (a drag down the rows passes this one), so the number gives way. */
 export function QueueButton({ track, className, instead, marked }: { track: ListenTrack; className?: string; instead?: ReactNode; marked?: boolean }) {
-  const queuedAt = useListen((s) => {
-    if (!s.track) return -1;
-    for (let i = s.index + 1; i < s.queue.length; i++) if (s.queue[i].queued && s.queue[i].ref === track.ref) return i;
-    return -1;
-  });
-  const queued = queuedAt >= 0;
+  const key = manualQueueKey(track);
+  const queued = useListen((s) => s.manualQueue.some((entry) => manualQueueKey(entry.track) === key));
   const button = (
     <IconButton
       icon="queue"
@@ -23,8 +18,8 @@ export function QueueButton({ track, className, instead, marked }: { track: List
       label={queued ? `Убрать из очереди: «${track.title}»` : `В очередь: «${track.title}»`}
       onClick={(e) => {
         e.stopPropagation();
-        if (queued) removeFromQueue(queuedAt);
-        else addToQueue([track]);
+        if (queued) void unqueue([track]);
+        else void addToQueue([track]);
       }}
       className={cx(
         queued ? '!text-accent' : 'text-muted opacity-0 hover:text-fg focus-visible:opacity-100 group-hover/track:opacity-100',

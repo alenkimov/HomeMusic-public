@@ -182,13 +182,16 @@ def lyrics_messages(text: str, *, caption_room: int = CAPTION_MAX) -> tuple[str 
     return None, [_quote(c) for c in chunks]
 
 
-async def send_audio(token: str, chat_id: str, path: Path, *, filename: str, title: str, performer: str, favorite_data: str,
+async def send_audio(token: str, chat_id: str, path: Path, *, filename: str, title: str, performer: str,
+                     favorite_data: str, queue_data: str,
                      duration_s: int | None = None, cover: bytes | None = None, lyrics: str | None = None,
                      link: str | None = None, sender_id: int | None = None) -> None:
     thumb = thumbnail(cover)
-    buttons = [InlineKeyboardButton(text="Открыть", url=link)] if link else []
-    buttons.append(InlineKeyboardButton(text="❤️", callback_data=favorite_data))
-    markup = InlineKeyboardMarkup(inline_keyboard=[buttons])
+    buttons = [[InlineKeyboardButton(text="В очередь", callback_data=queue_data),
+                InlineKeyboardButton(text="❤️", callback_data=favorite_data)]]
+    if link:
+        buttons.append([InlineKeyboardButton(text="Открыть", url=link)])
+    markup = InlineKeyboardMarkup(inline_keyboard=buttons)
     chat = int(chat_id) if chat_id.lstrip("-").isdigit() else chat_id
     async with bot_of(token, SEND_WAIT_S) as bot:
         signature = ""

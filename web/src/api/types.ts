@@ -1549,6 +1549,7 @@ export interface HubEventMap {
   import: ImportEvent;
   search_history: Record<string, never>;
   genres: Record<string, never>;
+  playback_queue: Record<string, never>;
   ping: Record<string, never>;
   /** Pseudo event: the stream (re)connected after a drop; refetch state. */
   reconnect: Record<string, never>;
@@ -1585,6 +1586,8 @@ export interface PlayEventIn {
   nd_song_id?: string | null;
   playback_id?: string | null;
   device_id?: string | null;
+  queue_entry_id?: number;
+  queue_claim?: string;
   listened_ms?: number | null;
   track_metadata?: { title?: string; album?: string; artist_credit?: string; artists?: { name: string; ref?: string }[]; duration_s?: number | null; isrc?: string; year?: number } | null;
   position_s?: number | null;

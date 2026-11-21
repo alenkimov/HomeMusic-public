@@ -199,7 +199,7 @@ onPlayEvent((e) => {
   const s = session;
   if (!s || e.kind === 'progress' || e.kind === 'interrupted' || e.kind === 'error') return;
   if ((e.target_type && e.target_type !== 'track') || e.reverts_event_id) return;
-  const rec = !!e.ref && s.recs.has(e.ref);
+  const rec = e.context !== 'queue' && !!e.ref && s.recs.has(e.ref);
   if (rec) s.pending.push(e);
   // the player moved on (a track started) or the user reacted to a recommendation: the Hub fills the places ahead
   if (e.kind === 'start' || (rec && (e.kind === 'finish' || e.kind === 'skip' || e.kind === 'like' || e.kind === 'dislike'))) void ask();

@@ -141,6 +141,7 @@ def create_app() -> FastAPI:
         lyrics,
         medialib,
         mixes,
+        playback_queue,
         playlists,
         plays,
         quality,
@@ -160,7 +161,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="HomeMusic Hub", version="0.1.0", lifespan=lifespan, docs_url=None, openapi_url=None,
                   redoc_url=None)
     for r in (auth.router, search.router, catalog.router, downloads.router, listen.router, library.router, medialib.router, file_picker.router,
-              uploads.router, playlists.router, plays.router, mixes.router, wave.router, smart_shuffle.router, imports.router, events.router, system.router, admin.router,
+              uploads.router, playlists.router, plays.router, playback_queue.router, mixes.router, wave.router, smart_shuffle.router, imports.router, events.router, system.router, admin.router,
               artists.router, insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, quality.router, discoveries.router, listenbrainz.router, for_you.router, subsonic.router, integrations.router):
         app.include_router(r)
     app.include_router(integrations.callback_router)

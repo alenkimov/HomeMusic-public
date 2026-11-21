@@ -625,7 +625,7 @@ export function TrackRow({
     return (
       <div ref={rowRef} onClickCapture={onPick} aria-selected={selected} data-track-row={releaseFeed || undefined}>
         <SwipeRow
-          right={{ icon: 'queue', onAction: () => { if (needsFile) return void toast('У трека нет файла: выберите его в меню', 'info'); addToQueue([menuTrack.listen as ListenTrack]); toast(`В очереди: «${displayTitle}»`, 'success'); } }}
+          right={{ icon: 'queue', onAction: async () => { if (needsFile) return void toast('У трека нет файла: выберите его в меню', 'info'); if (await addToQueue([menuTrack.listen as ListenTrack])) toast(`В очереди: «${displayTitle}»`, 'success'); } }}
           left={{ icon: 'plus', armedIcon: 'check', onAction: () => setPicking(true) }}
         >
           <div className={cx('flex min-h-16 items-center', releaseFeed ? 'group/track min-w-0 gap-2 rounded-lg px-2 py-1 hover:bg-fg/5 focus-within:bg-fg/5' : 'gap-1 pl-4 pr-1', selected && 'bg-accent/15', unreachable && 'opacity-40', grey)}>

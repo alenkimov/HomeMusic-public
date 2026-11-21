@@ -215,6 +215,7 @@ function end() {
 }
 
 onPlayEvent((e) => {
+  if (e.context === 'queue') return;
   if (e.kind === 'progress' || e.kind === 'interrupted' || e.kind === 'error') return;
   if ((e.target_type && e.target_type !== 'track') || e.reverts_event_id) return;
   const s = session;

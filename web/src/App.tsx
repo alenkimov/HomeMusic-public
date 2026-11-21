@@ -14,7 +14,7 @@ import { ErrorState, Spinner, cx } from './components/ui';
 import { useDesktop } from './lib/desktop';
 import { STANDALONE } from './lib/embedded';
 import { hubEvents } from './lib/events';
-import { restoreListening, stopListening } from './lib/listen';
+import { restoreListening, stopListening, watchManualQueue } from './lib/listen';
 import { restoreWave } from './lib/wave';
 import { resetInPlaylists } from './lib/inPlaylists';
 import { resetReleases } from './lib/releases';
@@ -236,6 +236,7 @@ export function App() {
   }, []);
   // whom the user does not listen to: the player needs it from the start, to go past their tracks
   const uid = me?.id;
+  useEffect(() => uid != null ? watchManualQueue() : undefined, [uid]);
   useVersionLabelsSync(uid);
   useEffect(() => {
     if (uid != null) void refreshDislikes(true);

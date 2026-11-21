@@ -59,7 +59,7 @@ async def env(hub_env):
             async with app_client(app) as client:
                 await add_track("Кино", "Группа крови", "ndK", ref="dz:100")
                 await add_track("Кто-то", "Своё", "ndX")
-                yield {"client": client, "state": state}
+                yield {"app": app, "client": client, "state": state}
 
 
 async def add_track(artist: str, title: str, nd_song_id: str, duration_s: int = 245, **kw) -> int:
@@ -104,6 +104,38 @@ async def test_checkpoints_are_cumulative_and_retries_are_idempotent(env):
     assert (await post(c, ev("finish", ref="dz:100", position_s=100)))["accepted"] == 1
     legacy = next(x for x in await stored() if x.position_s == 100)
     assert legacy.listened_ms is None and legacy.playback_id is None
+
+
+async def test_manual_queue_resumes_on_another_device_in_order(env):
+    computer = env["client"]
+    path = "/api/playback/queue"
+    async with app_client(env["app"]) as phone:
+        account = (await computer.get("/api/auth/me")).json()["id"]
+        tracks = [{"ref": f"sp:{i}", "title": f"Трек {i}", "artist": "Исполнитель"} for i in range(10)]
+        body = {"expected_user_id": account, "request_id": "first-batch", "tracks": tracks}
+        assert (await computer.post(path, json=body)).json() == {"count": 10}
+        assert (await phone.post(path, json=body)).json() == {"count": 0}
+        rows = (await phone.get(path)).json()
+        assert [row["track"] for row in rows] == tracks
+
+        first = f"{path}/{rows[0]['id']}"
+        assert (await computer.post(first + "/claim", json={"token": "discarded"})).json() == {"ok": True}
+        assert (await phone.post(first + "/claim", json={"token": "busy"})).json() == {"ok": False}
+        assert (await computer.post(first + "/release", json={"token": "discarded"})).is_success
+        for row in rows[:5]:
+            entry = f"{path}/{row['id']}"
+            assert (await computer.post(entry + "/claim", json={"token": "computer"})).json() == {"ok": True}
+            assert (await phone.post(entry + "/played", json={"token": "discarded"})).is_success
+            assert row["id"] in [item["id"] for item in (await phone.get(path)).json()]
+            assert (await post(computer, ev("start", ref=row["track"]["ref"], playback_id=f"play-{row['id']}",
+                                            device_id="computer", listened_ms=0, queue_entry_id=row["id"],
+                                            queue_claim="computer")))["accepted"] == 1
+        assert (await phone.get(path)).json() == rows[5:]
+        assert (await phone.post(f"{path}/{rows[9]['id']}/move", json={"before_id": rows[5]["id"]})).is_success
+        assert (await phone.post(f"{path}/{rows[9]['id']}/claim", json={"token": "phone"})).json() == {"ok": True}
+        assert (await phone.post(f"{path}/{rows[9]['id']}/played", json={"token": "phone"})).is_success
+        assert (await computer.post(path, json={**body, "tracks": tracks[:1], "request_id": "next"})).json() == {"count": 1}
+        assert [row["track"] for row in (await computer.get(path)).json()] == [*tracks[5:9], tracks[0]]
 
 
 async def test_listening_metadata_survives_library_deletion(env):

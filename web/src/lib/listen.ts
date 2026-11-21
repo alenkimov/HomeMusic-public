@@ -9,6 +9,7 @@ import { startDownload } from './actions';
 import { hubEvents } from './events';
 import { NATIVE_PLAYING_EVENT, canPlayAll, pauseNative, webPlayerShown } from './player';
 import { listeningAccount, newEventId, newLaunch, playEvent, routeContext, type Launch } from './plays';
+import { toast } from './ui';
 
 /** Listening to catalog tracks before downloading them, in the page itself (one `<audio>`): the Hub picks the
  * file a download would take and streams it (GET /api/listen). Works in a plain browser too. Inside the Android
@@ -36,7 +37,7 @@ export interface ListenTrack {
   /** a recommendation of the smart shuffle (`lib/smartShuffle.ts`): ✨ in the player and the queue; `label` — «Рекомендация
    * на основе …», `session` — the Hub's session (its events carry the context `smart:<session>`) */
   rec?: { label: string; session: string } | null;
-  /** put into the queue by hand («Играть следующим», «В очередь»): the quick queue button marks it and takes it out */
+  /** The current track came from the manual queue. Pending manual entries are kept separately. */
   queued?: boolean;
   title: string;
   artist: string;
@@ -56,6 +57,11 @@ export interface ListenTrack {
   year?: number;
   duration_s?: number | null;
   spotify_plays?: number | null;
+}
+
+export interface ManualQueueEntry {
+  id: number;
+  track: ListenTrack;
 }
 
 /** A file on «Загрузить файлы» that is played before it is brought in (`up:<upload>`): it is no track of the library
@@ -89,6 +95,7 @@ export interface ListenState {
   track: ListenTrack | null;
   /** the list the track was started from (album, search results); `index` is the track's place in it */
   queue: readonly ListenTrack[];
+  manualQueue: readonly ManualQueueEntry[];
   index: number;
   /** where the list was started from (`routeContext()`, `wave:<id>`) */
   context: string;
@@ -144,6 +151,7 @@ let smartChosen = savedModes.smart;
 let state: ListenState = {
   track: null,
   queue: [],
+  manualQueue: [],
   index: 0,
   context: 'other',
   page: '',
@@ -164,7 +172,8 @@ function set(patch: Partial<ListenState>) {
   const shown = !!state.track;
   state = { ...state, ...patch };
   // Time updates are frequent; queue edits and controls must survive an immediate reload.
-  persistListening(Object.keys(patch).some((key) => key !== 'position' && key !== 'duration'));
+  const playerKeys = Object.keys(patch).filter((key) => key !== 'manualQueue');
+  if (playerKeys.length) persistListening(playerKeys.some((key) => key !== 'position' && key !== 'duration'));
   if (!!state.track !== shown) webPlayerShown(!!state.track);
   for (const fn of subscribers) fn();
 }
@@ -203,7 +212,7 @@ const RESTART_AFTER_S = 3;
 const FINISH_SHARE = 0.9;
 
 /** The track being played, as reported to the Hub: `started` once its `start` was sent. */
-type OpenPlay = { ref: string; context: string; page?: string; launch: Launch; started: boolean; playbackId: string; listenedMs: number; anchor: number | null; account: number | null; ndSongId?: string | null; trackId?: number | null };
+type OpenPlay = { ref: string; context: string; page?: string; launch: Launch; started: boolean; playbackId: string; listenedMs: number; anchor: number | null; account: number | null; ndSongId?: string | null; trackId?: number | null; manual?: ManualClaim };
 let played: OpenPlay | null = null;
 let OPEN_PLAY_KEY = (() => {
   try {
@@ -327,7 +336,8 @@ function reportStart() {
   p.ndSongId = state.info.nd_song_id;
   p.trackId = state.info.track_id ?? state.track?.library_track_id ?? null;
   p.anchor = performance.now();
-  playEvent('start', { ref: p.ref, nd_song_id: p.ndSongId, track_id: p.trackId }, { context: p.context, page: p.page, playback_id: p.playbackId, device_id: deviceId, listened_ms: 0, track_metadata: metadata(), account: p.account, launch_id: p.launch.id, launch_origin: p.launch.origin });
+  playEvent('start', { ref: p.ref, nd_song_id: p.ndSongId, track_id: p.trackId }, { context: p.context, page: p.page, playback_id: p.playbackId, device_id: deviceId, listened_ms: 0, track_metadata: metadata(), account: p.account, launch_id: p.launch.id, launch_origin: p.launch.origin,
+    ...(p.manual ? { queue_entry_id: p.manual.id, queue_claim: p.manual.token } : {}) });
   checkpoint();
 }
 
@@ -364,6 +374,7 @@ function el(): HTMLAudioElement {
   a.addEventListener('playing', () => {
     if (resolving) resolving.retryMedia = false;
     set({ phase: 'playing', error: null });
+    confirmManualPlayback();
     refreshInfo();
     reportStart();
     if (played?.started && played.anchor === null) played.anchor = performance.now();
@@ -385,11 +396,8 @@ function el(): HTMLAudioElement {
   // the same element plays on: it was unlocked by the first tap, so the next track may start without one
   a.addEventListener('ended', () => {
     reportEnd(true);
-    const after = ahead(state.index);
     if (state.repeat === 'one') start(state.queue, state.index, true);
-    else if (after < state.queue.length) start(state.queue, after, true);
-    else if (state.repeat === 'all' && !onWave() && ahead(-1) < state.queue.length) start(state.queue, ahead(-1), true);
-    else set({ phase: 'ended' });
+    else if (!advance(true)) set({ phase: 'ended' });
   });
   a.addEventListener('error', () => mediaFailed(a));
   // the app's player started: one player on screen, so this one closes (the app shows its own again)
@@ -414,13 +422,15 @@ function mediaFailed(a: HTMLAudioElement) {
 }
 
 function playbackFailed(message: string) {
-  const after = ahead(state.index);
-  if (autoAdvanceOnFailure && after < state.queue.length) {
-    start(state.queue, after, true);
-    return;
-  }
   set({ phase: 'error', error: message });
   audio?.pause();
+  if (autoAdvanceOnFailure) {
+    if (activeManual && !activeManual.started) {
+      failedManualEntries.add(activeManual.id);
+      releaseManualPlayback();
+    }
+    advance(true, false);
+  }
 }
 
 function play(a: HTMLAudioElement) {
@@ -431,19 +441,34 @@ function play(a: HTMLAudioElement) {
 }
 
 /** `auto`: reached by the previous track ending; a track that can't be played is then skipped. */
-function start(queue: readonly ListenTrack[], index: number, auto = false, position = 0, autoplay = true) {
+function start(queue: readonly ListenTrack[], index: number, auto = false, position = 0, autoplay = true, claim?: ManualClaim) {
   const track = queue[index];
+  cancelManualOpening();
+  if (claim || track !== state.track) {
+    releaseManualPlayback();
+    activeManual = claim;
+  }
+  // A finished manual track has left the account's queue. Keep the automatic list in its own order.
+  if (queue.some((entry, i) => entry.queued && i !== index)) {
+    const from = index;
+    index = queue.slice(0, from).filter((entry) => !entry.queued).length;
+    queue = queue.filter((entry, i) => i === from || !entry.queued);
+  }
   const a = el();
   reportEnd();
   // a recommendation of the smart shuffle reports under its session, the playlist's own songs under their list
-  played = { ref: track.ref, context: track.rec ? `smart:${track.rec.session}` : listContext, page: listPage, launch: listLaunch, started: false, playbackId: newEventId(), listenedMs: 0, anchor: null, account: listeningAccount() };
+  played = { ref: track.ref, context: track.queued ? 'queue' : track.rec ? `smart:${track.rec.session}` : listContext,
+    page: listPage, launch: listLaunch, started: false, playbackId: newEventId(), listenedMs: 0, anchor: null,
+    account: listeningAccount(), manual: activeManual };
   resolving?.controller.abort();
   const ctl = new AbortController();
   const resolution = { controller: ctl, pending: true, retryMedia: false };
   resolving = resolution;
   autoAdvanceOnFailure = auto;
   pendingSeek = position;
-  set({ track, queue, index, context: listContext, page: listPage, phase: autoplay ? 'resolving' : 'paused', info: null, error: null, position, duration: track.duration_s ?? 0 });
+  set({ track, queue, index, context: listContext, page: listPage, phase: autoplay ? 'resolving' : 'paused', info: null,
+    error: null, position, duration: track.duration_s ?? 0,
+    ...(claim ? { manualQueue: state.manualQueue.filter((entry) => entry.id !== claim.id) } : {}) });
   const ref = playbackRef(track);
   a.src = listenStreamUrl(ref);
   if (autoplay) play(a);
@@ -509,9 +534,13 @@ function refreshInfo() {
 function prefetchNext() {
   // the tracks the queue plays next, the nearest first: the Hub opens their files now (opening a source is what
   // takes seconds) — the next one whole, the ones after it only their start, so skipping through them is instant
-  const ahead: ListenTrack[] = [];
-  for (let k = 1; k <= AHEAD && state.index + k < state.queue.length; k++) ahead.push(state.queue[state.index + k]);
-  if (!ahead.length && state.repeat === 'all' && !onWave() && state.queue.length) ahead.push(state.queue[0]);
+  if (!state.track) return;
+  const ahead = state.manualQueue.filter((entry) => !failedManualEntries.has(entry.id)).slice(0, AHEAD).map((entry) => entry.track);
+  for (let k = state.index + 1; ahead.length < AHEAD && k < state.queue.length; k++) ahead.push(state.queue[k]);
+  if (!ahead.length && state.repeat === 'all' && !onWave()) {
+    const first = state.queue.find((track) => !track.queued);
+    if (first) ahead.push(first);
+  }
   const want = new Map(ahead.map((t, k) => [playbackRef(t), k === 0 ? 'whole' : 'head'] as const));
   for (const [ref, p] of prefetching) {
     if (want.get(ref) === p.how) want.delete(ref); // asked for already, and for as much
@@ -603,6 +632,7 @@ export function listen(track: ListenTrack, queue?: readonly ListenTrack[], conte
 }
 
 function startList(track: ListenTrack, queue?: readonly ListenTrack[], context?: string, origin?: LaunchOrigin, page?: string) {
+  failedManualEntries.clear();
   listContext = context ?? routeContext();
   listPage = page ?? location.hash.replace(/^#/, '').split('?')[0];
   listLaunch = newLaunch(listContext, origin);
@@ -641,11 +671,109 @@ export function listenAll(list: readonly ListenTrack[], opts: { shuffle?: boolea
 let unshuffled: readonly ListenTrack[] | null = null;
 
 const SESSION_KEY = 'hm-listen-session:';
+const QUEUE_MIGRATION_KEY = 'hm-manual-queue-migration:';
 let sessionAccount: number | null = null;
 let lastSaved = 0;
+type ManualClaim = { id: number; token: string; started: boolean };
+let activeManual: ManualClaim | undefined;
+const failedManualEntries = new Set<number>();
+let manualOpening = false;
+let manualTransition = 0;
+let queueRead = 0;
+let queueWrites = Promise.resolve<unknown>(undefined);
+const queueConfirmations = new Map<number, string>();
+
+function cancelManualOpening() {
+  manualTransition++;
+  manualOpening = false;
+}
+
+function releaseManualPlayback() {
+  const claim = activeManual;
+  activeManual = undefined;
+  if (claim && !claim.started) {
+    void api.releaseManual(claim.id, claim.token).then(refreshManualQueue, () => undefined);
+  }
+}
+
+export async function refreshManualQueue() {
+  const account = sessionAccount;
+  if (account === null) return;
+  const read = ++queueRead;
+  try {
+    const entries = await api.manualQueue();
+    if (read !== queueRead || account !== sessionAccount) return;
+    for (const id of queueConfirmations.keys()) {
+      if (!entries.some((entry) => entry.id === id)) queueConfirmations.delete(id);
+    }
+    set({ manualQueue: entries.filter((entry) => entry.id !== activeManual?.id && !queueConfirmations.has(entry.id)) });
+    if (listenBusy()) prefetchNext();
+  } catch { /* The device keeps its last view until the Hub is reachable again. */ }
+}
+
+function flushQueueConfirmations() {
+  const account = sessionAccount;
+  for (const [id, token] of queueConfirmations) {
+    void api.confirmManual(id, token).then(() => {
+      if (account === sessionAccount) void refreshManualQueue();
+    }, () => undefined);
+  }
+}
+
+function confirmManualPlayback() {
+  if (!activeManual || activeManual.started) return;
+  activeManual.started = true;
+  queueConfirmations.set(activeManual.id, activeManual.token);
+  persistListening(true);
+  flushQueueConfirmations();
+}
+
+async function appendManualTracks(tracks: readonly ListenTrack[], account: number, requestId: string) {
+  let count = 0;
+  for (let i = 0; i < tracks.length; i += 400) {
+    if (account !== sessionAccount) break;
+    const { count: added } = await api.appendManualQueue(tracks.slice(i, i + 400), account, `${requestId}:${i}`);
+    count += added;
+  }
+  return count;
+}
+
+export function watchManualQueue() {
+  const account = sessionAccount;
+  if (account === null) return;
+  const fetchQueue = () => {
+    flushQueueConfirmations();
+    void refreshManualQueue();
+  };
+  const onVisible = () => { if (document.visibilityState === 'visible') fetchQueue(); };
+  const offChanged = hubEvents.on('playback_queue', () => void refreshManualQueue());
+  const offReconnect = hubEvents.on('reconnect', fetchQueue);
+  const offPing = hubEvents.on('ping', () => void refreshManualQueue());
+  window.addEventListener('online', fetchQueue);
+  document.addEventListener('visibilitychange', onVisible);
+  const migration = async () => {
+    try {
+      const key = QUEUE_MIGRATION_KEY + account;
+      const old = JSON.parse(localStorage.getItem(key) ?? 'null') as { id: string; tracks: ListenTrack[] } | null;
+      if (old) {
+        await appendManualTracks(old.tracks, account, old.id);
+        if (sessionAccount === account) localStorage.removeItem(key);
+      }
+    } catch { /* A saved migration can be retried next time the player is opened. */ }
+    fetchQueue();
+  };
+  queueWrites = queueWrites.then(migration);
+  return () => {
+    offChanged();
+    offReconnect();
+    offPing();
+    window.removeEventListener('online', fetchQueue);
+    document.removeEventListener('visibilitychange', onVisible);
+  };
+}
 
 interface SavedSession {
-  version: 1;
+  version: 1 | 2;
   queue: ListenTrack[];
   index: number;
   context: string;
@@ -665,12 +793,16 @@ function persistListening(force = false) {
   if (sessionAccount === null || (!force && Date.now() - lastSaved < 1000)) return;
   try {
     const key = SESSION_KEY + sessionAccount;
-    if (!state.track) localStorage.removeItem(key);
+    const unplayedManual = activeManual != null && !activeManual.started;
+    const queue = unplayedManual ? state.queue.filter((_, i) => i !== state.index) : [...state.queue];
+    if (!state.track || !queue.length) localStorage.removeItem(key);
     else {
       const saved: SavedSession = {
-        version: 1, queue: [...state.queue], index: state.index, context: state.context, page: state.page, launch: listLaunch,
-        position: state.position, autoplay: listenBusy(), shuffle: state.shuffle, smart: state.smart, repeat: state.repeat,
-        originalOrder: unshuffled?.map((t) => state.queue.indexOf(t)).filter((i) => i >= 0) ?? null,
+        version: 2, queue, index: unplayedManual ? Math.max(0, state.index - 1) : state.index,
+        context: state.context, page: state.page, launch: listLaunch,
+        position: unplayedManual ? 0 : state.position, autoplay: !unplayedManual && listenBusy(),
+        shuffle: state.shuffle, smart: state.smart, repeat: state.repeat,
+        originalOrder: unshuffled?.map((t) => queue.indexOf(t)).filter((i) => i >= 0) ?? null,
       };
       localStorage.setItem(key, JSON.stringify(saved));
     }
@@ -682,14 +814,23 @@ function persistListening(force = false) {
 export function restoreListening(account: number | null) {
   if (sessionAccount === account) return;
   if (sessionAccount !== null) stopListening();
+  queueConfirmations.clear();
+  failedManualEntries.clear();
+  set({ manualQueue: [] });
   sessionAccount = account;
   if (account === null || canPlayAll()) return;
   try {
     const saved = JSON.parse(localStorage.getItem(SESSION_KEY + account) ?? 'null') as SavedSession | null;
     const validTrack = (t: ListenTrack) => t && typeof t.ref === 'string' && !!t.ref && typeof t.title === 'string' && typeof t.artist === 'string';
-    if (!saved || saved.version !== 1 || !Array.isArray(saved.queue) || !saved.queue.length || !saved.queue.every(validTrack)
+    if (!saved || (saved.version !== 1 && saved.version !== 2) || !Array.isArray(saved.queue) || !saved.queue.length || !saved.queue.every(validTrack)
       || !Number.isInteger(saved.index) || saved.index < 0 || saved.index >= saved.queue.length
       || typeof saved.context !== 'string' || !Number.isFinite(saved.position) || saved.position < 0) return;
+    if (saved.version === 1) {
+      const pending = saved.queue.slice(saved.index + 1).filter((track) => track.queued);
+      if (pending.length && !localStorage.getItem(QUEUE_MIGRATION_KEY + account)) {
+        localStorage.setItem(QUEUE_MIGRATION_KEY + account, JSON.stringify({ id: newEventId(), tracks: pending }));
+      }
+    }
     unshuffled = Array.isArray(saved.originalOrder) && saved.originalOrder.every((i) => Number.isInteger(i) && i >= 0 && i < saved.queue.length)
       ? saved.originalOrder.map((i) => saved.queue[i]) : null;
     listContext = saved.context;
@@ -738,14 +879,14 @@ export function setShuffle(on: boolean) {
   const current = state.queue[state.index];
   if (on) {
     if (wasSmart) return;
-    unshuffled = state.queue;
+    unshuffled = state.queue.filter((t) => !t.queued);
     set({ queue: [current, ...shuffled(state.queue.filter((_, i) => i !== state.index))], index: 0 });
   } else {
     const base = unshuffled ?? state.queue;
     const own = state.queue.filter((t) => !t.rec);
     let queue: readonly ListenTrack[];
-    if (current.rec) {
-      // a recommendation plays now: what is left of the list goes on after it, in the list's own order
+    if (current.rec || current.queued) {
+      // The current track is outside the list. Put the remaining list tracks after it in their original order.
       const left = new Set(state.queue.slice(state.index + 1).filter((t) => !t.rec));
       queue = [current, ...base.filter((t) => left.has(t)), ...[...left].filter((t) => !base.includes(t))];
     } else {
@@ -767,7 +908,7 @@ export function cycleShuffle() {
     smartChosen = true;
     setModes({});
     set({ smart: true });
-    smartHooks.begin((unshuffled ?? state.queue).filter((t) => !t.rec), state.queue[state.index]);
+    smartHooks.begin((unshuffled ?? state.queue).filter((t) => !t.rec && !t.queued), state.queue[state.index]);
     return;
   }
   setShuffle(false);
@@ -826,7 +967,7 @@ export function insertAfterOwn(items: ReadonlyArray<{ after: string; track: List
   }
   if (!added) return;
   set({ queue });
-  if (state.phase === 'ended' && hasNext(state)) start(state.queue, state.index + 1, true);
+  if (state.phase === 'ended' && hasNext(state)) advance(true);
   else if (state.phase !== 'error') prefetchNext();
 }
 
@@ -843,14 +984,23 @@ export function cycleRepeat() {
   prefetchNext();
 }
 
-/** «Добавить в очередь»: after the last track (when nothing plays, they start now). */
-export function addToQueue(tracks: readonly ListenTrack[]) {
-  if (!tracks.length) return;
-  if (!state.track) return listen(tracks[0], tracks);
-  const ended = state.phase === 'ended';
-  set({ queue: [...state.queue, ...tracks.map((t) => ({ ...t, queued: true }))] });
-  if (ended) start(state.queue, state.index + 1, true);
-  else prefetchNext();
+/** Adds to the end of the account's manual queue. */
+export function addToQueue(tracks: readonly ListenTrack[]): Promise<number> {
+  const account = sessionAccount;
+  if (!tracks.length || account === null) return Promise.resolve(0);
+  const requestId = newEventId();
+  const added = queueWrites.then(async () => {
+    try {
+      return await appendManualTracks(tracks, account, requestId);
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+      return 0;
+    } finally {
+      if (sessionAccount === account) await refreshManualQueue();
+    }
+  });
+  queueWrites = added;
+  return added;
 }
 
 /** Takes a track that is not the current one out of the queue. */
@@ -860,23 +1010,91 @@ export function removeFromQueue(index: number) {
   prefetchNext();
 }
 
-/** The refs of the tracks the user queued by hand that are still to play. */
+export function manualQueueKey(track: ListenTrack): string {
+  return track.library_track_id && !track.ref.startsWith('file:') ? `lib:${track.library_track_id}` : track.ref;
+}
+
 export function queuedRefs(): Set<string> {
-  const out = new Set<string>();
-  for (let i = state.index + 1; i < state.queue.length; i++) if (state.queue[i].queued) out.add(state.queue[i].ref);
-  return out;
+  return new Set(state.manualQueue.map((entry) => manualQueueKey(entry.track)));
 }
 
 /** Takes these tracks out of what the user queued by hand (the list that plays keeps its own tracks). */
-export function unqueue(refs: readonly string[]): number {
-  const drop = new Set(refs);
-  const queue = state.queue.filter((t, i) => !(i > state.index && t.queued && drop.has(t.ref)));
-  const removed = state.queue.length - queue.length;
-  if (removed) {
-    set({ queue });
-    prefetchNext();
+export function unqueue(tracks: readonly ListenTrack[]): Promise<number> {
+  const drop = new Set(tracks.map(manualQueueKey));
+  return removeManualQueue(state.manualQueue.filter((entry) => drop.has(manualQueueKey(entry.track))).map((entry) => entry.id));
+}
+
+export async function removeManualQueue(ids: number[]) {
+  let count = 0;
+  try {
+    for (let i = 0; i < ids.length; i += 400) {
+      count += (await api.removeManualQueue(ids.slice(i, i + 400))).count;
+    }
+  } catch (e) {
+    toast(errorMessage(e), 'error');
+  } finally {
+    if (ids.length) await refreshManualQueue();
   }
-  return removed;
+  return count;
+}
+
+export async function moveManualQueue(id: number, overId: number) {
+  const rows = state.manualQueue;
+  const from = rows.findIndex((entry) => entry.id === id);
+  const to = rows.findIndex((entry) => entry.id === overId);
+  if (from < 0 || to < 0 || from === to) return;
+  const before = rows[to + (from < to ? 1 : 0)]?.id ?? null;
+  try {
+    await api.moveManualQueue(id, before);
+  } catch (e) {
+    toast(errorMessage(e), 'error');
+  } finally {
+    await refreshManualQueue();
+  }
+}
+
+async function openManualQueue(entries: readonly ManualQueueEntry[], auto: boolean, fallback?: () => void) {
+  if (manualOpening || sessionAccount === null) return;
+  const epoch = ++manualTransition;
+  manualOpening = true;
+  try {
+    for (const entry of entries) {
+      const token = newEventId();
+      const { ok } = await api.claimManual(entry.id, token);
+      if (epoch !== manualTransition) {
+        if (ok) void api.releaseManual(entry.id, token).catch(() => undefined);
+        return;
+      }
+      if (!ok) continue;
+      const track = { ...entry.track, queued: true };
+      const at = state.track ? state.index + 1 : 0;
+      const queue = [...state.queue.slice(0, at), track, ...state.queue.slice(at)];
+      if (!state.track) {
+        listContext = 'queue';
+        listPage = '/player';
+        listLaunch = newLaunch('queue');
+      }
+      start(queue, at, auto, 0, true, { id: entry.id, token, started: false });
+      return;
+    }
+    if (!fallback) toast('Очередь обновилась', 'info');
+  } catch (e) {
+    if (epoch === manualTransition && !fallback) toast(errorMessage(e), 'error');
+  } finally {
+    if (epoch === manualTransition) {
+      manualOpening = false;
+      void refreshManualQueue();
+      fallback?.();
+    }
+  }
+}
+
+export function playManualQueueAt(id: number) {
+  const entry = state.manualQueue.find((row) => row.id === id);
+  if (entry) {
+    failedManualEntries.delete(id);
+    void openManualQueue([entry], false);
+  }
 }
 
 /** Moves a track of the queue to another place (the current one too). */
@@ -900,10 +1118,10 @@ export function playQueueAt(index: number) {
 
 /** More tracks of a list were loaded (search results): if it is the list playing, it plays on through them too. */
 export function extendQueue(list: readonly ListenTrack[]) {
-  const q = state.queue;
+  const q = state.queue.filter((track) => !track.queued);
   // the playing queue is the list as it was: the same refs in the same order
   if (!state.track || list.length <= q.length || q.some((t, i) => t.ref !== list[i].ref)) return;
-  set({ queue: [...q, ...list.slice(q.length)] });
+  set({ queue: [...state.queue, ...list.slice(q.length)] });
   if (state.phase !== 'error' && state.phase !== 'ended') prefetchNext();
 }
 
@@ -913,18 +1131,38 @@ export function replaceUpcoming(list: readonly ListenTrack[]) {
   if (!state.track) return;
   const ended = state.phase === 'ended';
   set({ queue: [...state.queue.slice(0, state.index + 1), ...list] });
-  if (ended && hasNext(state)) start(state.queue, state.index + 1, true);
+  if (ended && hasNext(state)) advance(true);
   else if (state.phase !== 'error') prefetchNext();
 }
 
-export const hasNext = (s: ListenState) => s.index + 1 < s.queue.length;
+export const hasNext = (s: ListenState) => s.manualQueue.some((entry) => !failedManualEntries.has(entry.id)) || s.index + 1 < s.queue.length;
 export const hasPrev = (s: ListenState) => s.index > 0;
 
 /** Plays the next track of the queue; false at its end. */
 export function next(): boolean {
+  return advance(false);
+}
+
+function advance(auto: boolean, wrap = true): boolean {
+  if (manualOpening) return true;
+  const entries = state.manualQueue.filter((entry) => !failedManualEntries.has(entry.id));
+  if (entries.length && sessionAccount !== null) {
+    void openManualQueue(entries, auto, () => {
+      if (!nextAutomatic(auto, wrap) && auto && state.phase !== 'error') set({ phase: 'ended' });
+    });
+    return true;
+  }
+  return nextAutomatic(auto, wrap);
+}
+
+function nextAutomatic(auto: boolean, wrap: boolean): boolean {
   const after = ahead(state.index);
-  if (after < state.queue.length) start(state.queue, after);
-  else if (state.repeat === 'all' && state.track && !onWave() && ahead(-1) < state.queue.length) start(state.queue, ahead(-1));
+  if (after < state.queue.length) start(state.queue, after, auto);
+  else if (wrap && state.repeat === 'all' && state.track && !onWave()) {
+    const first = state.queue.findIndex((track) => !track.queued && !ofHiddenArtist(track));
+    if (first < 0) return false;
+    start(state.queue, first, auto);
+  }
   else return false;
   return true;
 }
@@ -986,6 +1224,8 @@ export function seek(seconds: number) {
 
 /** Stops and hides the player. */
 export function stopListening() {
+  cancelManualOpening();
+  releaseManualPlayback();
   reportEnd();
   resolving?.controller.abort();
   resolving = null;

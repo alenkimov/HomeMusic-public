@@ -19,14 +19,14 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from app.catalog.models import CATALOGS
-
 from pydantic import ValidationError
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import playback_queue
 from app.api.schemas import PlayEventIn
+from app.catalog.models import CATALOGS
 from app.db import session_scope
 from app.models import (
     CatalogCache,
@@ -179,6 +179,7 @@ class Recorded:
     accepted: int = 0
     duplicates: int = 0
     rejected: list[dict[str, Any]] = field(default_factory=list)
+    queue_changed: bool = False
 
 
 async def _track_length(s: AsyncSession, nd_song_id: str, duration_s: float | None) -> timedelta:
@@ -312,6 +313,9 @@ async def record_events(s: AsyncSession, user_id: int, raw: Iterable[Any], now: 
             out.duplicates += 1
             continue
         out.accepted += 1
+        if e.queue_entry_id is not None and e.queue_claim is not None:
+            finished = await playback_queue.finish(s, user_id, e.queue_entry_id, e.queue_claim)
+            out.queue_changed = out.queue_changed or finished
         if e.kind in ("like", "unlike") and e.target_type != "track":
             from app.api.schemas import FavoriteTarget
             from app.favorites import remember

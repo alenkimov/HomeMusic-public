@@ -26,10 +26,13 @@ import { isUpload,
   hasNext,
   hasPrev,
   moveInQueue,
+  moveManualQueue,
   next,
+  playManualQueueAt,
   playQueueAt,
   prev,
   removeFromQueue,
+  removeManualQueue,
   toggle,
   useListen,
   type ListenTrack,
@@ -64,6 +67,7 @@ export function PlayerPage() {
   const smart = useListen((s) => s.smart);
   const repeat = useListen((s) => s.repeat);
   const queue = useListen((s) => s.queue);
+  const hasManual = useListen((s) => s.manualQueue.length > 0);
   const index = useListen((s) => s.index);
   const context = useListen((s) => s.context);
   const page = useListen((s) => s.page);
@@ -126,7 +130,12 @@ export function PlayerPage() {
         <div className="flex min-h-14 items-center px-2">
           <IconButton icon="down" label="Свернуть" onClick={() => goBack('/home')} />
         </div>
-        <Empty icon="note" title="Сейчас ничего не играет" text="Выберите трек, альбом или «Мою волну»." />
+        {hasManual ? (
+          <div className="mx-auto max-w-xl px-5 pb-6">
+            <h1 className="mb-3 text-xl font-bold">Очередь</h1>
+            <QueueList queue={queue} index={index} onWave={false} shuffle={false} />
+          </div>
+        ) : <Empty icon="note" title="Сейчас ничего не играет" text="Выберите трек, альбом или «Мою волну»." />}
       </div>
     );
 
@@ -410,11 +419,12 @@ function contextLabel(context: string): string {
 /** The queue: the track that plays and what comes after it. A tap plays a track, × takes it out, the handle on the
  * right drags it to another place — the order changes as it is dragged. */
 function QueueList({ queue, index, onWave, shuffle }: { queue: readonly ListenTrack[]; index: number; onWave: boolean; shuffle: boolean }) {
+  const manual = useListen((s) => s.manualQueue);
   const list = useRef<HTMLUListElement>(null);
   const ids = useRef(new WeakMap<ListenTrack, number>());
   const lastId = useRef(0);
   const [dragged, setDragged] = useState<string | null>(null);
-  const upcoming = queue.length - index - 1;
+  const following = queue.slice(index + 1);
   // a row keeps its key as it is moved (the same track may stand in the queue twice: then the keys are counted)
   const seen = new Map<number, number>();
   const keyOf = (t: ListenTrack) => {
@@ -425,9 +435,10 @@ function QueueList({ queue, index, onWave, shuffle }: { queue: readonly ListenTr
     return `${id}:${nth}`;
   };
 
-  const grab = (e: ReactPointerEvent, key: string) => {
+  const grab = (e: ReactPointerEvent, key: string, manualId?: number) => {
     e.preventDefault();
     setDragged(key);
+    let manualOver: number | undefined;
     const move = (ev: PointerEvent) => {
       const ul = list.current;
       if (!ul) return;
@@ -437,76 +448,84 @@ function QueueList({ queue, index, onWave, shuffle }: { queue: readonly ListenTr
         if (ev.clientY < r.top + 56) box.scrollTop -= 14;
         else if (ev.clientY > r.bottom - 56) box.scrollTop += 14;
       }
-      const rows = [...ul.querySelectorAll<HTMLElement>('li[data-i]')];
+      const rows = [...ul.querySelectorAll<HTMLElement>(manualId == null ? 'li[data-i]' : 'li[data-manual]')];
       const own = rows.find((r) => r.dataset.k === key);
       const over = rows.find((r) => {
         const b = r.getBoundingClientRect();
         return ev.clientY >= b.top && ev.clientY < b.bottom;
       });
+      if (manualId != null) {
+        manualOver = own && over && own !== over ? Number(over.dataset.manual) : undefined;
+        return;
+      }
       if (!own || !over) return;
       const from = Number(own.dataset.i);
       const to = Number(over.dataset.i);
       if (to !== from && to > getListenState().index) moveInQueue(from, to); // never above the track that plays
     };
-    const drop = () => {
+    const drop = (ev: PointerEvent) => {
       setDragged(null);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', drop);
       window.removeEventListener('pointercancel', drop);
+      if (ev.type === 'pointerup' && manualId != null && manualOver != null) void moveManualQueue(manualId, manualOver);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', drop);
     window.addEventListener('pointercancel', drop);
   };
 
+  const row = (t: ListenTrack, i?: number, manualId?: number) => {
+    const key = manualId == null ? keyOf(t) : `manual:${manualId}`;
+    const current = i === index;
+    return (
+      <li key={key} data-i={i} data-manual={manualId} data-k={key} className={cx('flex min-h-14 items-center gap-1 rounded-lg', dragged === key && 'bg-fg/10')}>
+        <button type="button" onClick={() => manualId != null ? playManualQueueAt(manualId) : i != null && playQueueAt(i)} className="flex min-w-0 flex-1 items-center gap-3 py-1.5 text-left" aria-label={`Слушать «${t.title}»`}>
+          <Cover src={t.cover_small_url || t.cover_url} size={40} alt="" />
+          <span className="min-w-0 flex-1">
+            <span className={cx('block truncate text-[15px]', current && 'font-semibold text-accent')}><TrackTitle title={t.title} track={t} /></span>
+            <span className="flex items-center gap-1 text-[13px] text-muted">
+              {t.rec && (
+                <span title="Рекомендация" className="shrink-0 text-accent">
+                  <Icon name="sparkle" size={12} />
+                </span>
+              )}
+              <span className="truncate">{t.artist}</span>
+            </span>
+          </span>
+        </button>
+        {!current && (
+          <>
+            <IconButton icon="x" label="Убрать из очереди" onClick={() => manualId != null ? void removeManualQueue([manualId]) : i != null && removeFromQueue(i)} size={18} className="w-9 text-muted" />
+            <span
+              role="button"
+              aria-label={`Перетащить «${t.title}»`}
+              title="Перетащить"
+              onPointerDown={(e) => grab(e, key, manualId)}
+              className="-mr-2 flex h-11 w-9 shrink-0 cursor-grab touch-none items-center justify-center text-muted hover:text-fg active:cursor-grabbing"
+            >
+              <Icon name="grip" size={18} />
+            </span>
+          </>
+        )}
+      </li>
+    );
+  };
+
   return (
     <ul ref={list} className={cx(dragged && 'select-none')}>
-      {queue.map((t, i) => {
-        if (i < index) return null;
-        const key = keyOf(t);
-        return (
-          <li key={key} data-i={i} data-k={key} className={cx('flex min-h-14 items-center gap-1 rounded-lg', dragged === key && 'bg-fg/10')}>
-            <button type="button" onClick={() => playQueueAt(i)} className="flex min-w-0 flex-1 items-center gap-3 py-1.5 text-left" aria-label={`Слушать «${t.title}»`}>
-              <Cover src={t.cover_small_url || t.cover_url} size={40} alt="" />
-              <span className="min-w-0 flex-1">
-                <span className={cx('block truncate text-[15px]', i === index && 'font-semibold text-accent')}><TrackTitle title={t.title} track={t} /></span>
-                <span className="flex items-center gap-1 text-[13px] text-muted">
-                  {t.rec && (
-                    <span title="Рекомендация" className="shrink-0 text-accent">
-                      <Icon name="sparkle" size={12} />
-                    </span>
-                  )}
-                  <span className="truncate">{t.artist}</span>
-                </span>
-              </span>
-            </button>
-            {i !== index && (
-              <>
-                <IconButton icon="x" label="Убрать из очереди" onClick={() => removeFromQueue(i)} size={18} className="w-9 text-muted" />
-                <span
-                  role="button"
-                  aria-label={`Перетащить «${t.title}»`}
-                  title="Перетащить"
-                  onPointerDown={(e) => grab(e, key)}
-                  className="-mr-2 flex h-11 w-9 shrink-0 cursor-grab touch-none items-center justify-center text-muted hover:text-fg active:cursor-grabbing"
-                >
-                  <Icon name="grip" size={18} />
-                </span>
-              </>
-            )}
-          </li>
-        );
-      }).flatMap((row, i) =>
-        // between the track that plays and the rest: what comes next, and how much of it
-        i === index
-          ? [row, (
-              <li key="next" className="flex items-center gap-1.5 pb-1 pt-3 text-xs text-muted">
-                {shuffle && !onWave && <Icon name="shuffle" size={13} />}
-                {onWave ? 'Далее · подбирается на ходу' : upcoming > 0 ? `${shuffle ? 'Вперемешку' : 'Далее'} · ${tracksWord(upcoming)}` : 'Очередь закончится на этом треке'}
-              </li>
-            )]
-          : [row],
+      {queue[index] && row(queue[index], index)}
+      {manual.length > 0 && (
+        <li className="pb-1 pt-3 text-xs text-muted">Ручная очередь · {tracksWord(manual.length)}</li>
       )}
+      {manual.map(({ id, track }) => row(track, undefined, id))}
+      {(onWave || following.length > 0) && (
+        <li className="flex items-center gap-1.5 pb-1 pt-3 text-xs text-muted">
+          {shuffle && !onWave && <Icon name="shuffle" size={13} />}
+          {onWave ? 'Далее · подбирается на ходу' : `${shuffle ? 'Вперемешку' : 'Далее'} · ${tracksWord(following.length)}`}
+        </li>
+      )}
+      {following.map((t, i) => row(t, index + 1 + i))}
     </ul>
   );
 }

@@ -7,6 +7,7 @@ import { isUpload, stopListening, toggle, useListen } from '../lib/listen';
 import { STANDALONE } from '../lib/embedded';
 import { Link, albumPath } from '../lib/router';
 import { Icon } from './Icon';
+import { tracksWord } from '../lib/format';
 import { SaveButton } from './PlaylistsButton';
 import { Cover, Spinner } from './ui';
 
@@ -16,6 +17,7 @@ import { Cover, Spinner } from './ui';
  * player (`/player`; inside the app — the album); swept down, it goes. Publishes its height as `--player-h`. */
 export function MiniPlayer() {
   const track = useListen((s) => s.track);
+  const manualCount = useListen((s) => STANDALONE ? s.manualQueue.length : 0);
   const phase = useListen((s) => s.phase);
   const info = useListen((s) => s.info);
   const error = useListen((s) => s.error);
@@ -24,7 +26,7 @@ export function MiniPlayer() {
   const onWave = useListen((s) => s.context.startsWith('wave:'));
   const touchY = useRef<number | null>(null);
   const box = useRef<HTMLDivElement>(null);
-  const shown = !!track;
+  const shown = !!track || manualCount > 0;
 
   useLayoutEffect(() => {
     const el = box.current;
@@ -40,7 +42,15 @@ export function MiniPlayer() {
     };
   }, [shown]);
 
-  if (!track) return null;
+  const bar = 'fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-40 mx-auto max-w-(--app-w) px-2 pb-1';
+  if (!track) return manualCount > 0 ? (
+    <div ref={box} className={bar}>
+      <Link to="/player" className="flex min-h-12 items-center gap-3 rounded-xl bg-raised px-3 shadow-2xl">
+        <Icon name="queue" size={20} />
+        <span>Ручная очередь · {tracksWord(manualCount)}</span>
+      </Link>
+    </div>
+  ) : null;
 
   const waiting = phase === 'resolving' || phase === 'loading';
   const playing = phase === 'playing' || waiting;
@@ -83,7 +93,7 @@ export function MiniPlayer() {
   };
 
   return (
-    <div ref={box} className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-40 mx-auto max-w-(--app-w) px-2 pb-1" role="region" aria-label="Прослушивание">
+    <div ref={box} className={bar} role="region" aria-label="Прослушивание">
       <div {...swipe} className="anim-up relative overflow-hidden rounded-xl bg-raised shadow-2xl">
         <div className="flex items-center gap-1 py-1.5 pl-2 pr-1">
           {STANDALONE ? (
@@ -127,6 +137,6 @@ export function MiniPlayer() {
 
 /** Keeps the end of the page above the player (the app's style fixes `main`'s bottom padding). */
 export function PlayerSpacer() {
-  const shown = useListen((s) => !!s.track);
+  const shown = useListen((s) => !!s.track || (STANDALONE && s.manualQueue.length > 0));
   return shown ? <div aria-hidden="true" style={{ height: 'var(--player-h, 0px)' }} /> : null;
 }

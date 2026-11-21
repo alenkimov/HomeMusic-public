@@ -81,10 +81,10 @@ export function SelectionBar() {
             icon="queue"
             size={20}
             label="В очередь"
-            onClick={() => {
+            onClick={async () => {
               const list = take();
-              addToQueue(list.map((t) => t.listen));
-              toast(`В очереди: ${tracksWord(list.length)}`, 'success');
+              const n = await addToQueue(list.map((t) => t.listen));
+              if (n) toast(`В очереди: ${tracksWord(n)}`, 'success');
             }}
             className={cx(btn, 'text-muted hover:text-fg')}
           />

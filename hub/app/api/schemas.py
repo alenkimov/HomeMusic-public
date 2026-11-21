@@ -1250,6 +1250,8 @@ class PlayEventIn(FavoriteTarget):
     nd_song_id: str | None = Field(default=None, max_length=64)
     playback_id: str | None = Field(default=None, min_length=1, max_length=64)
     device_id: str | None = Field(default=None, min_length=1, max_length=64)
+    queue_entry_id: int | None = Field(default=None, ge=1, le=2**53 - 1)
+    queue_claim: str | None = Field(default=None, min_length=1, max_length=64)
     listened_ms: int | None = Field(default=None, ge=0, le=604800000)
     track_metadata: ListeningMetadata | None = None
     position_s: float | None = Field(default=None, ge=0, le=86400)
@@ -1270,6 +1272,8 @@ class PlayEventIn(FavoriteTarget):
             raise ValueError("playback events require a track")
         if (self.playback_id is None) != (self.device_id is None):
             raise ValueError("playback_id and device_id must be provided together")
+        if (self.queue_entry_id is None) != (self.queue_claim is None) or (self.queue_claim and self.kind != "start"):
+            raise ValueError("a manual queue claim requires a playback start and its entry ID")
         if self.kind in ("progress", "interrupted", "error") and (not self.playback_id or self.listened_ms is None):
             raise ValueError("checkpoint requires playback_id, device_id and listened_ms")
         if self.listened_ms is not None and (self.kind not in playback_kinds or not self.playback_id):

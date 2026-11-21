@@ -104,7 +104,6 @@ function TrackMenu({ track, extra, inPlayer, lean, noTags, onClose }: { track: M
   const disliked = useDisliked(target);
   const artistDisliked = useDisliked(artist ?? { artist_ref: '\u0000' });
   const playing = useListen((s) => !!track.ref && s.track?.ref === track.ref);
-  const hasQueue = useListen((s) => !!s.track);
   // the page's own player plays here (a browser, an app without `playQueue`)
   const queueable = !!track.listen && !canPlayAll() && !playing;
   const albumTo = track.album_ref || track.release_id ? albumPath({ ref: track.album_ref ?? '', release_id: track.release_id })
@@ -143,10 +142,9 @@ function TrackMenu({ track, extra, inPlayer, lean, noTags, onClose }: { track: M
           <MenuItem
             icon="queue"
             label="Добавить в очередь"
-            hint={hasQueue ? undefined : 'Сейчас ничего не играет — начнёт играть'}
             onClick={() => {
               onClose();
-              addToQueue([track.listen as ListenTrack]);
+              void addToQueue([track.listen as ListenTrack]);
             }}
           />
         )}

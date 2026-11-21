@@ -1108,6 +1108,25 @@ class PlaylistItem(Base):
     added_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class PlaybackQueueItem(Base):
+    __tablename__ = "playback_queue_items"
+    __table_args__ = (
+        Index("ix_playback_queue_pending", "user_id", "finished_at", "position", "id"),
+        UniqueConstraint("user_id", "source_key", name="uq_playback_queue_source"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), index=True)
+    track: Mapped[dict[str, Any]] = mapped_column(JSON)
+    source_key: Mapped[str | None] = mapped_column(String(64))
+    position: Mapped[int | None] = mapped_column(Integer)
+    claim: Mapped[str | None] = mapped_column(String(64))
+    claim_until: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class DiscoveryIssue(Base):
     """One week's «Открытия недели» (app/mixes/discover.py): catalog tracks of artists the user has not heard.
     Issues are kept — an old week can be opened again; a track that was in one is not picked for another."""

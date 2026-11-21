@@ -1,3 +1,4 @@
+import type { ListenTrack, ManualQueueEntry } from '../lib/listen';
 import type { LyricsCandidate, LyricsOut, LyricsSettings, LyricsTranslation, LyricsTranslators } from '../lib/lyrics';
 import type { StatsBy, StatsImportOut, StatsOut, StatsPeriod, StatsTrackOut } from '../lib/stats';
 import { timeZone } from '../lib/stats';
@@ -383,6 +384,15 @@ const enc = encodeURIComponent;
 // --- typed endpoints ------------------------------------------------------------------------------
 
 export const api = {
+  manualQueue: () => request<ManualQueueEntry[]>('GET', '/api/playback/queue'),
+  appendManualQueue: (tracks: readonly ListenTrack[], expected_user_id: number, request_id: string) =>
+    request<{ count: number }>('POST', '/api/playback/queue', { json: { tracks, expected_user_id, request_id } }),
+  removeManualQueue: (ids: number[]) => request<{ count: number }>('POST', '/api/playback/queue/remove', { json: { ids } }),
+  moveManualQueue: (id: number, before_id: number | null) =>
+    request<OkOut>('POST', `/api/playback/queue/${id}/move`, { json: { before_id } }),
+  claimManual: (id: number, token: string) => request<OkOut>('POST', `/api/playback/queue/${id}/claim`, { json: { token } }),
+  releaseManual: (id: number, token: string) => request<OkOut>('POST', `/api/playback/queue/${id}/release`, { json: { token } }),
+  confirmManual: (id: number, token: string) => request<OkOut>('POST', `/api/playback/queue/${id}/played`, { json: { token } }),
   // auth
   login: (body: LoginIn) => request<MeOut>('POST', '/api/auth/login', { json: body }),
   logout: () => request<OkOut>('POST', '/api/auth/logout'),

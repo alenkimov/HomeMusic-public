@@ -32,6 +32,7 @@ export function DesktopPlayer() {
   const repeat = useListen((s) => s.repeat);
   const onWave = useListen((s) => s.context.startsWith('wave:'));
   const canNext = useListen((s) => hasNext(s) || (s.repeat === 'all' && !s.context.startsWith('wave:')));
+  const hasManual = useListen((s) => s.manualQueue.length > 0);
   const canPrev = useListen(hasPrev);
   const { shownPos, aim, aimPct, range } = useSeek(position, duration);
   const volumeControl = useRef<HTMLDivElement>(null);
@@ -165,7 +166,7 @@ export function DesktopPlayer() {
               className="!h-9 !w-9 text-muted hover:text-fg"
             />
           )}
-          <Link to="/player" onClick={askForQueue} title="Очередь" aria-label="Очередь" className={cx('flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg', !track && 'pointer-events-none opacity-40')}>
+          <Link to="/player" onClick={askForQueue} title="Очередь" aria-label="Очередь" className={cx('flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg', !track && !hasManual && 'pointer-events-none opacity-40')}>
             <Icon name="queue" size={20} />
           </Link>
           <div ref={volumeControl} className="-mx-1 flex h-11 min-w-0 items-center gap-1 px-2">
