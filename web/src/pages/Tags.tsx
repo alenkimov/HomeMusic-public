@@ -1,16 +1,17 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
+import { GenreSourceFilter } from '../components/GenreSources';
 import { Button, ErrorState, Field, IconButton, Loading, PageHeader, Sheet, cx } from '../components/ui';
 import { tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { Link } from '../lib/router';
-import { UNTAGGED, filterWords, selectionsChanged, setTagsData, useTags, type Tag } from '../lib/tags';
+import { UNTAGGED, filterWords, genreSourcesFor, selectionsChanged, setTagsData, useTags, type GenreSource, type Tag } from '../lib/tags';
 import { attempt, confirmDialog } from '../lib/ui';
 
 const GROUP_NOTE: Record<string, string> = {
   lang: 'ставит Хаб — по тексту песни; у песни может быть несколько языков',
-  genre: 'ставит Хаб — жанр из каталога, пришедший с треком',
+  genre: 'жанры из аудиофайлов и музыкальных сервисов',
   own: 'ваши собственные',
 };
 const SCOPE: Record<string, string> = { liked: 'Любимое', library: 'Вся библиотека' };
@@ -23,6 +24,8 @@ export function TagsPage() {
   const [name, setName] = useState('');
   const [editing, setEditing] = useState<Tag | null>(null);
   const [busy, setBusy] = useState(false);
+  const [genreSource, setGenreSource] = useState<GenreSource | ''>('');
+  const origins = useMemo(() => genreSourcesFor(tags.genre_sources), [tags.genre_sources]);
   const own = tags.groups.find((g) => g.id === 'own')?.tags ?? [];
 
   const create = async () => {
@@ -84,6 +87,9 @@ export function TagsPage() {
             <section key={g.id} aria-label={g.title}>
               <h3 className="px-4 pb-0.5 pt-5 text-base font-bold">{g.title}</h3>
               <p className="px-4 pb-1 text-xs text-dim">{GROUP_NOTE[g.id]}</p>
+              {g.id === 'genre' && <div className="px-4 pt-2">
+                <GenreSourceFilter byGenre={origins} selected={genreSource} onChange={setGenreSource} />
+              </div>}
               {g.id === 'own' && (
                 <form
                   className="flex items-center gap-2 px-4 py-2"
@@ -99,7 +105,7 @@ export function TagsPage() {
                 </form>
               )}
               <ul className="px-2">
-                {g.tags.map((t) => (
+                {g.tags.filter((t) => g.id !== 'genre' || !genreSource || origins.get(t.id)?.has(genreSource)).map((t) => (
                   <li key={t.id} className="flex min-h-11 items-center gap-1 rounded-lg px-2 hover:bg-fg/5">
                     <Link to={`/selection/library?yes=${t.id}`} className="flex min-w-0 flex-1 items-center gap-3 py-1.5" title="Показать треки с этим тегом">
                       <Icon name="tag" size={16} className="shrink-0 text-muted" />

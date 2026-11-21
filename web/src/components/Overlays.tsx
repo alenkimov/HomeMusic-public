@@ -1,8 +1,10 @@
 import { dismissToast, useDialog, useToasts } from '../lib/ui';
 import { TrackEdit } from './TrackEdit';
+import { CoverPicker } from './CoverPicker';
 import { navigate } from '../lib/router';
 import { Button, cx } from './ui';
 import { Icon } from './Icon';
+import { ServiceText } from './ServiceBadge';
 import { useDragAction, type DragKind } from '../lib/dragAction';
 import { tracksWord } from '../lib/format';
 import { closePlaylistsSheet, usePlaylistsSheet } from '../lib/playlistsSheet';
@@ -32,7 +34,7 @@ export function Overlays() {
             role={t.kind === 'error' ? 'alert' : 'status'}
           >
             <Icon name={t.kind === 'error' ? 'alert' : t.kind === 'success' ? 'check' : 'bell'} size={18} className="shrink-0" />
-            <span className="min-w-0 flex-1">{t.text}</span>
+            <span className="min-w-0 flex-1">{t.kind === 'error' || /^(Telegram|ListenBrainz|Подтягиваем новое:|Отправ(?:ляю|лено) в Telegram|Предыдущая отправка в Telegram|(?:Ключ|Без ключа) Last\.fm)/.test(t.text) ? <ServiceText text={t.text} /> : t.text}</span>
             {t.link && (
               <button
                 type="button"
@@ -58,6 +60,7 @@ export function Overlays() {
       <TagsSheet />
       <PlaylistMenu />
       <TrackEdit />
+      <CoverPicker />
       <FindFile />
       <Versions />
       <TelegramSetup />
@@ -69,9 +72,9 @@ export function Overlays() {
           <button type="button" aria-label="Отмена" className="absolute inset-0 bg-black/70" onClick={() => dialog.resolve(false)} />
           <div className="anim-up relative w-full max-w-sm rounded-2xl bg-surface p-5">
             <h2 id="hm-dialog-title" className="text-lg font-bold">
-              {dialog.title}
+              {dialog.title.startsWith('Отключить ListenBrainz') ? <ServiceText text={dialog.title} /> : dialog.title}
             </h2>
-            {dialog.body && <p className="mt-2 whitespace-pre-line text-sm text-muted">{dialog.body}</p>}
+            {dialog.body && <p className="mt-2 whitespace-pre-line text-sm text-muted">{/^(Отключить ListenBrainz|Отключить бота|Удалить импортированную историю)/.test(dialog.title) ? <ServiceText text={dialog.body} /> : dialog.body}</p>}
             <div className="mt-5 flex justify-end gap-2">
               <Button variant="ghost" onClick={() => dialog.resolve(false)}>
                 {dialog.cancelLabel}

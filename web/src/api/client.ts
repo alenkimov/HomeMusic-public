@@ -9,6 +9,8 @@ import type {
   CatalogArtist,
   AdminUsersOut,
   AlbumCreateIn,
+  AlbumEditOut,
+  AlbumEditTarget,
   AlbumMergeIn,
   AlbumOut,
   AlbumPatchIn,
@@ -20,6 +22,7 @@ import type {
   ChatMessage,
   ChatOut,
   ChatSavedOut,
+  Candidate,
   ClearOut,
   DislikeIn,
   DislikeOut,
@@ -30,9 +33,12 @@ import type {
   ReleasesOut,
   DownloadItemOut,
   ImportIn,
-  ImportItemsOut,
+  ImportSource,
   ImportOut,
   ImportStartIn,
+  IntegrationConnection,
+  IntegrationGrant,
+  IntegrationsOut,
   InviteIn,
   InviteOut,
   LibAlbumOut,
@@ -43,6 +49,9 @@ import type {
   MixSettingsIn,
   MixSettingsOut,
   DiscographyOut,
+  TrackAudience,
+  TrackAudienceRequest,
+  CatalogPlaylistOut,
   NamesakeOut,
   FileJournalOut,
   HistoryOut,
@@ -69,9 +78,13 @@ import type {
   EmailCodeOut,
   EmailRegisterIn,
   RetryIn,
-  SearchOut,
+  LiveSearchResult,
+  ProgressEvent,
   SearchHistoryOut,
   SearchRecent,
+  SearchScope,
+  SearchSnapshot,
+  SourceStatus,
   SearchTracksOut,
   TrackOut,
   StarIn,
@@ -80,18 +93,22 @@ import type {
   TasteOnboardingOut,
   CoverInfo,
   FileRowOut,
+  VersionLabelOut,
   VersionOut,
   VersionsOut,
   ArtistCardOut,
+  ArtistProfileOut,
   ArtistLooksOut,
   ArtistOtherIn,
   ArtistPickOut,
   PickOut,
+  FileComparisonOut,
   QualityPeaks,
   QualityOut,
   TrackFileOut,
   SplitAlbums,
   TrackEditEntry,
+  CoverSearchOut,
   TrackEditOut,
   TrashedOut,
   TrackPatchIn,
@@ -215,6 +232,92 @@ export function invalidateCache(prefix = '') {
   for (const key of cache.keys()) if (key.startsWith(prefix)) cache.delete(key);
 }
 
+async function progressRequest<T>(path: string, signal: AbortSignal, opts: {
+  onSources: (sources: SourceStatus[]) => void;
+  onPartial?: (data: T) => void;
+  unavailable: string;
+  interrupted: string;
+}): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, { credentials: 'include', signal, headers: { Accept: 'application/x-ndjson' } });
+  } catch (e) {
+    if (isAbort(e)) throw e;
+    throw new ApiError(0, 'Нет связи с сервером');
+  }
+  if (response.status === 401) onUnauthorized(path);
+  if (!response.ok) throw await errorFromResponse(response);
+  if (!response.body || !response.headers.get('content-type')?.includes('application/x-ndjson')) {
+    throw new ApiError(502, opts.unavailable);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const statuses = new Map<string, SourceStatus>();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) throw new ApiError(502, opts.interrupted);
+      buffer += decoder.decode(value, { stream: true });
+      let next: number;
+      while ((next = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, next);
+        buffer = buffer.slice(next + 1);
+        if (!line.trim()) continue;
+        const event = JSON.parse(line) as ProgressEvent<T>;
+        if (event.type === 'error') throw new ApiError(502, event.data);
+        if (event.type === 'done') return event.data;
+        if (event.type === 'partial') {
+          opts.onPartial?.(event.data);
+        } else {
+          if (event.type === 'sources') {
+            statuses.clear();
+            for (const source of event.data) statuses.set(source.service, source);
+          } else {
+            statuses.set(event.data.service, event.data);
+          }
+          opts.onSources([...statuses.values()]);
+        }
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+}
+
+async function catalogPage<T>(path: string, title: string, signal?: AbortSignal, fresh = false,
+  onSources?: (sources: SourceStatus[]) => void): Promise<T> {
+  if (!signal || !onSources) return cachedGet<T>(path, signal, fresh);
+  const hit = fresh ? undefined : peekCache<T>(path);
+  if (hit !== undefined) return hit;
+  const data = await progressRequest<T>(path, signal, {
+    onSources,
+    unavailable: title,
+    interrupted: 'Загрузка прервалась',
+  });
+  cache.set(path, { at: Date.now(), data });
+  return data;
+}
+
+async function searchLive(q: string, scope: SearchScope, update: (snapshot: SearchSnapshot) => void, signal: AbortSignal) {
+  const path = withQuery('/api/search/stream', { q, scope });
+  const hit = peekCache<SearchSnapshot>(path);
+  if (hit) {
+    update(hit);
+    return;
+  }
+  let snapshot: SearchSnapshot = { sources: [] };
+  const data = await progressRequest<LiveSearchResult>(path, signal, {
+    onSources: (sources) => update(snapshot = { ...snapshot, sources }),
+    onPartial: (data) => update(snapshot = { ...snapshot, data }),
+    unavailable: 'Поиск недоступен',
+    interrupted: 'Поиск прервался',
+  });
+  snapshot = { ...snapshot, data };
+  cache.set(path, { at: Date.now(), data: snapshot });
+  update(snapshot);
+}
+
 /** multipart POST via XMLHttpRequest to get upload progress (0..1). */
 export function uploadWithProgress<T>(
   url: string,
@@ -298,7 +401,8 @@ export const api = {
   deleteInvite: (id: number) => request<OkOut>('DELETE', `/api/admin/invites/${id}`),
 
   // search / catalog
-  search: (q: string, signal?: AbortSignal) => cachedGet<SearchOut>(withQuery('/api/search', { q }), signal),
+  searchLive,
+  spotifyPlaylist: (id: string, signal?: AbortSignal) => cachedGet<CatalogPlaylistOut>(`/api/search/spotify/playlist/${enc(id)}`, signal),
   searchHistory: (signal?: AbortSignal) => request<SearchHistoryOut>('GET', '/api/search/history', { signal }),
   rememberSearch: (item: Omit<SearchRecent, 'key'>) => request<OkOut>('POST', '/api/search/history', { json: item }),
   forgetSearch: (key: string) => request<OkOut>('DELETE', withQuery('/api/search/history', { key })),
@@ -311,10 +415,24 @@ export const api = {
   /** `group`: only the regular sources, or only re-uploads by small channels (slower). */
   searchProviders: (q: string, signal?: AbortSignal, group?: 'sources' | 'reuploads') =>
     cachedGet<ProviderSearchOut>(withQuery('/api/search/providers', { q, group }), signal),
-  artist: (ref: string, signal?: AbortSignal, fresh = false) =>
-    cachedGet<ArtistPageOut>(`/api/catalog/artist/${enc(ref)}`, signal, fresh),
-  album: (ref: string, signal?: AbortSignal, fresh = false) =>
-    cachedGet<AlbumOut>(`/api/catalog/album/${enc(ref)}`, signal, fresh),
+  searchCovers: (q: string, album: boolean, signal?: AbortSignal) =>
+    request<CoverSearchOut>('GET', withQuery('/api/search/covers', { q, album }), { signal }),
+  coverImage: async (key: string, signal?: AbortSignal): Promise<{ file: File; info: CoverInfo }> => {
+    const path = `/api/search/covers/${enc(key)}`;
+    const res = await fetch(path, { credentials: 'include', signal });
+    if (res.status === 401) onUnauthorized(path);
+    if (!res.ok) throw await errorFromResponse(res);
+    const image = await res.blob();
+    return {
+      file: new File([image], 'cover', { type: image.type }),
+      info: { w: Number(res.headers.get('X-Cover-Width')), h: Number(res.headers.get('X-Cover-Height')),
+        format: res.headers.get('X-Cover-Format'), size: image.size },
+    };
+  },
+  artist: (ref: string, signal?: AbortSignal, fresh = false, onSources?: (sources: SourceStatus[]) => void) =>
+    catalogPage<ArtistPageOut>(`/api/catalog/artist/${enc(ref)}`, 'Не удалось загрузить исполнителя', signal, fresh, onSources),
+  album: (ref: string, signal?: AbortSignal, fresh = false, onSources?: (sources: SourceStatus[]) => void) =>
+    catalogPage<AlbumOut>(`/api/catalog/album/${enc(ref)}`, 'Не удалось загрузить альбом', signal, fresh, onSources),
 
   // listening before download: picks the file (may take seconds), `stream_url` plays it
   /** `ahead`: the queue plays the track soon — the Hub opens its file and copies it to its disk now: 'whole' for
@@ -330,6 +448,12 @@ export const api = {
     request<DownloadItemOut[]>('GET', withQuery('/api/downloads', { status, limit }), { signal }),
   downloadItem: (id: number, signal?: AbortSignal) =>
     request<DownloadItemOut>('GET', `/api/downloads/${id}`, { signal }),
+  checkDownloadLink: (id: number, url: string) =>
+    request<Candidate>('POST', `/api/downloads/items/${id}/check-link`, { json: { url } }),
+  preparedDownloadFiles: (id: number, ref?: string, signal?: AbortSignal) =>
+    request<string[]>('GET', withQuery(`/api/downloads/items/${id}/prepared`, { ref }), { signal }),
+  prepareDownloadFile: (id: number, ref: string) =>
+    request<string>('POST', `/api/downloads/items/${id}/prepare`, { json: { candidate_ref: ref } }),
   retry: (id: number, body: RetryIn = {}) =>
     request<DownloadItemOut>('POST', `/api/downloads/items/${id}/retry`, { json: body }),
   cancel: (id: number) => request<DownloadItemOut>('POST', `/api/downloads/items/${id}/cancel`),
@@ -344,10 +468,23 @@ export const api = {
   createAlbum: (body: AlbumCreateIn) => request<LibAlbumOut>('POST', '/api/library/albums', { json: body }),
   patchAlbum: (id: number, body: AlbumPatchIn) =>
     request<LibAlbumOut>('PATCH', `/api/library/albums/${id}`, { json: body }),
+  albumEdit: (target: AlbumEditTarget, signal?: AbortSignal) =>
+    request<AlbumEditOut>('GET', withQuery('/api/library/album-edit', target), { signal }),
+  renameAlbum: (target: AlbumEditTarget, title: string, album_artist: string) =>
+    request<AlbumEditOut>('PATCH', withQuery('/api/library/album-edit', target), { json: { title, album_artist } }),
+  addAlbumName: (target: AlbumEditTarget, name: string) =>
+    request<AlbumEditOut>('POST', withQuery('/api/library/album-edit/names', target), { json: { name } }),
+  dropAlbumName: (target: AlbumEditTarget, id: number) =>
+    request<AlbumEditOut>('DELETE', withQuery(`/api/library/album-edit/names/${id}`, target)),
   setAlbumCover: (id: number, file: File) => {
     const form = new FormData();
     form.append('file', file);
     return request<LibAlbumOut>('PUT', `/api/library/albums/${id}/cover`, { form });
+  },
+  setCatalogAlbumCover: (ref: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request<LibAlbumOut>('PUT', `/api/catalog/album/${enc(ref)}/cover`, { form });
   },
   mergeAlbums: (body: AlbumMergeIn) => request<LibAlbumOut>('POST', '/api/library/albums/merge', { json: body }),
   /** «Все файлы»: every track with a file that one looks after, the newest file first. */
@@ -374,9 +511,11 @@ export const api = {
     request<{ can_delete: boolean; others: number; has_file: boolean; mine: { id: string; name: string; liked: boolean }[] }>('GET', `/api/library/tracks/${id}/keeping`),
   /** A track's names and cover as they are, for the window that puts them right; a catalog song the Hub has not
    * met becomes a track by this. */
-  trackEdit: (q: { track_id?: number; ref?: string; nd_song_id?: string }) => request<TrackEditOut>('GET', withQuery('/api/library/track-edit', q)),
+  trackEdit: (q: { track_id?: number; ref?: string; nd_song_id?: string }, signal?: AbortSignal) =>
+    request<TrackEditOut>('GET', withQuery('/api/library/track-edit', q), { signal }),
   /** A song and its versions (the Hub's `app/library/versions.py`). */
   versions: (q: { track_id?: number; ref?: string; nd_song_id?: string }, signal?: AbortSignal) => request<VersionsOut>('GET', withQuery('/api/library/versions', q), { signal }),
+  versionLabels: (signal?: AbortSignal) => request<VersionLabelOut[]>('GET', '/api/library/version-labels', { signal }),
   versionsFind: (id: number, q: string, signal?: AbortSignal) => request<VersionOut[]>('GET', withQuery(`/api/library/tracks/${id}/versions/find`, { q }), { signal }),
   /** `other`: a track of the Hub's, or a song of the catalog by its ref (it becomes a track, without a file) */
   versionAdd: (id: number, other: { track_id?: number; ref?: string }) => request<VersionsOut>('POST', `/api/library/tracks/${id}/versions`, { json: other }),
@@ -386,6 +525,13 @@ export const api = {
   dropTrackName: (id: number, nameId: number) => request<TrackEditOut>('DELETE', `/api/library/tracks/${id}/names/${nameId}`),
   /** An artist's name, spellings and projects (the Hub's `app/library/artists.py`): by the catalog's own or by a name. */
   artistOf: (q: { name?: string; ref?: string }, signal?: AbortSignal) => request<ArtistCardOut | null>('GET', withQuery('/api/artists/of', q), { signal }),
+  artistProfiles: (id: number, signal?: AbortSignal) => request<ArtistProfileOut[]>('GET', `/api/artists/${id}/profiles`, { signal }),
+  artistDetachProfile: async (id: number, ref: string) => {
+    const card = await request<ArtistCardOut>('DELETE', `/api/artists/${id}/profiles/${enc(ref)}`);
+    invalidateCache('/api/catalog/artist/');
+    invalidateCache('/api/search');
+    return card;
+  },
   artistFind: (q: string, signal?: AbortSignal) => request<ArtistPickOut[]>('GET', withQuery('/api/artists/find', { q }), { signal }),
   artistAddName: (id: number, name: string) => request<ArtistCardOut>('POST', `/api/artists/${id}/names`, { json: { name } }),
   artistDropName: (id: number, nameId: number) => request<ArtistCardOut>('DELETE', `/api/artists/${id}/names/${nameId}`),
@@ -448,7 +594,14 @@ export const api = {
   /** The catalog's artist of this very name (`ref` null: nobody is called so). */
   artistNamed: (name: string, signal?: AbortSignal) => request<{ ref: string | null }>('GET', `/api/catalog/artist-named?name=${enc(name)}`, { signal }),
   /** Every release of an artist with its tracks (the first asking of a long one takes seconds). */
-  discography: (ref: string, signal?: AbortSignal) => request<DiscographyOut>('GET', `/api/catalog/artist/${enc(ref)}/discography`, { signal }),
+  discography: (ref: string, signal: AbortSignal, onSources: (sources: SourceStatus[]) => void) =>
+    progressRequest<DiscographyOut>(`/api/catalog/artist/${enc(ref)}/discography`, signal, {
+      onSources,
+      unavailable: 'Дискография недоступна',
+      interrupted: 'Загрузка дискографии прервалась',
+    }),
+  catalogArtistPhoto: (ref: string, signal?: AbortSignal) =>
+    cachedGet<{ url?: string | null }>(`/api/catalog/artist/${enc(ref)}/photo`, signal),
   /** How a track's file came to the library: the journal of its download. */
   fileJournal: (trackId: number, signal?: AbortSignal) => request<FileJournalOut>('GET', `/api/library/tracks/${trackId}/journal`, { signal }),
   /** «Для вас»: the lists the Hub makes by itself, and one of them as its page shows it. */
@@ -501,10 +654,19 @@ export const api = {
   qualityVersion: (id: number) => request<OkOut>('POST', `/api/quality/${id}/version`),
   /** A track of the library and the file it plays from («Найти другой файл»). */
   trackFile: (id: number, signal?: AbortSignal) => request<TrackFileOut>('GET', `/api/quality/track/${id}`, { signal }),
-  /** Download a file found for the track and say how it compares with the track's own. */
-  fileWeigh: (id: number, pick: { ref?: string; url?: string }) => request<PickOut>('POST', `/api/quality/track/${id}/weigh`, { json: pick }),
-  /** Put the picked file in the place of the track's own (`sure`: though it is not the same recording). */
-  fileTake: (id: number, pick: { ref?: string; url?: string; sure?: boolean }) => request<PickOut>('POST', `/api/quality/track/${id}/take`, { json: pick }),
+  resolveFilePickerTrack: (ref: string, signal?: AbortSignal) =>
+    request<{ track_id: number }>('POST', '/api/quality/track/resolve', { json: { ref }, signal }),
+  filePrepare: (id: number, pick: { ref?: string; url?: string }, signal?: AbortSignal) =>
+    request<PickOut>('POST', `/api/quality/track/${id}/prepare`, { json: pick, signal }),
+  fileUpload: (id: number, file: File, progress: (fraction: number) => void, signal?: AbortSignal) => {
+    const form = new FormData();
+    form.set('file', file);
+    return uploadWithProgress<PickOut>(`/api/quality/track/${id}/upload`, form, progress, signal);
+  },
+  fileCompare: (id: number, pair: { ref: string; baseline_ref?: string; expected_file_uid?: string }, signal?: AbortSignal) =>
+    request<FileComparisonOut>('POST', `/api/quality/track/${id}/compare`, { json: pair, signal }),
+  fileTake: (id: number, pick: { ref: string; expected_file_uid: string | null; sure?: boolean; import_review_id?: number }) =>
+    request<OkOut>('POST', `/api/quality/track/${id}/take`, { json: pick }),
   /** Take back the file a track had before a better one was put in its place. */
   qualityRevert: (id: number) => request<OkOut>('POST', `/api/quality/${id}/revert`),
   qualityPeaks: (id: number, signal?: AbortSignal) => request<QualityPeaks>('GET', `/api/quality/${id}/peaks`, { signal }),
@@ -543,16 +705,16 @@ export const api = {
     request<NdAlbumOut[]>('GET', withQuery('/api/nd/albums', { type, offset, size }), { signal }),
 
   // imports from music services
-  // the user's own Telegram bot (lib/telegram.ts)
-  telegram: () => request<TelegramStatus>('GET', '/api/telegram'),
-  telegramConnect: (token: string) => request<TelegramStatus>('POST', '/api/telegram/connect', { json: { token } }),
-  telegramCheck: () => request<TelegramStatus>('POST', '/api/telegram/check'),
+  // the Hub's shared Telegram bot (lib/telegram.ts)
+  telegram: (signal?: AbortSignal) => request<TelegramStatus>('GET', '/api/telegram', { signal }),
+  telegramLink: (signal?: AbortSignal) => request<TelegramStatus & { start_url: string | null }>('POST', '/api/telegram/link', { signal }),
+  telegramCheck: (signal?: AbortSignal) => request<TelegramStatus>('POST', '/api/telegram/check', { signal }),
   telegramDisconnect: () => request<TelegramStatus>('DELETE', '/api/telegram'),
   telegramPrefs: (with_lyrics: boolean) => request<TelegramStatus>('PUT', '/api/telegram/prefs', { json: { with_lyrics } }),
   telegramChats: () => request<TelegramChat[]>('GET', '/api/telegram/chats'),
   telegramChatsRefresh: () => request<TelegramChat[]>('POST', '/api/telegram/chats/refresh'),
-  telegramSend: (body: { nd_song_id?: string | null; ref?: string | null; with_lyrics?: boolean | null; chat?: number | null; with_link?: boolean }) =>
-    request<{ ok: boolean; title: string; light: boolean; lyrics: boolean }>('POST', '/api/telegram/send', { json: body }),
+  telegramSend: (body: { nd_song_id?: string | null; ref?: string | null; with_lyrics?: boolean | null; chat?: number | null; with_link?: boolean; anonymous?: boolean }) =>
+    request<{ ok: boolean; title: string; version_label?: string | null; light: boolean; lyrics: boolean }>('POST', '/api/telegram/send', { json: body }),
   // tags of tracks (lib/tags.ts)
   tags: () => request<TagsData>('GET', '/api/tags'),
   tagCreate: (name: string) => request<Tag>('POST', '/api/tags', { json: { name } }),
@@ -569,7 +731,13 @@ export const api = {
   listenbrainz: (signal?: AbortSignal) => request<ListenBrainzOut>('GET', '/api/listenbrainz', { signal }),
   listenbrainzConnect: (token: string) => request<ListenBrainzOut>('POST', '/api/listenbrainz/connect', { json: { token } }),
   listenbrainzSend: (again: boolean) => request<ListenBrainzOut>('POST', withQuery('/api/listenbrainz/send', { again: again || undefined })),
-  listenbrainzDisconnect: () => request<ListenBrainzOut>('DELETE', '/api/listenbrainz'),
+  integrations: (signal?: AbortSignal) => request<IntegrationsOut>('GET', '/api/integrations', { signal }),
+  integrationConnect: (provider: 'spotify' | 'yandex', shared: boolean) => request<IntegrationGrant>('POST', `/api/integrations/${provider}/connect`, { json: { shared } }),
+  integrationPoll: (ticket: string, signal?: AbortSignal) => request<{ stage: string }>('POST', '/api/integrations/auth/poll', { json: { ticket }, signal }),
+  integrationAccess: (id: number, shared: boolean) => request<IntegrationConnection>('PATCH', `/api/integrations/${id}`, { json: { shared } }),
+  integrationDisconnect: (id: number) => request<{ ok: boolean }>('DELETE', `/api/integrations/${id}`),
+  integrationCheck: (id: number, playlist: string) => request<{ connection: IntegrationConnection; playlist?: string; liked_read?: number; playlist_error?: string }>('POST', `/api/integrations/${id}/check`, { json: { playlist } }),
+  lastfmConnect: (key: string) => request<IntegrationConnection>('POST', '/api/integrations/lastfm', { json: { key } }),
   // «Открытия недели»
   discoveriesBuild: () => request<OkOut>('POST', '/api/discoveries/build'),
   // «Релизы» (lib/releases.ts)
@@ -588,12 +756,17 @@ export const api = {
   statsForget: () => request<OkOut>('DELETE', '/api/stats/import'),
   // a track on music services («Поделиться ссылкой»)
   links: (q: { nd_song_id?: string | null; ref?: string | null }) =>
-    request<{ links: { service: string; title: string; url: string }[]; universal?: string | null; homemusic?: string | null }>(
+    request<{ links: { service: string; title: string; url: string }[]; homemusic?: string | null }>(
       'GET', withQuery('/api/links', { nd_song_id: q.nd_song_id ?? undefined, ref: q.ref ?? undefined })),
   /** a «HomeMusic» link opened here: the library's track, the catalog's, or the words to search by */
-  openLink: (q: { dz?: string | null; isrc?: string | null; sp?: string | null; a?: string | null; t?: string | null }, signal?: AbortSignal) =>
-    request<{ nd_song_id?: string | null; ref?: string | null; album_ref?: string | null; title?: string | null; artist?: string | null; query?: string | null }>(
-      'GET', withQuery('/api/links/open', { dz: q.dz ?? undefined, isrc: q.isrc ?? undefined, sp: q.sp ?? undefined, a: q.a ?? undefined, t: q.t ?? undefined }), { signal }),
+  openLink: (q: { dz?: string | null; isrc?: string | null; sp?: string | null; a?: string | null; t?: string | null; url?: string | null }, signal?: AbortSignal) =>
+    request<{ nd_song_id?: string | null; ref?: string | null; album_ref?: string | null; title?: string | null; artist?: string | null; query?: string | null; artist_ref?: string | null; playlist_id?: string | null }>(
+      'GET', withQuery('/api/links/open', { dz: q.dz ?? undefined, isrc: q.isrc ?? undefined, sp: q.sp ?? undefined, a: q.a ?? undefined, t: q.t ?? undefined, url: q.url ?? undefined }), { signal }),
+  spotifyTrack: (q: { nd_song_id?: string | null; ref?: string | null }, signal?: AbortSignal) =>
+    cachedGet<{ spotify_plays?: number | null; spotify_id?: string | null }>(
+      withQuery('/api/links/spotify-track', { nd_song_id: q.nd_song_id ?? undefined, ref: q.ref ?? undefined }), signal),
+  trackAudience: (tracks: TrackAudienceRequest[], signal: AbortSignal) =>
+    request<TrackAudience[]>('POST', '/api/links/track-audience', { json: { tracks }, signal }),
   // lyrics of a library track (lib/lyrics.ts)
   lyrics: (q: { nd_song_id?: string | null; ref?: string | null }, signal?: AbortSignal) =>
     request<LyricsOut>('GET', withQuery('/api/lyrics', { nd_song_id: q.nd_song_id ?? undefined, ref: q.ref ?? undefined }), { signal }),
@@ -621,6 +794,8 @@ export const api = {
     request<LyricsSettings>('PUT', '/api/lyrics/settings', { json: body }),
   lyricsScan: () => request<LyricsSettings>('POST', '/api/lyrics/scan'),
   imports: (signal?: AbortSignal) => request<ImportOut[]>('GET', '/api/imports', { signal }),
+  importAccounts: (source: ImportSource, signal?: AbortSignal) => request<{ id: number; account: string | null }[]>('GET', `/api/imports/accounts/${source}`, { signal }),
+  disconnectVk: (id: number) => request<OkOut>('DELETE', `/api/imports/accounts/${id}`),
   createImport: (body: ImportIn) => request<ImportOut>('POST', '/api/imports', { json: body }),
   /** Spotify playlists exported to CSV by Exportify: one file is one playlist. */
   createImportCsv: (files: File[]) => {
@@ -631,18 +806,13 @@ export const api = {
   /** What VK asked for at the sign-in: the code it sent, or what its captcha page answered with. */
   importAuth: (id: number, body: { code?: string; captcha?: string }) => request<ImportOut>('POST', `/api/imports/${id}/auth`, { json: body }),
   importGet: (id: number, signal?: AbortSignal) => request<ImportOut>('GET', `/api/imports/${id}`, { signal }),
-  importItems: (id: number, q: { collection_id?: number; status?: string; match?: string; offset?: number; limit?: number }, signal?: AbortSignal) =>
-    request<ImportItemsOut>('GET', withQuery(`/api/imports/${id}/items`, q), { signal }),
   importStart: (id: number, body: ImportStartIn) => request<ImportOut>('POST', `/api/imports/${id}/start`, { json: body }),
   importDownloadAll: (id: number) => request<ImportOut>('POST', `/api/imports/${id}/download_all`),
   importSync: (id: number) => request<ImportOut>('POST', `/api/imports/${id}/sync`),
   importForgetToken: (id: number) => request<ImportOut>('DELETE', `/api/imports/${id}/token`),
   importCancel: (id: number) => request<ImportOut>('POST', `/api/imports/${id}/cancel`),
   importDelete: (id: number) => request<OkOut>('DELETE', `/api/imports/${id}`),
-  /** a track there is nothing to play of: a download by its names, where the user picks the file — the track's own */
-  trackFindFile: (trackId: number) => request<{ download_item_id: number }>('POST', `/api/library/tracks/${trackId}/find-file`),
-  importPick: (itemId: number) => request<{ download_item_id: number }>('POST', `/api/imports/items/${itemId}/pick`),
-  importSkip: (itemId: number) => request<OkOut>('POST', `/api/imports/items/${itemId}/skip`),
+  confirmImportMatch: (itemId: number) => request<OkOut>('POST', `/api/imports/items/${itemId}/confirm_match`),
 
   // assistant
   assistantTask: (id: number, signal?: AbortSignal) =>

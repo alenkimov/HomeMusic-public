@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from 'react';
+import { subscribeVersionLabels, titleWithVersion } from './versionLabels';
 import { imageUrl } from './img';
 import { ofHiddenArtist } from './dislikes';
 import { keptInfo } from './offline';
-import { api, errorMessage, isAbort, listenStreamUrl } from '../api/client';
+import { ApiError, api, errorMessage, isAbort, listenStreamUrl } from '../api/client';
 import type { LaunchOrigin, ListenOut } from '../api/types';
 import { startDownload } from './actions';
 import { hubEvents } from './events';
@@ -24,7 +25,7 @@ import { listeningAccount, newEventId, newLaunch, playEvent, routeContext, type 
  *
  * What plays here is reported to the Hub for mixes (`lib/plays.ts`, MIXES.md 3.2): `start` once sound plays, then
  * `finish` (played to its end, or left after ≥ 90 %) or `skip` (left earlier: another track, the player closed),
- * with the screen the list was started from. A Deezer preview is no listen of the track and is not reported. */
+ * with the screen the list was started from. */
 
 export interface ListenTrack {
   ref: string;
@@ -40,17 +41,21 @@ export interface ListenTrack {
   title: string;
   artist: string;
   cover_url?: string | null;
+  page_url?: string | null;
   /** the small cover for the mini player (the system notification keeps the big one) */
   cover_small_url?: string | null;
   album_ref?: string | null;
+  release_id?: number | null;
   artist_ref?: string | null;
+  hub_artist_id?: number | null;
   /** every credited artist, with the page each opens: the catalog's (`ref`) when the Hub knows it, else the library's
    * (`nd`: Navidrome's artist) — `artistTo` */
-  artists?: { name: string; ref?: string; nd?: string }[];
+  artists?: { name: string; ref?: string; nd?: string; id?: number }[];
   album?: string;
   isrc?: string;
   year?: number;
   duration_s?: number | null;
+  spotify_plays?: number | null;
 }
 
 /** A file on «Загрузить файлы» that is played before it is brought in (`up:<upload>`): it is no track of the library
@@ -61,16 +66,17 @@ export const isUpload = (t: { ref: string } | null | undefined): boolean => !!t?
 /** The page of a credited artist of a playing track: the catalog's when the track says which (`ref`), the library's
  * (`nd`), else the one found by the name (`pages/Artist.tsx`, `ArtistNamedPage`) — a wave, a recommendation or a
  * line of the history names its artists and nothing more. Null: there is not even a name. */
-export const artistTo = (a: { name?: string | null; ref?: string | null; nd?: string | null }): string | null =>
-  a.ref ? `/artist/${encodeURIComponent(a.ref)}` : a.nd ? `/lib/artist/${encodeURIComponent(a.nd)}` : a.name?.trim() ? `/artist-named/${encodeURIComponent(a.name.trim())}` : null;
+export const artistTo = (a: { name?: string | null; ref?: string | null; nd?: string | null; id?: number }): string | null =>
+  a.id || a.ref ? `/artist/${encodeURIComponent(a.id ?? a.ref ?? '')}` : a.nd ? `/lib/artist/${encodeURIComponent(a.nd)}` : a.name?.trim() ? `/artist-named/${encodeURIComponent(a.name.trim())}` : null;
 
 /** Everyone credited on a playing track, each with what opens their page (`artistTo`). A track that names its
  * artists one by one says so itself; one that has only a line of them («Eliminate, fussy» — a wave's, a line of the
  * history) is read by its commas, the first being the one its `artist_ref` is of. */
-export function creditedOf(t: Pick<ListenTrack, 'artist' | 'artist_ref' | 'artists'>): { name: string; ref?: string; nd?: string }[] {
+export function creditedOf(t: Pick<ListenTrack, 'artist' | 'artist_ref' | 'artists' | 'hub_artist_id'>): NonNullable<ListenTrack['artists']> {
   if (t.artists?.length) return t.artists;
   const names = t.artist.split(',').map((x) => x.trim()).filter(Boolean);
-  return (names.length ? names : [t.artist]).map((name, i) => ({ name, ...(i === 0 && t.artist_ref ? { ref: t.artist_ref } : {}) }));
+  return (names.length ? names : [t.artist]).map((name, i) => ({ name, ...(i === 0 && t.artist_ref ? { ref: t.artist_ref } : {}),
+    ...(i === 0 && t.hub_artist_id ? { id: t.hub_artist_id } : {}) }));
 }
 
 /** off; all: the queue starts over after its end; one: the track plays again. */
@@ -106,6 +112,11 @@ export interface ListenState {
 
 /** The id the Hub knows a track of a playlist by: its Navidrome song, else the catalog ref. */
 export const idOf = (t: Pick<ListenTrack, 'ref' | 'nd_song_id'>) => t.nd_song_id || t.ref;
+
+function playbackRef(t: ListenTrack) {
+  return t.library_track_id && !t.ref.startsWith('file:') && !isUpload(t) && !keptInfo(t.ref)
+    ? `lib:${t.library_track_id}` : t.ref;
+}
 
 const VOLUME_KEY = 'hm-listen-volume';
 const savedVolume = (() => {
@@ -180,7 +191,8 @@ let audio: HTMLAudioElement | null = null;
 /** The page player's `<audio>` (null until the first track): `lib/waveAudio.ts` reads its loudness. */
 export const listenAudio = (): HTMLAudioElement | null => audio;
 let pendingSeek = 0;
-let resolving: AbortController | null = null;
+let resolving: { controller: AbortController; pending: boolean; retryMedia: boolean } | null = null;
+let autoAdvanceOnFailure = false;
 /** How many tracks of the queue are loaded ahead (`prefetchNext`): the next one whole, the rest only their start. */
 const AHEAD = 3;
 /** What the Hub was asked to load ahead: ref -> how much of it, and the request. */
@@ -306,10 +318,10 @@ function metadata() {
     isrc: t.isrc, year: t.year, ...(t.artists?.length ? { artists: t.artists } : {}) } : undefined;
 }
 
-/** Sends `start` once the track sounds and the Hub has said what plays (not a preview). */
+/** Sends `start` once the track sounds and the Hub has said what plays. */
 function reportStart() {
   const p = played;
-  if (!p || p.started || state.track?.ref !== p.ref || !state.info || state.info.kind === 'preview') return;
+  if (!p || p.started || state.track?.ref !== p.ref || !state.info) return;
   if (state.phase !== 'playing') return;
   p.started = true;
   p.ndSongId = state.info.nd_song_id;
@@ -350,6 +362,7 @@ function el(): HTMLAudioElement {
   a.addEventListener('durationchange', sync);
   a.addEventListener('play', pauseNative);
   a.addEventListener('playing', () => {
+    if (resolving) resolving.retryMedia = false;
     set({ phase: 'playing', error: null });
     refreshInfo();
     reportStart();
@@ -378,13 +391,36 @@ function el(): HTMLAudioElement {
     else if (state.repeat === 'all' && !onWave() && ahead(-1) < state.queue.length) start(state.queue, ahead(-1), true);
     else set({ phase: 'ended' });
   });
-  a.addEventListener('error', () => {
-    if (a.getAttribute('src')) { reportEnd(false, true); set({ phase: 'error', error: state.error ?? 'Не удалось воспроизвести' }); }
-  });
+  a.addEventListener('error', () => mediaFailed(a));
   // the app's player started: one player on screen, so this one closes (the app shows its own again)
   window.addEventListener(NATIVE_PLAYING_EVENT, stopListening);
   audio = a;
   return a;
+}
+
+function mediaFailed(a: HTMLAudioElement) {
+  // The audio element has no HTTP status. Let the parallel lookup report the cause and decide whether to retry.
+  if (!a.getAttribute('src') || resolving?.pending) return;
+  if (resolving?.retryMedia) {
+    resolving.retryMedia = false;
+    const paused = state.phase === 'paused';
+    if (!paused) set({ phase: 'loading' });
+    a.load();
+    if (!paused) play(a);
+    return;
+  }
+  reportEnd(false, true);
+  playbackFailed(state.error ?? 'Не удалось воспроизвести');
+}
+
+function playbackFailed(message: string) {
+  const after = ahead(state.index);
+  if (autoAdvanceOnFailure && after < state.queue.length) {
+    start(state.queue, after, true);
+    return;
+  }
+  set({ phase: 'error', error: message });
+  audio?.pause();
 }
 
 function play(a: HTMLAudioElement) {
@@ -401,12 +437,15 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
   reportEnd();
   // a recommendation of the smart shuffle reports under its session, the playlist's own songs under their list
   played = { ref: track.ref, context: track.rec ? `smart:${track.rec.session}` : listContext, page: listPage, launch: listLaunch, started: false, playbackId: newEventId(), listenedMs: 0, anchor: null, account: listeningAccount() };
-  resolving?.abort();
+  resolving?.controller.abort();
   const ctl = new AbortController();
-  resolving = ctl;
+  const resolution = { controller: ctl, pending: true, retryMedia: false };
+  resolving = resolution;
+  autoAdvanceOnFailure = auto;
   pendingSeek = position;
   set({ track, queue, index, context: listContext, page: listPage, phase: autoplay ? 'resolving' : 'paused', info: null, error: null, position, duration: track.duration_s ?? 0 });
-  a.src = listenStreamUrl(track.ref);
+  const ref = playbackRef(track);
+  a.src = listenStreamUrl(ref);
   if (autoplay) play(a);
   else a.load();
   mediaSession(track);
@@ -416,22 +455,33 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
   prefetching.clear();
   // a track kept on the device (`lib/offline.ts`) plays from it: when the Hub cannot be asked, what it said of the
   // file when the track was kept is shown
-  api.listen(track.ref, ctl.signal).catch((e: unknown) => {
+  api.listen(ref, ctl.signal).catch((e: unknown) => {
     const kept = isAbort(e) ? null : keptInfo(track.ref);
-    if (!kept) throw e;
-    return kept;
+    if (kept) return kept;
+    if (e instanceof ApiError && e.status === 500 && !ctl.signal.aborted) {
+      resolution.retryMedia = a.readyState < HTMLMediaElement.HAVE_CURRENT_DATA && !played?.started;
+      return api.listen(ref, ctl.signal);
+    }
+    throw e;
   }).then(
     (info) => {
-      if (resolving !== ctl) return;
-      set({ info, duration: info.kind === 'preview' ? (info.duration_s ?? 30) : state.duration });
+      if (resolving !== resolution) return;
+      resolution.pending = false;
+      set({ info });
+      if (a.error) {
+        mediaFailed(a);
+        if (state.phase === 'error' || resolving !== resolution) return;
+      }
+      updateMediaTitle();
       reportStart();
       prefetchNext();
     },
     (e: unknown) => {
-      if (isAbort(e) || resolving !== ctl) return;
-      if (auto && hasNext(state)) return void start(state.queue, state.index + 1, true);
-      set({ phase: 'error', error: errorMessage(e) });
-      a.pause();
+      if (isAbort(e) || resolving !== resolution) return;
+      resolution.pending = false;
+      resolution.retryMedia = false;
+      if (a.error) reportEnd(false, true);
+      playbackFailed(errorMessage(e));
     },
   );
 }
@@ -440,11 +490,17 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
  * open: once sound plays, the source shown is asked for again (the Hub has it in memory). */
 let refreshed: string | null = null;
 function refreshInfo() {
-  const ref = state.track?.ref;
-  if (!ref || refreshed === ref || state.info?.kind !== 'full') return;
+  const track = state.track;
+  if (!track || state.info?.kind !== 'full') return;
+  const ref = playbackRef(track);
+  if (refreshed === ref) return;
   refreshed = ref;
   api.listen(ref).then(
-    (info) => state.track?.ref === ref && set({ info }),
+    (info) => {
+      if (state.track !== track) return;
+      set({ info });
+      updateMediaTitle();
+    },
     () => {},
   );
 }
@@ -456,7 +512,7 @@ function prefetchNext() {
   const ahead: ListenTrack[] = [];
   for (let k = 1; k <= AHEAD && state.index + k < state.queue.length; k++) ahead.push(state.queue[state.index + k]);
   if (!ahead.length && state.repeat === 'all' && !onWave() && state.queue.length) ahead.push(state.queue[0]);
-  const want = new Map(ahead.map((t, k) => [t.ref, k === 0 ? 'whole' : 'head'] as const));
+  const want = new Map(ahead.map((t, k) => [playbackRef(t), k === 0 ? 'whole' : 'head'] as const));
   for (const [ref, p] of prefetching) {
     if (want.get(ref) === p.how) want.delete(ref); // asked for already, and for as much
     else if (!want.has(ref)) {
@@ -931,7 +987,7 @@ export function seek(seconds: number) {
 /** Stops and hides the player. */
 export function stopListening() {
   reportEnd();
-  resolving?.abort();
+  resolving?.controller.abort();
   resolving = null;
   for (const p of prefetching.values()) p.ctl.abort();
   prefetching.clear();
@@ -984,11 +1040,26 @@ hubEvents.on('download', (d) => {
 });
 
 /** Lock screen / headset controls in a phone browser (the app's WebView ignores them). */
+function mediaTitle(track: ListenTrack) {
+  return titleWithVersion(track.title, {
+    ...track,
+    library_track_id: state.info?.track_id ?? track.library_track_id,
+    nd_song_id: state.info?.nd_song_id ?? track.nd_song_id,
+    page_url: state.info?.page_url ?? track.page_url,
+  });
+}
+
+function updateMediaTitle() {
+  if (state.track && navigator.mediaSession?.metadata) navigator.mediaSession.metadata.title = mediaTitle(state.track);
+}
+
+subscribeVersionLabels(updateMediaTitle);
+
 function mediaSession(track: ListenTrack) {
   if (!('mediaSession' in navigator) || typeof MediaMetadata === 'undefined') return;
   const ms = navigator.mediaSession;
   ms.metadata = new MediaMetadata({
-    title: track.title,
+    title: mediaTitle(track),
     artist: track.artist,
     artwork: track.cover_url ? [{ src: imageUrl(track.cover_url), sizes: '500x500' }] : [],
   });

@@ -23,18 +23,16 @@ from app.jobs.downloads import _cover_kept, enqueue_scan, owe_cover
 from app.library import artists
 from app.jobs.queue import notify
 from app.library import acoustic, probe, quality, recognize, tagger
+from app.library.artwork import cover_info
 from app.library.credits import main_artist, split_artists
 from app.library.owned import find_owned
 from app.library.tracks import current_file
-from app.library.importer import ImportSpec, import_file
+from app.library.importer import ImportSpec, copy_limited, import_file
 from app.models import Track, Upload, User
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
-
-CHUNK = 1024 * 1024
-
 
 _better = quality.better
 
@@ -121,7 +119,7 @@ async def upload_out(s: AsyncSession, u: Upload) -> UploadOut:
     twin = await _twin(s, u) if u.status == "uploaded" else None
     kept = dict(u.probed_tags_json or {})
     if kept.get("has_cover") and "cover_info" not in kept and _abs(u).is_file():  # an upload from before the mark
-        kept["cover_info"] = _cover_info(await asyncio.to_thread(tagger.read_cover, _abs(u)))
+        kept["cover_info"] = cover_info(await asyncio.to_thread(tagger.read_cover, _abs(u)))
         u.probed_tags_json = kept
         await s.flush()
     tags = {k: v for k, v in kept.items() if not k.startswith("_")}
@@ -137,25 +135,6 @@ async def upload_out(s: AsyncSession, u: Upload) -> UploadOut:
                      single=recognize.single_album(tags.get("album"), title), duration_s=u.duration_s)
 
 
-def _cover_info(image: bytes | None) -> dict | None:
-    """What a picture is: the mark of its bytes (two files with one picture are told by it), its size in pixels,
-    its kind and its weight — a listener chooses the cover of an album among several by these."""
-    import hashlib
-    from io import BytesIO
-
-    from PIL import Image
-
-    if not image:
-        return None
-    out: dict = {"hash": hashlib.md5(image).hexdigest()[:12], "size": len(image)}
-    try:
-        with Image.open(BytesIO(image)) as im:
-            out.update(w=im.size[0], h=im.size[1], format=(im.format or "").upper() or None)
-    except Exception:
-        pass
-    return out
-
-
 _catalog_covers: dict[str, dict | None] = {}
 
 
@@ -167,17 +146,6 @@ def _upload_dir(user_id: int) -> Path:
 
 def _abs(u: Upload) -> Path:
     return get_settings().staging_dir / Path(u.staging_path)
-
-
-def _copy_limited(src, dest: Path, limit: int) -> int:
-    n = 0
-    with dest.open("wb") as out:
-        while chunk := src.read(CHUNK):
-            n += len(chunk)
-            if n > limit:
-                raise ValueError("too large")
-            out.write(chunk)
-    return n
 
 
 @router.post("", response_model=list[UploadOut])
@@ -195,7 +163,7 @@ async def upload(files: list[UploadFile] = File(...), user: User = Depends(curre
         dest = get_settings().staging_dir / rel
         _upload_dir(user.id)
         try:
-            size = await asyncio.to_thread(_copy_limited, f.file, dest, limit)
+            size = await asyncio.to_thread(copy_limited, f.file, dest, limit)
         except ValueError:
             dest.unlink(missing_ok=True)
             raise HTTPException(413, f"Файл больше {cfg.max_file_mb} МБ: {name}") from None
@@ -213,7 +181,7 @@ async def upload(files: list[UploadFile] = File(...), user: User = Depends(curre
             log.info("upload %s not probed: %r", name, e)
             info = None
         # the mark of the file's picture: files of one album whose pictures differ are told by it
-        tags["cover_info"] = _cover_info(await asyncio.to_thread(tagger.read_cover, dest)) if tags.get("has_cover") else None
+        tags["cover_info"] = cover_info(await asyncio.to_thread(tagger.read_cover, dest)) if tags.get("has_cover") else None
         sound = await acoustic.of_file(dest)
         duration = (info.duration_s if info else None) or (sound[1] if sound else None)
         tags["_match"] = await recognize.of_file(tags, name, duration)
@@ -278,7 +246,7 @@ async def preview(upload_id: int, user: User = Depends(current_user), s: AsyncSe
 
 @router.get("/{upload_id}/catalog-cover")
 async def catalog_cover(upload_id: int, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")) -> dict:
-    """What the catalog's picture of the file's record is (`_cover_info`): it is fetched to be measured, once."""
+    """Measure the picture from the catalog once."""
     from app.jobs.downloads import fetch_cover
 
     u = await _own(s, user, upload_id)
@@ -288,7 +256,7 @@ async def catalog_cover(upload_id: int, user: User = Depends(current_user), s: A
     if url not in _catalog_covers:
         if len(_catalog_covers) > 2000:
             _catalog_covers.clear()
-        info = _cover_info(await fetch_cover(url))
+        info = cover_info(await fetch_cover(url))
         if info is None:  # the catalog did not give it just now: asked again the next time
             return {}
         _catalog_covers[url] = info
@@ -350,7 +318,8 @@ async def _catalog_spec(meta: dict, *, with_cover: bool = True) -> ImportSpec:
         release_type={"compile": "compilation"}.get(meta.get("record_type", ""), meta.get("record_type"))
         or ("single" if single else "album"),
         track_no=meta.get("track_no") or (1 if single else None), track_total=meta.get("track_total"),
-        disc_no=meta.get("disc_no") or 1, genre=meta.get("genre"), isrc=meta.get("isrc"), explicit=meta.get("explicit"),
+        disc_no=meta.get("disc_no") or 1, genre=meta.get("genre"), genre_source=meta.get("genre_source"),
+        catalog_album_ref=meta.get("album_ref"), isrc=meta.get("isrc"), explicit=meta.get("explicit"),
         deezer_track_id=meta.get("deezer_track_id"), ref=ref or None, deezer_album_id=meta.get("deezer_album_id"),
         upc=meta.get("upc"), cover=await fetch_cover(meta.get("cover_url")) if with_cover else None,
     )
@@ -435,7 +404,8 @@ async def commit(body: UploadCommitIn, user: User = Depends(current_user),
             spec.release_date = released if released and released.year == album.year else None
             spec.release_type = {"compile": "compilation"}.get(rel.get("record_type", ""), rel.get("record_type")) or ("single" if album.single else "album")
             spec.track_total = rel.get("track_total")
-            spec.genre = spec.genre or rel.get("genre")
+            if not spec.genre:
+                spec.genre, spec.genre_source = rel.get("genre"), rel.get("genre_source")
             # its place in the album: the catalog's when its record stands on this very release, else the file's
             there = bool(meta and rel.get("deezer_album_id") and meta.get("deezer_album_id") == rel.get("deezer_album_id"))
             spec.track_no = tr.track_no or (meta.get("track_no") if there and meta else None) or (1 if album.single else tags.get("track_no"))

@@ -1,16 +1,18 @@
+import { TrackTitle } from './TrackTitle';
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { Candidate } from '../api/types';
-import { fmtDate, fmtDuration, providerLabel } from '../lib/format';
+import { fmtDate, fmtDuration } from '../lib/format';
+import { ServiceBadge } from './ServiceBadge';
 import { listen, touchTrack, useListen, watchOnScreen, type ListenTrack } from '../lib/listen';
 import { canPlayAll, playHubItems, type HubItem } from '../lib/player';
 import { ListenButton } from './catalog';
 import { Icon } from './Icon';
 import { SaveButton } from './PlaylistsButton';
 import { TrackMenuButton } from './TrackMenu';
-import { Cover, ExplicitBadge, cx } from './ui';
+import { Cover, cx } from './ui';
 
 /** A provider's file named like a catalog track: the Hub streams it (`/api/listen`) and downloads it by this ref.
- * Only files the Hub has just shown in a search (`/api/search/providers`) are known to it. */
+ * The Hub remembers files it has just shown in search results or a download's details. */
 export const fileRef = (c: Candidate) => `file:${c.provider}:${c.provider_id}`;
 
 const fileTrack = (c: Candidate): ListenTrack & HubItem => ({
@@ -19,6 +21,7 @@ const fileTrack = (c: Candidate): ListenTrack & HubItem => ({
   artist: c.artist,
   album: c.album ?? undefined,
   cover_url: c.cover_url,
+  page_url: c.page_url,
   duration_s: c.duration_s,
 });
 
@@ -68,14 +71,11 @@ export function CandidateRow({ c, action, queue }: { c: Candidate; action?: Reac
     <div ref={rowRef} className={cx('flex gap-3 py-3 pl-4', listenable ? 'pr-1' : 'pr-4')}>
       <Cover src={c.cover_url} size={52} />
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          {c.explicit && <ExplicitBadge />}
-          <span className={cx('truncate text-[15px]', current && 'text-accent')}>{c.title}</span>
-        </div>
+        <div className={cx('truncate text-[15px]', current && 'text-accent')}><TrackTitle title={c.title} track={c} /></div>
         <div className="truncate text-[13px] text-muted">{[c.artist, c.album, c.year].filter(Boolean).join(' · ')}</div>
         {version && version !== c.title && <div className="truncate text-xs text-dim">{version}</div>}
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-          <span className="rounded bg-fg/8 px-1.5 py-0.5 font-medium text-fg">{providerLabel(c.provider)}</span>
+          <ServiceBadge service={c.provider} className="rounded bg-fg/8 px-1.5 py-0.5 font-medium text-fg" />
           {mark && (
             <span className={cx('rounded px-1.5 py-0.5 font-medium', mark.tone === 'good' ? 'bg-accent/15 text-accent' : 'bg-warn/15 text-warn')}>
               {mark.text}

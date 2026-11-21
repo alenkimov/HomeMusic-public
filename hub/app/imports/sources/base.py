@@ -42,3 +42,5 @@ class SnapCollection:
 class Snapshot:
     account: str | None
     collections: list[SnapCollection] = field(default_factory=list)
+    account_subject: str | None = None
+    plan: str | None = None

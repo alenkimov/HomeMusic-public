@@ -1,9 +1,11 @@
+import { TrackTitle } from '../components/TrackTitle';
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { NdSongOut } from '../api/types';
 import { playAll } from '../components/catalog';
 import { Trend } from '../components/PlaysCell';
 import { Icon, type IconName } from '../components/Icon';
+import { ServiceBadge, ServiceIcon, ServiceText } from '../components/ServiceBadge';
 import { Button, Cover, Empty, ErrorState, Loading, Notice, PageHeader, ProgressBar, Segmented, Sheet, cx } from '../components/ui';
 import { WEEKDAYS_SHORT, fmtListened, fmtNum, fmtPct, plural } from '../lib/format';
 import { useAsync } from '../lib/hooks';
@@ -76,7 +78,7 @@ export function StatsPage() {
             <Tile label="Пропуски" value={fmtPct(d.summary.skips, d.summary.attempts)} hint="Треки, выключенные раньше 30 секунд" />
           </div>
           {!d.summary.attempts ? (
-            <Empty icon="history" title="За этот период прослушиваний нет" text="Выберите период подольше или импортируйте историю из Spotify." />
+            <Empty icon="history" title="За этот период прослушиваний нет" text={<ServiceText text="Выберите период подольше или импортируйте историю из Spotify." />} />
           ) : (
             <>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -98,7 +100,7 @@ export function StatsPage() {
             <Weeks heat={d.heatmap} by={by} />
           </Card>
           <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-surface p-4">
-            <Icon name="transfer" size={22} className="text-muted" />
+            <ServiceIcon service="spotify" size={22} />
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold">История из Spotify</div>
               <div className="text-xs text-muted">
@@ -192,7 +194,7 @@ function Rows({ kind, items, by, bySong, icon, round }: { kind: StatsKind; items
             <span className="min-w-0 flex-1">
               {/* a phone has no room for both in a line: the name, and under it whose it is */}
               <span className="flex flex-col sm:flex-row sm:items-baseline sm:gap-2">
-                <span className={cx('truncate text-sm', outside ? 'text-muted' : 'text-fg')}>{x.name}</span>
+                <span className={cx('truncate text-sm', outside ? 'text-muted' : 'text-fg')}><TrackTitle title={x.name} track={kind === 'tracks' ? x : undefined} /></span>
                 {x.sub && <span className="truncate text-xs text-dim">{x.sub}</span>}
               </span>
               <span className="mt-1 block h-1 overflow-hidden rounded-full bg-fg/10">
@@ -358,7 +360,7 @@ function ImportSheet({ onClose, onDone }: { onClose: () => void; onDone: () => v
     <Sheet
       open
       onClose={onClose}
-      title="История из Spotify"
+      title={<ServiceBadge service="spotify" label="История из Spotify" size={18} />}
       footer={
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>{result ? 'Готово' : 'Отмена'}</Button>
@@ -384,7 +386,7 @@ function ImportSheet({ onClose, onDone }: { onClose: () => void; onDone: () => v
       ) : (
         <div className="space-y-3 text-sm">
           <p className="text-muted">
-            Запросите у Spotify «Расширенную историю стриминга»: аккаунт → «Конфиденциальность» → «Загрузка ваших данных». Архив приходит на почту — обычно за несколько дней, иногда до 30.
+            <ServiceText text="Запросите у Spotify «Расширенную историю стриминга»: аккаунт → «Конфиденциальность» → «Загрузка ваших данных». Архив приходит на почту — обычно за несколько дней, иногда до 30." />
           </p>
           <p className="text-muted">Сюда можно отдать архив целиком (.zip) или файлы Streaming_History_Audio_….json из него. Повторный импорт дубликатов не создаёт.</p>
           <input ref={input} type="file" multiple accept=".zip,.json,application/zip,application/json" className="hidden" onChange={(e) => setFiles([...(e.target.files ?? [])])} />

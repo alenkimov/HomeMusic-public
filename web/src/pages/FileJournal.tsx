@@ -1,8 +1,8 @@
+import { TrackTitle } from '../components/TrackTitle';
 import { api } from '../api/client';
 import { FileInfo } from '../components/FileInfo';
 import { Icon } from '../components/Icon';
 import { Empty, ErrorState, Loading, PageHeader } from '../components/ui';
-import { providerLabel } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { Link } from '../lib/router';
 import { Journal } from './DownloadDetail';
@@ -15,7 +15,7 @@ export function FileJournalPage({ id }: { id: number }) {
   const d = res.data;
   return (
     <div>
-      <PageHeader title="Как скачан файл" sub={d ? `${d.artist} — ${d.title}` : undefined} back="/library" />
+      <PageHeader title="Как скачан файл" sub={d ? <TrackTitle title={`${d.artist} — ${d.title}`} track={d} /> : undefined} back="/library" />
       {res.loading ? (
         <Loading />
       ) : !d ? (
@@ -28,7 +28,6 @@ export function FileJournalPage({ id }: { id: number }) {
                 <span className="block truncate text-[15px]">
                   <FileInfo info={d.file} />
                 </span>
-                <span className="block truncate text-[13px] text-muted">{providerLabel(d.file.source)}</span>
               </span>
               {d.download_id !== null && d.download_id !== undefined && (
                 <Link to={`/downloads/${d.download_id}`} className="flex shrink-0 items-center gap-1 text-sm text-muted hover:text-fg" title="Найденные файлы, выбор другого">

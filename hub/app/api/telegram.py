@@ -1,4 +1,4 @@
-"""«Отправить в Telegram»: the user's own bot (app/telegram.py) — connecting it and sending library tracks to it."""
+"""«Отправить в Telegram»: pair an account and send library tracks through the shared bot."""
 
 from __future__ import annotations
 
@@ -16,8 +16,7 @@ from app.config import get_settings
 from app.db import get_session
 from app.library import tagger
 from app.lyrics import service as lyrics_service
-from app.models import TgChat, User
-from app.security import decrypt, encrypt
+from app.models import TelegramGroup, User
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
@@ -26,15 +25,15 @@ LIGHT_WAIT_S = 120  # a file over Telegram's limit is sent as its light copy; ma
 
 
 class TelegramOut(BaseModel):
-    connected: bool = False  # a bot's key is saved
-    ready: bool = False  # ... and the chat it writes to is known
+    configured: bool = False
+    ready: bool = False  # the current user has started the bot using a personal link
     bot_username: str | None = None
     chat_name: str | None = None
     with_lyrics: bool = False  # «Отправить в Telegram» sends the track's text with it
 
 
-class TelegramConnectIn(BaseModel):
-    token: str
+class TelegramLinkOut(TelegramOut):
+    start_url: str | None = None
 
 
 class TelegramPrefsIn(BaseModel):
@@ -54,144 +53,140 @@ class TelegramSendIn(BaseModel):
     chat: int | None = None  # one of the bot's chats (`/chats`); None: the private chat with the user
     with_lyrics: bool | None = None  # None: as the user's setting says
     with_link: bool = False  # a button under the audio: the track's «HomeMusic» link (app/links.py)
+    anonymous: bool = False
 
 
 class TelegramSentOut(BaseModel):
     ok: bool = True
     title: str
+    version_label: str | None = None
     light: bool = False  # the light copy was sent (the file is over Telegram's limit)
     lyrics: bool = False  # the track's text went with it
 
 
-def _out(u: User) -> TelegramOut:
-    return TelegramOut(connected=bool(u.tg_bot_token_enc), ready=bool(u.tg_bot_token_enc and u.tg_chat_id),
-                       bot_username=u.tg_bot_username, chat_name=u.tg_chat_name, with_lyrics=bool(u.tg_with_lyrics))
+async def _bot() -> telegram.SharedBot | None:
+    try:
+        return await telegram.shared_bot()
+    except telegram.TelegramError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
-async def _me(s: AsyncSession, user: User) -> User:
-    u = await s.get(User, user.id)
-    assert u is not None
-    return u
+async def _required_bot() -> telegram.SharedBot:
+    if (bot := await _bot()) is None:
+        raise HTTPException(409, "Администратор Хаба ещё не настроил бота Telegram")
+    return bot
 
 
-def _listen(u: User) -> None:
-    """The bot's chats are kept fresh in the background from now on."""
-    if u.tg_bot_token_enc and not get_settings().disable_background:
-        telegram_chats.start(u.id)
+async def _out(s: AsyncSession, user: User, bot: telegram.SharedBot | None) -> TelegramOut:
+    linked = await telegram_chats.account(s, user.id, bot) if bot else None
+    return TelegramOut(configured=bot is not None, ready=linked is not None, bot_username=bot.username if bot else None,
+                       chat_name=linked.name if linked else None, with_lyrics=user.tg_with_lyrics)
 
 
-async def _chats_out(s: AsyncSession, u: User) -> list[TelegramChatOut]:
-    return [TelegramChatOut(id=c.id, kind=c.kind, title=c.title, photo=c.photo_key if c.photo else None)
-            for c in await telegram_chats.chats(s, u)]
+async def _linked_id(s: AsyncSession, user: User, bot: telegram.SharedBot) -> str:
+    account = await telegram_chats.account(s, user.id, bot)
+    if account is None or account.telegram_id is None:
+        raise HTTPException(409, "Откройте бота из HomeMusic и нажмите Start")
+    return account.telegram_id
+
+
+async def _chats_out(s: AsyncSession, user: User, *, refresh: bool = False) -> list[TelegramChatOut]:
+    bot = await _bot()
+    if bot and refresh:
+        await _sync(bot)
+    account = await telegram_chats.account(s, user.id, bot) if bot else None
+    if bot is None or account is None or account.telegram_id is None:
+        return []
+    rows = await telegram_chats.groups(s, bot, account.telegram_id, refresh=refresh)
+    return [TelegramChatOut(id=0, kind="private", title=account.name or "Мне"), *[
+        TelegramChatOut(id=c.id, kind=c.kind, title=c.title, photo=c.photo_key if c.photo else None) for c in rows]]
+
+
+async def _sync(bot: telegram.SharedBot) -> None:
+    try:
+        await telegram_chats.sync(bot)
+    except telegram.TelegramError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+async def _allowed_group(s: AsyncSession, bot: telegram.SharedBot, chat: int, telegram_id: str) -> TelegramGroup:
+    row = await s.get(TelegramGroup, chat)
+    if row is not None:
+        async with telegram.bot_of(bot.token, 10) as client:
+            if await telegram_chats.can_send(client, bot, row, telegram_id):
+                return row
+    raise HTTPException(404, "Чат недоступен: проверьте своё членство и права бота")
 
 
 @router.get("", response_model=TelegramOut)
 async def status(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    return _out(await _me(s, user))
+    return await _out(s, user, await _bot())
 
 
-@router.post("/connect", response_model=TelegramOut)
-async def connect(body: TelegramConnectIn, user: User = Depends(current_user),
-                  s: AsyncSession = Depends(get_session, scope="function")):
-    """Save the bot's key (checked with Telegram first). The chat is bound at once when Start was pressed already."""
-    try:
-        token = telegram.clean_token(body.token)
-        bot = await telegram.get_me(token)
-        u = await _me(s, user)
-        u.tg_bot_token_enc = encrypt(token)
-        u.tg_bot_username = str(bot.get("username") or "")[:64] or None
-        u.tg_chat_id = u.tg_chat_name = None
-        await telegram_chats.forget(s, u.id)
-        await telegram_chats.sync(s, u)
-    except telegram.TelegramError as e:
-        raise HTTPException(400, str(e)) from e
+@router.post("/link", response_model=TelegramLinkOut)
+async def link(response: Response, user: User = Depends(current_user),
+               s: AsyncSession = Depends(get_session, scope="function")):
+    """Issue a short-lived Start link for the authenticated Hub account."""
+    bot = await _required_bot()
+    url = await telegram_chats.link_url(s, user.id, bot)
+    out = await _out(s, user, bot)
     await s.commit()
-    _listen(u)
-    return _out(u)
+    response.headers["Cache-Control"] = "no-store"
+    return TelegramLinkOut(**out.model_dump(), start_url=url)
 
 
 @router.post("/check", response_model=TelegramOut)
 async def check(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     """Look for the chat again: the user has pressed Start in the bot."""
-    u = await _me(s, user)
-    if not u.tg_bot_token_enc:
-        raise HTTPException(409, "Бот не подключён")
-    try:
-        await telegram_chats.sync(s, u)
-    except telegram.TelegramError as e:
-        raise HTTPException(400, str(e)) from e
-    await s.commit()
-    _listen(u)
-    return _out(u)
+    bot = await _required_bot()
+    await _sync(bot)
+    return await _out(s, user, bot)
 
 
 @router.get("/chats", response_model=list[TelegramChatOut])
 async def chats(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    """Where the bot can send: the private chat first, then the groups and channels the user added it to."""
-    u = await _me(s, user)
-    try:
-        await telegram_chats.sync(s, u)
-        await s.commit()
-    except telegram.TelegramError as e:  # the list as it was
-        log.info("telegram: chats not synced: %s", e)
-    _listen(u)
-    return await _chats_out(s, u)
+    return await _chats_out(s, user)
 
 
 @router.post("/chats/refresh", response_model=list[TelegramChatOut])
 async def refresh_chats(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    """«Обновить»: names and pictures again; a chat the bot was removed from leaves the list."""
-    u = await _me(s, user)
-    if not u.tg_bot_token_enc:
-        raise HTTPException(409, "Бот не подключён")
-    try:
-        await telegram_chats.sync(s, u)
-        await telegram_chats.refresh(s, u)
-    except telegram.TelegramError as e:
-        raise HTTPException(502, str(e)) from e
+    rows = await _chats_out(s, user, refresh=True)
     await s.commit()
-    _listen(u)
-    return await _chats_out(s, u)
+    return rows
 
 
 @router.get("/chats/{chat}/photo")
 async def chat_photo(chat: int, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    row = await s.get(TgChat, chat)
-    if row is None or row.user_id != user.id or not row.photo:
+    bot = await _required_bot()
+    telegram_id = await _linked_id(s, user, bot)
+    row = await _allowed_group(s, bot, chat, telegram_id)
+    if not row.photo:
         raise HTTPException(404, "У чата нет картинки")
-    return Response(row.photo, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+    return Response(row.photo, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @router.delete("", response_model=TelegramOut)
 async def disconnect(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    u = await _me(s, user)
-    u.tg_bot_token_enc = u.tg_bot_username = u.tg_chat_id = u.tg_chat_name = None
-    await telegram_chats.forget(s, u.id)
+    await telegram_chats.unlink(s, user.id)
     await s.commit()
-    return _out(u)
+    return await _out(s, user, await _bot())
 
 
 @router.put("/prefs", response_model=TelegramOut)
 async def prefs(body: TelegramPrefsIn, user: User = Depends(current_user),
                 s: AsyncSession = Depends(get_session, scope="function")):
-    u = await _me(s, user)
+    u = await s.get(User, user.id)
+    assert u is not None
     u.tg_with_lyrics = body.with_lyrics
     await s.commit()
-    return _out(u)
+    return await _out(s, u, await _bot())
 
 
 @router.post("/send", response_model=TelegramSentOut)
 async def send(body: TelegramSendIn, user: User = Depends(current_user),
                s: AsyncSession = Depends(get_session, scope="function")):
-    u = await _me(s, user)
-    if not (u.tg_bot_token_enc and u.tg_chat_id):
-        raise HTTPException(409, "Сначала подключите своего бота Telegram")
-    target = u.tg_chat_id
-    if body.chat is not None:
-        row = await s.get(TgChat, body.chat)
-        if row is None or row.user_id != u.id:
-            raise HTTPException(404, "Этого чата больше нет в списке бота — обновите список")
-        target = row.chat_id
+    bot = await _required_bot()
+    await _linked_id(s, user, bot)
     track = await lyrics_service.track_of(s, nd_song_id=body.nd_song_id, ref=body.ref)
     if track is None:
         raise HTTPException(404, "Этого трека нет в библиотеке — сначала скачайте его")
@@ -210,7 +205,7 @@ async def send(body: TelegramSendIn, user: User = Depends(current_user),
         log.info("telegram: no cover of %s: %r", track.path, e)
         cover = None
     text = ""
-    if body.with_lyrics if body.with_lyrics is not None else u.tg_with_lyrics:
+    if body.with_lyrics if body.with_lyrics is not None else user.tg_with_lyrics:
         try:
             text = lyrics_service.text_of(await lyrics_service.ensure(s, track))
             await s.commit()
@@ -226,10 +221,18 @@ async def send(body: TelegramSendIn, user: User = Depends(current_user),
             await s.commit()
         except Exception as e:  # the track goes without its button rather than not at all
             log.info("telegram: no link of %s: %r", track.path, e)
+    from app.library.versions import label_of
+
+    version_label = await label_of(s, track.id)
+    display_title = f"{track.title} ({version_label})" if version_label else track.title
+    # Re-read the pairing and verify group membership just before uploading.
+    await s.commit()
+    sender_id = await _linked_id(s, user, bot)
+    target = sender_id if body.chat is None else (await _allowed_group(s, bot, body.chat, sender_id)).chat_id
     try:
-        await telegram.send_audio(decrypt(u.tg_bot_token_enc), target, path, filename=f"{name}{path.suffix}",
-                                  title=track.title, performer=track.artist, duration_s=track.duration_s, cover=cover,
-                                  lyrics=text, link=link)
+        await telegram.send_audio(bot.token, target, path, filename=f"{name}{path.suffix}",
+                                  title=display_title, performer=track.artist, duration_s=track.duration_s, cover=cover,
+                                  lyrics=text, link=link, sender_id=None if body.anonymous else int(sender_id))
     except telegram.TelegramError as e:
         raise HTTPException(502, str(e)) from e
-    return TelegramSentOut(title=track.title, light=is_light, lyrics=bool(text))
+    return TelegramSentOut(title=track.title, version_label=version_label, light=is_light, lyrics=bool(text))

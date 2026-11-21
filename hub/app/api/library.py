@@ -5,46 +5,51 @@ The files are looked after by who brought them and by the admins (`app/library/a
 from __future__ import annotations
 
 import asyncio
-import logging
 import io
+import logging
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
-    VersionOut,
-    VersionsOut,
-    TrackEditOut,
     AlbumCreateIn,
+    AlbumEditOut,
     AlbumMergeIn,
     AlbumPatchIn,
+    AlbumRenameIn,
     FileJournalOut,
     FileRowOut,
     LibAlbumOut,
     LibTrackOut,
     StarIn,
     StarredOut,
+    TrackEditOut,
     TrackPatchIn,
     TracksDeleteIn,
     TracksDeleteOut,
     TracksMoveIn,
     TrackSourceOut,
+    VersionLabelOut,
+    VersionOut,
+    VersionsOut,
 )
 from app.auth import current_user, user_navidrome
-from app.catalog.models import split_ref
+from app.catalog.models import CatalogAlbum, split_ref
 from app.db import get_session
 from app.events import bus
 from app.jobs.downloads import enqueue_scan
 from app.jobs.queue import notify
-from app.library import access, editor, edits, tagger, trash
-from app.library.importer import album_reldir, library_abs
+from app.library import access, album_names, artists, editor, edits, tagger, trash
+from app.library.artwork import album_cover_url
+from app.library.importer import album_reldir, get_or_create_album, library_abs, library_lock
+from app.library.owned import file_out
 from app.library.tracks import current_file, current_files
 from app.matching.normalize import normalize_title
-from app.library.owned import file_out
 from app.models import Album, DownloadItem, Track, TrackFile, User
 
 router = APIRouter(tags=["library"])
@@ -76,6 +81,7 @@ async def album_out(s: AsyncSession, a: Album, user: User, *, with_tracks: bool 
     return LibAlbumOut(
         id=a.id, uid=a.uid, title=a.title, album_artist=a.album_artist, year=a.year, release_type=a.release_type,
         genre=a.genre, deezer_album_id=a.deezer_album_id, track_count=len(tracks), has_cover=_has_cover(a),
+        cover_url=album_cover_url(a),
         can_edit=await access.owns_album(s, user, a),
         tracks=[track_out(t, files.get(t.id)) for t in tracks] if with_tracks else None,
     )
@@ -108,8 +114,11 @@ async def list_albums(q: str | None = None, offset: int = 0, limit: int = Query(
                       user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     rows = (await s.execute(select(Album).where(access.albums_of(user)).order_by(Album.updated_at.desc()))).scalars().all()
     if q:
-        nq = normalize_title(q).text
-        rows = [a for a in rows if all(w in normalize_title(f"{a.album_artist} {a.title}").text for w in nq.split())]
+        titles = await album_names.listed(s)
+        words = artists.fold(q).split()
+        rows = [a for a in rows if all(w in artists.fold(" ".join(
+            [a.album_artist, a.title, *(row.name for row in titles.get(a.id, []))]
+        )) for w in words)]
     rows = rows[offset: offset + limit]
     counts = dict((await s.execute(
         select(Track.album_id, func.count(Track.id)).where(Track.album_id.in_([a.id for a in rows]), access.tracks_of(user))
@@ -215,13 +224,121 @@ async def patch_album(album_id: int, body: AlbumPatchIn, user: User = Depends(cu
     return await album_out(s, a, user, with_tracks=True)
 
 
+class AlternateNameIn(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=512)]
+
+
+async def _album_edit_target(
+    s: AsyncSession, album_id: int | None, ref: str | None,
+) -> tuple[Album | None, CatalogAlbum | None]:
+    if (album_id is None) == (ref is None):
+        raise HTTPException(422, "Укажи альбом или ссылку на каталог")
+    if album_id is not None:
+        return await _album(s, album_id), None
+    from app.api.catalog import editable_release
+
+    assert ref is not None
+    release, local = await editable_release(s, ref)
+    return local, release
+
+
+async def _album_edit_info(
+    s: AsyncSession, user: User, local: Album | None, release: CatalogAlbum | None,
+) -> AlbumEditOut:
+    assert local is not None or release is not None
+    title = local.title if local is not None else release.title
+    artist = local.album_artist if local is not None else release.artist
+    known = (await album_names.listed(s, [local.id])).get(local.id, []) if local is not None else []
+    names = {row.key: {"id": row.id if row.source != "catalog" else None, "name": row.name, "source": row.source}
+             for row in known if row.key != artists.key(title)}
+    if release is not None:
+        for name in [release.title, *release.alternate_titles]:
+            if (key := artists.key(name)) and key != artists.key(title):
+                names[key] = {"id": None, "name": name, "source": "catalog"}
+    return AlbumEditOut(album_id=local.id if local is not None else None, title=title, album_artist=artist,
+                        names=list(names.values()), can_edit=local is None or await access.owns_album(s, user, local))
+
+
+async def _ensure_album_edit(
+    s: AsyncSession, user: User, local: Album | None, release: CatalogAlbum | None,
+) -> Album:
+    if local is None:
+        from app.api.catalog import release_spec
+
+        assert release is not None
+        async with library_lock:
+            local = await get_or_create_album(s, release_spec(release, user))
+            await s.commit()
+    if not await access.owns_album(s, user, local):
+        raise HTTPException(403, "Изменить названия этого альбома может администратор")
+    return local
+
+
+async def _keep_catalog_album_names(s: AsyncSession, local: Album, release: CatalogAlbum | None) -> None:
+    if release is not None:
+        from app.catalog import registry
+
+        for name in [release.title, *release.alternate_titles]:
+            await album_names.add(s, local, name, "catalog")
+        row = await registry.by_address(s, release.ref)
+        if row is not None and row.album_id is None:
+            row.album_id = local.id
+
+
+@router.get("/api/library/album-edit", response_model=AlbumEditOut)
+async def get_album_edit(album_id: int | None = None, ref: str | None = None, user: User = Depends(current_user),
+                         s: AsyncSession = Depends(get_session, scope="function")):
+    local, release = await _album_edit_target(s, album_id, ref)
+    return await _album_edit_info(s, user, local, release)
+
+
+@router.patch("/api/library/album-edit", response_model=AlbumEditOut)
+async def rename_album(body: AlbumRenameIn, album_id: int | None = None, ref: str | None = None,
+                       user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    local, release = await _album_edit_target(s, album_id, ref)
+    local = await _ensure_album_edit(s, user, local, release)
+    await edits.update_album(s, user, local, **body.model_dump(exclude_unset=True))
+    await _keep_catalog_album_names(s, local, release)
+    await _after_edit(s, user, local.id)
+    return await _album_edit_info(s, user, local, release)
+
+
+@router.post("/api/library/album-edit/names", response_model=AlbumEditOut)
+async def add_album_name(body: AlternateNameIn, album_id: int | None = None, ref: str | None = None,
+                         user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    local, release = await _album_edit_target(s, album_id, ref)
+    local = await _ensure_album_edit(s, user, local, release)
+    await _keep_catalog_album_names(s, local, release)
+    await album_names.add(s, local, body.name, "manual")
+    return await _album_edit_info(s, user, local, release)
+
+
+@router.delete("/api/library/album-edit/names/{name_id}", response_model=AlbumEditOut)
+async def drop_album_name(name_id: int, album_id: int | None = None, ref: str | None = None,
+                          user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    local, release = await _album_edit_target(s, album_id, ref)
+    if local is None:
+        raise HTTPException(404, "Название не найдено")
+    local = await _ensure_album_edit(s, user, local, release)
+    await album_names.drop(s, local, name_id)
+    return await _album_edit_info(s, user, local, release)
+
+
 @router.put("/api/library/albums/{album_id}/cover", response_model=LibAlbumOut)
 async def put_cover(album_id: int, file: UploadFile = File(...), user: User = Depends(current_user),
                     s: AsyncSession = Depends(get_session, scope="function")):
     a = await _album(s, album_id)
-    data = await file.read()
+    return await save_album_cover(s, user, a, await read_cover_upload(file))
+
+
+async def read_cover_upload(file: UploadFile) -> bytes:
+    data = await file.read(20 * 1024 * 1024 + 1)
     if len(data) > 20 * 1024 * 1024:
         raise HTTPException(413, "Картинка слишком большая")
+    return data
+
+
+async def save_album_cover(s: AsyncSession, user: User, a: Album, data: bytes) -> LibAlbumOut:
     try:
         await edits.set_album_cover(s, user, a, data)
     except Exception as e:
@@ -239,7 +356,7 @@ async def get_cover(album_id: int, size: int | None = Query(None, ge=32, le=1000
     p = library_abs(album_reldir(a)) / "cover.jpg"
     data: bytes | None = await asyncio.to_thread(p.read_bytes) if p.is_file() else None
     if data is None:
-        t = (await s.execute(select(Track).where(Track.album_id == a.id).limit(1))).scalar_one_or_none()
+        t = (await s.execute(select(Track).where(Track.album_id == a.id, Track.path.is_not(None)).limit(1))).scalar_one_or_none()
         if t is not None and library_abs(t.path).is_file():
             data = await asyncio.to_thread(tagger.read_cover, library_abs(t.path))
     if data is None:
@@ -312,9 +429,7 @@ async def put_track_cover(track_id: int, file: UploadFile = File(...), user: Use
                           s: AsyncSession = Depends(get_session, scope="function")):
     """The track's own cover, for everyone: where the album's picture is not its."""
     t = await _track(s, track_id)
-    data = await file.read()
-    if len(data) > 20 * 1024 * 1024:
-        raise HTTPException(413, "Картинка слишком большая")
+    data = await read_cover_upload(file)
     try:
         await edits.set_track_cover(s, user, t, data)
     except Exception as e:
@@ -405,7 +520,8 @@ async def find_file(track_id: int, user: User = Depends(current_user),
         q = TrackQuery(artist=track.artist, title=track.title, album=track.album, duration_s=track.duration_s,
                        isrc=track.isrc)
         dl = DownloadItem(batch_id=batch.id, user_id=user.id,
-                          query_json={"query": q.model_dump(), "meta": {"track_id": track.id}, "requested": True})
+                          query_json={"query": q.model_dump(), "meta": {"track_id": track.id}, "requested": True,
+                                      "pick_only": True})
         s.add(dl)
         await s.flush()
         await enqueue(s, "download_item", {"item_id": dl.id})
@@ -583,12 +699,8 @@ async def star(body: StarIn, user: User = Depends(current_user), s: AsyncSession
     return {"ok": True, "event_ids": [e.event_id for e in events]}
 
 
-class TrackNameIn(BaseModel):
-    name: str = Field(min_length=1, max_length=512)
-
-
 @router.post("/api/library/tracks/{track_id}/names", response_model=TrackEditOut)
-async def add_track_name(track_id: int, body: TrackNameIn, user: User = Depends(current_user),
+async def add_track_name(track_id: int, body: AlternateNameIn, user: User = Depends(current_user),
                          s: AsyncSession = Depends(get_session, scope="function")):
     """One more name the track is known by («Марафоны» for «Спорт»): the search finds it by that too."""
     from app.library import artists
@@ -649,6 +761,14 @@ async def _versions(s: AsyncSession, user: User, t: Track) -> dict:
     await s.commit()
     bus.publish(user.id, "library", {"kind": "changed", "album_id": t.album_id})
     return out
+
+
+@router.get("/api/library/version-labels", response_model=list[VersionLabelOut])
+async def version_labels(user: User = Depends(current_user),
+                         s: AsyncSession = Depends(get_session, scope="function")):
+    from app.library import versions
+
+    return await versions.label_index(s)
 
 
 @router.get("/api/library/versions", response_model=VersionsOut)

@@ -1,247 +1,248 @@
-"""The chats a user's bot can send to (`models.TgChat`): the private chat with the user and every group or channel
-the user has added the bot to.
-
-Telegram never tells a bot which chats it is in — only what happens: «you were added», «you were removed», a message.
-So the Hub listens to each connected bot (`start`: a long poll per bot, in the background) and keeps the list itself.
-Only the bot's owner brings a chat into the list: the one who added the bot (or wrote in the group) must be the user
-of the private chat — a stranger who finds the bot and adds it somewhere changes nothing.
-
-Where nothing polls (tests, `DISABLE_BACKGROUND`) the API reads the bot's updates itself (`sync`); never both at
-once — Telegram ends a long poll when a second `getUpdates` comes.
-"""
+"""Private account pairing, group discovery and membership checks for the shared bot."""
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import logging
+import re
+import secrets
+from datetime import timedelta
 from typing import Any
 
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from sqlalchemy import delete, select
+from aiogram import Bot
+from aiogram.exceptions import TelegramAPIError
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from sqlalchemy import delete, select, update
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app import telegram
+from app.config import get_settings
 from app.db import session_scope
-from app.models import TgChat, User, utcnow
-from app.security import decrypt
+from app.models import TelegramAccount, TelegramGroup, utcnow
 
 log = logging.getLogger(__name__)
-
+GROUP_KINDS = ("group", "supergroup", "channel")
 POLL_S = 25
-ALLOWED = ["message", "channel_post", "my_chat_member"]
-RETRY_S = 60
-RETRY_BROKEN_S = 600  # the key was revoked, or another program polls the bot
+_LINK_TTL = timedelta(minutes=15)
+_LINK = re.compile(r"hm_[A-Za-z0-9_-]{32}")
+_TG_ERRORS = (TelegramAPIError, TimeoutError, OSError)
+_offsets: dict[str, int] = {}
+_poll_lock = asyncio.Lock()
 
-_offsets: dict[int, int] = {}  # user id -> the next update to ask for
-_tasks: dict[int, asyncio.Task] = {}
+
+def _digest(code: str) -> str:
+    return hashlib.sha256(code.encode()).hexdigest()
 
 
-class Gone(Exception):
-    """The bot is not in the chat any more."""
+async def account(s: AsyncSession, user_id: int, bot: telegram.SharedBot) -> TelegramAccount | None:
+    return await s.scalar(select(TelegramAccount).where(
+        TelegramAccount.user_id == user_id, TelegramAccount.bot_id == bot.id, TelegramAccount.telegram_id.is_not(None)
+    ).execution_options(populate_existing=True))
+
+
+async def link_url(s: AsyncSession, user_id: int, bot: telegram.SharedBot) -> str | None:
+    code = "hm_" + secrets.token_urlsafe(24)
+    attrs = dict(bot_id=bot.id, telegram_id=None, name=None, link_digest=_digest(code),
+                 link_expires_at=utcnow() + _LINK_TTL)
+    stmt = insert(TelegramAccount).values(user_id=user_id, **attrs).on_conflict_do_update(
+        index_elements=[TelegramAccount.user_id], set_=attrs,
+        where=(TelegramAccount.bot_id != bot.id) | TelegramAccount.telegram_id.is_(None),
+    ).returning(TelegramAccount.user_id)
+    if await s.scalar(stmt) is None:
+        return None
+    return f"https://t.me/{bot.username}?start={code}"
+
+
+async def unlink(s: AsyncSession, user_id: int) -> None:
+    await s.execute(delete(TelegramAccount).where(TelegramAccount.user_id == user_id))
 
 
 def _plain(value: Any) -> str:
     return str(getattr(value, "value", value) or "")
 
 
-def _title(chat: Any) -> str:
-    return (getattr(chat, "title", None) or telegram.chat_name(chat))[:256]
+def _status(member: Any) -> str:
+    return _plain(member.status)
 
 
-def _is_owner(u: User, who: Any) -> bool:
-    return bool(u.tg_chat_id) and who is not None and str(getattr(who, "id", "")) == u.tg_chat_id
+def _can_post(member: Any, kind: str) -> bool:
+    return _status(member) == "creator" or (
+        _status(member) == "administrator" and (kind != "channel" or bool(member.can_post_messages)))
 
 
-async def _row(s: AsyncSession, user_id: int, chat_id: Any) -> TgChat | None:
-    return (await s.execute(select(TgChat).where(TgChat.user_id == user_id, TgChat.chat_id == str(chat_id))
-                            .limit(1))).scalar_one_or_none()
+def _lookup(bot: telegram.SharedBot, chat_id: int | str):
+    return (TelegramGroup.bot_id == bot.id, TelegramGroup.chat_id == str(chat_id))
 
 
-async def _put(s: AsyncSession, u: User, chat: Any) -> TgChat:
-    row = await _row(s, u.id, chat.id)
-    if row is None:
-        row = TgChat(user_id=u.id, chat_id=str(chat.id), kind=_plain(chat.type), title=_title(chat))
-        s.add(row)
-    else:
-        row.kind, row.title, row.updated_at = _plain(chat.type), _title(chat), utcnow()
-    await s.flush()
-    return row
-
-
-async def _look(bot: Any, row: TgChat) -> None:
-    """The chat's name and picture as they are now. `Gone`: Telegram says the bot has no such chat."""
+async def _chat_details(bot: Bot, chat_id: str, previous: str | None = None) -> dict:
     try:
-        full = await bot.get_chat(chat_id=int(row.chat_id))
-        row.title = _title(full)
-        photo = getattr(full, "photo", None)
-        key = getattr(photo, "small_file_unique_id", None)
-        if key is None:
-            row.photo = row.photo_key = None
-        elif key != row.photo_key:
-            buf = io.BytesIO()
-            await bot.download(photo.small_file_id, destination=buf)
-            row.photo, row.photo_key = buf.getvalue(), str(key)[:64]
-    except (TelegramForbiddenError, TelegramBadRequest) as e:
-        raise Gone from e
-    except Exception as e:  # the list works without pictures
-        log.info("telegram: no picture of chat %s: %s", row.chat_id, type(e).__name__)
-
-
-async def apply(s: AsyncSession, u: User, updates: list[Any], bot: Any) -> None:
-    """What the bot's updates say about its chats."""
-    fresh: dict[int, TgChat] = {}
-    for up in updates:
-        member = getattr(up, "my_chat_member", None)
-        msg = getattr(up, "message", None) or getattr(up, "channel_post", None)
-        if member is not None:
-            chat = member.chat
-            if _plain(chat.type) == "private":
-                continue
-            status = _plain(getattr(member.new_chat_member, "status", ""))
-            row = await _row(s, u.id, chat.id)
-            # a channel takes posts from its admins only
-            can_write = status in ("administrator", "creator") or (status == "member" and _plain(chat.type) != "channel")
-            if not can_write:
-                if row is not None:
-                    fresh.pop(row.id, None)
-                    await s.delete(row)
-                    await s.flush()
-            elif row is not None or _is_owner(u, getattr(member, "from_user", None)):
-                row = await _put(s, u, chat)
-                fresh[row.id] = row
-        elif msg is not None:
-            chat = msg.chat
-            if _plain(chat.type) == "private":
-                if not u.tg_chat_id:  # the first to press Start is the owner
-                    u.tg_chat_id = str(chat.id)
-                if str(chat.id) == u.tg_chat_id:
-                    u.tg_chat_name = telegram.chat_name(chat)[:128]
-                    row = await _put(s, u, chat)
-                    fresh[row.id] = row
-                continue
-            row = await _row(s, u.id, chat.id)
-            moved = getattr(msg, "migrate_to_chat_id", None)  # a group that became a supergroup has a new id
-            if moved and row is not None:
-                row.chat_id, row.kind = str(moved), "supergroup"
-                await s.flush()
-            elif row is None and _plain(chat.type) in ("group", "supergroup") and _is_owner(u, getattr(msg, "from_user", None)):
-                row = await _put(s, u, chat)  # a group the bot was in before the Hub listened
-                fresh[row.id] = row
-    for row in fresh.values():
+        full = await bot.get_chat(chat_id=int(chat_id))
+    except _TG_ERRORS:
+        return {}
+    fields: dict[str, Any] = {"title": full.title[:256]} if full.title else {}
+    if full.photo is None:
+        fields.update(photo=None, photo_key=None)
+    elif full.photo.small_file_unique_id != previous:
         try:
-            await _look(bot, row)
-        except Gone:
+            buf = io.BytesIO()
+            await bot.download(full.photo.small_file_id, destination=buf)
+            fields.update(photo=buf.getvalue(), photo_key=full.photo.small_file_unique_id[:64])
+        except _TG_ERRORS:
             pass
+    return fields
 
 
-async def _take(s: AsyncSession, u: User, bot: Any, wait_s: int) -> None:
-    offset = _offsets.get(u.id)
-    updates = await bot.get_updates(limit=100, timeout=wait_s, allowed_updates=ALLOWED, request_timeout=wait_s + 15,
-                                    **({"offset": offset} if offset else {}))
-    if not updates:
-        return
-    await apply(s, u, list(updates), bot)
-    last = getattr(updates[-1], "update_id", None)
-    if last is not None:
-        _offsets[u.id] = last + 1
+async def _save_group(s: AsyncSession, shared: telegram.SharedBot, bot: Bot, chat: Any) -> None:
+    existing = await s.scalar(select(TelegramGroup).where(*_lookup(shared, chat.id)))
+    attrs = {"kind": _plain(chat.type), "title": (chat.title or str(chat.id))[:256]}
+    # A transient Telegram error leaves the last known picture in place.
+    attrs.update(await _chat_details(bot, str(chat.id), existing.photo_key if existing else None))
+    stmt = insert(TelegramGroup).values(bot_id=shared.id, chat_id=str(chat.id), **attrs)
+    await s.execute(stmt.on_conflict_do_update(index_elements=["bot_id", "chat_id"], set_=attrs))
 
 
-async def sync(s: AsyncSession, u: User) -> None:
-    """Read the bot's updates now — unless the background already does (then the list is seconds fresh)."""
-    if polling(u.id) or not u.tg_bot_token_enc:
-        return
-    async with telegram.bot_of(decrypt(u.tg_bot_token_enc)) as bot:
-        await _take(s, u, bot, 0)
+async def can_send(bot: Bot, shared: telegram.SharedBot, group: TelegramGroup, telegram_id: str) -> bool:
+    if group.bot_id != shared.id or group.kind not in GROUP_KINDS:
+        return False
+    try:
+        bot_member = await bot.get_chat_member(chat_id=int(group.chat_id), user_id=int(shared.id))
+        if not _can_post(bot_member, group.kind):
+            return False
+        member = await bot.get_chat_member(chat_id=int(group.chat_id), user_id=int(telegram_id))
+    except _TG_ERRORS:
+        return False  # Telegram did not confirm membership
+    if group.kind == "channel":
+        return _can_post(member, "channel")
+    return _status(member) in ("creator", "administrator", "member") or (
+        _status(member) == "restricted" and bool(member.is_member) and bool(member.can_send_audios))
 
 
-async def refresh(s: AsyncSession, u: User) -> None:
-    """Names and pictures again; a chat the bot was removed from goes."""
-    if not u.tg_bot_token_enc:
-        return
-    rows = list((await s.execute(select(TgChat).where(TgChat.user_id == u.id))).scalars())
-    async with telegram.bot_of(decrypt(u.tg_bot_token_enc)) as bot:
-        for row in rows:
-            try:
-                await _look(bot, row)
-            except Gone:
-                if row.kind != "private":
-                    await s.delete(row)
+async def groups(s: AsyncSession, shared: telegram.SharedBot, telegram_id: str, *, refresh: bool = False) -> list[TelegramGroup]:
+    rows = list((await s.scalars(select(TelegramGroup).where(TelegramGroup.bot_id == shared.id))).all())
+    if not rows:
+        return []
+    limit = asyncio.Semaphore(8)
+    async with telegram.bot_of(shared.token, 10) as bot:
+        async def visible(row: TelegramGroup) -> bool:
+            async with limit:
+                if not await can_send(bot, shared, row, telegram_id):
+                    return False
+                if refresh:
+                    for key, value in (await _chat_details(bot, row.chat_id, row.photo_key)).items():
+                        setattr(row, key, value)
+                return True
+
+        allowed = await asyncio.gather(*(visible(row) for row in rows))
+    return sorted((row for row, yes in zip(rows, allowed, strict=True) if yes), key=lambda row: row.title.casefold())
 
 
-async def chats(s: AsyncSession, u: User) -> list[TgChat]:
-    rows = list((await s.execute(select(TgChat).where(TgChat.user_id == u.id))).scalars())
-    return sorted(rows, key=lambda r: (r.kind != "private", r.title.casefold()))
+async def _private(s: AsyncSession, shared: telegram.SharedBot, msg: Any) -> str | None:
+    sender = msg.from_user
+    if sender is None or sender.is_bot or sender.id != msg.chat.id:
+        return None
+    text = (msg.text or "").split(maxsplit=1)
+    is_start = bool(text and text[0].lower() in ("/start", f"/start@{shared.username.lower()}"))
+    tg_id = str(sender.id)
+    existing = aliased(TelegramAccount)
+    occupied = select(existing.user_id).where(existing.bot_id == shared.id, existing.telegram_id == tg_id).exists()
+    if is_start and len(text) == 2 and _LINK.fullmatch(text[1].strip()):
+        stmt = (update(TelegramAccount)
+                .where(TelegramAccount.bot_id == shared.id,
+                       TelegramAccount.link_digest == _digest(text[1].strip()),
+                       TelegramAccount.link_expires_at > utcnow(), TelegramAccount.telegram_id.is_(None), ~occupied)
+                .values(telegram_id=tg_id, name=telegram.chat_name(msg.chat)[:128], link_digest=None, link_expires_at=None)
+                .returning(TelegramAccount.user_id))
+        if await s.scalar(stmt) is not None:
+            return "Telegram подключён. Теперь в HomeMusic можно отправлять треки в этот чат."
+        if await s.scalar(select(existing.user_id).where(existing.bot_id == shared.id, existing.telegram_id == tg_id)):
+            return "Этот Telegram уже подключён к HomeMusic."
+        return "Ссылка для подключения устарела. Откройте новую в HomeMusic → Меню → Telegram."
+    linked = await s.scalar(select(existing.user_id).where(existing.bot_id == shared.id, existing.telegram_id == tg_id))
+    if linked:
+        return "Telegram уже подключён. Отправляйте треки через «Поделиться» в HomeMusic." if is_start else None
+    return "Чтобы получать треки, откройте HomeMusic → Меню → Telegram и нажмите «Открыть бота»."
 
 
-async def forget(s: AsyncSession, user_id: int) -> None:
-    """The bot is disconnected (or replaced): its chats are not this user's any more."""
-    stop(user_id)
-    _offsets.pop(user_id, None)
-    await s.execute(delete(TgChat).where(TgChat.user_id == user_id))
+async def _apply(s: AsyncSession, shared: telegram.SharedBot, bot: Bot, item: Update) -> tuple[int, str] | None:
+    if event := item.my_chat_member:
+        kind = _plain(event.chat.type)
+        if kind in GROUP_KINDS:
+            if _can_post(event.new_chat_member, kind):
+                await _save_group(s, shared, bot, event.chat)
+            else:
+                await s.execute(delete(TelegramGroup).where(*_lookup(shared, event.chat.id)))
+        return None
+    if (msg := item.message) is None:
+        return None
+    kind = _plain(msg.chat.type)
+    if kind == "private":
+        reply = await _private(s, shared, msg)
+        return (msg.chat.id, reply) if reply else None
+    if msg.migrate_to_chat_id:
+        row = await s.scalar(select(TelegramGroup).where(*_lookup(shared, msg.chat.id)))
+        if row is not None:
+            stmt = insert(TelegramGroup).values(bot_id=shared.id, chat_id=str(msg.migrate_to_chat_id),
+                                                kind="supergroup", title=row.title, photo=row.photo, photo_key=row.photo_key)
+            await s.execute(stmt.on_conflict_do_nothing(index_elements=["bot_id", "chat_id"]))
+            await s.delete(row)
+        return None
+    # Discover a group that had already made the bot an admin before HomeMusic started polling it.
+    command = (msg.text or "").lower().split(maxsplit=1)
+    if kind in ("group", "supergroup") and command and command[0] in ("/homemusic", f"/homemusic@{shared.username.lower()}"):
+        try:
+            member = await bot.get_chat_member(chat_id=msg.chat.id, user_id=int(shared.id))
+        except _TG_ERRORS:
+            return None
+        if _can_post(member, kind):
+            await _save_group(s, shared, bot, msg.chat)
+    return None
 
 
-# --- background ---------------------------------------------------------------------------------------
+async def _reply(bot: Bot, chat_id: int, text: str) -> None:
+    url = get_settings().public_hub_url.rstrip("/")
+    markup = None
+    if url.startswith(("http://", "https://")):
+        markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Открыть HomeMusic", url=url + "/#/more")]])
+    try:
+        await bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
+    except _TG_ERRORS:
+        log.info("telegram: could not reply to a private message")
 
 
-def polling(user_id: int) -> bool:
-    task = _tasks.get(user_id)
-    return task is not None and not task.done()
+async def _read(shared: telegram.SharedBot, bot: Bot, wait: int) -> None:
+    updates = await bot.get_updates(offset=_offsets.get(shared.id), timeout=wait, limit=100,
+                                    allowed_updates=["message", "my_chat_member"], request_timeout=wait + 15)
+    for item in updates:
+        async with session_scope() as s:
+            reply = await _apply(s, shared, bot, item)
+        _offsets[shared.id] = item.update_id + 1
+        if reply:
+            await _reply(bot, *reply)
 
 
-async def _poll(user_id: int) -> None:
-    first = True
+async def sync(shared: telegram.SharedBot) -> None:
+    """Read updates on request only when the background listener is disabled."""
+    if get_settings().disable_background:
+        async with _poll_lock, telegram.bot_of(shared.token) as bot:
+            await _read(shared, bot, 0)
+
+
+async def poll() -> None:
     while True:
         try:
-            async with session_scope() as s:
-                u = await s.get(User, user_id)
-                token = decrypt(u.tg_bot_token_enc) if u is not None and u.tg_bot_token_enc else None
-                if token and first:
-                    assert u is not None
-                    await refresh(s, u)
-            if not token:
+            shared = await telegram.shared_bot()
+            if shared is None:
                 return
-            first = False
-            async with telegram.bot_of(token, POLL_S + 30) as bot:
-                offset = _offsets.get(user_id)
-                updates = await bot.get_updates(limit=100, timeout=POLL_S, allowed_updates=ALLOWED,
-                                                request_timeout=POLL_S + 15, **({"offset": offset} if offset else {}))
-                if updates:
-                    async with session_scope() as s:
-                        u = await s.get(User, user_id)
-                        if u is None or not u.tg_bot_token_enc:
-                            return
-                        await apply(s, u, list(updates), bot)
-                    _offsets[user_id] = updates[-1].update_id + 1
-        except asyncio.CancelledError:
-            raise
-        except telegram.TelegramError as e:
-            broken = "ключ" in str(e) or "webhook" in str(e)
-            log.info("telegram: bot of user %s is not polled: %s", user_id, e)
-            await asyncio.sleep(RETRY_BROKEN_S if broken else RETRY_S)
-        except Exception as e:
-            log.warning("telegram: polling of user %s failed: %s", user_id, type(e).__name__)
-            await asyncio.sleep(RETRY_S)
-
-
-def start(user_id: int) -> None:
-    if not polling(user_id):
-        _tasks[user_id] = asyncio.create_task(_poll(user_id), name=f"telegram-{user_id}")
-
-
-def stop(user_id: int) -> None:
-    task = _tasks.pop(user_id, None)
-    if task is not None:
-        task.cancel()
-
-
-async def start_all() -> None:
-    async with session_scope() as s:
-        ids = list((await s.execute(select(User.id).where(User.tg_bot_token_enc.is_not(None)))).scalars())
-    for user_id in ids:
-        start(user_id)
-
-
-def stop_all() -> None:
-    for user_id in list(_tasks):
-        stop(user_id)
+            async with telegram.bot_of(shared.token, POLL_S + 30) as bot:
+                while True:
+                    await _read(shared, bot, POLL_S)
+        except telegram.TelegramError as exc:
+            log.info("telegram: shared bot is not polled: %s", exc)
+            await asyncio.sleep(60)
+        except Exception as exc:
+            log.warning("telegram: shared bot polling failed: %s", type(exc).__name__)
+            await asyncio.sleep(60)

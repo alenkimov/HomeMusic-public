@@ -1,24 +1,31 @@
-import { useEffect, useRef, useState } from 'react';
+import { VersionBadge } from '../components/TrackTitle';
+import { titleWithVersion, useVersionLabel } from '../lib/versionLabels';
+import { TrackTitle } from '../components/TrackTitle';
+import { useEffect, useState } from 'react';
 import { api, libraryCoverUrl } from '../api/client';
 import type { LibAlbumOut, LibTrackOut, ReleaseType } from '../api/types';
 import { Icon } from '../components/Icon';
+import { LibraryAlbumMenu } from '../components/AlbumEdit';
 import { AlbumPicker } from '../components/pickers';
-import { Button, Checkbox, Cover, ErrorState, ExplicitBadge, Field, IconButton, Loading, Notice, PageHeader, SectionTitle, Sheet, cx } from '../components/ui';
-import { fmtDuration, fmtLength, providerLabel, toIntOrNull, tracksWord, warningText } from '../lib/format';
-import { useAsync } from '../lib/hooks';
+import { Button, Checkbox, Cover, ErrorState, Field, IconButton, Loading, Notice, PageHeader, SectionTitle, Sheet, cx } from '../components/ui';
+import { fmtDuration, fmtLength, toIntOrNull, tracksWord, warningText } from '../lib/format';
+import { FileInfo } from '../components/FileInfo';
+import { useAsync, useWindowEvent } from '../lib/hooks';
+import { openAlbumArtwork } from '../lib/coverPicker';
+import { EDITED_EVENT } from '../lib/trackEdit';
 import { SaveButton } from '../components/PlaylistsButton';
 import { TrackMenuButton } from '../components/TrackMenu';
 import { listen, listenAll, type ListenTrack } from '../lib/listen';
 import { canPlay, playList } from '../lib/player';
 import { navigate } from '../lib/router';
-import { attempt, confirmDialog, toast } from '../lib/ui';
+import { attempt, confirmDialog } from '../lib/ui';
 import { ReleaseTypeSelect } from './Files';
 
 const RELEASE_TYPES: ReleaseType[] = ['album', 'single', 'ep', 'compilation'];
 
 export function LibraryAlbumPage({ id }: { id: number }) {
   const res = useAsync((s) => api.libAlbum(id, s), [id]);
-  const [coverRev, setCoverRev] = useState(() => Date.now());
+  useWindowEvent(EDITED_EVENT, () => res.reload(true));
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [picker, setPicker] = useState<'move' | 'merge' | null>(null);
   const [pickBusy, setPickBusy] = useState(false);
@@ -41,14 +48,16 @@ export function LibraryAlbumPage({ id }: { id: number }) {
 
   const album = res.data;
   const tracks = [...(album.tracks ?? [])].sort((a, b) => (a.disc_no ?? 1) - (b.disc_no ?? 1) || (a.track_no ?? 0) - (b.track_no ?? 0));
+  const cover = album.cover_url ?? (album.has_cover ? libraryCoverUrl(album.id, 600) : null);
+  const artwork = { albumId: album.can_edit ? album.id : null, title: album.title, artist: album.album_artist, src: cover, tracks };
   const total = tracks.reduce((s, t) => s + (t.duration_s ?? 0), 0);
   const allSelected = tracks.length > 0 && selected.size === tracks.length;
   // Tracks Navidrome has scanned play in album order: in the app's player, in a browser in the page's own one.
   const playable = tracks.filter((t) => t.nd_song_id);
   const asListen = (t: LibTrackOut): ListenTrack => ({
     ref: `nd:${t.nd_song_id}`, title: t.title, artist: t.artist, album: t.album ?? undefined, duration_s: t.duration_s,
-    cover_url: album.has_cover ? libraryCoverUrl(album.id, 600, coverRev) : null,
-    cover_small_url: album.has_cover ? libraryCoverUrl(album.id, 120, coverRev) : null,
+    cover_url: cover,
+    cover_small_url: cover,
   });
   const playFrom = (from?: LibTrackOut) => {
     if (canPlay()) return playList(playable, (x) => x.nd_song_id, from);
@@ -96,7 +105,7 @@ export function LibraryAlbumPage({ id }: { id: number }) {
   const deleteTrack = async (t: LibTrackOut) => {
     const ok = await confirmDialog({
       title: 'Удалить трек?',
-      body: `«${t.title}» — ${t.artist}\nФайл переместится в корзину и будет удалён через 30 дней.`,
+      body: `«${titleWithVersion(t.title, { track_id: t.id })}» — ${t.artist}\nФайл переместится в корзину и будет удалён через 30 дней.`,
       okLabel: 'Удалить',
       danger: true,
     });
@@ -114,26 +123,27 @@ export function LibraryAlbumPage({ id }: { id: number }) {
         title={album.title}
         sub={album.album_artist}
         back="/files"
-        right={
-          album.can_edit ? <IconButton icon="merge" label="Объединить с другим альбомом" onClick={() => setPicker('merge')} /> : undefined
-        }
+        right={<LibraryAlbumMenu id={album.id} title={album.title} onSaved={(saved) => {
+          res.setData((prev) => prev && { ...prev, title: saved.title, album_artist: saved.album_artist });
+        }} onCover={album.can_edit ? () => openAlbumArtwork(artwork, 'edit') : undefined}
+          onMerge={album.can_edit ? () => setPicker('merge') : undefined} />}
       />
 
       {/* an album with tracks of other listeners: its name and picture are an admin's to change; one's own tracks of
           it are below, as ever */}
       {!album.can_edit && (
         <div className="px-4 pb-2">
+          {cover && <button type="button" className="mb-2 cursor-pointer" aria-label="Открыть обложку крупно" onClick={() => openAlbumArtwork(artwork)}>
+            <Cover src={cover} size={96} icon="disc" />
+          </button>}
           <Notice kind="info">В этом альбоме есть треки других слушателей, поэтому его название и обложку меняет администратор. Свои треки ниже вы можете править и удалять.</Notice>
         </div>
       )}
       {album.can_edit && <AlbumForm
         album={album}
-        coverSrc={album.has_cover ? libraryCoverUrl(album.id, 600, coverRev) : null}
+        coverSrc={cover}
         onSaved={(a) => res.setData((prev) => ({ ...a, tracks: a.tracks ?? prev?.tracks }))}
-        onCover={(a) => {
-          res.setData((prev) => ({ ...a, tracks: a.tracks ?? prev?.tracks }));
-          setCoverRev(Date.now());
-        }}
+        onViewCover={() => openAlbumArtwork(artwork)}
       />}
 
       <SectionTitle
@@ -167,20 +177,16 @@ export function LibraryAlbumPage({ id }: { id: number }) {
                 <span className="w-6 shrink-0 text-center text-sm tabular-nums text-dim">{t.track_no ?? '–'}</span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
-                    <span className="truncate text-[15px]">{t.title}</span>
+                    <span className="truncate text-[15px]"><TrackTitle title={t.title} track={{ track_id: t.id, nd_song_id: t.nd_song_id }} /></span>
                     {t.locked && (
                       <span className="shrink-0 text-dim" title="Ранняя (оригинальная) копия: повторная загрузка её не заменит" aria-label="Оригинальная копия">
                         <Icon name="lock" size={13} />
                       </span>
                     )}
                   </span>
-                  <span className="flex items-center gap-1.5 text-[13px] text-muted">
-                    {t.explicit && <ExplicitBadge />}
-                    <span className="truncate">
-                      {[t.artist !== album.album_artist ? t.artist : null, t.codec?.toUpperCase(), t.bitrate_kbps ? `${t.bitrate_kbps} kbps` : null, providerLabel(t.source)]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </span>
+                  <span className="block truncate text-[13px] text-muted">
+                    {t.artist !== album.album_artist && <>{t.artist}{(t.source || t.codec || t.bitrate_kbps) && ' · '}</>}
+                    <FileInfo info={{ source: t.source, codec: t.codec, bitrate_kbps: t.bitrate_kbps }} />
                   </span>
                   {(t.warnings ?? []).map((w, i) => (
                     <span key={i} className="flex items-center gap-1 text-xs text-warn">
@@ -195,7 +201,7 @@ export function LibraryAlbumPage({ id }: { id: number }) {
                 <IconButton icon="play" label={`Слушать «${t.title}»`} className="!text-accent" size={20} onClick={() => playFrom(t)} />
               )}
               <IconButton icon="trash" label={`Удалить «${t.title}»`} className="text-dim hover:text-danger" size={20} onClick={() => deleteTrack(t)} />
-              {t.nd_song_id && <TrackMenuButton track={{ title: t.title, artist: t.artist, nd_song_id: t.nd_song_id, library_track_id: t.id }} className="-ml-2 w-8" />}
+              <TrackMenuButton track={{ title: t.title, artist: t.artist, nd_song_id: t.nd_song_id, library_track_id: t.id }} className="-ml-2 w-8" />
             </li>
           ))}
         </ul>
@@ -237,32 +243,24 @@ function AlbumForm({
   album,
   coverSrc,
   onSaved,
-  onCover,
+  onViewCover,
 }: {
   album: LibAlbumOut;
   coverSrc: string | null;
   onSaved: (a: LibAlbumOut) => void;
-  onCover: (a: LibAlbumOut) => void;
+  onViewCover: () => void;
 }) {
-  const [title, setTitle] = useState(album.title);
-  const [artist, setArtist] = useState(album.album_artist);
   const [year, setYear] = useState(album.year ? String(album.year) : '');
   const [genre, setGenre] = useState(album.genre ?? '');
   const [type, setType] = useState<ReleaseType>(RELEASE_TYPES.includes(album.release_type as ReleaseType) ? (album.release_type as ReleaseType) : 'album');
   const [busy, setBusy] = useState(false);
-  const [coverBusy, setCoverBusy] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setTitle(album.title);
-    setArtist(album.album_artist);
     setYear(album.year ? String(album.year) : '');
     setGenre(album.genre ?? '');
-  }, [album.id, album.title, album.album_artist, album.year, album.genre]);
+  }, [album.id, album.year, album.genre]);
 
   const dirty =
-    title.trim() !== album.title ||
-    artist.trim() !== album.album_artist ||
     toIntOrNull(year) !== (album.year ?? null) ||
     (genre.trim() || null) !== (album.genre || null) ||
     type !== (album.release_type ?? 'album');
@@ -270,44 +268,20 @@ function AlbumForm({
   const save = async () => {
     setBusy(true);
     const r = await attempt(
-      () => api.patchAlbum(album.id, { title: title.trim(), album_artist: artist.trim(), year: toIntOrNull(year), genre: genre.trim() || null, release_type: type }),
+      () => api.patchAlbum(album.id, {
+        year: toIntOrNull(year), genre: genre.trim() || null, release_type: type,
+      }),
       'Сохранено',
     );
     setBusy(false);
     if (r) onSaved(r);
   };
 
-  const pickCover = async (file: File | undefined) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      toast('Нужна картинка (JPEG или PNG)', 'error');
-      return;
-    }
-    setCoverBusy(true);
-    const r = await attempt(() => api.setAlbumCover(album.id, file), 'Обложка обновлена');
-    setCoverBusy(false);
-    if (r) onCover(r);
-  };
-
   return (
     <div className="px-4">
-      <div className="flex gap-4">
-        <div className="relative w-32 shrink-0">
-          <Cover src={coverSrc} alt="Обложка" className="aspect-square w-full" icon="disc" />
-          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => void pickCover(e.target.files?.[0]).finally(() => (e.target.value = ''))} />
-          <Button small className="mt-2 w-full" icon="image" busy={coverBusy} onClick={() => fileRef.current?.click()}>
-            Обложка
-          </Button>
-        </div>
-        <div className="min-w-0 flex-1 space-y-3">
-          <Field label="Название">
-            <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
-          </Field>
-          <Field label="Исполнитель альбома">
-            <input className="input" value={artist} onChange={(e) => setArtist(e.target.value)} />
-          </Field>
-        </div>
-      </div>
+      <button type="button" aria-label="Открыть обложку крупно" onClick={onViewCover} className="block w-32 cursor-pointer">
+        <Cover src={coverSrc} alt="Обложка" className="aspect-square w-full" icon="disc" />
+      </button>
       <div className="mt-3 grid grid-cols-3 gap-3">
         <Field label="Год">
           <input className="input" inputMode="numeric" value={year} onChange={(e) => setYear(e.target.value.replace(/\D/g, '').slice(0, 4))} />
@@ -321,7 +295,7 @@ function AlbumForm({
       </div>
       {dirty && (
         <div className="mt-3 flex justify-end">
-          <Button variant="primary" small icon="check" busy={busy} disabled={!title.trim() || !artist.trim()} onClick={save}>
+          <Button variant="primary" small icon="check" busy={busy} onClick={save}>
             Сохранить
           </Button>
         </div>
@@ -337,6 +311,7 @@ function TrackEditSheet({ track, onClose, onSaved }: { track: LibTrackOut | null
   const [discNo, setDiscNo] = useState('');
   const [genre, setGenre] = useState('');
   const [explicit, setExplicit] = useState(false);
+  const version = useVersionLabel({ track_id: track?.id });
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -381,7 +356,10 @@ function TrackEditSheet({ track, onClose, onSaved }: { track: LibTrackOut | null
     >
       <div className="space-y-4">
         <Field label="Название">
-          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
+          <span className="flex min-w-0 items-center gap-2">
+            <input className="input min-w-0 flex-1" value={title} onChange={(e) => setTitle(e.target.value)} />
+            <VersionBadge label={version} />
+          </span>
         </Field>
         <Field label="Исполнитель">
           <input className="input" value={artist} onChange={(e) => setArtist(e.target.value)} />

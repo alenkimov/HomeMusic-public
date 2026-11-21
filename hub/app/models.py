@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -53,16 +54,6 @@ class User(Base):
     # the confirmed email the account registered with (lower case): sign-in by it, too
     email: Mapped[str | None] = mapped_column(String(320), unique=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
-    # the user's own Telegram bot (app/telegram.py): its key (Fernet) and the private chat it sends tracks to
-    # the user's ListenBrainz account, if they gave one (app/listenbrainz.py): the token (Fernet), the name it is
-    # of, and the time of the last listen sent there
-    lb_token_enc: Mapped[str | None] = mapped_column(Text)
-    lb_user: Mapped[str | None] = mapped_column(String(128))
-    lb_sent_until: Mapped[datetime | None] = mapped_column(DateTime)
-    tg_bot_token_enc: Mapped[str | None] = mapped_column(Text)
-    tg_bot_username: Mapped[str | None] = mapped_column(String(64))
-    tg_chat_id: Mapped[str | None] = mapped_column(String(32))
-    tg_chat_name: Mapped[str | None] = mapped_column(String(128))
     tg_with_lyrics: Mapped[bool] = mapped_column(Boolean, default=False)  # send the track's text with it by default
 
 
@@ -167,6 +158,44 @@ class Album(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class AlbumName(Base):
+    __tablename__ = "album_names"
+    __table_args__ = (UniqueConstraint("album_id", "key", name="uq_album_names"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    album_id: Mapped[int] = mapped_column(ForeignKey("albums.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(512))
+    key: Mapped[str] = mapped_column(String(512))
+    source: Mapped[str] = mapped_column(String(16), default="manual")
+
+
+class CatalogReleaseMatch(Base):
+    __tablename__ = "catalog_release_matches"
+
+    ref: Mapped[str] = mapped_column(String(128), primary_key=True)
+    group_ref: Mapped[str] = mapped_column(String(128), index=True)
+    album_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    search_key: Mapped[str] = mapped_column(Text)
+
+
+class CatalogRelease(Base):
+    """A release with its own Hub ID, including releases without library files."""
+
+    __tablename__ = "catalog_releases"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    album_id: Mapped[int | None] = mapped_column(ForeignKey("albums.id", ondelete="SET NULL"), index=True)
+    merged_into_id: Mapped[int | None] = mapped_column(ForeignKey("catalog_releases.id", ondelete="SET NULL"), index=True)
+    album_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
+
+class CatalogReleaseRef(Base):
+    __tablename__ = "catalog_release_refs"
+
+    ref: Mapped[str] = mapped_column(String(128), primary_key=True)
+    release_id: Mapped[int] = mapped_column(ForeignKey("catalog_releases.id", ondelete="CASCADE"), index=True)
+
+
 class Track(Base):
     """A song the Hub knows (ARCHITECTURE.md): its names and length. Nothing here is about a file — a track has
     none, one or several (`TrackFile`), and the one that plays is the newest."""
@@ -185,8 +214,10 @@ class Track(Base):
     year: Mapped[int | None] = mapped_column(Integer)
     genre: Mapped[str | None] = mapped_column(String(128))
     duration_s: Mapped[int | None] = mapped_column(Integer)
+    genre_sources: Mapped[dict[str, list[str]] | None] = mapped_column(JSON)
+    genres_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
     isrc: Mapped[str | None] = mapped_column(String(16), index=True)
-    # what the catalog calls the song ("dz:3135556"): one track per ref. None — the catalog does not know it
+    # Source record used for the current metadata snapshot. Confirmed catalog refs are stored separately.
     ref: Mapped[str | None] = mapped_column(String(64), unique=True)
     explicit: Mapped[bool | None] = mapped_column(Boolean)
     # who made the beat, where the track's name said so («(prod. by X)»): not a performer, not part of the name
@@ -276,6 +307,7 @@ class DownloadItem(Base):
     progress: Mapped[float] = mapped_column(Float, default=0)
     provider: Mapped[str | None] = mapped_column(String(32))
     chosen_candidate_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    search_sources_json: Mapped[dict[str, str] | None] = mapped_column(JSON)
     candidates_json: Mapped[list[Any]] = mapped_column(JSON, default=list)
     # the journal: its steps in order ({t, kind: info/ok/warn/bad, text, cand?}) — `jobs.downloads.step`
     log_json: Mapped[list[Any]] = mapped_column(JSON, default=list, server_default="[]")
@@ -393,6 +425,60 @@ class AssistantChat(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class IntegrationConnection(Base):
+    """A provider account owned by one Hub user, or a server-wide application key."""
+
+    __tablename__ = "integration_connections"
+    __table_args__ = (
+        UniqueConstraint("provider", "owner_user_id", "subject"),
+        CheckConstraint("shared = 0 OR provider IN ('yandex', 'spotify', 'lastfm')"),
+        CheckConstraint("owner_user_id IS NOT NULL OR provider = 'lastfm' OR "
+                        "(provider = 'spotify' AND shared = 0 AND state = 'unclaimed')"),
+        Index("uq_integration_lastfm", "provider", unique=True, sqlite_where=text("provider = 'lastfm'")),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(20))
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    subject: Mapped[str | None] = mapped_column(String(256))
+    account: Mapped[str | None] = mapped_column(String(256))
+    shared: Mapped[bool] = mapped_column(Boolean, default=False)
+    retained: Mapped[bool] = mapped_column(Boolean, default=True)
+    state: Mapped[str] = mapped_column(String(24), default="connected")
+    plan: Mapped[str | None] = mapped_column(String(20))
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime)
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class IntegrationCredential(Base):
+    __tablename__ = "integration_credentials"
+
+    connection_id: Mapped[int] = mapped_column(ForeignKey("integration_connections.id", ondelete="CASCADE"),
+                                               primary_key=True)
+    encrypted: Mapped[str] = mapped_column(Text)
+
+
+class IntegrationAuthAttempt(Base):
+    __tablename__ = "integration_auth_attempts"
+
+    digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(20))
+    stage: Mapped[str] = mapped_column(String(24), default="waiting")
+    shared: Mapped[bool] = mapped_column(Boolean, default=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    next_poll_at: Mapped[datetime | None] = mapped_column(DateTime)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class ListenBrainzSync(Base):
+    __tablename__ = "listenbrainz_sync"
+
+    connection_id: Mapped[int] = mapped_column(ForeignKey("integration_connections.id", ondelete="CASCADE"),
+                                               primary_key=True)
+    sent_until: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class Import(Base):
     """Moving a user's collection over from a music service (Yandex Music now; Spotify, YouTube Music later)."""
 
@@ -406,7 +492,8 @@ class Import(Base):
     status: Mapped[str] = mapped_column(String(16), default="fetching")
     mode: Mapped[str] = mapped_column(String(16), default="economy")  # economy/full
     account: Mapped[str | None] = mapped_column(String(256))  # login or profile shown to the user
-    token_enc: Mapped[str | None] = mapped_column(Text)  # service token (Fernet)
+    connection_id: Mapped[int | None] = mapped_column(
+        ForeignKey("integration_connections.id", ondelete="SET NULL"), index=True)
     keep_token: Mapped[bool] = mapped_column(Boolean, default=False)  # kept after the import for «Обновить»
     auth_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # sign-in in progress (device code)
     options_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # download_albums...
@@ -430,7 +517,7 @@ class ImportCollection(Base):
     position: Mapped[int] = mapped_column(Integer, default=0)
     selected: Mapped[bool] = mapped_column(Boolean, default=True)
     cover_url: Mapped[str | None] = mapped_column(String(1024))
-    # a playlist of the service: the Hub's playlist made of it, and the tracks it was last given, in order
+    # a playlist of the service: the Hub's playlist made of it, and the track ids it has already been given
     playlist_id: Mapped[int | None] = mapped_column(ForeignKey("playlists.id", ondelete="SET NULL"))
     given: Mapped[list[Any]] = mapped_column(JSON, default=list)
 
@@ -775,6 +862,15 @@ class Lyrics(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class TrackCatalogRef(Base):
+    """A confirmed external catalog record belonging to one Hub track."""
+
+    __tablename__ = "track_catalog_refs"
+
+    ref: Mapped[str] = mapped_column(String(64), primary_key=True)
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), index=True)
+
+
 class TrackLink(Base):
     """A library track's id on a music service (app/links.py): what «Поделиться ссылкой» is made of."""
 
@@ -787,21 +883,33 @@ class TrackLink(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
-class TgChat(Base):
-    """A chat the user's Telegram bot can send to (app/telegram_chats.py): the private one, a group, a channel."""
+class TelegramAccount(Base):
+    """A private chat paired with a Hub account using a single-use Start link."""
 
-    __tablename__ = "tg_chats"
-    __table_args__ = (UniqueConstraint("user_id", "chat_id", name="uq_tg_chats_user_chat"),)
+    __tablename__ = "telegram_accounts"
+    __table_args__ = (UniqueConstraint("bot_id", "telegram_id", name="uq_telegram_accounts_identity"),)
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    bot_id: Mapped[str] = mapped_column(String(32))
+    telegram_id: Mapped[str | None] = mapped_column(String(32))
+    name: Mapped[str | None] = mapped_column(String(128))
+    link_digest: Mapped[str | None] = mapped_column(String(64), unique=True)
+    link_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class TelegramGroup(Base):
+    """A chat where the shared bot was made an administrator."""
+
+    __tablename__ = "telegram_groups"
+    __table_args__ = (UniqueConstraint("bot_id", "chat_id", name="uq_telegram_groups_chat"), {"sqlite_autoincrement": True})
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    chat_id: Mapped[str] = mapped_column(String(32))  # Telegram's id
-    kind: Mapped[str] = mapped_column(String(16))  # private/group/supergroup/channel
+    bot_id: Mapped[str] = mapped_column(String(32))
+    chat_id: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(16))  # group/supergroup/channel
     title: Mapped[str] = mapped_column(String(256))
     photo: Mapped[bytes | None] = mapped_column(LargeBinary)  # the chat's small picture (a JPEG)
-    photo_key: Mapped[str | None] = mapped_column(String(64))  # Telegram's id of that picture: changes with it
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    photo_key: Mapped[str | None] = mapped_column(String(64))
 
 
 class LyricsTranslation(Base):
@@ -1091,6 +1199,7 @@ class Artist(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(300))
+    merged_into_id: Mapped[int | None] = mapped_column(ForeignKey("artists.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -1116,6 +1225,7 @@ class ArtistRef(Base):
 
     ref: Mapped[str] = mapped_column(String(64), primary_key=True)
     artist_id: Mapped[int] = mapped_column(ForeignKey("artists.id", ondelete="CASCADE"), index=True)
+    page_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     tied_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

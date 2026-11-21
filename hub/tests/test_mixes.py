@@ -650,7 +650,8 @@ async def test_onboarding_picks_artists_and_starts_a_build(env) -> None:
 
 
 async def test_the_map_is_lastfms_word_of_who_is_near(env, monkeypatch) -> None:
-    from app.config import get_settings
+    from app import integrations
+    from app.db import session_scope
     from app.mixes import build, sources
 
     client = env["client"]
@@ -658,7 +659,8 @@ async def test_the_map_is_lastfms_word_of_who_is_near(env, monkeypatch) -> None:
     r = await client.get("/api/taste/map", params={"ref": "dz:1"})
     assert r.status_code == 404 and "Last.fm" in r.json()["detail"]  # no key: no map
 
-    monkeypatch.setattr(get_settings(), "lastfm_api_key", "key")
+    async with session_scope() as s:
+        await integrations.save(s, provider="lastfm", owner_id=None, secret="key")
     asked = []
 
     async def near(name, limit=20):
@@ -721,7 +723,7 @@ async def test_an_artist_of_several_catalog_records_is_one(env) -> None:
     assert r.status_code == 200, r.text
     async with session_scope() as s:
         states = [x for x in (await favorites.snapshot(s, env["admin"])).values() if x.target_type == "artist"]
-        assert [(x.ref, x.liked, x.aliases) for x in states] == [("dz:1", True, ["ref:dz:1", "ref:dz:7"])]
+        assert [(x.ref, x.liked, x.aliases) for x in states] == [("dz:1", True, [f"ref:artist:{kino.id}", "ref:dz:1", "ref:dz:7"])]
         assert [f.ref for f in await releases.follows(s, env["admin"])] == ["dz:1"]
         assert await releases.followed(s, env["admin"]) == {"dz:1": "Кино", "dz:7": "Кино"}
         # shown at the address, whichever record the catalog gave
@@ -740,7 +742,7 @@ async def test_an_artist_of_several_catalog_records_is_one(env) -> None:
 
 
 async def test_the_picker_offers_whom_this_server_listens_to(env) -> None:
-    """The most listened to first, then those the library has most of — and only artists with a catalog record."""
+    """The most listened to first, then those the library has most of, including local artists."""
     from app.db import session_scope
     from app.models import Artist, ArtistRef, TrackArtist
 
@@ -756,7 +758,9 @@ async def test_the_picker_offers_whom_this_server_listens_to(env) -> None:
     r = await env["client"].get("/api/taste/onboarding")
     assert r.status_code == 200, r.text
     # under the name the artist has here, not the catalog's
-    assert r.json()["source"] == "server" and [(a["ref"], a["name"]) for a in r.json()["suggestions"]] == [("dz:1", "КИНО")]
+    assert r.json()["source"] == "server" and [(a["ref"], a["name"]) for a in r.json()["suggestions"]] == [
+        (f"artist:{other.id}", "Без записи в каталоге"), ("dz:1", "КИНО"),
+    ]
 
 
 # --- the schedule ------------------------------------------------------------------------------------------------------

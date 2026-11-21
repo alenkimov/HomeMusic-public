@@ -144,18 +144,18 @@ async def test_listen_picks_the_ranked_file_and_streams_ranges(env):
 
 
 async def test_slow_listen_releases_auth_connection_before_resolving_and_allows_likes(env, monkeypatch):
-    from app.api import listen as api
+    from app import listen
     from app.db import engine
     from app.listen import Choice
 
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def choose(ref):
+    async def choose(ref, *, background=False):
         entered.set()
         await release.wait()
-        return Choice(ref=ref, kind="preview", artist="QA", title="Song", duration_s=214)
+        return Choice(ref=ref, kind="full", artist="QA", title="Song", duration_s=214)
 
-    monkeypatch.setattr(api, "_choose", choose)
+    monkeypatch.setattr(listen, "choose", choose)
     pending = asyncio.create_task(env["client"].get("/api/listen", params={"ref": "dz:100"}))
     try:
         await asyncio.wait_for(entered.wait(), 1)
@@ -437,36 +437,27 @@ async def test_seek_far_past_the_server_copy_goes_to_the_source(env, monkeypatch
     gate.set()
 
 
-async def test_deezer_preview_when_no_source_has_it(env):
+async def test_unavailable_recording_does_not_serve_a_catalog_preview(env):
     c = env["client"]
-    r = await c.get("/api/listen", params={"ref": "dz:100"})
-    assert r.status_code == 200, r.text
-    assert r.json()["kind"] == "preview" and r.json()["duration_s"] == 30 and r.json()["provider"] is None
-    r = await c.get(r.json()["stream_url"], headers={"Range": "bytes=0-"})
-    assert r.status_code == 206 and r.content == AUDIO
-    from app.services import svc
-
-    assert svc.deezer.previews >= 1  # a fresh signed link, not the cached catalog one
-
-
-async def test_full_song_request_never_plays_a_preview(env):
-    c = env["client"]
-    assert (await c.get("/api/listen", params={"ref": "dz:100"})).json()["kind"] == "preview"
-    response = await c.get("/api/listen/stream", params={"ref": "dz:100", "full": "1"})
-    assert response.status_code == 503, response.text
-    assert "Полная версия" in response.json()["detail"]
+    for endpoint in ("/api/listen", "/api/listen/stream"):
+        response = await c.get(endpoint, params={"ref": "dz:100"})
+        assert response.status_code == 404, response.text
+        assert "Полная версия" in response.json()["detail"]
     assert not any(call.request.url.host == "preview.test" for call in env["mock"].calls)
 
 
-async def test_full_song_replaces_a_cached_preview_with_the_download_fallback(env):
+async def test_legacy_preview_in_cache_is_ignored_and_full_sources_are_searched(env):
+    from app.catalog.cache import cache_set
     from app.services import svc
 
     c = env["client"]
-    assert (await c.get("/api/listen", params={"ref": "dz:100"})).json()["kind"] == "preview"
+    await cache_set("listen:dz:100", {
+        "kind": "preview", "artist": "Кино", "title": "Группа крови", "duration_s": 30,
+    }, 86400)
     svc.providers["soundcloud"] = FakeProvider("soundcloud", [
         cand("full", "https://cdn.test/good.mp3", provider="soundcloud"),
     ], client=env["hm"].client)
-    response = await c.get("/api/listen/stream", params={"ref": "dz:100", "full": "1"},
+    response = await c.get("/api/listen/stream", params={"ref": "dz:100"},
                            headers={"Range": "bytes=0-"})
     assert response.status_code == 206, response.text
     assert response.headers["X-HomeMusic-Listen-Kind"] == "full"
@@ -498,7 +489,7 @@ async def test_optional_name_lookup_cannot_delay_playback(env, monkeypatch):
     assert response.json()["kind"] == "full" and response.json()["provider"] == "hitmoz"
 
 
-async def test_a_full_request_joining_browser_resolution_does_not_play_the_preview(env, monkeypatch):
+async def test_simultaneous_metadata_and_stream_requests_agree_when_no_file_is_available(env, monkeypatch):
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def search(q, limit=10):
@@ -511,19 +502,19 @@ async def test_a_full_request_joining_browser_resolution_does_not_play_the_previ
     native = None
     try:
         await asyncio.wait_for(entered.wait(), 1)
-        native = asyncio.create_task(env["client"].get("/api/listen/stream", params={"ref": "dz:100", "full": "1"}))
+        native = asyncio.create_task(env["client"].get("/api/listen/stream", params={"ref": "dz:100"}))
         await asyncio.sleep(0)
         release.set()
-        assert (await asyncio.wait_for(browser, 1)).json()["kind"] == "preview"
+        assert (await asyncio.wait_for(browser, 1)).status_code == 404
         response = await asyncio.wait_for(native, 1)
-        assert response.status_code == 503, response.text
+        assert response.status_code == 404, response.text
         assert not any(call.request.url.host == "preview.test" for call in env["mock"].calls)
     finally:
         release.set()
         await asyncio.gather(*(t for t in [browser, native] if t is not None), return_exceptions=True)
 
 
-async def test_import_finishing_during_resolution_replaces_the_preview(env, monkeypatch):
+async def test_import_finishing_during_resolution_provides_the_file(env, monkeypatch):
     from app.db import session_scope
     from app.matching.normalize import fingerprint
 
@@ -535,7 +526,7 @@ async def test_import_finishing_during_resolution_replaces_the_preview(env, monk
         return []
 
     monkeypatch.setattr(env["hm"], "search", search)
-    pending = asyncio.create_task(env["client"].get("/api/listen/stream", params={"ref": "dz:100", "full": "1"}))
+    pending = asyncio.create_task(env["client"].get("/api/listen/stream", params={"ref": "dz:100"}))
     try:
         await asyncio.wait_for(entered.wait(), 1)
         rel = "QA/song.mp3"
@@ -554,34 +545,19 @@ async def test_import_finishing_during_resolution_replaces_the_preview(env, monk
     assert response.content == AUDIO
 
 
-async def test_preview_picked_while_a_source_is_down_is_not_remembered(env):
-    import time
-
+async def test_source_failure_is_not_cached_and_playback_can_retry(env):
     from app import listen
 
     c, hm, fm = env["client"], env["hm"], env["fm"]
     hm.down = fm.down = True  # e.g. the Hub's network dropped for a minute
     r = await c.get("/api/listen", params={"ref": "dz:100"})
-    assert r.json()["kind"] == "preview"
-    hit = listen._choices["dz:100"]
-    assert hit.transient
-    # back online: the preview isn't kept for long, and nothing was remembered
+    assert r.status_code == 502 and "недоступны" in r.json()["detail"]
+    assert "dz:100" not in listen._choices
     hm.down = fm.down = False
     hm.cands = [cand("1", "https://cdn.test/good.mp3")]
-    hit.at = time.monotonic() - listen.TRANSIENT_TTL_S - 1
     assert (await c.get("/api/listen", params={"ref": "dz:100"})).json()["kind"] == "full"
     await listen.reset()
     assert (await c.get("/api/listen", params={"ref": "dz:100"})).json()["kind"] == "full"
-
-    # no preview either: an error, not "not found"
-    from app.services import svc
-
-    svc.deezer = FakeDeezer(preview=None)
-    hm.down = fm.down = True
-    await listen.forget("dz:100")
-    await listen.reset()
-    r = await c.get("/api/listen", params={"ref": "dz:100"})
-    assert r.status_code == 502 and "недоступны" in r.json()["detail"]
 
 
 async def test_nothing_to_play(env):
@@ -593,6 +569,180 @@ async def test_nothing_to_play(env):
     assert r.status_code == 404 and "ни в одном источнике" in r.json()["detail"]
     assert (await c.get("/api/listen", params={"ref": "dz:404"})).status_code == 404
     assert (await c.get("/api/listen", params={"ref": "nonsense"})).status_code == 400
+
+
+@pytest.mark.parametrize("by_hub_id", [False, True])
+async def test_unavailable_catalog_track_can_open_the_file_picker(env, monkeypatch, by_hub_id):
+    from app import listen
+    from app.catalog.cache import cache_delete, cache_set
+    from app.db import session_scope
+    from app.models import TrackFile
+    from app.services import svc
+
+    c = env["client"]
+    ref = "dz:100"
+    target = await c.post("/api/quality/track/resolve", json={"ref": ref})
+    assert target.status_code == 200, target.text
+    track_id = target.json()["track_id"]
+    hub_ref = f"lib:{track_id}"
+    playback_ref = hub_ref if by_hub_id else ref
+    playlist = await c.post("/api/playlists", json={"name": "Выбор файла"})
+    page = f"/api/playlists/{playlist.json()['id']}"
+    assert (await c.post(f"{page}/add", json={"track_ids": [track_id]})).status_code == 200
+
+    async def availability():
+        playlist_track, = (await c.get(page)).json()["tracks"]
+        album_track, = (await c.get("/api/catalog/album/dz:10")).json()["tracks"]
+        assert playlist_track["library_track_id"] == album_track["library_track_id"] == track_id
+        fields = "unknown", "unavailable", "owned"
+        assert all(playlist_track[field] == album_track[field] for field in fields)
+        return tuple(album_track[field] for field in fields)
+
+    assert await availability() == (False, False, False)
+    env["hm"].down = True
+    assert (await c.get("/api/listen", params={"ref": playback_ref})).status_code == 502
+    assert await availability() == (False, False, False)
+    env["hm"].down = False
+    assert (await c.get("/api/listen", params={"ref": playback_ref})).status_code == 404
+    await listen.reset()
+    assert await availability() == (False, True, False)
+
+    other_key = f"listen:{ref if by_hub_id else hub_ref}"
+    candidate = cand("1", "https://cdn.test/good.mp3").model_dump(mode="json")
+    await cache_set(other_key, {"kind": "full", "candidate": candidate}, 600)
+    assert await availability() == (False, False, False)
+    await cache_delete(other_key)
+
+    again = await c.post("/api/quality/track/resolve", json={"ref": ref})
+    assert again.json() == target.json()
+    info = await c.get(f"/api/quality/track/{track_id}")
+    assert (info.json()["title"], info.json()["file_uid"]) == ("Группа крови", None)
+
+    # The manual choice still plays if it differs in duration and the catalog goes offline.
+    path = env["music"] / "library" / "picked.mp3"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(AUDIO)
+    async with session_scope() as s:
+        s.add(TrackFile(track_id=track_id, uid="manual-pick", path="picked.mp3"))
+
+    async def catalog_offline(_):
+        raise RuntimeError("catalog offline")
+
+    monkeypatch.setattr(svc.deezer, "get_track", catalog_offline)
+    stream = await c.get("/api/listen/stream", params={"ref": ref})
+    assert stream.status_code == 200 and stream.content == AUDIO
+    assert await availability() == (False, False, True)
+
+
+async def test_file_picker_keeps_cover_from_the_selected_recording(env, monkeypatch):
+    import io
+    import wave
+
+    from PIL import Image
+
+    from app import listen
+    from app.api import file_picker
+    from app.api.medialib import songs_out
+    from app.db import session_scope
+    from app.library import tagger
+    from app.library.probe import ProbeInfo
+    from app.library.tracks import current_file
+
+    image = io.BytesIO()
+    Image.new("RGB", (360, 360), "seagreen").save(image, "PNG")
+    cover_url = "https://covers.test/recording.png"
+    env["mock"].get(cover_url).mock(return_value=httpx.Response(200, content=image.getvalue(),
+                                                              headers={"content-type": "image/png"}))
+    candidate = cand("1", "https://cdn.test/good.mp3").model_copy(update={"cover_url": cover_url})
+    await listen.remember_files([candidate])
+    ref = "file:hitmoz:1"
+    path = env["music"] / "picked.wav"
+    with wave.open(str(path), "wb") as audio:
+        audio.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+        audio.writeframes(bytes(16000))
+    listen._choices[ref].local = path
+
+    async def probe_audio(_path):
+        return ProbeInfo(duration_s=1, codec="wav")
+
+    monkeypatch.setattr(file_picker, "_probe_audio", probe_audio)
+    c = env["client"]
+    track = await c.post("/api/quality/track/resolve", json={"ref": "dz:100"})
+    track_id = track.json()["track_id"]
+    playlist = await c.post("/api/playlists", json={"name": "Обложки"})
+    page = f"/api/playlists/{playlist.json()['id']}"
+    assert (await c.post(f"{page}/add", json={"track_ids": [track_id]})).status_code == 200
+    take = await c.post(f"/api/quality/track/{track_id}/take", json={"ref": ref, "expected_file_uid": None})
+    assert take.status_code == 200, take.text
+    row, = (await c.get(page)).json()["tracks"]
+    assert row["cover_url"].startswith("/api/library/albums/")
+    cover = await c.get(row["cover_url"])
+    assert cover.status_code == 200
+    assert Image.open(io.BytesIO(cover.content)).size == (360, 360)
+
+    async with session_scope() as s:
+        file = await current_file(s, track_id)
+        assert tagger.read_cover(env["music"] / "library" / file.path) == cover.content
+        file.nd_song_id = "picked-song"
+        await s.flush()
+        scanned, = await songs_out(s, [{"id": "picked-song", "title": candidate.title, "artist": candidate.artist}])
+        assert scanned.cover_url == row["cover_url"]
+
+
+async def test_cover_search_and_saving_for_track_and_catalog_album(env):
+    import io
+
+    from PIL import Image
+
+    from app.services import svc
+
+    def picture(w, h, color):
+        dest = io.BytesIO()
+        Image.new("RGB", (w, h), color).save(dest, "PNG")
+        return dest.getvalue()
+
+    source_image = picture(720, 404, "seagreen")
+    from_catalog = "https://covers.test/catalog.png"
+    from_provider = "https://covers.test/recording.png"
+    svc.deezer = FakeDeezer(cover_url=from_catalog)
+    headers = {"Content-Type": "image/png"}
+    env["mock"].get(from_catalog).mock(return_value=httpx.Response(200, content=picture(500, 500, "blue"), headers=headers))
+    env["mock"].get(from_provider).mock(return_value=httpx.Response(200, content=source_image, headers=headers))
+    env["hm"].cands = [cand("1", "https://cdn.test/good.mp3").model_copy(update={"cover_url": from_provider})]
+
+    c = env["client"]
+    query = await c.get("/api/search/covers", params={"q": "Группа крови", "album": True})
+    assert query.status_code == 200, query.text
+    covers = query.json()["covers"]
+    assert sorted(o["source"] for o in covers) == ["deezer", "hitmoz"]
+    result = next(o for o in covers if o["source"] == "hitmoz")
+    response = await c.get(f"/api/search/covers/{result['key']}")
+    assert response.status_code == 200 and response.content == source_image
+    assert (response.headers["X-Cover-Width"], response.headers["X-Cover-Height"], response.headers["X-Cover-Format"]) == ("720", "404", "PNG")
+    assert (await c.get("/api/search/covers/" + "0" * 64)).status_code == 404
+
+    track = await c.post("/api/quality/track/resolve", json={"ref": "dz:100"})
+    track_id = track.json()["track_id"]
+    file = {"file": ("cover.png", response.content, "image/png")}
+    saved_track = await c.put(f"/api/library/tracks/{track_id}/cover", files=file)
+    assert saved_track.status_code == 200 and saved_track.json()["own_cover"]
+
+    endpoint = "/api/catalog/album/dz:10"
+    invalid = await c.put(endpoint + "/cover", files={"file": ("bad.jpg", b"invalid", "image/jpeg")})
+    assert invalid.status_code == 400
+    assert (await c.get(endpoint)).json()["library_album_id"] is None
+    saved_album = await c.put(endpoint + "/cover", files=file)
+    assert saved_album.status_code == 200, saved_album.text
+    album = (await c.get(endpoint)).json()
+    assert album["library_album_id"] == saved_album.json()["id"]
+    assert album["cover_url"] == saved_album.json()["cover_url"]
+    assert album["tracks"][0]["cover_url"] == saved_track.json()["cover_url"]
+    assert (await c.get(album["cover_url"])).status_code == 200
+    replaced = await c.put(endpoint + "/cover", files={"file": ("new.png", picture(500, 500, "brown"), "image/png")})
+    assert replaced.status_code == 200
+    assert replaced.json()["id"] == album["library_album_id"]
+    assert replaced.json()["cover_url"] != album["cover_url"]
+    assert (await c.get(f"/api/library/track-edit?track_id={track_id}")).json()["cover_url"] == saved_track.json()["cover_url"]
 
 
 async def test_owned_track_plays_the_library_file(env, monkeypatch):
@@ -791,6 +941,266 @@ async def test_file_of_the_search_is_downloaded_as_it_is(env):
     items = (await c.get("/api/downloads")).json()
     assert [(i["track_ref"], i["quiet"], i["chosen"]["page_url"]) for i in items] == [
         ("file:hitmoz:1", False, "https://hitmoz.test/song/1")]
+
+
+@pytest.mark.parametrize("save", ["like", "playlist", "picked_file"])
+async def test_saving_reuses_the_player_copy(env, monkeypatch, tmp_path, save):
+    from sqlalchemy import select
+
+    from app import listen
+    from app.db import session_scope
+    from app.jobs import downloads
+    from app.library.probe import PostcheckResult
+    from app.models import Job
+
+    client, provider = env["client"], env["hm"]
+    src = tmp_path / "fresh.mp3"
+    src.write_bytes(AUDIO)
+    provider.src = src
+    provider.cands = [cand("1", "https://shared.test/song.mp3")]
+    partial = save == "playlist"
+    gate = asyncio.Event()
+    requests = []
+
+    def cdn(request):
+        requests.append(request.headers.get("range"))
+        return partway(request, 8192, gate=gate) if partial else ranged(request)
+
+    env["mock"].route(host="shared.test").mock(side_effect=cdn)
+    ref = "file:hitmoz:1" if save == "picked_file" else "dz:100"
+    if save == "picked_file":
+        await search_files(client)
+    snap = await client.get("/api/listen/stream", params={"ref": ref}, headers={"Range": "bytes=0-1023"})
+    assert snap.status_code == 206 and snap.content == AUDIO[:1024]
+    copy = listen._copies[ref]
+
+    body = {"track_refs": [ref]}
+    if save == "playlist":
+        playlist = await client.post("/api/playlists", json={"name": "Из плеера"})
+        assert playlist.status_code == 200, playlist.text
+        body["playlist_ids"] = [playlist.json()["id"]]
+    elif save == "like":
+        liked = await client.post("/api/star", json={"targets": [{"target_type": "track", "ref": ref}]})
+        assert liked.status_code == 200, liked.text
+    response = await client.post("/api/downloads", json=body)
+    assert response.status_code == 200, response.text
+    if response.json()["expanding"]:
+        async with session_scope() as s:
+            expansion = (await s.execute(select(Job).where(Job.kind == "expand_batch"))).scalar_one()
+        await downloads.handle_expand_batch(expansion)
+    async with session_scope() as s:
+        job = (await s.execute(select(Job).where(Job.kind == "download_item"))).scalar_one()
+
+    staged = asyncio.Event()
+    original_stage = listen.stage_playback_file
+    imported = []
+
+    async def stage(*args):
+        staged.set()
+        return await original_stage(*args)
+
+    async def postcheck(*_args):
+        return PostcheckResult(ok=True)
+
+    async def import_file(_item_id, _user, _query, _meta, candidate, path, _check, _force, **_kwargs):
+        assert path != copy.path
+        imported.append((candidate.provider_id, path.read_bytes()))
+
+    monkeypatch.setattr(listen, "stage_playback_file", stage)
+    monkeypatch.setattr(downloads.probe, "postcheck", postcheck)
+    monkeypatch.setattr(downloads, "import_downloaded", import_file)
+    if not partial:
+        await asyncio.wait_for(copy.until(copy.settled), 5)
+    pending = asyncio.create_task(downloads.handle_download_item(job))
+    try:
+        await asyncio.wait_for(staged.wait(), 5)
+        if partial:
+            assert not copy.done and not pending.done() and not imported and not provider.fetched
+    finally:
+        gate.set()
+        await asyncio.wait_for(pending, 5)
+    assert imported == [("1", AUDIO)]
+    assert copy.path.read_bytes() == AUDIO
+    assert requests == ["bytes=0-"] and provider.fetched == 0
+
+
+async def test_attachment_requires_and_reuses_the_completed_preview(env, monkeypatch):
+    from sqlalchemy import select
+
+    from app import listen
+    from app.db import session_scope
+    from app.jobs import downloads
+    from app.library.probe import PostcheckResult
+    from app.models import DownloadBatch, DownloadItem, Job, Track, User
+
+    client, provider = env["client"], env["hm"]
+    candidate = cand("1", "https://cdn.test/good.mp3")
+    provider.cands = [candidate]
+    async with session_scope() as s:
+        user = (await s.execute(select(User).where(User.nd_username == "admin"))).scalar_one()
+        track = Track(artist=candidate.artist, title=candidate.title, fingerprint="fixture")
+        batch = DownloadBatch(user_id=user.id, origin="hub")
+        s.add_all([track, batch])
+        await s.flush()
+        item = DownloadItem(
+            batch_id=batch.id, user_id=user.id, status="needs_review",
+            query_json={"query": {"artist": track.artist, "title": track.title}, "meta": {"track_id": track.id}, "pick_only": True},
+            candidates_json=[candidate.model_dump(mode="json")],
+        )
+        s.add(item)
+        await s.flush()
+        item_id, track_id = item.id, track.id
+
+    base = f"/api/downloads/items/{item_id}"
+    ref = "file:hitmoz:1"
+    assert (await client.get(f"/api/downloads/{item_id}")).status_code == 200
+    assert (await client.post(f"{base}/retry", json={"candidate_ref": ref})).status_code == 409
+    assert (await client.get(f"{base}/prepared")).json() == []
+
+    response = await client.get("/api/listen/stream", params={"ref": ref})
+    assert response.content == AUDIO
+    assert (await client.get(f"{base}/prepared")).json() == [ref]
+    response = await client.post(f"{base}/retry", json={"candidate_ref": ref})
+    assert response.status_code == 200, response.text
+
+    # A queued attachment still has the exact audio if the playback cache disappears.
+    listen._copies.clear()
+    async with session_scope() as s:
+        job = (await s.execute(select(Job).where(Job.kind == "download_item"))).scalar_one()
+
+    imported = []
+
+    async def postcheck(*_args):
+        return PostcheckResult(ok=True)
+
+    async def import_file(_item_id, _user, _query, meta, _cand, path, _check, _force, **_kwargs):
+        imported.append((meta["track_id"], path.read_bytes()))
+
+    monkeypatch.setattr(downloads.probe, "postcheck", postcheck)
+    monkeypatch.setattr(downloads, "import_downloaded", import_file)
+    await downloads.handle_download_item(job)
+    assert imported == [(track_id, AUDIO)]
+    assert provider.fetched == 0
+
+
+async def test_replacement_reuses_the_completed_preview(env, monkeypatch):
+    from app import listen
+    from app.api import file_picker
+    from app.db import session_scope
+    from app.library.probe import ProbeInfo
+
+    client, provider = env["client"], env["hm"]
+    provider.cands = [cand("1", "https://cdn.test/good.mp3")]
+    await search_files(client)
+    async with session_scope() as s:
+        track = filed_track(artist="Artist", title="Track", fingerprint="fixture")
+        s.add(track)
+        await s.flush()
+        track_id = track.id
+
+    ref = "file:hitmoz:1"
+    base = f"/api/quality/track/{track_id}"
+    file_uid = (await client.get(base)).json()["file_uid"]
+    take_body = {"ref": ref, "expected_file_uid": file_uid, "sure": True}
+    assert (await client.post(f"{base}/take", json=take_body)).status_code == 410
+    assert (await client.get("/api/listen/stream", params={"ref": ref})).content == AUDIO
+    cached = listen.prepared_file(ref)
+    assert cached is not None
+
+    async def probe_audio(path):
+        assert path.read_bytes() == AUDIO
+        return ProbeInfo(duration_s=100, codec="mp3")
+
+    async def likeness(_mine, path):
+        assert path.read_bytes() == AUDIO
+        return 1.0
+
+    taken = []
+
+    async def take(_s, _user, track, path, **_kwargs):
+        assert path != cached.path
+        taken.append((track.id, path.read_bytes()))
+
+    monkeypatch.setattr(file_picker, "_probe_audio", probe_audio)
+    monkeypatch.setattr(file_picker, "_likeness", likeness)
+    monkeypatch.setattr(file_picker.upgrade, "take_picked", take)
+    response = await client.post(f"{base}/prepare", json={"ref": ref})
+    assert response.status_code == 200, response.text
+    assert response.json()["ref"] == ref
+    response = await client.post(f"{base}/take", json={**take_body, "expected_file_uid": None})
+    assert response.status_code == 409
+    response = await client.post(f"{base}/take", json=take_body)
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"]
+    assert taken == [(track_id, AUDIO)]
+    assert (await client.get(f"{base}/picked/audio", params={"ref": ref})).content == AUDIO
+    assert provider.fetched == 0
+
+
+async def test_picker_uploads_compares_and_attaches_without_replacing_the_track(env):
+    import io
+    import shutil
+    import struct
+    import wave
+
+    from app.db import session_scope
+    from app.library import probe
+    from app.library.tracks import current_file
+    from app.models import Track
+
+    if not shutil.which(probe.ffmpeg_bin()) or not shutil.which(probe.ffprobe_bin()):
+        pytest.skip("ffmpeg and ffprobe are needed")
+
+    def signal(level: int) -> bytes:
+        dest = io.BytesIO()
+        with wave.open(dest, "wb") as out:
+            out.setparams((1, 2, 44100, 0, "NONE", "not compressed"))
+            for value in (800, level, 1200):
+                out.writeframes(struct.pack("<h", value) * 44100)
+        return dest.getvalue()
+
+    async with session_scope() as s:
+        track = Track(artist="Artist", title="Track", fingerprint="fixture")
+        other = Track(artist="Artist", title="Different track", fingerprint="other")
+        s.add_all([track, other])
+        await s.flush()
+        tid, other_id = track.id, other.id
+
+    client = env["client"]
+    base = f"/api/quality/track/{tid}"
+    assert (await client.get(base)).json()["file_uid"] is None
+    picks = []
+    for level in (2400, 4800):
+        response = await client.post(f"{base}/upload", files={"file": ("Запись.wav", signal(level), "audio/wav")})
+        assert response.status_code == 200, response.text
+        picks.append(response.json())
+    mine, found = picks
+    assert found["provider"] == "upload" and found["title"] == "Запись.wav"
+    response = await client.post(f"{base}/compare", json={"ref": found["ref"], "baseline_ref": mine["ref"]})
+    assert response.status_code == 200, response.text
+    assert response.json()["length"] == {"mine": 3, "other": 3}
+    assert all(response.json()["peaks"].values())
+    params = {"ref": found["ref"], "start": 1.2, "end": 1.5}
+    response = await client.get(f"/api/quality/track/{other_id}/picked/audio", params=params)
+    assert response.status_code == 410
+    response = await client.get(f"{base}/picked/audio", params=params)
+    assert response.status_code == 200, response.text[:500]
+    with wave.open(io.BytesIO(response.content), "rb") as excerpt:
+        assert excerpt.getnframes() == 13230
+        sample, *_ = struct.unpack("<hh", excerpt.readframes(1))
+        assert sample > 2000  # comes from the middle section of the original
+    assert (await client.get(base)).json()["file_uid"] is None
+
+    response = await client.post(f"{base}/take", json={"ref": found["ref"], "expected_file_uid": None})
+    assert response.status_code == 200, response.text
+    async with session_scope() as s:
+        track = await s.get(Track, tid)
+        file = await current_file(s, tid)
+        assert (track.title, track.artist) == ("Track", "Artist")
+        assert file and file.source == "upload"
+        assert (await current_file(s, other_id)) is None
+    attached = await client.get("/api/listen/stream", params={"ref": f"lib:{tid}"})
+    assert attached.status_code == 200 and attached.content.startswith(b"RIFF")
 
 
 async def test_listen_needs_login(env):

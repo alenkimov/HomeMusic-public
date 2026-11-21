@@ -41,15 +41,16 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(db.run_migrations)
     db.init_engine()
 
-    from app import listen, telegram_chats
+    from app import integrations, listen, telegram_chats
+    from app.for_you import loop as for_you_loop
     from app.housekeeping import scheduler_loop
     from app.jobs.queue import WorkerPool, recover_stale
     from app.mixes import smart, wave
-    from app.for_you import loop as for_you_loop
     from app.mixes.core import schedule_loop
     from app.plays import scrobbles_loop
     from app.services import svc
 
+    await integrations.move_lastfm_from_env(s.lastfm_api_key)
     svc.start()
     from app.catalog import namesakes
 
@@ -87,15 +88,19 @@ async def lifespan(app: FastAPI):
         from app.listenbrainz import loop as listenbrainz_loop
 
         tasks.append(asyncio.create_task(listenbrainz_loop(), name="listenbrainz"))
-        await telegram_chats.start_all()
+        if s.telegram_bot_token.strip():
+            tasks.append(asyncio.create_task(telegram_chats.poll(), name="telegram"))
         tasks.append(asyncio.create_task(_sync_tags(), name="tags"))
+        from app.genres import loop as genres_loop
+
+        tasks.append(asyncio.create_task(genres_loop(), name="genres"))
     log.info("hub started")
     try:
         yield
     finally:
         for t in tasks:
             t.cancel()
-        telegram_chats.stop_all()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await pool.stop()
         await listen.reset()
         await wave.reset()
@@ -118,18 +123,20 @@ async def _sync_tags() -> None:
 def create_app() -> FastAPI:
     from app.api import (
         admin,
+        artists,
         auth,
         catalog,
         discoveries,
         downloads,
-        for_you,
         events,
+        file_picker,
+        for_you,
         imports,
         insights,
+        integrations,
         library,
         links,
         listen,
-        artists,
         listenbrainz,
         lyrics,
         medialib,
@@ -141,9 +148,9 @@ def create_app() -> FastAPI:
         search,
         smart_shuffle,
         stats,
+        subsonic,
         system,
         tags,
-        subsonic,
         telegram,
         uploads,
         wave,
@@ -152,10 +159,11 @@ def create_app() -> FastAPI:
     # no page that lists the Hub's commands: it is reached from the internet, and nobody but a guesser reads it
     app = FastAPI(title="HomeMusic Hub", version="0.1.0", lifespan=lifespan, docs_url=None, openapi_url=None,
                   redoc_url=None)
-    for r in (auth.router, search.router, catalog.router, downloads.router, listen.router, library.router, medialib.router,
+    for r in (auth.router, search.router, catalog.router, downloads.router, listen.router, library.router, medialib.router, file_picker.router,
               uploads.router, playlists.router, plays.router, mixes.router, wave.router, smart_shuffle.router, imports.router, events.router, system.router, admin.router,
-              artists.router, insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, quality.router, discoveries.router, listenbrainz.router, for_you.router, subsonic.router):
+              artists.router, insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, quality.router, discoveries.router, listenbrainz.router, for_you.router, subsonic.router, integrations.router):
         app.include_router(r)
+    app.include_router(integrations.callback_router)
     try:
         from app.api import assistant
 

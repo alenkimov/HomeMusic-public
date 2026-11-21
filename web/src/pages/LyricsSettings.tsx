@@ -4,6 +4,7 @@ import { Button, ErrorState, IconButton, Loading, PageHeader, cx } from '../comp
 import { useAsync, useInterval } from '../lib/hooks';
 import type { LyricsSettings, LyricsTranslators } from '../lib/lyrics';
 import { attempt, toast } from '../lib/ui';
+import { ServiceBadge } from '../components/ServiceBadge';
 
 /** The admin's «Тексты песен»: which sources the Hub asks for lyrics and in what order (the first that has a text
  * wins), how many of the library's tracks have a text in the database, when a miss is looked for again, and the
@@ -52,7 +53,7 @@ export function LyricsSettingsPage() {
 
   return (
     <div className="mx-auto max-w-3xl pb-8">
-      <PageHeader title="Тексты песен" back="/more" />
+      <PageHeader title="Тексты и перевод" back="/more" />
       {res.loading ? (
         <Loading />
       ) : res.error || !v ? (
@@ -68,7 +69,7 @@ export function LyricsSettingsPage() {
                   <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-raised text-xs text-muted">{i + 1}</span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2 font-semibold">
-                      {s.title}
+                      <ServiceBadge service={s.id} label={s.title} />
                       {h && <span className={cx('rounded-full px-2 py-0.5 text-[11px] font-normal', h.warn ? 'bg-warn/15 text-warn' : 'bg-accent/15 text-accent')}>{h.tag}</span>}
                     </div>
                     {h && <div className="text-xs text-muted">{h.text}</div>}
@@ -161,7 +162,7 @@ function Translators() {
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-raised text-xs text-muted">{i + 1}</span>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2 font-semibold">
-                {p.title}
+                <ServiceBadge service={p.id} label={p.title} />
                 {p.id === 'llm' && !v.llm && <span className="rounded-full bg-warn/15 px-2 py-0.5 text-[11px] font-normal text-warn">ИИ не настроен</span>}
               </div>
               <div className="text-xs text-muted">{TRANSLATOR_HINTS[p.id]}</div>

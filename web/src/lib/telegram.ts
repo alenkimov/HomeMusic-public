@@ -1,16 +1,11 @@
+import { titleWithVersion } from './versionLabels';
 import { useSyncExternalStore } from 'react';
 import { api, errorMessage } from '../api/client';
 import { tracksWord } from './format';
 import { attempt, toast } from './ui';
 
-/** Sending library tracks with the user's own Telegram bot (the Hub sends the files, `app/telegram.py`): to the
- * private chat with them or to a group / channel they added the bot to — picked in «Поделиться»
- * (`components/ShareSheet.tsx`). Without a bot that window opens the one where the bot's key is pasted
- * (`components/TelegramSetup.tsx`), and what was asked for goes to the private chat as soon as the bot is ready.
- * Several tracks (a selection, `lib/selection.ts`) go one after another, in their order. */
-
 export interface TelegramStatus {
-  connected: boolean;
+  configured: boolean;
   ready: boolean;
   bot_username?: string | null;
   chat_name?: string | null;
@@ -27,6 +22,8 @@ export interface TelegramChat {
   photo?: string | null;
 }
 
+export const TELEGRAM_LINK_EVENT = 'hm:telegram-link';
+
 export interface ShareTrack {
   title: string;
   artist?: string | null;
@@ -34,15 +31,20 @@ export interface ShareTrack {
   ref?: string | null;
 }
 
+interface DeliveryOptions {
+  withLyrics?: boolean | null;
+  anonymous?: boolean;
+  chat?: TelegramChat | null;
+}
+
 interface SetupState {
   open: boolean;
   /** the tracks to send once the bot is ready */
   pending: ShareTrack[];
-  /** ... with their texts (null: as the user's setting says) */
-  withLyrics: boolean | null;
+  options: Omit<DeliveryOptions, 'chat'>;
 }
 
-let state: SetupState = { open: false, pending: [], withLyrics: null };
+let state: SetupState = { open: false, pending: [], options: {} };
 const subs = new Set<() => void>();
 const set = (next: SetupState) => {
   state = next;
@@ -54,8 +56,8 @@ const subscribe = (cb: () => void) => {
 };
 
 export const useTelegramSetup = (): SetupState => useSyncExternalStore(subscribe, () => state, () => state);
-export const openTelegramSetup = (pending: ShareTrack[] = [], withLyrics: boolean | null = null) => set({ open: true, pending, withLyrics });
-export const closeTelegramSetup = () => set({ open: false, pending: [], withLyrics: null });
+export const openTelegramSetup = (pending: ShareTrack[] = [], options: SetupState['options'] = {}) => set({ open: true, pending, options });
+export const closeTelegramSetup = () => set({ open: false, pending: [], options: {} });
 
 let sending = false;
 
@@ -80,17 +82,19 @@ export function setShareWithLink(on: boolean) {
   }
 }
 
-export async function deliverToTelegram(tracks: readonly ShareTrack[], withLyrics: boolean | null = null, chat: TelegramChat | null = null): Promise<void> {
+export async function deliverToTelegram(tracks: readonly ShareTrack[], { withLyrics = null, anonymous = false, chat = null }: DeliveryOptions = {}): Promise<void> {
   if (!tracks.length) return;
   const to = chat && chat.kind !== 'private' ? `в «${chat.title}»` : 'в Telegram';
-  const chatId = chat?.id ?? null;
+  const chatId = chat?.kind === 'private' ? null : chat?.id ?? null;
   if (sending) return void toast('Предыдущая отправка в Telegram ещё идёт', 'info');
+  const settings = { with_lyrics: withLyrics, chat: chatId, with_link: shareWithLink(), anonymous };
+  const send = (track: ShareTrack) => api.telegramSend({ nd_song_id: track.nd_song_id ?? null, ref: track.ref ?? null, ...settings });
   sending = true;
   try {
     if (tracks.length === 1) {
-      toast(`Отправляю ${to}: «${tracks[0].title}»…`);
-      const r = await attempt(() => api.telegramSend({ nd_song_id: tracks[0].nd_song_id ?? null, ref: tracks[0].ref ?? null, with_lyrics: withLyrics, chat: chatId, with_link: shareWithLink() }));
-      if (r) toast(`Отправлено ${to}: «${r.title}»${r.lyrics ? ' с текстом' : withLyrics ? ' (текста у трека нет)' : ''}${r.light ? ' — сжатая копия: файл больше 50 МБ' : ''}`, 'success');
+      toast(`Отправляю ${to}: «${titleWithVersion(tracks[0].title, tracks[0])}»…`);
+      const r = await attempt(() => send(tracks[0]));
+      if (r) toast(`Отправлено ${to}: «${titleWithVersion(r.title, tracks[0], r.version_label ?? undefined)}»${r.lyrics ? ' с текстом' : withLyrics ? ' (текста у трека нет)' : ''}${r.light ? ' — сжатая копия: файл больше 50 МБ' : ''}`, 'success');
       return;
     }
     toast(`Отправляю ${to} ${tracksWord(tracks.length)} — это займёт время…`);
@@ -98,10 +102,10 @@ export async function deliverToTelegram(tracks: readonly ShareTrack[], withLyric
     let firstError = '';
     for (const t of tracks) {
       try {
-        await api.telegramSend({ nd_song_id: t.nd_song_id ?? null, ref: t.ref ?? null, with_lyrics: withLyrics, chat: chatId, with_link: shareWithLink() });
+        await send(t);
         ok++;
       } catch (e) {
-        firstError ||= `«${t.title}»: ${errorMessage(e)}`;
+        firstError ||= `«${titleWithVersion(t.title, t)}»: ${errorMessage(e)}`;
       }
     }
     if (ok === tracks.length) toast(`Отправлено ${to}: ${tracksWord(ok)}`, 'success');

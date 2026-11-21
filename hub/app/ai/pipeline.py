@@ -22,6 +22,7 @@ from app.api.schemas import (
     DownloadTrackIn,
     TrackOut,
 )
+from app.catalog import lookup
 from app.catalog.models import CatalogAlbum, CatalogTrack, make_ref
 from app.config import get_settings
 from app.db import session_scope
@@ -127,15 +128,18 @@ async def recognize(task: AssistantTask) -> tuple[dict[str, Any], list[CatalogTr
 
 async def tracks_for_intent(intent) -> list[CatalogTrack] | None:
     """Album / latest album / discography / top intents are answered straight from the catalog."""
-    if intent.kind in ("tracks", "unknown") or not intent.artist or svc.deezer is None:
+    if intent.kind in ("tracks", "unknown") or not intent.artist:
         return None
-    found = await svc.deezer.search(intent.artist, kinds=("artist",), limit=5)
-    if not found.artists:
+    try:
+        found = await lookup.search(intent.artist, kinds=("artist",), limit=5)
+    except lookup.CatalogUnavailable:
         return None
-    artist = found.artists[0]
+    artist = lookup.named_artist(intent.artist, found.artists)
+    page = await lookup.artist_page([artist.ref]) if artist else None
+    if page is None:
+        return None
     if intent.kind == "artist_top":
-        return await svc.deezer.get_artist_top(artist.id, limit=10)
-    page = await svc.deezer.get_artist_page(artist.id)
+        return page.top_tracks[:10]
     albums: list[CatalogAlbum] = []
     if intent.kind == "album" and intent.album:
         nq = normalize_title(intent.album).text
@@ -150,7 +154,7 @@ async def tracks_for_intent(intent) -> list[CatalogTrack] | None:
         albums = [a for a in page.albums if a.record_type in types]
     out: list[CatalogTrack] = []
     for a in albums[:30]:
-        full = await svc.deezer.get_album(a.id)
+        full = await svc.album(a.ref, credited=True)
         out += full.tracks or []
     return out or None
 
@@ -203,9 +207,8 @@ async def resolve_row(idx: int, item: dict[str, Any], album_tracks: list[Catalog
                 queries.append((title, artist))  # the model sometimes swaps artist and title
                 for qa, qt in queries:
                     try:
-                        found = await svc.deezer.search_tracks(qa, qt, limit=10) if svc.deezer else []
-                    except Exception as e:
-                        log.warning("deezer search failed: %r", e)
+                        found = (await lookup.search(f"{qa} {qt}".strip(), kinds=("track",), limit=10)).tracks
+                    except lookup.CatalogUnavailable:
                         found = []
                     if not found:
                         continue
@@ -265,16 +268,20 @@ def _parse_duration(v: Any) -> int | None:
 async def album_context_tracks(extraction: dict[str, Any]) -> list[CatalogTrack] | None:
     """Album screenshot: find the album first, then match rows against its tracklist (fixes truncated names)."""
     ctx = extraction.get("context") or {}
-    if extraction.get("page_type") != "album" or not ctx.get("album_title") or svc.deezer is None:
+    if extraction.get("page_type") != "album" or not ctx.get("album_title"):
         return None
     try:
-        albums = await svc.deezer.search_albums(ctx.get("album_artist") or "", ctx["album_title"], limit=5)
-    except Exception:
+        query = f"{ctx.get('album_artist') or ''} {ctx['album_title']}".strip()
+        albums = (await lookup.search(query, kinds=("album",), limit=5)).albums
+    except lookup.CatalogUnavailable:
         return None
     nq = normalize_title(ctx["album_title"]).text
     for a in albums:
         if normalize_title(a.title).text == nq:
-            return (await svc.deezer.get_album(a.id)).tracks
+            try:
+                return (await svc.album(a.ref, credited=True)).tracks
+            except Exception as error:
+                log.info("assistant: release %s unavailable: %r", a.ref, error)
     return None
 
 

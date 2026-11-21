@@ -1,10 +1,12 @@
+import { TrackTitle } from './TrackTitle';
 import { useMemo, useState } from 'react';
 import { selectedTracks, useSelectionCount } from '../lib/selection';
 import { api } from '../api/client';
 import { tracksWord } from '../lib/format';
-import { UNTAGGED, closeTagsSheet, filterActive, filterWords, selectionsChanged, setTagsData, useTags, useTagsSheet, type Tag, type TagFilter, type TagSelection } from '../lib/tags';
+import { UNTAGGED, closeTagsSheet, filterActive, filterWords, genreSourcesFor, selectionsChanged, setTagsData, useTags, useTagsSheet, type GenreSource, type Tag, type TagFilter, type TagSelection } from '../lib/tags';
 import { attempt, toast } from '../lib/ui';
 import { Icon } from './Icon';
+import { GenreSourceFilter } from './GenreSources';
 import { Button, Field, Loading, Sheet, cx } from './ui';
 
 type Mark = 'all' | 'some' | 'none';
@@ -23,7 +25,9 @@ function Body({ songIds, title, pick }: { songIds: string[]; title: string; pick
   const n = songIds.length;
   const [want, setWant] = useState<Record<number, Mark>>({});
   const [q, setQ] = useState('');
+  const [genreSource, setGenreSource] = useState<GenreSource | ''>('');
   const [busy, setBusy] = useState(false);
+  const origins = useMemo(() => genreSourcesFor(tags.genre_sources, pick ? undefined : songIds), [tags.genre_sources, songIds, pick]);
 
   const counts = useMemo(() => {
     const out = new Map<number, number>();
@@ -74,7 +78,7 @@ function Body({ songIds, title, pick }: { songIds: string[]; title: string; pick
     <Sheet
       open
       onClose={closeTagsSheet}
-      title={pick ? title : n === 1 ? `Теги: ${title}` : `${tracksWord(n)} — теги`}
+      title={pick ? title : n === 1 ? <TrackTitle title={`Теги: ${title}`} track={{ track_id: Number(songIds[0]) }} /> : `${tracksWord(n)} — теги`}
       footer={
         <div className="flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-xs text-muted">
@@ -106,11 +110,15 @@ function Body({ songIds, title, pick }: { songIds: string[]; title: string; pick
             )}
           </form>
           {tags.groups.map((g) => {
-            const shown = g.tags.filter((t) => !needle || t.name.toLocaleLowerCase('ru').includes(needle));
-            if (!shown.length && (g.id !== 'own' || needle)) return null;
+            const genre = g.id === 'genre';
+            const shown = g.tags.filter((t) => (!needle || t.name.toLocaleLowerCase('ru').includes(needle))
+              && (!genre || !genreSource || origins.get(t.id)?.has(genreSource)));
+            if (!shown.length && !genre && (g.id !== 'own' || needle)) return null;
+            if (genre && !g.tags.length) return null;
             return (
               <div key={g.id}>
                 <div className="pb-1.5 text-xs text-muted">{g.title}</div>
+                {genre && <GenreSourceFilter byGenre={origins} selected={genreSource} onChange={setGenreSource} />}
                 <div className="flex flex-wrap gap-1.5">
                   {shown.map((t) => {
                     const at = now(t);
@@ -129,13 +137,13 @@ function Body({ songIds, title, pick }: { songIds: string[]; title: string; pick
                       </button>
                     );
                   })}
-                  {!shown.length && <span className="text-xs text-dim">Своих тегов пока нет — впишите название выше.</span>}
+                  {!shown.length && <span className="text-xs text-dim">{genre ? 'Нет подходящих жанров' : 'Своих тегов пока нет — впишите название выше.'}</span>}
                 </div>
               </div>
             );
           })}
           <p className="text-[11px] text-dim">
-            {pick ? 'Язык и жанр Хаб поставит сам после импорта: язык — по тексту песни, жанр — из файла.' : 'Язык и жанр Хаб ставит сам: язык — по тексту песни, жанр — из каталога. Снятый вами тег он не вернёт.'} «Без слов» — для инструментальной музыки: текст для такого трека Хаб не ищет.
+            Хаб определяет язык по тексту песни, а жанры — по файлу и музыкальным сервисам. Снятые вручную теги сохраняются снятыми. Метка «Без слов» отключает поиск текста для трека.
           </p>
         </div>
       )}
@@ -175,7 +183,9 @@ export function TagFilterBody({ songIds, filter, onChange, onSave, wrap }: ListT
   }, [songIds, tags.map, tags.byId]);
   const [fresh, setFresh] = useState<number[]>([]); // tags made here just now: shown though no track of the list has them yet
   const [q, setQ] = useState('');
+  const [genreSource, setGenreSource] = useState<GenreSource | ''>('');
   const [whole, setWhole] = useState<string[]>([]); // groups opened by «ещё»
+  const origins = useMemo(() => genreSourcesFor(tags.genre_sources, songIds), [tags.genre_sources, songIds]);
   if (!tags.loaded) return <Loading />;
   const needle = q.trim().toLocaleLowerCase('ru');
   const count = (t: Tag) => present.counts.get(t.id) ?? 0;
@@ -184,9 +194,10 @@ export function TagFilterBody({ songIds, filter, onChange, onSave, wrap }: ListT
       ...g,
       tags: g.tags
         .filter((t) => (present.counts.has(t.id) || filter[t.id] || fresh.includes(t.id)) && (!needle || t.name.toLocaleLowerCase('ru').includes(needle)))
+        .filter((t) => g.id !== 'genre' || !genreSource || origins.get(t.id)?.has(genreSource))
         .sort((a, b) => Number(!!filter[b.id]) - Number(!!filter[a.id]) || count(b) - count(a) || a.name.localeCompare(b.name, 'ru')),
     }))
-    .filter((g) => g.tags.length || (g.id === 'own' && !needle));
+    .filter((g) => g.tags.length || (g.id === 'own' && !needle) || (g.id === 'genre' && origins.size));
   const tap = (key: string) => {
     const next = { ...filter };
     if (!next[key]) next[key] = 'yes';
@@ -227,6 +238,7 @@ export function TagFilterBody({ songIds, filter, onChange, onSave, wrap }: ListT
               {g.title}
               {g.tags.length > 5 && <span className="font-normal"> · {g.tags.length}</span>}
             </div>
+            {g.id === 'genre' && <GenreSourceFilter byGenre={origins} selected={genreSource} onChange={setGenreSource} />}
             <div className={wrap ? 'flex flex-wrap gap-1.5' : 'no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4'}>
               {all.map((t) => chip(String(t.id), t.name, count(t)))}
               {rest > 0 && (

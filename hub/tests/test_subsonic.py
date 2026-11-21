@@ -148,7 +148,7 @@ async def test_a_catalog_song_shows_plays_and_is_kept(env, monkeypatch):
         async def body():
             yield b"mp3"
 
-        return listen.Media(choice=SimpleNamespace(kind="preview"), body=body(), status=206, media_type="audio/mpeg",
+        return listen.Media(choice=SimpleNamespace(kind="full"), body=body(), status=206, media_type="audio/mpeg",
                             headers={"content-range": "bytes 0-2/3"})
 
     monkeypatch.setattr(listen, "open_media", open_media)

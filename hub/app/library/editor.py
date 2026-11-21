@@ -23,7 +23,7 @@ from app.library.importer import _move, _write_cover_file, album_reldir, library
 from app.library.layout import unique_path
 from app.library.tracks import current_file, files_of
 from app.matching.normalize import fingerprint
-from app.models import Album, Track, TrackCover, TrackFile
+from app.models import Album, Track, TrackCover, TrackFile, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -108,6 +108,7 @@ async def set_album_cover(s: AsyncSession, album: Album, image: bytes) -> Album:
         d = library_abs(album_reldir(album))
         await asyncio.to_thread(_write_cover_file, d, cover)
         album.cover_path = (album_reldir(album) / "cover.jpg").as_posix()
+        album.updated_at = utcnow()
         # a track with a cover of its own keeps it
         paths = (await s.execute(select(TrackFile.path).join(Track, Track.id == TrackFile.track_id)
                                  .where(Track.album_id == album.id, Track.cover_key.is_(None)))).scalars().all()
@@ -144,8 +145,17 @@ async def move_tracks(s: AsyncSession, track_ids: list[int], target: Album) -> l
 
 
 async def merge_albums(s: AsyncSession, source_ids: list[int], target: Album) -> Album:
-    ids = (await s.execute(select(Track.id).where(Track.album_id.in_([i for i in source_ids if i != target.id]))))
-    await move_tracks(s, list(ids.scalars()), target)
+    from app.library import album_names
+
+    sources = [i for i in source_ids if i != target.id]
+    names = await album_names.listed(s, sources)
+    albums = (await s.scalars(select(Album).where(Album.id.in_(sources)))).all()
+    ids = (await s.scalars(select(Track.id).where(Track.album_id.in_(sources)))).all()
+    await move_tracks(s, list(ids), target)
+    for source in albums:
+        await album_names.add(s, target, source.title, "renamed")
+        for row in names.get(source.id, []):
+            await album_names.add(s, target, row.name, row.source)
     return target
 
 

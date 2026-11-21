@@ -1,11 +1,42 @@
 import { useSyncExternalStore } from 'react';
+import type { HubEventMap, ImportReviewOut, TrackOut } from '../api/types';
 
-/** The window that finds another file for a track of the library (`components/FindFile.tsx`): asked for from a
- * track's menu, drawn once over everything. */
-export interface FileSought {
-  library_track_id: number;
+export function needsTrackFile(track: Pick<TrackOut, 'owned' | 'unknown' | 'unavailable'>): boolean {
+  return !track.owned && !!(track.unknown || track.unavailable);
+}
+
+export function withRecordingAvailability<T extends TrackOut>(tracks: T[], { ref, unavailable }: HubEventMap['recording']): T[] {
+  const changed = (track: T) => !track.owned && !!track.unavailable !== unavailable &&
+    (track.ref === ref || (track.library_track_id != null && ref === `lib:${track.library_track_id}`));
+  return tracks.some(changed) ? tracks.map((track) => changed(track) ? { ...track, unavailable } : track) : tracks;
+}
+
+/** A library track whose file can be selected or replaced in the file picker. */
+type FilePickerIdentity = { library_track_id: number; ref?: string | null } | { library_track_id?: null; ref: string };
+
+export type FileSought = FilePickerIdentity & {
   title: string;
   artist: string;
+  has_file: boolean;
+  cover_url?: string | null;
+  import_review?: ImportReviewOut;
+};
+
+export function filePickerTarget(track: {
+  library_track_id?: number | null;
+  ref?: string | null;
+  title: string;
+  artist: string;
+  cover_url?: string | null;
+  cover_small_url?: string | null;
+  import_review?: ImportReviewOut | null;
+}): FileSought | null {
+  const file = {
+    title: track.title, artist: track.artist, has_file: false, cover_url: track.cover_small_url || track.cover_url,
+    import_review: track.import_review ?? undefined,
+  };
+  if (track.library_track_id != null) return { ...file, library_track_id: track.library_track_id, ref: track.ref };
+  return track.ref && /^(dz|ym|sp):[^:]+$/.test(track.ref) ? { ...file, ref: track.ref } : null;
 }
 
 let state: FileSought | null = null;

@@ -407,7 +407,7 @@ function enqueue(items: Array<{ artist: string; title: string; album?: string | 
 
 type ImpItem = { id: number; collection_id: number; position: number; kind: 'track' | 'album' | 'artist'; artist: string; title: string; album: string | null; duration_s: number | null; cover_url: string | null; ref: string | null; match: string; nd: string | null; picked?: number; skipped?: boolean };
 type ImpColl = { id: number; kind: string; title: string; selected: boolean };
-type Imp = { id: number; method: string; account: string | null; mode: string; keep_token: boolean; download_albums: boolean; has_token: boolean; created: number; started: number | null; cancelled: boolean; colls: ImpColl[]; items: ImpItem[] };
+type Imp = { id: number; method: string; account: string | null; mode: string; keep_token: boolean; download_albums: boolean; has_token: boolean; created: number; started: number | null; cancelled: boolean; colls: ImpColl[]; items: ImpItem[]; playlistIds: string[]; star: boolean };
 let impSeq = 0;
 let impItemSeq = 0;
 let imps: Imp[] = [];
@@ -439,7 +439,7 @@ function newImport(method: string, account: string | null): Imp {
       else items.push({ ...base, kind: 'track', title: IMP_NAMES[k], album: 'Альбом ' + artist, duration_s: 160 + ((i * 29) % 140), cover_url: cover(IMP_NAMES[k]), ref: match === 'not_found' ? null : `dz:${1000 + (i % 8) * 100 + 1 + (i % 5)}`, match });
     }
   }
-  return { id, method, account, mode: 'economy', keep_token: false, download_albums: false, has_token: method !== 'profile', created: Date.now(), started: null, cancelled: false, colls, items };
+  return { id, method, account, mode: 'economy', keep_token: false, download_albums: false, has_token: method !== 'profile', created: Date.now(), started: null, cancelled: false, colls, items, playlistIds: [], star: false };
 }
 
 function impStatus(m: Imp): string {
@@ -487,11 +487,14 @@ function impOut(m: Imp) {
   const owned = tracks.filter((x) => x.match === 'owned').length;
   const count = (f: (o: Json) => boolean) => outs.filter(f).length;
   const toDownload = tracks.length - owned;
+  const destinations = playlists.filter((p) => m.playlistIds.includes(p.id)).map((p) => ({ playlist_id: p.id, name: p.name }));
   return {
     id: m.id, source: 'yandex', method: m.method, status, mode: m.mode, account: m.account ?? (status === 'auth' ? null : 'owner.yandex'),
     has_token: m.has_token, keep_token: m.keep_token, download_albums: m.download_albums,
     auth: status === 'auth' ? { user_code: 'hp5ukzu4', verification_url: 'https://ya.ru/device', expires_at: new Date(m.created + 300000).toISOString() } : null,
     error: null,
+    destinations: m.started && (m.star || m.colls.some((c) => c.kind === 'likes' && c.selected))
+      ? [...destinations, { playlist_id: null, name: 'Любимое' }] : destinations,
     stats: {
       tracks: tracks.length, owned, to_download: toDownload, est_bytes: toDownload * 9_400_000, free_bytes: 412_000_000_000,
       pending: count((o) => o.status === 'pending'), exact: count((o) => o.match === 'exact'), probable: count((o) => o.match === 'probable'),
@@ -679,18 +682,17 @@ function listenPick(ref: string): Promise<Json | null> {
   }
   if (!pick) {
     pick = delay(1500).then(() => {
-      if (ref === 'dz:1109') return null;
+      if (ref === 'dz:1109' || ref === 'dz:1304') return null;
       const t = trackByRef(ref);
-      const preview = ref === 'dz:1304';
       const yt = Number(ref.slice(3)) % 2 === 1;
       return {
         ref,
-        kind: t.owned ? 'library' : preview ? 'preview' : 'full',
+        kind: t.owned ? 'library' : 'full',
         artist: t.artist,
         title: t.title,
-        duration_s: preview ? 30 : t.duration_s,
-        provider: preview || t.owned ? null : yt ? 'ytdlp' : 'hitmoz',
-        bitrate_kbps: preview || t.owned ? null : yt ? 130 : 320,
+        duration_s: t.duration_s,
+        provider: t.owned ? null : yt ? 'ytdlp' : 'hitmoz',
+        bitrate_kbps: t.owned ? null : yt ? 130 : 320,
         page_url: null,
         nd_song_id: t.owned ? t.nd_song_id : null,
         stream_url: `/api/listen/stream?ref=${encodeURIComponent(ref)}`,
@@ -731,6 +733,15 @@ function send(res: ServerResponse, status: number, body?: unknown, type = 'appli
   res.statusCode = status;
   res.setHeader('Content-Type', type);
   res.end(body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body));
+}
+
+function mockProgressStream(res: ServerResponse, services: string[]) {
+  res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store' });
+  const emit = (type: string, data: unknown) => {
+    if (!res.destroyed) res.write(JSON.stringify({ type, data }) + '\n');
+  };
+  emit('sources', services.map((service) => ({ service, state: 'searching' })));
+  return emit;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -1049,20 +1060,36 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
     res.setHeader('Cache-Control', 'no-store');
     return send(res, 200, { queries: searchHistory }), true;
   }
-  if (p === '/api/search') {
+  const scope = p === '/api/search/stream' ? url.searchParams.get('scope') ?? 'catalog' : null;
+  if (p === '/api/search' || scope === 'catalog') {
     const q = (url.searchParams.get('q') ?? '').toLowerCase();
+    const spotifyError = q.includes('err');
+    const origins = (i: number) => ['deezer', ...(i % 2 === 0 ? ['yandex'] : []), ...(spotifyError ? [] : ['spotify'])];
     const artists = ARTISTS.filter((a) => a.name.toLowerCase().includes(q) || q.length < 3);
-    return (
-      send(res, 200, {
-        library: libTracks.filter((t) => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q)).map(libTrackOut),
-        artists,
-        albums: RELEASES.map((_, i) => albumOut(i)).slice(0, 6),
-        tracks: searchTracks().slice(0, SEARCH_PAGE),
-        tracks_next: SEARCH_PAGE,
-        errors: q.includes('err') ? ['Deezer недоступен, показаны результаты hitmoz'] : [],
-      }),
-      true
-    );
+    const result = {
+      library: libTracks.filter((t) => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q)).map(libTrackOut),
+      artists: artists.map((a, i) => ({ ...a, found_in: origins(i) })),
+      albums: RELEASES.slice(0, 6).map((_, i) => ({ ...albumOut(i), found_in: origins(i) })),
+      tracks: searchTracks().slice(0, SEARCH_PAGE).map((t, i) => ({ ...t, found_in: origins(i) })),
+      playlists: [],
+      tracks_next: SEARCH_PAGE,
+      errors: q.includes('err') ? ['Deezer недоступен, показаны результаты hitmoz'] : [],
+    };
+    if (!scope) return send(res, 200, result), true;
+    const emit = mockProgressStream(res, ['library', 'deezer', 'yandex', 'spotify']);
+    await delay(150);
+    emit('source', { service: 'library', state: result.library.length ? 'ready' : 'empty' });
+    await delay(350);
+    emit('source', { service: 'deezer', state: 'ready' });
+    const firstSource = <T extends { found_in: string[] },>(rows: T[]) => rows.map((row) => ({ ...row, found_in: ['deezer'] }));
+    emit('partial', { ...result, artists: firstSource(result.artists), albums: firstSource(result.albums),
+      tracks: firstSource(result.tracks), tracks_next: null });
+    await delay(250);
+    emit('source', { service: 'yandex', state: 'ready' });
+    await delay(650);
+    emit('source', { service: 'spotify', state: spotifyError ? 'error' : 'ready' });
+    emit('done', result);
+    return res.end(), true;
   }
   if (p === '/api/search/tracks') {
     const q = (url.searchParams.get('q') ?? '').toLowerCase();
@@ -1071,28 +1098,56 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
     if (q.includes('err')) return send(res, 502, { detail: 'Каталог Deezer недоступен' }), true;
     const all = searchTracks();
     const end = offset + SEARCH_PAGE;
-    return send(res, 200, { tracks: all.slice(offset, end), next_offset: end < all.length ? end : null }), true;
+    return send(res, 200, { tracks: all.slice(offset, end).map((t) => ({ ...t, found_in: ['deezer'] })),
+      next_offset: end < all.length ? end : null }), true;
   }
-  if (p === '/api/search/providers') {
+  if (p === '/api/search/providers' || scope === 'sources' || scope === 'reuploads') {
     const q = url.searchParams.get('q') ?? 'Трек';
-    const group = url.searchParams.get('group');
+    const group = scope ?? url.searchParams.get('group');
     const title = q.slice(0, 1).toUpperCase() + q.slice(1);
     const sources = group === 'reuploads' ? [] : [0, 1, 2].map((i) => hitmozCand('Три дня дождя', title, i));
-    if (group === 'reuploads') await delay(1500); // SoundCloud is slow
+    if (!scope && group === 'reuploads') await delay(1500); // SoundCloud is slow
     const reuploads = group === 'sources' ? [] : [0, 1, 2].map((i) => reuploadCand('Три дня дождя', title, i));
-    for (const c of [...sources, ...reuploads]) shownFiles.set(`file:${c.provider}:${c.provider_id}`, c);
-    return send(res, 200, { candidates: [...sources, ...reuploads], errors: [] }), true;
+    const candidates = [...sources, ...reuploads];
+    for (const c of candidates) shownFiles.set(`file:${c.provider}:${c.provider_id}`, c);
+    if (!scope) return send(res, 200, { candidates, errors: [] }), true;
+    const services = [...new Set(candidates.map((c) => c.provider))];
+    const emit = mockProgressStream(res, services);
+    const visible: typeof candidates = [];
+    for (const service of services) {
+      await delay(450);
+      if (res.destroyed) return true;
+      visible.push(...candidates.filter((c) => c.provider === service));
+      emit('source', { service, state: 'ready' });
+      emit('partial', { candidates: visible, errors: [] });
+    }
+    emit('done', { candidates, errors: [] });
+    return res.end(), true;
   }
 
   // catalog
-  let mm = p.match(/^\/api\/catalog\/artist\/(.+)$/);
+  let mm = p.match(/^\/api\/catalog\/artist\/([^/]+)(\/discography)?$/);
   if (mm) {
     const artist = ARTISTS.find((a) => a.ref === mm![1]) ?? ARTISTS[0];
-    const all = RELEASES.map((_, i) => albumOut(i, artist));
+    const all = RELEASES.map((_, i) => ({ ...albumOut(i, artist), found_in: i % 2 ? ['deezer'] : ['deezer', 'spotify'] }));
+    if (mm[2]) {
+      const albums = all.map((a, i) => ({ ...a, tracks: Array.from({ length: RELEASES[i].n }, (_, n) => trackOut(i, n + 1)) }));
+      if (!req.headers.accept?.includes('application/x-ndjson')) return send(res, 200, { artist, albums }), true;
+      const emit = mockProgressStream(res, ['deezer', 'yandex', 'spotify']);
+      await delay(400);
+      emit('source', { service: 'yandex', state: 'empty' });
+      await delay(350);
+      emit('source', { service: 'deezer', state: 'ready' });
+      await delay(500);
+      emit('source', { service: 'spotify', state: 'ready' });
+      emit('done', { artist, albums });
+      return res.end(), true;
+    }
     return (
       send(res, 200, {
         artist,
         top_tracks: [trackOut(0, 1), trackOut(2, 2), trackOut(0, 3), trackOut(3, 4), trackOut(5, 1), trackOut(1, 7), trackOut(0, 5)],
+        top_track_sources: ['spotify', 'spotify', 'spotify', 'deezer', 'deezer', 'lastfm', 'yandex'],
         albums: all.filter((a) => a.record_type === 'album'),
         singles: all.filter((a) => a.record_type === 'single' || a.record_type === 'ep'),
         compilations: all.filter((a) => a.record_type === 'compile'),
@@ -1222,6 +1277,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
   }
 
   // library
+  if (p === '/api/library/version-labels' && m === 'GET') return send(res, 200, []), true;
   if (p === '/api/library/albums' && m === 'GET') {
     const q = (url.searchParams.get('q') ?? '').toLowerCase();
     return send(res, 200, libAlbums.filter((a) => !q || a.title.toLowerCase().includes(q) || a.album_artist.toLowerCase().includes(q)).map((a) => libAlbumOut(a))), true;
@@ -1487,6 +1543,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
       for (const col of imp.colls) {
         col.selected = ids.has(col.id);
         if (col.selected && col.kind === 'likes' && b.copy_likes === false) col.kind = 'playlist';
+      }
+      imp.playlistIds = [...((b.playlist_ids as string[] | undefined) ?? [])];
+      imp.star = !!b.star;
+      for (const col of imp.colls.filter((c) => c.selected && c.kind === 'playlist')) {
+        const id = `pl-import-${col.id}`;
+        const songs = imp.items.filter((it) => it.collection_id === col.id && it.nd && ndSong(it.nd)).map((it) => it.nd!);
+        playlistSongs.set(id, songs);
+        playlists.push({ id, name: col.title, song_count: songs.length, duration_s: 0 });
+        imp.playlistIds.push(id);
       }
       Object.assign(imp, { mode: b.mode ?? 'economy', keep_token: !!b.keep_token, download_albums: !!b.download_albums, started: Date.now() });
       emit('import', { id: imp.id, status: 'running' });

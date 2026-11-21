@@ -157,11 +157,13 @@ async def user_detail(user_id: int, _: User = Depends(admin_user), s: AsyncSessi
               for r in (await s.execute(select(AiUsage).where(AiUsage.user_id == user.id)
                                         .order_by(AiUsage.id.desc()).limit(20))).scalars()]
     downloads = []
+    from app.jobs.downloads import item_ref
+
     for d in (await s.execute(select(DownloadItem).where(DownloadItem.user_id == user.id)
                               .order_by(DownloadItem.id.desc()).limit(15))).scalars():
         q = (d.query_json or {}).get("query") or {}
         downloads.append(AdminDownloadOut(artist=q.get("artist") or "", title=q.get("title") or "", status=d.status,
-                                          created_at=d.created_at))
+                                          track_id=d.track_id, track_ref=item_ref(d), created_at=d.created_at))
     return AdminUserDetailOut(**_user_out(user, stats, nd, counts), ai_months=months, ai_recent=recent,
                               recent_downloads=downloads)
 

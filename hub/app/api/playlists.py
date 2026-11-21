@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import playlists
 from app.catalog.models import CATALOGS
-from app.library.owned import with_files
-from app.api.medialib import songs_out
+from app.library.owned import with_cover_fallbacks, with_files, with_recording_availability
+from app.api.medialib import songs_out, with_artist_links
 from app.api.schemas import (
     NdSongOut,
     PlaylistAddIn,
@@ -112,6 +112,7 @@ def track_without_file(t: Track, *, downloading: bool = False) -> NdSongOut:
         album_ref=c.get("album_ref"), album_title=t.album, album_artist=t.album_artist, duration_s=t.duration_s,
         track_no=t.track_no, disc_no=t.disc_no, isrc=t.isrc, explicit=t.explicit, cover_url=c.get("cover_url"),
         cover_small_url=c.get("cover_small_url") or c.get("cover_url"), owned=False, library_track_id=t.id,
+        spotify_id=c.get("spotify_id"), spotify_plays=c.get("spotify_plays"),
         downloading=downloading, unknown=not t.ref)
 
 
@@ -119,17 +120,13 @@ def track_with_file(t: Track) -> NdSongOut:
     """A track of the library drawn from the Hub's own record: for when Navidrome has not been asked about its
     song yet, or does not answer."""
     out = track_without_file(t)
-    out.owned, out.nd_song_id = True, t.nd_song_id
+    out.owned, out.nd_song_id, out.unknown = True, t.nd_song_id, False
     if not t.ref and t.nd_song_id:  # the catalog does not know it: it is named by its song, as everywhere
         out.ref, out.source, out.id = f"nd:{t.nd_song_id}", "nd", t.nd_song_id
-    if t.album_id:
-        out.cover_url = out.cover_small_url = f"/api/library/albums/{t.album_id}/cover"
-    if t.cover_key:
-        out.cover_url = out.cover_small_url = f"/api/library/tracks/{t.id}/cover?v={t.cover_key}"
     return out
 
 
-async def tracks_out(s: AsyncSession, user: User, rows: list[Track]) -> list[NdSongOut]:
+async def tracks_out(s: AsyncSession, user: User, rows: list[Track], *, import_state: bool = False) -> list[NdSongOut]:
     """Tracks as a list shows them: one with a file as Navidrome's song of it, one without as the catalog's."""
     index: dict[str, dict] = {}
     if any(t.nd_song_id for t in rows):
@@ -140,16 +137,24 @@ async def tracks_out(s: AsyncSession, user: User, rows: list[Track]) -> list[NdS
     known = [index[t.nd_song_id] for t in rows if t.nd_song_id in index]
     drawn = {x.nd_song_id: x for x in await songs_out(s, known)}
     out = [drawn.get(t.nd_song_id) or (track_with_file(t) if t.path else track_without_file(t)) for t in rows]
+    fallback = [(o, t) for o, t in zip(out, rows, strict=True) if t.nd_song_id not in drawn]
+    await with_artist_links(s, fallback)
     await with_files(s, out)
-    # a track known by its name alone has the picture the service showed of it, where a transfer brought it
-    nameless = [x.library_track_id for x in out if x.unknown]
-    if nameless:
+    await with_cover_fallbacks(s, fallback)
+    await with_recording_availability(s, out)
+    if import_state:
+        from app.imports.review import annotate
+
+        await annotate(s, user.id, out)
+    # A transfer's image is still useful after a previously missing track has been given a file.
+    without_cover = [x.library_track_id for x in out if not x.cover_url]
+    if without_cover:
         from app.models import ImportItem
 
         covers = {track_id: (raw or {}).get("cover_url") for track_id, raw in (await s.execute(
-            select(ImportItem.track_id, ImportItem.raw_json).where(ImportItem.track_id.in_(nameless)))).all()}
+            select(ImportItem.track_id, ImportItem.raw_json).where(ImportItem.track_id.in_(without_cover)))).all()}
         for x in out:
-            if x.unknown and covers.get(x.library_track_id):
+            if not x.cover_url and covers.get(x.library_track_id):
                 x.cover_url = x.cover_small_url = covers[x.library_track_id]
     return out
 
@@ -253,7 +258,7 @@ async def get_playlist(playlist_id: str, user: User = Depends(current_user),
                        s: AsyncSession = Depends(get_session, scope="function")):
     p = await _own(s, user, playlist_id)
     rows = await playlists.items(s, p.id)
-    tracks = await tracks_out(s, user, [t for _, t in rows])
+    tracks = await tracks_out(s, user, [t for _, t in rows], import_state=True)
     for (item, _), t in zip(rows, tracks, strict=True):
         t.added_at = item.added_at
     return PlaylistPageOut(**(await _out(s, p)).model_dump(), tracks=tracks)

@@ -66,17 +66,18 @@ async def test_ids_come_from_imports_and_the_source_map_and_stay(client):
         ("yandex", "https://music.yandex.ru/track/138601318"),
         ("deezer", "https://www.deezer.com/track/111"),
         ("youtube", "https://www.youtube.com/watch?v=D3gOdoFWCdY")]
-    assert r["links"][1]["title"] == "Яндекс Музыка" and r["universal"] == "https://song.link/s/4OJV0JNPCQ6M1n6JCtiZ9T"
+    assert r["links"][1]["title"] == "Яндекс Музыка"
+    assert set(r) == {"links", "homemusic"}
 
     # a CSV line without a Spotify link gives no id; the page a file is from is a link only where it is a service
     r = (await client.get("/api/links", params={"nd_song_id": "b"})).json()
-    assert (r["links"], r["universal"]) == ([{"service": "soundcloud", "title": "SoundCloud", "url": "https://soundcloud.com/x/y"}], None)
+    assert r["links"] == [{"service": "soundcloud", "title": "SoundCloud", "url": "https://soundcloud.com/x/y"}]
     r = (await client.get("/api/links", params={"nd_song_id": "c"})).json()
-    assert (r["links"], r["universal"]) == ([], None)
+    assert r["links"] == []
 
     # a catalog track that is not in the library
     r = (await client.get("/api/links", params={"ref": "dz:999"})).json()
-    assert [x["service"] for x in r["links"]] == ["deezer"] and r["universal"] == "https://song.link/d/999"
+    assert r["links"] == [{"service": "deezer", "title": "Deezer", "url": "https://www.deezer.com/track/999"}]
 
     # the import goes, the ids stay
     async with session_scope() as s:
@@ -139,3 +140,34 @@ async def test_a_homemusic_link_names_the_track_and_is_found_in_another_library(
     get_settings.cache_clear()
     assert (await client.get("/api/links", params={"nd_song_id": "Своё"})).json()["homemusic"] is None
     get_settings.cache_clear()
+
+
+async def test_track_audience_uses_linked_spotify_recording_and_only_requested_metrics(client, monkeypatch):
+    from app.catalog import popular
+    from app.catalog.models import CatalogTrack
+    from app.db import session_scope
+    from app.models import TrackLink
+    from app.services import svc
+
+    spotify_id = "4OJV0JNPCQ6M1n6JCtiZ9T"
+    track_id = await add_track("Группа крови", ref="dz:123")
+    async with session_scope() as s:
+        s.add(TrackLink(track_id=track_id, service="spotify", external_id=spotify_id))
+
+    async def spotify_track(id_):
+        assert id_ == spotify_id
+        return CatalogTrack(ref=f"sp:{id_}", source="sp", id=id_, title="Группа крови", artist="Кино", spotify_plays=420)
+
+    async def lastfm_listeners(artist, title):
+        assert (artist, title) == ("Кино", "Перемен")
+        return 0
+
+    monkeypatch.setattr(svc.spotify, "track", spotify_track)
+    monkeypatch.setattr(popular, "track_listeners", lastfm_listeners)
+    r = await client.post("/api/links/track-audience", json={"tracks": [
+        {"ref": "dz:123", "library_track_id": track_id, "artist": "Кино", "title": "Группа крови", "spotify": True},
+        {"ref": "dz:173", "artist": "Кино", "title": "Перемен", "lastfm": True},
+    ]})
+    assert r.status_code == 200, r.text
+    assert r.json() == [{"spotify_plays": 420, "lastfm_listeners": None},
+                        {"spotify_plays": None, "lastfm_listeners": 0}]

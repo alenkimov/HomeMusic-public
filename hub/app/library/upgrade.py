@@ -42,7 +42,7 @@ from app.config import get_settings
 from app.db import session_scope
 from app.library import acoustic, quality
 from app.library.credits import split_artists
-from app.library.importer import ImportSpec, _move, import_file, library_abs, library_lock
+from app.library.importer import ImportSpec, TrackAlreadyFiled, _move, import_file, library_abs, library_lock
 from app.library.layout import unique_path
 from app.library.tracks import current_files
 from app.models import DownloadBatch, DownloadItem, Track, TrackCover, TrackFile, Upgrade
@@ -61,6 +61,7 @@ def wanted(file: TrackFile | None) -> bool:
 async def start(s: AsyncSession, user_id: int, track_ids: list[int]) -> int:
     """Queue the search of a better file for these tracks — the weak ones among them that are not being looked for
     already. The songs the catalog knows go first: they are found sooner and surer. How many were queued."""
+    from app.catalog.models import CATALOGS
     from app.jobs.queue import enqueue as enqueue_job
     from app.providers.base import TrackQuery
 
@@ -68,7 +69,7 @@ async def start(s: AsyncSession, user_id: int, track_ids: list[int]) -> int:
     busy = set((await s.execute(select(Upgrade.track_id).where(Upgrade.state.in_(OPEN)))).scalars())
     files = await current_files(s, ids)
     tracks = [t for t in [await s.get(Track, i) for i in ids if i not in busy] if t is not None and wanted(files.get(t.id))]
-    tracks.sort(key=lambda t: not str(t.ref or "").startswith("dz:"))
+    tracks.sort(key=lambda t: (t.ref or "").partition(":")[0] not in CATALOGS)
     if not tracks:
         return 0
     batch = DownloadBatch(user_id=user_id, origin="upgrade", title="Качество звука")
@@ -80,8 +81,10 @@ async def start(s: AsyncSession, user_id: int, track_ids: list[int]) -> int:
         s.add(row)
         await s.flush()
         meta: dict[str, Any] = {"upgrade_of": t.id, "upgrade_row": row.id}
-        if str(t.ref or "").startswith("dz:"):
-            meta.update(track_ref=t.ref, deezer_track_id=t.ref.split(":", 1)[1])
+        if t.ref and (source := t.ref.partition(":")[0]) in CATALOGS:
+            meta["track_ref"] = t.ref
+            if source == "dz":
+                meta["deezer_track_id"] = t.ref.split(":", 1)[1]
         q = TrackQuery(artist=t.artist, title=t.title, duration_s=t.duration_s, isrc=t.isrc, explicit=t.explicit)
         item = DownloadItem(batch_id=batch.id, user_id=user_id, force=True, query_json={
             "query": q.model_dump(), "upgrade": row.id, "replaces_song": f.nd_song_id, "meta": meta})
@@ -299,7 +302,9 @@ async def mark_in(s: AsyncSession, meta: dict[str, Any], **fields: Any) -> None:
 
 
 async def put(s: AsyncSession, track_id: int, path: Path, *, user_id: int | None, codec: str | None,
-              bitrate_kbps: int | None, provider: str | None, source_url: str | None, duration_s: float | None = None) -> str | None:
+              bitrate_kbps: int | None, provider: str | None, source_url: str | None, duration_s: float | None = None,
+              attach: bool = False, expected_file_uid: str | None = None,
+              fallback_cover: bytes | None = None) -> str | None:
     """Put the file under the track, in the place of the files it has: tagged as the track is named, in the track's
     album. The old files go to the trash folder; if the new one does not come in, they are put back."""
     track = await s.get(Track, track_id)
@@ -313,7 +318,10 @@ async def put(s: AsyncSession, track_id: int, path: Path, *, user_id: int | None
         track_id=track.id, cover=cover, source=provider, source_url=source_url,
         duration_s=round(duration_s) if duration_s else track.duration_s, bitrate_kbps=bitrate_kbps, codec=codec,
         added_by=user_id)
-    moved = await shelve(s, track_id)
+    if attach:
+        await import_file(s, path, spec, require_missing=True, fallback_cover=fallback_cover)
+        return None
+    moved = await shelve(s, track_id, expected_file_uid=expected_file_uid)
     try:
         await import_file(s, path, spec)
     except Exception:
@@ -322,12 +330,15 @@ async def put(s: AsyncSession, track_id: int, path: Path, *, user_id: int | None
     return str(moved[-1][0]) if moved else None  # where the file it had lies now
 
 
-async def shelve(s: AsyncSession, track_id: int) -> list[tuple[Path, Path]]:
+async def shelve(s: AsyncSession, track_id: int, *, expected_file_uid: str | None = None) -> list[tuple[Path, Path]]:
     """Take the track's files out of the library into the trash folder, their rows with them. [(where it went,
     where it was)]: `unshelve` puts them back if the new file does not come."""
     moved: list[tuple[Path, Path]] = []
     async with library_lock:
-        for f in list((await s.execute(select(TrackFile).where(TrackFile.track_id == track_id))).scalars()):
+        files = (await s.execute(select(TrackFile).where(TrackFile.track_id == track_id).order_by(TrackFile.id))).scalars().all()
+        if expected_file_uid is not None and (not files or files[-1].uid != expected_file_uid):
+            raise TrackAlreadyFiled()
+        for f in files:
             src = library_abs(f.path)
             if src.is_file():
                 dest = get_settings().trash_dir / datetime.now().strftime("%Y-%m-%d") / Path(*PurePosixPath(f.path).parts)
@@ -364,7 +375,8 @@ async def likeness_to(s: AsyncSession, track_id: int, path: Path) -> float | Non
 
 
 async def take_picked(s: AsyncSession, user_id: int, track: Track, path: Path, *, codec: str | None, bitrate_kbps: int | None,
-                      provider: str | None, source_url: str | None, duration_s: float | None, likeness: float | None) -> Upgrade:
+                      provider: str | None, source_url: str | None, duration_s: float | None, likeness: float | None,
+                      expected_file_uid: str) -> Upgrade:
     """Put a file the listener picked themself in the place of the track's own — whatever it sounds like: a version
     without the censor's cuts, another master, are picked on purpose. It is written down as any replacement, so the
     two can be heard side by side and the old one taken back («Качество звука» → «Заменено»)."""
@@ -374,7 +386,7 @@ async def take_picked(s: AsyncSession, user_id: int, track: Track, path: Path, *
                   was_codec=old.codec if old else None, was_kbps=old.bitrate_kbps if old else None)
     s.add(row)
     row.was_path = await put(s, track.id, path, user_id=user_id, codec=codec, bitrate_kbps=bitrate_kbps, provider=provider,
-                             source_url=source_url, duration_s=duration_s)
+                             source_url=source_url, duration_s=duration_s, expected_file_uid=expected_file_uid)
     await s.flush()
     return row
 

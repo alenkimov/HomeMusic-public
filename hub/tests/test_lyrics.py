@@ -48,6 +48,8 @@ def test_a_long_text_follows_the_audio_as_collapsed_quotes():
     assert lyrics_messages("") == (None, [])
     caption, after = lyrics_messages("a <b>\nline")
     assert caption == "<blockquote expandable>a &lt;b&gt;\nline</blockquote>" and after == []
+    caption, after = lyrics_messages("x" * 980, caption_room=1000)
+    assert caption is None and after == ["<blockquote expandable>" + "x" * 980 + "</blockquote>"]
     caption, after = lyrics_messages("\n".join(f"line {i} " + "x" * 60 for i in range(400)))
     assert caption is None and len(after) == 3 and all(len(m) <= 4096 for m in after) and after[-1].endswith("…</blockquote>")
 
@@ -290,6 +292,38 @@ def test_a_song_may_be_in_several_languages():
     assert languages(ja + "oh baby\n") == ["ja"]  # a borrowed phrase is not a language of the song
     assert languages("Тёплое место, но улицы ждут\n" * 4) == ["ru"]
     assert languages("la la la\n" * 5) == [] and languages("") == []
+
+
+async def test_genre_sources_share_one_tag_and_respect_removal(env):
+    from app import tags
+    from app.db import session_scope
+    from app.models import Track
+
+    track_id = await add_track("nd-genres")
+    async with session_scope() as s:
+        track = await s.get(Track, track_id)
+        track.genre = "Legacy"
+        track.genre_sources = {"spotify": ["Dance Pop"], "file": [" dance   pop "]}
+        await s.flush()
+        await tags.sync(s, [track_id])
+
+    client = env["client"]
+    data = (await client.get("/api/tags")).json()
+    names = {t["name"]: str(t["id"]) for g in data["groups"] if g["id"] == "genre" for t in g["tags"]}
+    assert set(names) == {"Dance Pop", "Legacy"}
+    provenance = data["genre_sources"][str(track_id)]
+    assert set(provenance[names["Dance Pop"]]) == {"spotify", "file"}
+    assert provenance[names["Legacy"]] == ["unknown"]
+
+    response = await client.post("/api/tags/assign", json={"track_ids": [track_id], "remove": [int(names["Dance Pop"])]})
+    assert response.status_code == 200
+    async with session_scope() as s:
+        track = await s.get(Track, track_id)
+        track.genre_sources = {**track.genre_sources, "lastfm": ["dance pop"]}
+        await s.flush()
+        await tags.sync(s, [track_id])
+    data = (await client.get("/api/tags")).json()
+    assert data["genre_sources"][str(track_id)] == {names["Legacy"]: ["unknown"]}
 
 
 async def test_tags_languages_genres_and_ones_own(env):

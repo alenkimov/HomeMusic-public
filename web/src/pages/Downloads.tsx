@@ -1,13 +1,16 @@
+import { titleWithVersion } from '../lib/versionLabels';
+import { TrackTitle } from '../components/TrackTitle';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { DownloadItemOut } from '../api/types';
 import { Icon } from '../components/Icon';
+import { ServiceBadge, ServiceIcon, ServiceText } from '../components/ServiceBadge';
 import { ListBar } from '../components/ListBar';
 import { useSearchField } from '../components/ListSearch';
 import { Button, Checkbox, Cover, Empty, ErrorState, IconButton, ProgressBar, Segmented, SkeletonRows, StatusChip, cx } from '../components/ui';
 import { useDesktop } from '../lib/desktop';
 import { useHubConnected, useHubEvent } from '../lib/events';
-import { DOWNLOAD_ACTIVE, fmtWhen, plural, providerLabel, warningText } from '../lib/format';
+import { DOWNLOAD_ACTIVE, fmtWhen, plural, warningText } from '../lib/format';
 import { useAsync, useInterval } from '../lib/hooks';
 import { canPlay, playList } from '../lib/player';
 import { Link, navigate } from '../lib/router';
@@ -109,7 +112,7 @@ export function DownloadsPage() {
     const unfinished = list.filter((x) => x.status !== 'done' && x.status !== 'cancelled').length;
     if (list.length > 1 || unfinished) {
       const ok = await confirmDialog({
-        title: list.length > 1 ? `Убрать ${downloadsWord(list.length)}?` : `Убрать «${list[0].title}»?`,
+        title: list.length > 1 ? `Убрать ${downloadsWord(list.length)}?` : `Убрать «${titleWithVersion(list[0].title, list[0])}»?`,
         body: unfinished
           ? `${unfinished === list.length ? 'Эти треки' : `${unfinished} из них`} скачаны не будут. Если они ждали места в плейлисте — плейлист соберётся без них.`
           : 'Они исчезнут только из этого списка. Треки останутся в библиотеке.',
@@ -173,7 +176,7 @@ export function DownloadsPage() {
       {!connected && !res.error && !res.loading && <p className="px-4 pb-2 text-xs text-muted lg:px-6">Нет связи с сервером — переподключаюсь, список может отставать.</p>}
       {running.map((imp) => (
         <Link key={imp.id} to={`/import/${imp.id}`} className="card mx-4 mb-3 flex items-center gap-3 p-3 hover:bg-hover">
-          <Icon name="transfer" size={22} className="shrink-0 text-accent" />
+          <ServiceIcon service="yandex" size={22} />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-semibold">Перенос из Яндекс Музыки</span>
             <span className="block truncate text-xs text-muted">
@@ -278,13 +281,13 @@ function Why({ item, open, onOpen }: { item: DownloadItemOut; open: boolean; onO
     <div className="min-w-0 text-xs">
       {full ? (
         <button type="button" onClick={onOpen} aria-expanded={open} title={open ? 'Скрыть подробности' : 'Показать подробности'} className="flex max-w-full items-center gap-1 text-left text-warn hover:underline">
-          <span className="truncate">{short}</span>
+          <span className="truncate"><ServiceText text={short} /></span>
           <Icon name={open ? 'down' : 'chevron'} size={12} className="shrink-0" />
         </button>
       ) : (
-        <span className="block truncate text-warn">{short}</span>
+        <span className="block truncate text-warn"><ServiceText text={short} /></span>
       )}
-      {open && full && <div className="mt-1 select-text whitespace-pre-wrap break-words rounded-md bg-fg/5 px-2 py-1.5 font-mono text-[11px] text-muted">{full}</div>}
+      {open && full && <div className="mt-1 select-text whitespace-pre-wrap break-words rounded-md bg-fg/5 px-2 py-1.5 font-mono text-[11px] text-muted"><ServiceText text={full} /></div>}
     </div>
   );
 }
@@ -310,7 +313,7 @@ function Notes({ item }: { item: DownloadItemOut }) {
       {warnings.map((w, i) => (
         <div key={i} className="flex items-center gap-1 text-xs text-warn">
           <Icon name="alert" size={13} className="shrink-0" />
-          <span className="truncate">{w}</span>
+          <span className="truncate"><ServiceText text={w} /></span>
         </div>
       ))}
     </>
@@ -319,7 +322,7 @@ function Notes({ item }: { item: DownloadItemOut }) {
 
 const name = (item: DownloadItemOut): ReactNode => (
   <>
-    <span className="block truncate text-sm text-fg">{item.title}</span>
+    <span className="block truncate text-sm text-fg"><TrackTitle title={item.title} track={{ ...item, page_url: item.chosen?.page_url }} /></span>
     <span className="block truncate text-xs text-muted">{item.artist}</span>
   </>
 );
@@ -336,7 +339,7 @@ function TableRow(p: RowProps) {
           <span className="min-w-0">{name(item)}</span>
         </Link>
         <span className="truncate text-sm text-muted">{item.album}</span>
-        <span className="truncate text-xs text-muted">{item.provider ? providerLabel(item.provider) : '—'}</span>
+        <span className="truncate text-xs text-muted">{item.provider ? <ServiceBadge service={item.provider} /> : '—'}</span>
         <span className="min-w-0 text-xs text-dim">
           {active || item.status === 'cancelled' ? <StatusChip status={item.status} progress={item.progress} /> : fmtWhen(item.updated_at)}
         </span>
@@ -367,7 +370,7 @@ function Card(p: RowProps) {
             {name(item)}
             <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-dim">
               {(active || item.status === 'cancelled') && <StatusChip status={item.status} progress={item.progress} />}
-              {item.provider && <span>{providerLabel(item.provider)}</span>}
+              {item.provider && <ServiceBadge service={item.provider} />}
               <span>{fmtWhen(item.updated_at)}</span>
             </span>
           </span>

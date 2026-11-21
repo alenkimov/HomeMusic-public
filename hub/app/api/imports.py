@@ -6,15 +6,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import integrations
 from app.api.schemas import ImportAuthIn, ImportIn, ImportItemsOut, ImportOut, ImportPickOut, ImportStartIn
 from app.auth import current_user
 from app.db import get_session
 from app.events import bus
-from app.imports import apply, core
+from app.imports import apply, core, review
 from app.imports.sources import spotify_csv
 from app.imports.sources.base import SourceError
 from app.jobs.queue import PRIORITY_IMPORT, PermanentError, enqueue, notify
-from app.models import DownloadItem, Import, ImportCollection, ImportItem, Track, User
+from app.models import DownloadItem, Import, ImportCollection, ImportItem, IntegrationConnection, Track, User
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
 
@@ -32,12 +33,32 @@ async def list_imports(user: User = Depends(current_user), s: AsyncSession = Dep
     return [await core.import_out(s, imp) for imp in rows]
 
 
+@router.get("/accounts/{source}")
+async def accounts(source: str, user: User = Depends(current_user),
+                   s: AsyncSession = Depends(get_session, scope="function")):
+    rows = (await s.scalars(select(IntegrationConnection).where(
+        IntegrationConnection.provider == source, IntegrationConnection.owner_user_id == user.id,
+        IntegrationConnection.retained.is_(True), IntegrationConnection.state != "reauth",
+    ).order_by(IntegrationConnection.id.desc()))).all() if source in {"spotify", "yandex", "vk"} else []
+    return [{"id": row.id, "account": row.account} for row in rows]
+
+
+@router.delete("/accounts/{connection_id:int}")
+async def disconnect_vk(connection_id: int, user: User = Depends(current_user),
+                        s: AsyncSession = Depends(get_session, scope="function")):
+    row = await s.get(IntegrationConnection, connection_id)
+    if row is None or row.provider != "vk" or row.owner_user_id != user.id or not row.retained:
+        raise HTTPException(404, "Сохранённый вход не найден")
+    await integrations.remove(s, row)
+    return {"ok": True}
+
+
 @router.post("", response_model=ImportOut)
 async def create(body: ImportIn, user: User = Depends(current_user),
                  s: AsyncSession = Depends(get_session, scope="function")):
     try:
         imp = await core.create(s, user.id, source=body.source, method=body.method, token=body.token, url=body.url,
-                                login=body.login, password=body.password)
+                                login=body.login, password=body.password, connection_id=body.connection_id)
     except SourceError as e:
         raise HTTPException(400, str(e)) from e
     await s.flush()
@@ -165,7 +186,7 @@ async def sync(import_id: int, user: User = Depends(current_user),
         raise HTTPException(409, "Импорт ещё не запущен")
     if imp.method == "csv":
         raise HTTPException(409, "Перенос из файла не обновляется — загрузите новую выгрузку")
-    if imp.method not in ("profile", "link") and not imp.token_enc:
+    if imp.method not in ("profile", "link") and not await integrations.import_connection(s, imp):
         raise HTTPException(409, "Вход в сервис удалён — начните новый перенос")
     imp.status = "fetching"
     await enqueue(s, "import_fetch", {"import_id": imp.id}, priority=PRIORITY_IMPORT)
@@ -181,7 +202,7 @@ async def forget_token(import_id: int, user: User = Depends(current_user),
                        s: AsyncSession = Depends(get_session, scope="function")):
     """Remove the stored sign-in of the service (the import stays)."""
     imp = await _own(s, user, import_id)
-    imp.token_enc = None
+    await integrations.release_import(s, imp)
     imp.keep_token = False
     await s.flush()
     return await core.import_out(s, imp)
@@ -196,7 +217,8 @@ async def cancel(import_id: int, user: User = Depends(current_user),
         raise HTTPException(409, "Импорт уже закончен")
     await apply.cancel_downloads(s, imp)
     imp.status = "cancelled"
-    imp.token_enc = None if not imp.keep_token else imp.token_enc
+    if not imp.keep_token:
+        await integrations.release_import(s, imp)
     await s.flush()
     out = await core.import_out(s, imp)
     core.publish(imp)
@@ -208,6 +230,18 @@ async def remove(import_id: int, user: User = Depends(current_user),
                  s: AsyncSession = Depends(get_session, scope="function")):
     """Forget the import (and its sign-in). The music, the ♥ and the playlists it made stay."""
     await core.remove(s, await _own(s, user, import_id))
+    await s.commit()
+    bus.publish(user.id, "library", {"kind": "import_review"})
+    return {"ok": True}
+
+
+@router.post("/items/{item_id}/confirm_match")
+async def confirm_match(item_id: int, user: User = Depends(current_user),
+                        s: AsyncSession = Depends(get_session, scope="function")):
+    if not await review.acknowledge(s, user.id, item_id):
+        raise HTTPException(404, "Совпадение не найдено")
+    await s.commit()
+    bus.publish(user.id, "library", {"kind": "import_review"})
     return {"ok": True}
 
 

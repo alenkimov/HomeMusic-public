@@ -1,3 +1,4 @@
+import { TrackTitle } from '../components/TrackTitle';
 import { useEffect } from 'react';
 import { api } from '../api/client';
 import { playAll } from '../components/catalog';
@@ -11,7 +12,7 @@ import { enc, navigate } from '../lib/router';
  * has not got opens in the catalog, on its album's page, to be downloaded; one the catalog does not know either
  * becomes a search by its names. */
 export function OpenPage({ query }: { query: URLSearchParams }) {
-  const q = { dz: query.get('dz'), isrc: query.get('isrc'), sp: query.get('sp'), a: query.get('a'), t: query.get('t') };
+  const q = { dz: query.get('dz'), isrc: query.get('isrc'), sp: query.get('sp'), a: query.get('a'), t: query.get('t'), url: query.get('url') };
   const res = useAsync(async (s) => {
     const found = await api.openLink(q, s);
     const song = found.nd_song_id ? (await api.ndSongs(s)).find((x) => x.nd_song_id === found.nd_song_id) : undefined;
@@ -22,21 +23,23 @@ export function OpenPage({ query }: { query: URLSearchParams }) {
 
   useEffect(() => {
     if (!found || song) return;
-    if (found.album_ref) navigate(`/album/${enc(found.album_ref)}`, { replace: true });
+    if (found.artist_ref) navigate(`/artist/${enc(found.artist_ref)}`, { replace: true });
+    else if (found.playlist_id) navigate(`/spotify/playlist/${enc(found.playlist_id)}`, { replace: true });
+    else if (found.album_ref) navigate(`/album/${enc(found.album_ref)}`, { replace: true });
     else if (found.query) navigate(`/search?q=${enc(found.query)}`, { replace: true });
   }, [found, song]);
 
   return (
     <div>
-      <PageHeader title="Трек по ссылке" back={STANDALONE ? '/home' : '/search'} />
+      <PageHeader title={q.url ? 'Открыть ссылку Spotify' : 'Трек по ссылке'} back={STANDALONE ? '/home' : '/search'} />
       {res.error ? (
         <ErrorState text={res.error} onRetry={() => res.reload()} />
       ) : !found ? (
-        <Loading text="Ищу трек…" />
+        <Loading text="Открываю ссылку…" />
       ) : song ? (
         <div className="mx-auto flex max-w-sm flex-col items-center px-6 pt-4 text-center">
           <Cover src={song.cover_url} alt="" className="aspect-square w-56 shadow-2xl" />
-          <h2 className="pt-5 text-xl font-bold">{song.title}</h2>
+          <h2 className="pt-5 text-xl font-bold"><TrackTitle title={song.title} track={song} /></h2>
           <p className="pb-5 text-sm text-muted">{[song.artist, song.album_title].filter(Boolean).join(' · ')}</p>
           <Button variant="primary" block icon="play" onClick={() => playAll([song], { context: 'link' })}>
             Слушать
@@ -48,10 +51,10 @@ export function OpenPage({ query }: { query: URLSearchParams }) {
           )}
           <p className="pt-4 text-xs text-dim">Этот трек уже есть в вашей библиотеке.</p>
         </div>
-      ) : found.album_ref || found.query ? (
+      ) : found.artist_ref || found.playlist_id || found.album_ref || found.query ? (
         <Loading text="Открываю в каталоге…" />
       ) : (
-        <Empty icon="link" title="В ссылке нет трека" text="Откройте её целиком — такой, какой вам её прислали." />
+        <Empty icon="link" title={q.url ? 'Ссылка Spotify недоступна' : 'В ссылке нет трека'} text="Откройте её целиком — такой, какой вам её прислали." />
       )}
     </div>
   );

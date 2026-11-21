@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-/** The window that puts a track's name and cover right (`components/TrackEdit.tsx`): asked for from a track's menu,
+/** The window that puts a track's name right (`components/TrackEdit.tsx`): asked for from a track's menu,
  * drawn once over everything. The track is named the way a row knows it — the Hub's id, the catalog's ref or
  * Navidrome's song. */
 export interface EditedTrack {

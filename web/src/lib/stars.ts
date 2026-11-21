@@ -226,7 +226,7 @@ export async function toggleLike(t: LikeTarget, quiet = false, change?: () => vo
     const link: Toast['link'] = liked && change && typeOf(t) === 'track' ? { label: 'Изменить', run: change } : fetching ? { label: 'Загрузки', to: '/downloads' } : undefined;
     // an artist is followed, not put into «Любимое»
     if (!quiet && typeOf(t) === 'artist') toast(liked ? 'Вы подписаны. Новые релизы появятся в «Релизах»' : 'Вы отписались', liked ? 'success' : 'info');
-    else if (!quiet) toast(liked ? (fetching ? 'Добавлено в «Любимое» — скачиваю в библиотеку' : 'Добавлено в «Любимое»') : 'Убрано из «Любимого»', 'success', link);
+    else if (!quiet) toast(liked ? (fetching ? 'Добавлено в «Любимое» — сохраняю в библиотеку' : 'Добавлено в «Любимое»') : 'Убрано из «Любимого»', 'success', link);
   } catch (e) {
     if (generation !== epoch) return;
     if (previous) local.set(key, previous);

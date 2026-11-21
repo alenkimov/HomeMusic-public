@@ -11,7 +11,7 @@ const IMG = 'hm-img-v1'; // covers
 /* What a page reads to draw the library: kept as last answered, for when there is no network. Not what must be live
    (downloads, the search of the catalog, events) nor what is asked once (the assistant, the admin's pages). */
 const KEPT = ['/api/auth/me', '/api/playlists', '/api/nd/', '/api/for-you', '/api/tags', '/api/starred', '/api/stats/counts',
-  '/api/lyrics', '/api/mixes/today', '/api/plays/history'];
+  '/api/lyrics', '/api/mixes/today', '/api/plays/history', '/api/library/version-labels'];
 const NOT_KEPT = ['/api/lyrics/candidates', '/api/lyrics/search', '/api/lyrics/probe', '/api/lyrics/sources', '/api/lyrics/settings', '/api/lyrics/translators'];
 const audioKey = (ref) => `${self.location.origin}/api/listen/stream?ref=${encodeURIComponent(ref)}`;
 const SHELL_URLS = ['/', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/badge-96.png'];

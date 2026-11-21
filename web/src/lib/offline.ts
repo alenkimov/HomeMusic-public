@@ -112,7 +112,6 @@ async function fetchOne(ref: string): Promise<void> {
   const track = wanted.get(ref);
   if (!track) return;
   const info = await api.listen(ref);
-  if (info.kind === 'preview') throw new Error('есть только отрывок');
   // `X-HomeMusic-Prefetch`: this is no listen (the Hub counts a stream as one)
   const res = await fetch(listenStreamUrl(ref), { credentials: 'include', headers: { 'X-HomeMusic-Prefetch': '1' } });
   if (!res.ok) throw new Error(`сервер ответил ${res.status}`);

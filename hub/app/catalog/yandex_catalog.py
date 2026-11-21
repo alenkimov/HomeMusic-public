@@ -1,4 +1,4 @@
-"""Yandex Music as a catalog (the anonymous API, nobody signs in): tracks, albums and artists the other catalogs
+"""Yandex Music as a catalog: tracks, albums and artists the other catalogs
 lack — Russian-language music first of all — with their covers, the artists' pictures and how many listen to them.
 
 A record is "ym:<id>". What Yandex gives without a sign-in is read here; what needs one (stations, lyrics, the
@@ -16,9 +16,10 @@ from datetime import date
 from typing import Any
 
 from app.catalog.cache import cached
-from app.catalog.deezer import CatalogNotFound
+from app.catalog.models import CatalogNotFound
 from app.catalog.models import ArtistPage, CatalogAlbum, CatalogArtist, CatalogTrack, SearchResults
 from app.catalog.yandex import yandex_client, yandex_track_row
+from app.integrations import shared_search_credential
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +100,7 @@ def track_of(t: Any, album: Any | None = None) -> CatalogTrack | None:
         album_ref=_ref(al.id) if al is not None else None,
         album_title=_named(al.title, getattr(al, "version", None)) if al is not None and al.title else None,
         album_artist=al_who[0].name if al_who else None, duration_s=row["duration_s"],
+        isrc=getattr(t, "isrc", None),
         track_no=getattr(place, "index", None), disc_no=getattr(place, "volume", None),
         explicit=bool(getattr(t, "explicit", None)) or getattr(t, "content_warning", None) == "explicit" or None,
         release_date=day, cover_url=_img(uri, COVER), cover_small_url=_img(uri, COVER_SMALL))
@@ -130,15 +132,27 @@ class YandexCatalog:
         if not q:
             return SearchResults()
 
-        def read() -> dict:
-            r = yandex_client().search(q, type_="all")
+        def read(token: str | None = None) -> dict:
+            r = yandex_client(token).search(q, type_="all")
             got = lambda kind: (getattr(getattr(r, kind, None), "results", None) or []) if r is not None else []  # noqa: E731
             return SearchResults(
                 artists=[artist_of(a) for a in got("artists") if getattr(a, "name", None) and not getattr(a, "various", False)],
                 albums=[album_of(a) for a in got("albums") if getattr(a, "title", None)],
                 tracks=[x for t in got("tracks") if (x := track_of(t)) is not None]).model_dump(mode="json")
 
-        return SearchResults.model_validate(await cached(f"ym:search:{q.lower()}", SEARCH_TTL_S, lambda: self._call(read)))
+        async def search() -> dict:
+            try:
+                return await self._call(read)
+            except Exception:
+                token = await shared_search_credential("yandex")
+                if not token:
+                    raise
+                try:
+                    return await self._call(lambda: read(token))
+                except Exception:
+                    raise RuntimeError("Yandex catalogue search unavailable") from None
+
+        return SearchResults.model_validate(await cached(f"ym:search:{q.lower()}", SEARCH_TTL_S, search))
 
     async def search_tracks(self, artist: str, title: str, limit: int = 10) -> list[CatalogTrack]:
         return (await self.search(f"{artist} {title}")).tracks[:limit]

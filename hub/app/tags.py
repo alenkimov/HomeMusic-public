@@ -3,7 +3,7 @@ songs», «Japanese and chill».
 
 Three groups. «Язык» and «Жанр» are everyone's and are set by the Hub itself (`sync`): the languages of a track are
 told from its lyrics (a song may have several; one the listener marked as having no lyrics is «без слов»), its genre
-is the one that came with it from the catalog. «Теги» are each user's own, set by hand.
+comes from its known metadata sources. «Теги» are each user's own, set by hand.
 A tag the Hub set may be taken off a track by hand, and then stays off (`TagRemoved`): the Hub does not argue.
 """
 
@@ -23,6 +23,23 @@ LANG_NAMES = {"ja": "японский", "en": "английский", "ru": "р�
               "zh": "китайский"}
 NO_WORDS = ("instrumental", "без слов")
 CHUNK = 400
+RELEASE_GENRE_SOURCES = {"dz": "deezer", "ym": "yandex", "hm": "hitmoz"}
+
+
+def genre_names(values: list[str]) -> list[str]:
+    names: dict[str, str] = {}
+    for value in values:
+        if name := " ".join(value.split())[:64]:
+            names.setdefault(name.casefold(), name)
+    return list(names.values())
+
+
+def genre_evidence(sources: dict[str, list[str]] | None) -> dict[str, list[str]]:
+    evidence: dict[str, list[str]] = {}
+    for source, names in (sources or {}).items():
+        for name in genre_names(names):
+            evidence.setdefault(name.casefold(), []).append(source)
+    return evidence
 
 
 async def get_or_create(s: AsyncSession, group: str, name: str, *, code: str | None = None,
@@ -56,7 +73,7 @@ async def sync(s: AsyncSession, track_ids: list[int] | None = None) -> None:
     """Set the tags the Hub tells by itself — languages and genre — for these tracks (all of them by default), and
     take off the ones it set that no longer hold (another text was chosen). What a user set or took off stays."""
     await get_or_create(s, "lang", NO_WORDS[1], code=NO_WORDS[0])  # always there to be put on by hand
-    q = (select(Track.id, Track.genre, Lyrics.kind, Lyrics.pinned, Lyrics.search_text, Lyrics.source)
+    q = (select(Track.id, Track.genre, Track.genre_sources, Lyrics.kind, Lyrics.pinned, Lyrics.search_text, Lyrics.source)
          .outerjoin(Lyrics, Lyrics.track_id == Track.id))
     if track_ids is not None:
         q = q.where(Track.id.in_(track_ids))
@@ -66,16 +83,17 @@ async def sync(s: AsyncSession, track_ids: list[int] | None = None) -> None:
     cache: dict[tuple[str, str], int] = {}
 
     async def tag_id(group: str, name: str, code: str | None = None) -> int:
-        key = (group, name.lower())
+        key = (group, name.casefold())
         if key not in cache:
             cache[key] = (await get_or_create(s, group, name, code=code)).id
         return cache[key]
 
     want: dict[int, set[int]] = {}
-    for track_id, genre, kind, pinned, text, source in rows:
+    for track_id, genre, genres, kind, pinned, text, source in rows:
         ids: set[int] = set()
-        if genre and genre.strip():
-            ids.add(await tag_id("genre", genre.strip()))
+        names = genre_names([*([genre] if genre else []), *(name for values in (genres or {}).values() for name in values)])
+        for name in names:
+            ids.add(await tag_id("genre", name))
         if kind == "none" and (pinned or source == NO_WORDS[0]):  # said by the listener, or by a lyrics source
             ids.add(await tag_id("lang", NO_WORDS[1], NO_WORDS[0]))
         elif kind and kind != "none" and text:
@@ -126,6 +144,21 @@ async def tag_map(s: AsyncSession, user_id: int) -> dict[int, list[int]]:
     q = (select(TrackTag.track_id, TrackTag.tag_id).join(Tag, Tag.id == TrackTag.tag_id).where(visible(user_id)))
     for track_id, tid in (await s.execute(q)).all():
         out.setdefault(track_id, []).append(tid)
+    return out
+
+
+async def genre_source_map(s: AsyncSession, user_id: int) -> dict[int, dict[int, list[str]]]:
+    out: dict[int, dict[int, list[str]]] = {}
+    q = (select(TrackTag.track_id, TrackTag.tag_id, Tag.name, TrackTag.auto, Track.genre_sources)
+         .join(Tag, Tag.id == TrackTag.tag_id).join(Track, Track.id == TrackTag.track_id)
+         .where(Tag.group == "genre", visible(user_id)).order_by(TrackTag.track_id))
+    previous = None
+    evidence: dict[str, list[str]] = {}
+    for track_id, tag_id, name, auto, sources in (await s.execute(q)).all():
+        if previous != track_id:
+            evidence = genre_evidence(sources)
+            previous = track_id
+        out.setdefault(track_id, {})[tag_id] = evidence.get(name.casefold()) or ["unknown" if auto else "manual"]
     return out
 
 

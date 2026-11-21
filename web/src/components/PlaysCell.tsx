@@ -1,3 +1,4 @@
+import { TrackTitle } from './TrackTitle';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { fmtListened, fmtWhen, plural } from '../lib/format';
@@ -70,7 +71,7 @@ function Details({ songId, title, artist, up, left }: { songId: string; title: s
   const d = res.data;
   return (
     <div role="dialog" aria-label={`Прослушивания: ${title}`} onClick={(e) => e.stopPropagation()} className={cx('absolute z-30 w-72 cursor-default rounded-xl border border-line bg-raised p-3 text-left shadow-lg', up ? 'bottom-8' : 'top-8', left ? 'right-0' : 'left-0')}>
-      <div className="truncate text-sm font-semibold text-fg">{title}</div>
+      <div className="truncate text-sm font-semibold text-fg"><TrackTitle title={title} track={{ nd_song_id: songId }} /></div>
       {artist && <div className="truncate text-xs text-muted">{artist}</div>}
       {!d ? (
         <div className="flex h-24 items-center justify-center text-muted">{res.error ? <span className="text-xs">{res.error}</span> : <Spinner size={18} />}</div>

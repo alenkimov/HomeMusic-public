@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useDesktop } from '../lib/desktop';
 import { imageUrl, retryImage } from '../lib/img';
@@ -6,6 +6,7 @@ import { goBack } from '../lib/router';
 import { downloadStatusLabel, percent } from '../lib/format';
 import type { OwnedStatus } from '../api/types';
 import { Icon, type IconName } from './Icon';
+import { ServiceText } from './ServiceBadge';
 
 const cx = (...xs: Array<string | false | null | undefined>) => xs.filter(Boolean).join(' ');
 export { cx };
@@ -82,7 +83,7 @@ export function Spinner({ size = 20, className }: { size?: number; className?: s
 
 // --- states ---------------------------------------------------------------------------------------
 
-export function Loading({ text = 'Загрузка…' }: { text?: string }) {
+export function Loading({ text = 'Загрузка…' }: { text?: ReactNode }) {
   return (
     <div className="flex items-center justify-center gap-3 py-16 text-muted" role="status">
       <Spinner />
@@ -95,7 +96,7 @@ export function ErrorState({ text, onRetry }: { text: string; onRetry?: () => vo
   return (
     <div className="flex flex-col items-center gap-4 px-6 py-14 text-center" role="alert">
       <Icon name="alert" size={36} className="text-danger" />
-      <p className="text-muted">{text}</p>
+      <p className="text-muted"><ServiceText text={text} /></p>
       {onRetry && (
         <Button small icon="refresh" onClick={onRetry}>
           Повторить
@@ -105,7 +106,7 @@ export function ErrorState({ text, onRetry }: { text: string; onRetry?: () => vo
   );
 }
 
-export function Empty({ icon = 'note', title, text, children }: { icon?: IconName; title: string; text?: string; children?: ReactNode }) {
+export function Empty({ icon = 'note', title, text, children }: { icon?: IconName; title: string; text?: ReactNode; children?: ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-3 px-6 py-14 text-center">
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-surface text-dim">
@@ -274,9 +275,9 @@ export function StatusChip({ status, progress = 0 }: { status: string; progress?
   );
 }
 
-export function ProgressBar({ value, className }: { value: number; className?: string }) {
+export function ProgressBar({ value, className, label }: { value: number; className?: string; label?: string }) {
   return (
-    <div className={cx('h-1 w-full overflow-hidden rounded-full bg-fg/10', className)} role="progressbar" aria-valuenow={percent(value)} aria-valuemin={0} aria-valuemax={100}>
+    <div className={cx('h-1 w-full overflow-hidden rounded-full bg-fg/10', className)} role="progressbar" aria-label={label} aria-valuenow={percent(value)} aria-valuemin={0} aria-valuemax={100}>
       <div className="h-full rounded-full bg-accent transition-[width] duration-300" style={{ width: `${percent(value)}%` }} />
     </div>
   );
@@ -406,7 +407,8 @@ export function Radio({ checked }: { checked: boolean }) {
 
 // --- sheet (bottom modal) -------------------------------------------------------------------------
 
-export function Sheet({ open, onClose, title, children, footer }: { open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode }) {
+export function Sheet({ open, onClose, title, children, footer, wide }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
+  const headingId = useId();
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -424,11 +426,11 @@ export function Sheet({ open, onClose, title, children, footer }: { open: boolea
   // only, and whatever is drawn above the layer shows through it (the seek bar's hint over «Перевод текста», a sheet
   // under the tab bar).
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-label={title}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-labelledby={headingId}>
       <button type="button" aria-label="Закрыть" className="absolute inset-0 bg-black/70" onClick={onClose} />
-      <div className="anim-up pb-safe relative flex max-h-[88dvh] w-full max-w-lg flex-col rounded-t-2xl bg-surface sm:rounded-2xl">
+      <div className={cx('anim-up pb-safe relative flex max-h-[88dvh] w-full flex-col rounded-t-2xl bg-surface sm:rounded-2xl', wide ? 'max-w-2xl' : 'max-w-lg')}>
         <div className="flex items-center gap-2 border-b border-line px-4 py-2">
-          <h2 className="flex-1 truncate text-base font-bold">{title}</h2>
+          <h2 id={headingId} className="min-w-0 flex-1 truncate text-base font-bold">{title}</h2>
           <IconButton icon="x" label="Закрыть" onClick={onClose} />
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">{children}</div>

@@ -32,9 +32,7 @@ def load(name: str) -> Any:
 async def db(hub_env, db_file: Path, monkeypatch: pytest.MonkeyPatch):
     from app.db import dispose, init_engine
 
-    monkeypatch.setenv("LASTFM_API_KEY", "test-key")
     monkeypatch.setenv("EMBEDDER_URL", EMBEDDER)
-    monkeypatch.setattr(sources, "LASTFM_RATE", 0)
     from app.config import get_settings
 
     get_settings.cache_clear()
@@ -93,7 +91,17 @@ async def test_ytm_radio_down_is_not_cached(db, respx_mock: respx.MockRouter) ->
 # --- Last.fm ------------------------------------------------------------------------------------------------------
 
 
-async def test_lastfm_similar_tracks(db, respx_mock: respx.MockRouter) -> None:
+@pytest.fixture
+async def lastfm(db, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import integrations
+    from app.db import session_scope
+
+    monkeypatch.setattr(sources, "LASTFM_RATE", 0)
+    async with session_scope() as s:
+        await integrations.save(s, provider="lastfm", owner_id=None, secret="test-key")
+
+
+async def test_lastfm_similar_tracks(lastfm, respx_mock: respx.MockRouter) -> None:
     route = respx_mock.get(LASTFM).respond(json=load("lastfm_track_similar"))
 
     hits = await sources.lastfm_similar_tracks("Кино", "Группа крови", limit=30)
@@ -106,7 +114,7 @@ async def test_lastfm_similar_tracks(db, respx_mock: respx.MockRouter) -> None:
     assert hits[0].duration_s == 213
 
 
-async def test_lastfm_unknown_track_is_empty_and_cached(db, respx_mock: respx.MockRouter) -> None:
+async def test_lastfm_unknown_track_is_empty_and_cached(lastfm, respx_mock: respx.MockRouter) -> None:
     route = respx_mock.get(LASTFM).respond(json=load("lastfm_not_found"))
 
     assert await sources.lastfm_similar_tracks("Нет", "Такого") == []
@@ -114,14 +122,14 @@ async def test_lastfm_unknown_track_is_empty_and_cached(db, respx_mock: respx.Mo
     assert route.call_count == 1
 
 
-async def test_lastfm_error_is_source_down(db, respx_mock: respx.MockRouter) -> None:
+async def test_lastfm_error_is_source_down(lastfm, respx_mock: respx.MockRouter) -> None:
     respx_mock.get(LASTFM).respond(json={"error": 10, "message": "Invalid API key"})
 
     with pytest.raises(SourceDown, match="Invalid API key"):
         await sources.lastfm_similar_tracks("Кино", "Группа крови")
 
 
-async def test_lastfm_similar_artists_and_tags(db, respx_mock: respx.MockRouter) -> None:
+async def test_lastfm_similar_artists_and_tags(lastfm, respx_mock: respx.MockRouter) -> None:
     def answer(request: httpx.Request) -> httpx.Response:
         method = request.url.params["method"]
         return httpx.Response(200, json=load({"artist.getSimilar": "lastfm_artist_similar",

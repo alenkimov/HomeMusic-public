@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.catalog import ARTIST_URLS
 from app.auth import current_user
+from app.catalog.models import CATALOG_SERVICES, CatalogArtist
 from app.db import get_session
 from app.events import bus
 from app.jobs.queue import enqueue, notify
 from app.library import artists
+from app.library.looks import profile_card
 from app.models import Artist, User
+from app.services import svc
 
 router = APIRouter(prefix="/api/artists", tags=["artists"])
 
@@ -57,6 +63,15 @@ class ArtistCardOut(BaseModel):
     rewriting: bool = False
 
 
+class ArtistProfileOut(BaseModel):
+    ref: str
+    service: str
+    name: str
+    picture_url: str | None = None
+    followers: int | None = None
+    url: str | None = None
+
+
 class NameIn(BaseModel):
     name: str = Field(min_length=1, max_length=300)
 
@@ -73,7 +88,7 @@ class OtherIn(BaseModel):
 
 
 async def _artist(s: AsyncSession, artist_id: int) -> Artist:
-    a = await s.get(Artist, artist_id)
+    a = await artists.by_id(s, artist_id)
     if a is None:
         raise HTTPException(404, "Исполнитель не найден")
     return a
@@ -190,6 +205,49 @@ async def apart(artist_id: int, body: OtherIn, user: User = Depends(current_user
     """«Это другой»: not offered to be joined with this one again."""
     a = await _artist(s, artist_id)
     await artists.apart(s, a, await _other(s, body))
+    return await _done(s, user, a)
+
+
+async def _profile_card(ref: str) -> CatalogArtist | None:
+    try:
+        async with asyncio.timeout(5):
+            if ref.startswith(("ym:", "hm:")):
+                return (await svc.artist_page(ref)).artist
+            return await profile_card(ref)
+    except Exception:
+        return None
+
+
+@router.get("/{artist_id}/profiles", response_model=list[ArtistProfileOut])
+async def linked_profiles(artist_id: int, user: User = Depends(current_user),
+                          s: AsyncSession = Depends(get_session, scope="function")):
+    a = await _artist(s, artist_id)
+    refs = await artists.profiles(s, a.id)
+    await s.commit()
+    cards = await asyncio.gather(*(_profile_card(ref) for ref in refs))
+    out = []
+    for ref, card in zip(refs, cards, strict=True):
+        source, _, ref_id = ref.partition(":")
+        link = ARTIST_URLS.get(source)
+        out.append(ArtistProfileOut(
+            ref=ref, service=CATALOG_SERVICES.get(source, "catalog"), name=card.name if card else a.name,
+            picture_url=(card.picture_small_url or card.picture_url) if card else None,
+            followers=card.nb_fans if card else None, url=link.format(quote(ref_id, safe="")) if link else None,
+        ))
+    return out
+
+
+@router.delete("/{artist_id}/profiles/{ref}", response_model=ArtistCardOut)
+async def drop_profile(artist_id: int, ref: str = Path(min_length=3, max_length=64), user: User = Depends(current_user),
+                       s: AsyncSession = Depends(get_session, scope="function")):
+    a = await _artist(s, artist_id)
+    if ref not in await artists.profiles(s, a.id):
+        raise HTTPException(404, "Профиль уже отвязан или принадлежит другому исполнителю")
+    await s.commit()
+    card = await _profile_card(ref)
+    if not await artists.detach_profile(s, user.id, a, ref, (card.name.strip() if card else "") or a.name):
+        raise HTTPException(409, "Привязка профиля уже изменилась")
+    await s.commit()
     return await _done(s, user, a)
 
 

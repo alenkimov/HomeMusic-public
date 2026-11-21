@@ -72,6 +72,24 @@ async def _run(*args: str, timeout: float) -> tuple[int, bytes, bytes]:
     return proc.returncode or 0, out, err
 
 
+async def remux_webm(src: Path, dest: Path) -> None:
+    code, _, err = await _run(ffmpeg_bin(), "-nostdin", "-loglevel", "error", "-i", str(src),
+                              "-map", "0:a:0", "-c:a", "copy", str(dest), timeout=60)
+    if code:
+        raise ProbeError(err.decode("utf-8", "replace").strip() or "Не удалось подготовить файл")
+
+
+async def write_audio_excerpt(src: Path, dest: Path, start: float, end: float) -> None:
+    """Decode only the selected interval. WAV carries no encoder padding around the cut."""
+    code, _, err = await _run(
+        ffmpeg_bin(), "-nostdin", "-v", "error", "-ss", str(start), "-i", str(src),
+        "-t", str(end - start), "-map", "0:a:0", "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le",
+        str(dest), timeout=60,
+    )
+    if code:
+        raise ProbeError(err.decode("utf-8", "replace").strip() or "Не удалось вырезать отрывок")
+
+
 def _int(v: object) -> int | None:
     try:
         return int(float(v))  # type: ignore[arg-type]

@@ -1,408 +1,537 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { api } from '../api/client';
-import type { Candidate, FileGap, PickOut } from '../api/types';
+import { ApiError, api, isAbort, withQuery } from '../api/client';
+import type { Candidate, FileComparisonOut, PickOut } from '../api/types';
 import { useDesktop } from '../lib/desktop';
-import { closeFindFile, useFindFile, type FileSought } from '../lib/findFile';
-import { fmtDuration, providerLabel } from '../lib/format';
+import { closeFindFile, filePickerTarget, openFindFile, useFindFile, type FileSought } from '../lib/findFile';
+import { fmtDuration } from '../lib/format';
 import { useAsync } from '../lib/hooks';
+import { isUpload, pause, useListen } from '../lib/listen';
+import { pauseNative } from '../lib/player';
 import { EDITED_EVENT } from '../lib/trackEdit';
-import { attempt, confirmDialog, toast } from '../lib/ui';
-import { BrandIcon } from './BrandIcon';
+import { confirmDialog, toast, toastError } from '../lib/ui';
 import { fileRef } from './candidate';
+import { FileInfo, fileWords } from './FileInfo';
 import { Icon } from './Icon';
-import { Button, Cover, IconButton, Spinner, cx } from './ui';
+import { AudioServiceList, ServiceBadge } from './ServiceBadge';
+import { TrackTitle } from './TrackTitle';
+import { Button, Cover, ErrorState, IconButton, ProgressBar, Sheet, Spinner, cx } from './ui';
 
-/** «Найти другой файл»: another file for a track the library has — one without the censor's cuts, a better copy.
- *
- * Over the list stands the file the track plays from now, with the lane of its loudness to move through it by. Under
- * it are the files the sources have of the song (the regular sources first, then the re-uploads by small channels,
- * where the uncensored copies are), as the rows of a playlist: the cover that plays the file, its name and artists
- * as its source says them, the source with its mark, its length, what the file is. A row that is played opens: the
- * Hub downloads the file, says how it sounds beside the track's own — the same recording, one only alike, another —
- * and lays the two lanes one over the other, with the places where the two part in red: that is what a cut or a
- * bleeped word shows as, and each such place is heard in either file by a tap. A link of one's own is weighed the
- * same way before anything is replaced.
- *
- * The choice is the listener's: a file that is another recording is taken too, once they say so — that is how a
- * version is picked on purpose. The old file goes to the trash for thirty days, and the two can be heard side by
- * side again on «Качество звука». */
-export function FindFile() {
-  const sought = useFindFile();
-  return sought ? <Window key={sought.library_track_id} track={sought} /> : null;
-}
+const CURRENT = 'current';
+const clock = (seconds: number) => fmtDuration(Math.floor(seconds)) || '0:00';
+type Interval = [number, number];
 
-const fileWords = (codec?: string | null, kbps?: number | null) => [codec ? codec.toUpperCase() : null, kbps ? String(kbps) : null].filter(Boolean).join(' ') || '—';
-const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-const CLEAN = /(без мата|цензур|clean|radio edit|радио верси)/i;
-const UNCENSORED = /(без цензур|uncensored|explicit|нецензур)/i;
-const BRAND: Record<string, string> = { ytdlp: 'youtube', soundcloud: 'soundcloud', hitmoz: 'hitmos', hitmos_fm: 'hitmos' };
-
-/** A file of the list: one the sources gave, or one the listener gave the page of. */
-interface Row {
-  key: string;
-  pick: { ref: string } | { url: string };
+interface FileRow {
+  ref: string;
   title: string;
   artist: string;
-  provider: string;
-  duration_s?: number | null;
+  source?: string | null;
+  cover_url?: string | null;
+  page_url?: string | null;
+  codec?: string | null;
   bitrate_kbps?: number | null;
-  explicit?: boolean | null;
-  reupload: boolean;
+  duration_s?: number | null;
 }
 
-/** What is heard in the window, one thing at a time; `from`: where to start, 0…1 of the file. */
-function usePlayer() {
+export function FindFile() {
+  const track = useFindFile();
+  return track ? <PickerTarget key={track.library_track_id ?? track.ref} track={track} /> : null;
+}
+
+export function ChoosePlaybackFile({ compact = false }: { compact?: boolean }) {
+  const track = useListen((state) => state.track);
+  const info = useListen((state) => state.info);
+  const failed = useListen((state) => state.phase === 'error');
+  if (!failed || !track || isUpload(track) || track.nd_song_id || info?.kind === 'library') return null;
+  const target = filePickerTarget({ ...track, library_track_id: info?.track_id ?? track.library_track_id });
+  if (!target) return null;
+  const choose = () => openFindFile(target);
+  return compact
+    ? <IconButton icon="search" size={18} label="Выбрать файл" onClick={choose} className="shrink-0 text-muted" />
+    : <Button small icon="search" onClick={choose}>Выбрать файл</Button>;
+}
+
+function PickerTarget({ track }: { track: FileSought }) {
+  const ref = track.ref ?? '';
+  const target = useAsync((signal) => api.resolveFilePickerTrack(ref, signal), [ref], track.library_track_id == null);
+  const id = track.library_track_id ?? target.data?.track_id;
+  if (id != null) return <FilePicker track={{ ...track, library_track_id: id }} />;
+  return (
+    <Sheet open onClose={closeFindFile} title="Выбрать файл">
+      {target.error ? <ErrorState text={target.error} onRetry={() => target.reload()} /> :
+        <div role="status" aria-label="Открываем трек" className="flex justify-center py-4"><Spinner /></div>}
+    </Sheet>
+  );
+}
+
+function candidateRow(c: Candidate): FileRow {
+  const audio = c.extra?.acodec;
+  const codec = c.provider === 'hitmoz' || c.provider === 'hitmos_fm' ? 'mp3'
+    : typeof audio === 'string' && audio !== 'none' ? audio.startsWith('mp4a.') ? 'aac' : audio : null;
+  return { ...c, ref: fileRef(c), source: c.provider, codec };
+}
+
+function preparedRow(pick: PickOut): FileRow {
+  return { ...pick, source: pick.provider };
+}
+
+interface Preview {
+  ref: string;
+  url: string;
+  at: number;
+  excerpt?: Interval;
+}
+
+function usePreview() {
   const audio = useRef<HTMLAudioElement | null>(null);
-  const [on, setOn] = useState<{ key: string; at: number } | null>(null);
-  useEffect(() => () => audio.current?.pause(), []);
-  const stop = () => {
-    audio.current?.pause();
-    setOn(null);
-  };
-  const play = (key: string, src: string, from?: number) => {
-    const a = (audio.current ??= new Audio());
-    if (on?.key === key && from === undefined) return stop();
-    if (on?.key !== key) {
-      a.src = src;
-      a.ontimeupdate = () => setOn((cur) => (cur ? { ...cur, at: a.duration ? a.currentTime / a.duration : 0 } : cur));
-      a.onended = () => setOn(null);
-      a.onerror = () => {
-        setOn(null);
-        toast('Не удалось воспроизвести', 'error');
-      };
+  const active = useRef<Preview | null>(null);
+  const [on, setOn] = useState<Preview | null>(null);
+  const reset = useCallback(() => {
+    active.current = null;
+    const previous = audio.current;
+    audio.current = null;
+    if (previous) {
+      previous.pause();
+      previous.onloadedmetadata = previous.ontimeupdate = previous.onended = previous.onerror = null;
+      previous.removeAttribute('src');
+      previous.load();
     }
-    const seek = () => {
-      if (from !== undefined && a.duration) a.currentTime = from * a.duration;
+  }, []);
+  useEffect(() => reset, [reset]);
+  const stop = useCallback(() => {
+    reset();
+    setOn(null);
+  }, [reset]);
+
+  const play = (ref: string, url: string, seconds?: number, excerpt?: Interval) => {
+    if (active.current?.url === url && seconds == null) return stop();
+    reset();
+    pause();
+    pauseNative();
+    const next = { ref, url, at: excerpt?.[0] ?? seconds ?? 0, excerpt };
+    const element = new Audio(url);
+    audio.current = element;
+    active.current = next;
+    setOn(next);
+    element.onloadedmetadata = () => {
+      if (seconds != null && !excerpt) element.currentTime = Math.min(seconds, element.duration || seconds);
     };
-    if (a.readyState >= 1) seek();
-    else a.onloadedmetadata = seek;
-    setOn({ key, at: from ?? 0 });
-    void a.play().catch(() => setOn(null));
+    element.ontimeupdate = () => {
+      setOn({ ...next, at: (excerpt?.[0] ?? 0) + element.currentTime });
+    };
+    element.onended = stop;
+    const fail = () => {
+      if (audio.current !== element) return;
+      stop();
+      toast('Не удалось воспроизвести файл', 'error');
+    };
+    element.onerror = fail;
+    void element.play().catch(fail);
   };
   return { on, play, stop };
 }
 
-/** The loudness of a file along its length: a tap moves the listening there; the places in `marks` (seconds) are red. */
-function Lane({ bars, length, marks, playing, at, onSeek, label }: { bars: number[]; length: number; marks: [number, number][]; playing: boolean; at: number; onSeek: (to: number) => void; label: string }) {
+/** The same loudness bars as the quality view. The buttons over the red bars play server-cut excerpts. */
+function WaveLane({ label, main, bars, length, marks, preview, onSeek, onExcerpt }: {
+  label: string;
+  main: boolean;
+  bars: number[];
+  length: number;
+  marks: Interval[];
+  preview: Preview | null;
+  onSeek: (at: number) => void;
+  onExcerpt: (mark: Interval) => void;
+}) {
+  const n = Math.min(112, bars.length);
+  const spans = marks.flatMap(([start, end]): Interval[] => {
+    const from = Math.max(0, start), to = Math.min(length, end);
+    return to > from ? [[from, to]] : [];
+  });
   return (
-    <button
-      type="button"
-      aria-label={`Перемотать: ${label}`}
-      title="Нажмите, чтобы слушать с этого места"
-      className="flex h-9 min-w-0 flex-1 cursor-pointer items-center gap-px"
-      onClick={(e) => {
-        const box = e.currentTarget.getBoundingClientRect();
-        onSeek(Math.min(0.999, Math.max(0, (e.clientX - box.left) / box.width)));
-      }}
-    >
-      {bars.length ? (
-        bars.map((v, i) => {
-          const t = ((i + 0.5) / bars.length) * length;
-          const red = !!length && marks.some(([a, b]) => t >= a && t <= b);
-          return <span key={i} className={cx('min-w-px flex-1 rounded-sm', red ? 'bg-danger' : playing && i / bars.length <= at ? 'bg-accent' : 'bg-fg/30')} style={{ height: `${Math.max(6, v)}%` }} />;
-        })
-      ) : (
-        <span className="h-1 w-full rounded bg-fg/10" />
-      )}
-    </button>
+    <div className="grid grid-cols-[1.15rem_minmax(0,1fr)_2.5rem] items-center gap-2">
+      <span role="img" aria-label={label} className={main ? 'text-warn' : 'text-muted'}>
+        <Icon name={main ? 'star' : 'search'} size={17} filled={main} />
+      </span>
+      <div className="relative min-w-0">
+        <button type="button" className="flex h-11 w-full items-center gap-px" aria-label={'Перемотать · ' + label}
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const at = e.detail ? Math.min(.999, Math.max(0, (e.clientX - rect.left) / rect.width)) * length : 0;
+            onSeek(at);
+          }}>
+          {n ? Array.from({ length: n }, (_, i) => {
+            const start = i / n * length, end = (i + 1) / n * length;
+            const red = spans.some(([from, to]) => start < to && end > from);
+            const sourceStart = Math.floor(i * bars.length / n);
+            const sourceEnd = Math.floor((i + 1) * bars.length / n);
+            const height = Math.max(6, ...bars.slice(sourceStart, sourceEnd));
+            return <span key={i} className={cx('min-w-0 flex-1 rounded-sm', red ? 'bg-danger' : preview && start <= preview.at ? 'bg-accent' : 'bg-fg/30')}
+              style={{ height: height + '%' }} />;
+          }) : <span className="h-1 w-full rounded bg-fg/10" />}
+        </button>
+        {spans.map(([from, to]) => {
+          const active = preview?.excerpt?.[0] === from && preview.excerpt[1] === to;
+          const range = clock(from) + '–' + clock(to);
+          return <button type="button" key={from + ':' + to}
+            className={cx('absolute inset-y-0 min-w-3 -translate-x-1/2 rounded border border-transparent hover:border-danger/70 focus-visible:border-danger', active && 'border-danger bg-danger/15')}
+            style={{ left: (from + to) / 2 / length * 100 + '%', width: (to - from) / length * 100 + '%' }}
+            aria-label={(active ? 'Остановить отрывок ' : 'Слушать отрывок ') + range + ' · ' + label}
+            title={range} aria-pressed={active} onClick={() => onExcerpt([from, to])} />;
+        })}
+      </div>
+      <span className="text-right text-xs tabular-nums text-dim">{clock(length)}</span>
+    </div>
   );
 }
 
-function Window({ track }: { track: FileSought }) {
+function FilePicker({ track }: { track: FileSought & { library_track_id: number } }) {
   const id = track.library_track_id;
+  const headingId = useId();
   const desktop = useDesktop();
-  const mine = useAsync((s) => api.trackFile(id, s), [id]);
-  const q = `${track.artist.split(',')[0].trim()} - ${track.title}`;
-  const sources = useAsync((s) => api.searchProviders(q, s, 'sources'), [q]);
-  const reuploads = useAsync((s) => api.searchProviders(q, s, 'reuploads'), [q]);
-  const [weighed, setWeighed] = useState<Record<string, PickOut | 'busy'>>({});
-  const [open, setOpen] = useState<string | null>(null); // the row whose file is laid beside the track's own
-  const [linked, setLinked] = useState<Row[]>([]); // files the listener gave the pages of
-  const [busy, setBusy] = useState<string | null>(null);
+  const player = usePreview();
+  const mine = useAsync((signal) => api.trackFile(id, signal), [id]);
+  const sought = track.import_review ?? track;
+  const query = [(sought.artist.split(',')[0] || sought.artist).trim(), sought.title].filter(Boolean).join(' - ');
+  const sources = useAsync((signal) => api.searchProviders(query, signal, 'sources'), [query]);
+  const reuploads = useAsync((signal) => api.searchProviders(query, signal, 'reuploads'), [query]);
+  const [prepared, setPrepared] = useState<Record<string, PickOut>>({});
+  const [extra, setExtra] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [comparisonRef, setComparisonRef] = useState<string | null>(null);
+  const [showLink, setShowLink] = useState(false);
   const [url, setUrl] = useState('');
-  const [myBars, setMyBars] = useState<number[]>([]);
-  const player = usePlayer();
-  const myAudio = `/api/quality/track/${id}/audio`;
+  const [busy, setBusy] = useState<string | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const request = useRef<AbortController | null>(null);
+  const saveLock = useRef(false);
+  const input = useRef<HTMLInputElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close();
-    window.addEventListener('keydown', onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const close = () => {
-    player.stop();
-    closeFindFile();
-  };
-
-  /** How the file compares with the track's own — asked once: the Hub downloads it for that. */
-  const weigh = async (row: Row): Promise<PickOut | null> => {
-    const have = weighed[row.key];
-    if (have && have !== 'busy') return have;
-    if (have === 'busy') return null;
-    setWeighed((prev) => ({ ...prev, [row.key]: 'busy' }));
+  const current = mine.data?.file_uid != null ? { ...mine.data, ref: CURRENT } : null;
+  const rows = new Map<string, FileRow>();
+  if (current) rows.set(CURRENT, current);
+  for (const ref of extra) {
+    if (prepared[ref]) rows.set(ref, preparedRow(prepared[ref]));
+  }
+  for (const c of [...(sources.data?.candidates ?? []), ...(reuploads.data?.candidates ?? [])]) {
+    const row = candidateRow(c);
+    if (!rows.has(row.ref)) rows.set(row.ref, prepared[row.ref] ? { ...row, ...preparedRow(prepared[row.ref]) } : row);
+  }
+  for (const file of Object.values(prepared)) {
+    if (!rows.has(file.ref)) rows.set(file.ref, preparedRow(file));
+  }
+  const main = rows.get(selected ?? CURRENT);
+  const other = comparisonRef ? rows.get(comparisonRef) : undefined;
+  const reversed = other?.ref === CURRENT;
+  const left = reversed ? other : main;
+  const right = reversed ? main : other;
+  const pairKey = left && right ? JSON.stringify([left.ref, right.ref, mine.data?.file_uid]) : '';
+  const comparison = useAsync(async (signal) => {
+    if (!left || !right) throw new Error('Выберите два файла');
     try {
-      const r = await api.fileWeigh(id, row.pick);
-      setWeighed((prev) => ({ ...prev, [row.key]: r }));
-      if (r.peaks?.mine?.length) setMyBars(r.peaks.mine);
-      return r;
-    } catch (e) {
-      setWeighed((prev) => {
-        const next = { ...prev };
-        delete next[row.key];
-        return next;
-      });
-      toast(e instanceof Error && e.message ? e.message : 'Источник не отдал файл', 'error');
-      return null;
+      const result = await api.fileCompare(id, {
+        ref: right.ref,
+        baseline_ref: left.ref === CURRENT ? undefined : left.ref,
+        expected_file_uid: left.ref === CURRENT ? mine.data?.file_uid ?? undefined : undefined,
+      }, signal);
+      return { pairKey, result };
+    } catch (error) {
+      if (!signal.aborted && error instanceof ApiError && error.status === 410) {
+        discardPrepared([left.ref, right.ref]);
+        toastError(error);
+      }
+      throw error;
     }
-  };
-  /** A tap on a row's cover: the file is downloaded and laid beside the track's own, then it plays. */
-  const hear = async (row: Row) => {
-    const have = weighed[row.key];
-    if (player.on?.key === row.key) return player.stop();
-    setOpen(row.key);
-    const w = have && have !== 'busy' ? have : await weigh(row);
-    if (w?.key) player.play(row.key, `/api/quality/picked/${w.key}/audio`);
-  };
-  const take = async (row: Row) => {
-    setBusy(row.key);
-    const w = await weigh(row);
-    if (!w) return setBusy(null);
-    const gaps = w.verdict === 'same' ? (w.gaps ?? []) : [];
-    if (gaps.length > 0) {
-      setOpen(row.key);
-      const quiet = gaps.filter((g) => g.quieter === 'other').length;
-      const ok = await confirmDialog({
-        title: 'Файлы расходятся местами',
-        body: `Запись та же, но файлы расходятся на ${gaps.map((g) => clock(g.at)).join(', ')}` + (quiet ? ' — и там тише найденный файл' : '') + '. Что там, слышно только на слух. Заменить всё равно?',
-        okLabel: 'Заменить',
-      });
-      if (!ok) return setBusy(null);
-    }
-    if (w.verdict !== 'same') {
-      const ok = await confirmDialog({
-        title: w.verdict === 'other' ? 'Это другая запись' : w.verdict === 'alike' ? 'Запись только похожа' : 'Не удалось сравнить по звуку',
-        body: (w.likeness != null ? `Сходство с вашим файлом по звуку: ${w.likeness.toFixed(2)}. ` : '') + 'Так бывает у ремикса, живой записи, другой версии. Всё равно поставить этот файл вместо вашего?',
-        okLabel: 'Заменить',
-      });
-      if (!ok) return setBusy(null);
-    }
-    const r = await attempt(() => api.fileTake(id, { ...row.pick, sure: true }));
-    setBusy(null);
-    if (!r?.taken) return;
-    player.stop();
-    window.dispatchEvent(new Event(EDITED_EVENT));
+  }, [pairKey], !!pairKey);
+  const result = comparison.data?.pairKey === pairKey && !comparison.loading ? comparison.data.result : null;
+  const ready = (ref: string) => ref === CURRENT || !!prepared[ref];
+
+  const close = useCallback(() => {
+    if (saveLock.current) return;
+    request.current?.abort();
     closeFindFile();
-    toast('Файл заменён. Прежний хранится 30 дней', 'success', { label: 'Сравнить', to: '/quality' });
-  };
-  /** A page of one's own: the file is downloaded and stands in the list, laid beside the track's own. */
-  const addLink = async () => {
-    const link = url.trim();
-    const row: Row = { key: `url:${link}`, pick: { url: link }, title: link, artist: '', provider: '', reupload: false };
-    setBusy('url');
-    const w = await weigh(row);
-    setBusy(null);
-    if (!w) return;
-    setLinked((prev) => [{ ...row, title: w.title || link, artist: w.artist ?? '', provider: w.provider ?? '', duration_s: w.duration_s, bitrate_kbps: w.bitrate_kbps }, ...prev.filter((x) => x.key !== row.key)]);
-    setOpen(row.key);
-    setUrl('');
-  };
-
-  const seen = new Set<string>();
-  const found: Row[] = [...(sources.data?.candidates ?? []), ...(reuploads.data?.candidates ?? [])]
-    .map((c: Candidate) => ({ key: fileRef(c), pick: { ref: fileRef(c) }, title: c.title, artist: c.artist, provider: c.provider, duration_s: c.duration_s, bitrate_kbps: c.bitrate_kbps, explicit: c.explicit, reupload: !!(c.extra as { reupload?: boolean } | undefined)?.reupload }))
-    .filter((r) => (seen.has(r.key) ? false : (seen.add(r.key), true)));
-  const list = [...linked, ...found];
-  const loading = sources.loading || reuploads.loading;
-  const m = mine.data;
-  const myLength = m?.duration_s ?? 0;
-  const cover = m?.cover_url;
-  const grid = { gridTemplateColumns: desktop ? '2.5rem minmax(0,1fr) 8rem 3rem 5.5rem 6.5rem' : '2.5rem minmax(0,1fr) 6.5rem' };
-
-  const coverButton = (key: string, label: string, onClick: () => void, wait = false) => {
-    const playing = player.on?.key === key;
-    return (
-      <button type="button" aria-label={playing ? 'Пауза' : label} onClick={onClick} className="group/c relative flex h-10 w-10 shrink-0 items-center justify-center">
-        <Cover src={cover} size={40} alt="" />
-        <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !playing && !wait && 'opacity-0 group-hover/c:opacity-100')}>
-          {wait ? <Spinner size={16} /> : <Icon name={playing ? 'pause' : 'play'} size={16} filled />}
-        </span>
-      </button>
-    );
-  };
-  const quality = (codec: string | null | undefined, kbps: number | null | undefined, better: boolean) => (
-    <span className={cx('justify-self-start whitespace-nowrap rounded-full px-2 py-0.5 text-[11px]', better ? 'bg-accent/15 text-accent' : 'bg-fg/5 text-muted')}>{fileWords(codec, kbps)}</span>
-  );
-  const sourceOf = (provider: string, reupload: boolean) => (
-    <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
-      {BRAND[provider] ? <BrandIcon service={BRAND[provider]} size={15} className="shrink-0" /> : <Icon name="link" size={14} className="shrink-0" />}
-      <span className="truncate">{provider ? providerLabel(provider) : 'ссылка'}{reupload ? ' · перезалив' : ''}</span>
-    </span>
-  );
-
-  const row = (r: Row) => {
-    const w = weighed[r.key];
-    const told = w && w !== 'busy' ? w : null;
-    const name = [r.artist, r.title].filter(Boolean).join(' — ');
-    const far = !!(myLength && r.duration_s && Math.abs(myLength - r.duration_s) > 5);
-    const kbps = told?.bitrate_kbps ?? r.bitrate_kbps;
-    const better = told ? told.better : !!(kbps && m?.bitrate_kbps && kbps >= m.bitrate_kbps + 48);
-    const isOpen = open === r.key;
-    const gaps: FileGap[] = told?.gaps ?? [];
-    const length = told?.length?.other ?? told?.duration_s ?? r.duration_s ?? 0;
-    const src = told?.key ? `/api/quality/picked/${told.key}/audio` : '';
-    const from = (which: 'mine' | 'other', at: number) => {
-      const len = which === 'mine' ? myLength : length;
-      if (!len) return;
-      player.play(which === 'mine' ? 'mine' : r.key, which === 'mine' ? myAudio : src, Math.min(0.999, Math.max(0, (at - 2) / len)));
+  }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('keydown', onKey);
+    const old = document.body.style.overflow;
+    const opener = document.activeElement;
+    document.body.style.overflow = 'hidden';
+    closeButton.current?.focus();
+    return () => {
+      request.current?.abort();
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = old;
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true });
     };
+  }, [close]);
+
+  function audioUrl(ref: string, excerpt?: Interval) {
+    const interval = { start: excerpt?.[0], end: excerpt?.[1] };
+    const trackUrl = '/api/quality/track/' + id;
+    return ref === CURRENT
+      ? withQuery(trackUrl + '/audio', { file_uid: mine.data?.file_uid ?? undefined, ...interval })
+      : withQuery(trackUrl + '/picked/audio', { ref, ...interval });
+  }
+
+  function discardPrepared(refs: string[]) {
+    player.stop();
+    setPrepared((previous) => Object.fromEntries(Object.entries(previous).filter(([ref]) => !refs.includes(ref))));
+    setSelected((ref) => ref && refs.includes(ref) ? null : ref);
+    setComparisonRef(null);
+  }
+
+  async function prepare(key: string, get: (signal: AbortSignal) => Promise<PickOut>, add = false) {
+    if (request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setBusy(key);
+    try {
+      const file = await get(controller.signal);
+      if (controller.signal.aborted) return;
+      setPrepared((previous) => ({ ...previous, [file.ref]: file }));
+      if (add) setExtra((previous) => [file.ref, ...previous.filter((ref) => ref !== file.ref)]);
+      return file;
+    } catch (error) {
+      if (!isAbort(error)) toastError(error);
+    } finally {
+      request.current = null;
+      if (!controller.signal.aborted) setBusy(null);
+    }
+  }
+
+  async function download(row: FileRow, play = false) {
+    const file = await prepare(row.ref, (signal) => api.filePrepare(id, { ref: row.ref }, signal));
+    if (!file) return;
+    if (main && file.ref !== main.ref) setComparisonRef(file.ref);
+    if (play) player.play(file.ref, audioUrl(file.ref));
+  }
+
+  function hear(row: FileRow) {
+    if (!ready(row.ref)) {
+      void download(row, true);
+      return;
+    }
+    if (player.on?.ref === row.ref) {
+      player.stop();
+      return;
+    }
+    if (main && main.ref !== row.ref) setComparisonRef(row.ref);
+    player.play(row.ref, audioUrl(row.ref));
+  }
+
+  function choose(row: FileRow) {
+    player.stop();
+    setSelected(row.ref);
+    setComparisonRef(main?.ref ?? null);
+  }
+
+  async function addLink() {
+    const link = url.trim();
+    if (!link) return;
+    const file = await prepare('link', (signal) => api.filePrepare(id, { url: link }, signal), true);
+    if (!file) return;
+    setShowLink(false);
+    setUrl('');
+    if (main && main.ref !== file.ref) setComparisonRef(file.ref);
+  }
+
+  async function upload(file: File | undefined) {
+    if (!file) return;
+    setProgress(0);
+    const picked = await prepare('upload', (signal) => api.fileUpload(id, file, setProgress, signal), true);
+    if (picked && main) setComparisonRef(picked.ref);
+  }
+
+  async function commit() {
+    if (saveLock.current || !mine.data || !selected || selected === CURRENT || !ready(selected)) return;
+    saveLock.current = true;
+    setSaving(true);
+    player.stop();
+    const existing = mine.data.file_uid;
+    try {
+      if (existing != null && !(other?.ref === CURRENT && result?.verdict === 'same' && !result.gaps.length)) {
+        const confirmed = await confirmDialog({
+          title: 'Заменить файл трека?',
+          body: 'Выбранный файл будет воспроизводиться вместо текущего. Прежний можно вернуть в разделе «Качество звука».',
+          okLabel: 'Заменить',
+        });
+        if (!confirmed) return;
+      }
+      try {
+        await api.fileTake(id, { ref: selected, expected_file_uid: existing, sure: existing != null, import_review_id: track.import_review?.id });
+      } catch (error) {
+        toastError(error);
+        if (error instanceof ApiError && error.status === 410) discardPrepared([selected]);
+        return;
+      }
+      window.dispatchEvent(new Event(EDITED_EVENT));
+      closeFindFile();
+      if (existing == null) toast('Файл привязан к треку', 'success');
+      else toast('Файл заменён. Прежний хранится 30 дней', 'success', { label: 'Сравнить', to: '/quality' });
+    } finally {
+      saveLock.current = false;
+      setSaving(false);
+    }
+  }
+
+  function renderWave(file: FileRow, index: 'mine' | 'other', data: FileComparisonOut, mainLane: boolean) {
+    const label = mainLane ? 'Основной файл' : 'Файл для сравнения';
     return (
-      <li key={r.key} className={cx('border-b border-line/60 last:border-0', isOpen && 'bg-fg/[0.04]')}>
-        <div className="grid items-center gap-2.5 px-4 py-1.5" style={grid}>
-          {coverButton(r.key, `Слушать и сравнить: ${name}`, () => void hear(r), w === 'busy')}
-          <span className="min-w-0">
-            <span className={cx('flex min-w-0 items-center gap-1.5 text-[15px]', player.on?.key === r.key && 'text-accent')}>
-              <span className="truncate">{r.title}</span>
-              {(r.explicit || UNCENSORED.test(name)) && <span className="shrink-0 rounded-full bg-info/20 px-1.5 text-[11px] text-info">без цензуры</span>}
-            </span>
-            <span className="block truncate text-[13px] text-muted">
-              {r.artist}
-              {CLEAN.test(name) && !UNCENSORED.test(name) && <span className="text-warn"> · возможно, цензурная версия</span>}
-              {far && <span className="text-warn"> · другая длительность</span>}
-            </span>
-            {!desktop && (
-              <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                {sourceOf(r.provider, r.reupload)}
-                <span className="text-[11px] tabular-nums text-dim">{fmtDuration(told?.duration_s ?? r.duration_s)}</span>
-                {quality(told?.codec, kbps, better)}
-              </span>
-            )}
-          </span>
-          {desktop && sourceOf(r.provider, r.reupload)}
-          {desktop && <span className={cx('text-right text-xs tabular-nums', far ? 'text-warn' : 'text-dim')}>{fmtDuration(told?.duration_s ?? r.duration_s)}</span>}
-          {desktop && quality(told?.codec, kbps, better)}
-          <Button small busy={busy === r.key} disabled={!!busy && busy !== r.key} onClick={() => void take(r)}>
-            Заменить
-          </Button>
-        </div>
-        {isOpen && (
-          <div className="px-4 pb-3 md:pl-[4.25rem]">
-            {w === 'busy' && <p className="flex items-center gap-2 py-2 text-xs text-muted"><Spinner size={12} /> Скачиваю файл и сравниваю с вашим по звуку…</p>}
-            {told && (
-              <>
-                <div className="flex flex-wrap gap-1.5 pb-1 text-[11px]">
-                  <span className={cx('rounded-full px-2 py-0.5', told.verdict === 'same' ? 'bg-accent/15 text-accent' : told.verdict === 'alike' ? 'bg-warn/15 text-warn' : told.verdict === 'other' ? 'bg-danger/15 text-danger' : 'bg-fg/10 text-muted')}>
-                    {told.verdict === 'same' ? 'та же запись' : told.verdict === 'alike' ? 'похожа, но не та же' : told.verdict === 'other' ? 'другая запись' : 'сравнить по звуку не удалось'}
-                    {told.likeness != null ? ` · ${told.likeness.toFixed(2)}` : ''}
-                  </span>
-                  {gaps.length > 0 && <span className="rounded-full bg-danger/15 px-2 py-0.5 text-danger">расходится в {gaps.length === 1 ? '1 месте' : `${gaps.length} местах`}</span>}
-                  {told.verdict === 'same' && gaps.length === 0 && <span className="rounded-full bg-fg/10 px-2 py-0.5 text-muted">отличающихся мест нет</span>}
-                </div>
-                {(['mine', 'other'] as const).map((which) => {
-                  const key = which === 'mine' ? 'mine' : r.key;
-                  const playing = player.on?.key === key;
-                  return (
-                    <div key={which} className="flex items-center gap-3 py-0.5">
-                      <span className="w-12 shrink-0 text-[11px] text-dim">{which === 'mine' ? 'Ваш' : 'Найден'}</span>
-                      <button type="button" aria-label={playing ? 'Пауза' : which === 'mine' ? 'Слушать ваш файл' : 'Слушать найденный файл'} onClick={() => player.play(key, which === 'mine' ? myAudio : src)} className={cx('flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition hover:scale-105', playing ? 'border-accent text-accent' : 'border-line text-fg')}>
-                        <Icon name={playing ? 'pause' : 'play'} size={12} filled className={playing ? '' : 'translate-x-px'} />
-                      </button>
-                      <Lane
-                        bars={told.peaks?.[which] ?? []}
-                        length={which === 'mine' ? myLength : length}
-                        marks={gaps.map((g) => (which === 'mine' ? [g.at, g.to] : [g.other_at, g.other_to]))}
-                        playing={playing}
-                        at={player.on?.at ?? 0}
-                        label={which === 'mine' ? 'ваш файл' : 'найденный файл'}
-                        onSeek={(to) => player.play(key, which === 'mine' ? myAudio : src, to)}
-                      />
-                    </div>
-                  );
-                })}
-                {gaps.length > 0 && (
-                  <ul className="space-y-1 pt-1.5 text-xs">
-                    {gaps.map((g) => (
-                      <li key={g.at} className="flex flex-wrap items-center gap-2">
-                        <span className="w-24 tabular-nums text-danger">{clock(g.at)}–{clock(g.to)}</span>
-                        <button type="button" onClick={() => from('mine', g.at)} className="rounded-full bg-fg/10 px-2 py-0.5 hover:bg-fg/20">▶ ваш</button>
-                        <button type="button" onClick={() => from('other', g.other_at)} className="rounded-full bg-fg/10 px-2 py-0.5 hover:bg-fg/20">▶ найден</button>
-                        <span className="text-dim">{g.quieter === 'other' ? 'здесь тише найденный' : g.quieter === 'mine' ? 'здесь тише ваш' : ''}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </>
-            )}
-          </div>
-        )}
-      </li>
+      <WaveLane label={label} main={mainLane} bars={data.peaks[index]} length={data.length[index]}
+        marks={data.gaps.map((gap) => index === 'mine' ? [gap.at, gap.to] : [gap.other_at, gap.other_to])}
+        preview={player.on?.ref === file.ref ? player.on : null}
+        onSeek={(at) => player.play(file.ref, audioUrl(file.ref), at)}
+        onExcerpt={(part) => player.play(file.ref, audioUrl(file.ref, part), undefined, part)} />
     );
-  };
+  }
+
+  const title = (mine.data ? current != null : track.has_file) ? 'Найти другой файл' : 'Выбрать файл';
+  const grid: CSSProperties = { gridTemplateColumns: desktop
+    ? '1.75rem minmax(0,1fr) minmax(7rem,.5fr) 3rem 8rem'
+    : '1rem minmax(0,1fr) auto' };
+  const searching = sources.loading || reuploads.loading;
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-label="Найти другой файл">
-      <button type="button" aria-label="Закрыть" className="absolute inset-0 bg-black/70" onClick={close} />
-      <div className="anim-up pb-safe relative flex h-[100dvh] w-full max-w-4xl flex-col bg-surface sm:h-auto sm:max-h-[90dvh] sm:rounded-2xl">
-        <div className="flex items-center gap-2 border-b border-line px-4 py-2">
-          <h2 className="flex-1 truncate text-base font-bold">Найти другой файл</h2>
-          <IconButton icon="refresh" size={17} label="Искать заново" onClick={() => { sources.reload(); reuploads.reload(); }} />
-          <IconButton icon="x" label="Закрыть" onClick={close} />
-        </div>
-
-        <div className="border-b border-line px-4 py-2.5">
-          <p className="pb-1.5 text-[11px] text-dim">Сейчас у трека · {m?.name ?? '…'}{m?.source ? ` · ${providerLabel(m.source)}` : ''}</p>
-          <div className="flex items-center gap-2.5">
-            {coverButton('mine', 'Слушать текущий файл', () => player.play('mine', myAudio))}
-            <span className="w-32 min-w-0 shrink-0 md:w-52">
-              <span className={cx('block truncate text-[15px]', player.on?.key === 'mine' && 'text-accent')}>{track.title}</span>
-              <span className="block truncate text-[13px] text-muted">{track.artist}</span>
-            </span>
-            <Lane bars={myBars} length={myLength} marks={[]} playing={player.on?.key === 'mine'} at={player.on?.at ?? 0} label="ваш файл" onSeek={(to) => player.play('mine', myAudio, to)} />
-            <span className="shrink-0 text-xs tabular-nums text-dim">{fmtDuration(m?.duration_s)}</span>
-            <span className="shrink-0 whitespace-nowrap rounded-full bg-fg/10 px-2 py-0.5 text-[11px] text-muted">{fileWords(m?.codec, m?.bitrate_kbps)}</span>
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-labelledby={headingId}>
+      <button type="button" aria-label="Закрыть окно" tabIndex={-1} className="absolute inset-0 bg-black/70" onClick={close} />
+      <div className="anim-up pb-safe relative flex max-h-[94dvh] w-full max-w-4xl flex-col rounded-t-2xl bg-surface sm:max-h-[90dvh] sm:rounded-2xl">
+        <header className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2">
+          <div className="min-w-0 flex-1">
+            <h2 id={headingId} className="text-base font-bold">{title}</h2>
+            <p className="truncate text-xs text-muted"><TrackTitle title={track.title} track={track} /> · {track.artist}</p>
           </div>
-          {myBars.length === 0 && <p className="pt-1 text-[11px] text-dim">Дорожка вашего файла появится, когда вы включите первый найденный — тогда сервер сравнит их.</p>}
-        </div>
+          <IconButton icon="refresh" label="Искать заново" onClick={() => { sources.reload(); reuploads.reload(); }} />
+          <button ref={closeButton} type="button" aria-label="Закрыть" disabled={saving} onClick={close}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full hover:bg-fg/10"><Icon name="x" size={20} /></button>
+        </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {desktop && list.length > 0 && (
-            <div className="grid h-8 items-center gap-2.5 border-b border-line/60 px-4 text-xs text-dim" style={grid}>
-              <span />
-              <span>Найдено · {list.length}{loading ? ' · ищу ещё…' : ''}</span>
-              <span>Источник</span>
-              <span className="text-right">Время</span>
-              <span>Качество</span>
-              <span />
+          <div className="flex flex-wrap gap-1 border-b border-line px-3 py-1 lg:justify-end">
+            <Button variant="ghost" small icon="link" aria-expanded={showLink} onClick={() => setShowLink(!showLink)}>Скачать по ссылке</Button>
+            <Button variant="ghost" small icon="upload" disabled={busy !== null} onClick={() => input.current?.click()}>Загрузить файл</Button>
+            <input ref={input} type="file" accept="audio/*,.flac,.opus,.ogg,.oga,.m4a,.mp3,.wav,.aac,.aiff,.aif" hidden
+              onChange={(e) => { void upload(e.target.files?.[0]); e.target.value = ''; }} />
+          </div>
+          {busy === 'upload' && <div className="border-b border-line px-4 py-2" aria-label="Загрузка файла"><ProgressBar value={progress} /></div>}
+          {showLink && (
+            <form className="space-y-1.5 border-b border-line px-4 py-2" onSubmit={(e) => { e.preventDefault(); void addLink(); }}>
+              <div className="flex items-center gap-2">
+                <input className="input min-w-0 flex-1" type="url" autoFocus required value={url} aria-label="Ссылка на страницу трека"
+                  placeholder="https://…" onChange={(e) => setUrl(e.target.value)} />
+                <Button type="submit" small busy={busy === 'link'} disabled={busy !== null || !url.trim()}>Скачать</Button>
+              </div>
+              <div className="text-xs text-muted"><AudioServiceList /></div>
+            </form>
+          )}
+
+          {!mine.data && mine.error && <p role="alert" className="px-4 py-4 text-sm text-danger">{mine.error}</p>}
+          {desktop && !!rows.size && (
+            <div aria-hidden="true" className="grid items-center gap-3 border-b border-line px-4 py-2 text-xs text-dim" style={grid}>
+              <span className="text-center">#</span><span>Название</span><span>Файл</span><span className="text-right">Время</span>
             </div>
           )}
-          {list.length === 0 ? (
-            loading ? (
-              <div className="flex justify-center py-10"><Spinner /></div>
-            ) : (
-              <p className="px-4 py-10 text-center text-sm text-muted">Источники ничего не нашли. Вставьте ссылку на страницу трека ниже.</p>
-            )
-          ) : (
-            <ul>{list.map(row)}</ul>
+          <ul aria-label="Файлы для трека" className="px-2 py-1">
+            {[...rows.values()].map((row, index) => {
+              const isMain = main?.ref === row.ref;
+              const isOther = other?.ref === row.ref;
+              const playing = player.on?.ref === row.ref;
+              const wait = busy === row.ref;
+              return (
+                <li key={row.ref} style={grid} className={cx('grid min-h-14 items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-fg/5 lg:gap-3', isOther && 'bg-fg/[0.07]')}>
+                  {isMain || isOther ? (
+                    <span role="img" aria-label={isMain ? 'Основной файл' : 'Файл для сравнения'}
+                      className={cx('flex justify-center', isMain ? 'text-warn' : 'text-muted')}>
+                      <Icon name={isMain ? 'star' : 'search'} filled={isMain} size={17} />
+                    </span>
+                  ) : <span className="text-center text-xs tabular-nums text-dim">{index + 1}</span>}
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <button type="button" disabled={wait || (!!busy && !ready(row.ref))}
+                      aria-label={(playing ? 'Пауза · ' : 'Слушать · ') + row.title}
+                      className="group/cover relative h-10 w-10 shrink-0 rounded-md" aria-busy={wait || undefined}
+                      onClick={() => hear(row)}>
+                      <Cover src={row.cover_url || track.cover_url || mine.data?.cover_url} size={40} />
+                      <span className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white',
+                        desktop && !playing && !wait && 'opacity-0 group-hover/cover:opacity-100 group-focus-visible/cover:opacity-100')}>
+                        {wait ? <Spinner size={16} /> : <Icon name={playing ? 'pause' : 'play'} size={16} filled />}
+                      </span>
+                    </button>
+                    <div className="min-w-0">
+                      <div className={cx('truncate text-[15px]', playing && 'text-accent')}>
+                        <TrackTitle title={row.title} track={row.ref === CURRENT ? track : row} />
+                      </div>
+                      <div className="truncate text-[13px] text-muted">{row.artist}</div>
+                      {!desktop && <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
+                        <FileCell row={row} />{row.duration_s ? <span>{fmtDuration(row.duration_s)}</span> : null}
+                      </div>}
+                    </div>
+                  </div>
+                  {desktop && <div className="min-w-0 truncate text-xs text-muted"><FileCell row={row} /></div>}
+                  {desktop && <span className="text-right text-xs tabular-nums text-dim">{fmtDuration(row.duration_s)}</span>}
+                  <div className="justify-self-end">
+                    {isMain ? null : !ready(row.ref) ? (
+                      <Button variant="secondary" small busy={wait} disabled={busy !== null}
+                        onClick={() => void download(row)}>Скачать</Button>
+                    ) : !main || isOther ? (
+                      <Button variant="secondary" small disabled={!mine.data || saving} onClick={() => choose(row)}>
+                        <Icon name="star" size={15} filled className="text-warn" />Выбрать
+                      </Button>
+                    ) : (
+                      <Button variant="secondary" small icon="search" onClick={() => { player.stop(); setComparisonRef(row.ref); }}>Сравнить</Button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          {searching && (
+            <div role="status" aria-label="Поиск файлов" className="flex justify-center py-3"><Spinner size={18} /></div>
+          )}
+          {!searching && rows.size === (current ? 1 : 0) && (
+            <p className="px-4 py-4 text-sm text-muted">Варианты не найдены.</p>
+          )}
+          {mine.data && !main && Object.keys(prepared).length > 0 && (
+            <p className="px-4 pb-3 text-xs text-muted">Выберите основной файл, чтобы сравнить его с другим.</p>
+          )}
+          {main && other && pairKey && (
+            <section aria-label="Сравнение по звуку" className="space-y-1 border-t border-line bg-bg/35 px-4 py-3">
+              <div className="flex items-baseline justify-between gap-2">
+                <h3 className="text-sm font-medium">Сравнение по звуку</h3>
+                {player.on?.excerpt && <span className="text-xs tabular-nums text-muted">{clock(player.on.at)}</span>}
+              </div>
+              {result ? (
+                <>
+                  <p className="text-xs text-muted">
+                    {{ same: 'Та же запись', alike: 'Похожая запись', other: 'Другая запись', unknown: 'Не удалось определить сходство' }[result.verdict]}
+                  </p>
+                  {renderWave(main, reversed ? 'other' : 'mine', result, true)}
+                  {renderWave(other, reversed ? 'mine' : 'other', result, false)}
+                </>
+              ) : comparison.error && !comparison.loading ? (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-danger" role="alert">
+                  {comparison.error}<Button small onClick={() => comparison.reload()}>Повторить</Button>
+                </div>
+              ) : (
+                <div role="status" aria-label="Сравниваем файлы" className="py-2"><Spinner size={16} /></div>
+              )}
+            </section>
           )}
         </div>
 
-        <div className="border-t border-line px-4 py-2.5">
-          <div className="flex gap-2">
-            <input className="input min-w-0 flex-1" placeholder="Своя ссылка: YouTube, SoundCloud, hitmoz, hitmos.fm" aria-label="Ссылка на трек" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && url.trim() && void addLink()} />
-            <Button small busy={busy === 'url'} disabled={!url.trim() || (!!busy && busy !== 'url')} onClick={() => void addLink()}>
-              Скачать и сравнить
-            </Button>
-          </div>
-          <p className="pt-1.5 text-[11px] text-dim">После замены прежний файл хранится 30 дней: сравнить и вернуть его можно в «Качество звука» → «Заменено».</p>
-        </div>
+        <footer className="flex shrink-0 justify-end gap-2 border-t border-line px-4 py-2">
+          <Button variant="ghost" disabled={saving} onClick={close}>Отмена</Button>
+          <Button variant="primary" busy={saving} disabled={!mine.data || !selected || selected === CURRENT || !ready(selected)}
+            onClick={() => void commit()}>Готово</Button>
+        </footer>
       </div>
     </div>,
     document.body,
   );
+}
+
+function FileCell({ row }: { row: FileRow }) {
+  return row.source === 'upload'
+    ? <span className="inline-flex flex-wrap items-center gap-x-1.5"><ServiceBadge service="upload" label="Свой файл" />{fileWords(row, true)}</span>
+    : <FileInfo info={row} />;
 }

@@ -268,7 +268,7 @@ async def overview(s: AsyncSession, user_id: int, *, period: str = "month", by: 
         main = t.main_artist if t else p.artist
         if p.counted:
             heard.add(track_key)
-        add("tracks", track_key, p, name=title, sub=artist)
+        add("tracks", track_key, p, name=title, sub=artist, track_id=p.track_id, ref=p.key if t is None else None)
         if main:
             add("artists", main.lower(), p, name=main, sub=None)
         if album:

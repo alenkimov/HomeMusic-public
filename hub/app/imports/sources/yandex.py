@@ -199,16 +199,23 @@ def _names(artists: Any) -> str:
     return ", ".join(a.name for a in artists or [] if getattr(a, "name", None))
 
 
+def account_details(client: Any) -> tuple[str | None, str | None, str | None]:
+    status = client.me
+    account = status.account if status else None
+    uid = getattr(account, "uid", None)
+    has_plus = getattr(getattr(status, "plus", None), "has_plus", None)
+    plan = "plus" if has_plus is True else "free" if has_plus is False else None
+    return str(uid) if uid else None, (account.login or account.display_name) if account else None, plan
+
+
 def fetch_snapshot(client: Any, owner: str | int | None, *, signed_in: bool) -> Snapshot:
     """Everything of `owner` (None: the signed-in user) that the client may read, in Yandex's order."""
     from yandex_music.exceptions import NotFoundError, UnauthorizedError, YandexMusicError
 
     account: str | None = str(owner) if owner is not None else None
     try:
-        if signed_in:
-            acc = client.me.account if client.me else None
-            account = (acc.login or acc.display_name) if acc else account
-        snap = Snapshot(account=account)
+        subject, name, plan = account_details(client) if signed_in else (None, None, None)
+        snap = Snapshot(account=name or account, account_subject=subject, plan=plan)
         likes = client.users_likes_tracks(owner)
         # newest first, as in the app
         snap.collections.append(SnapCollection(

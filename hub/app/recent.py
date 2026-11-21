@@ -16,7 +16,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import stats
-from app.catalog.models import split_ref
+from app.catalog import lookup, registry
+from app.catalog.models import CatalogAlbum
 from app.models import PlayEvent, Playlist, PlaylistCover, TagSelection, Track
 from app.services import svc
 
@@ -118,8 +119,9 @@ async def _place(s: AsyncSession, user_id: int, path: str, track: Track | None) 
             cover = cat.get("cover_small_url") or cat.get("cover_url")
         else:
             try:
-                src, id_ = split_ref(tail)
-                a = await svc.deezer.get_album(id_) if src == "dz" and svc.deezer else None
+                registered = await registry.by_address(s, tail)
+                a = (CatalogAlbum.model_validate(registered.album_json) if registered and registered.album_json
+                     else await svc.album(tail))
             except Exception as e:
                 log.info("recent: album %s: %r", tail, e)
                 a = None
@@ -128,16 +130,16 @@ async def _place(s: AsyncSession, user_id: int, path: str, track: Track | None) 
             title, cover = a.title, a.cover_small_url or a.cover_url
         return {"to": _to(path), "kind": "album", "title": title, "cover_url": cover, "icon": "disc"}
     if head == "artist":
-        try:
-            src, id_ = split_ref(tail)
-            a = await svc.deezer.get_artist(id_) if src == "dz" and svc.deezer else None
-        except Exception as e:
-            log.info("recent: artist %s: %r", tail, e)
-            a = None
-        if a is None:
+        from app.library import artists
+
+        holder = await artists.by_id(s, int(tail)) if registry.numeric_id(tail) is not None else await artists.by_ref(s, tail)
+        refs = await artists.profiles(s, holder.id) if holder else [tail]
+        page = await lookup.artist_page(refs)
+        if holder is None and page is None:
             return None
-        return {"to": _to(path), "kind": "artist", "title": a.name, "cover_url": a.picture_small_url or a.picture_url,
-                "icon": "user", "round": True}
+        cover = (page.artist.picture_small_url or page.artist.picture_url) if page else None
+        return {"to": _to(path), "kind": "artist", "title": holder.name if holder else page.artist.name,
+                "cover_url": cover, "icon": "user", "round": True}
     if head == "lib" and track is not None:
         if parts[1] == "album":
             return {"to": _to(path), "kind": "album", "title": track.album or "Альбом",

@@ -3,7 +3,8 @@ import { useFollowedCount, useUnseenReleases } from '../lib/releases';
 import { api } from '../api/client';
 import { ForYouTiles } from '../components/ForYouTiles';
 import { Icon } from '../components/Icon';
-import { ArtistBubble, TrackRow } from '../components/catalog';
+import { ArtistBubble, TrackRow, TrackTableHeader } from '../components/catalog';
+import { TrackTable } from '../components/TrackTable';
 import { Cover, Empty, ErrorState, IconButton, PageHeader, SectionTitle, SkeletonRows } from '../components/ui';
 import { useHubEvent } from '../lib/events';
 import { plural, tracksWord } from '../lib/format';
@@ -143,9 +144,12 @@ export function LibrarySearchPage() {
             {tracks.length > 0 && (
               <section aria-label="Треки">
                 <SectionTitle>Треки</SectionTitle>
-                {tracks.map((t, i) => (
-                  <TrackRow key={`${t.ref}:${i}`} track={t} showAlbum queue={tracks.filter((x) => !x.unknown)} index={i + 1} />
-                ))}
+                <TrackTable tracks={tracks} numbered album>
+                  <TrackTableHeader numbered album />
+                  {tracks.map((t, i) => (
+                    <TrackRow key={`${t.ref}:${i}`} track={t} showAlbum queue={tracks.filter((x) => !x.unknown)} index={i + 1} />
+                  ))}
+                </TrackTable>
               </section>
             )}
           </>

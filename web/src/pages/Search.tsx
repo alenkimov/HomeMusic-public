@@ -1,28 +1,38 @@
+import { TrackTitle } from '../components/TrackTitle';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, errorMessage, isAbort, peekCache, withQuery } from '../api/client';
-import type { Candidate, ProviderSearchOut, SearchOut, SearchRecent, SearchTracksOut, TrackOut } from '../api/types';
+import type { Candidate, SearchOut, SearchRecent, SearchTrackOut, SearchTracksOut } from '../api/types';
 import { ArtistBubble, ReleaseCard, TrackRow, TrackTableHeader, listenTrack } from '../components/catalog';
+import { TrackTable } from '../components/TrackTable';
+import { SourceStatuses } from '../components/SourceStatuses';
+import { CatalogSourceMarks } from '../components/CatalogSourceMarks';
 import { CandidateRow, fileRef } from '../components/candidate';
+import { ServiceBadge, ServiceText } from '../components/ServiceBadge';
 import { Icon } from '../components/Icon';
-import { Button, Cover, Empty, ErrorState, IconButton, Notice, SectionTitle, Segmented, SkeletonRows, Spinner, cx } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, IconButton, Notice, SectionTitle, Segmented, SkeletonRows, Spinner } from '../components/ui';
 import { startDownload } from '../lib/actions';
 import { STANDALONE } from '../lib/embedded';
 import { useHubEvent } from '../lib/events';
-import { useAsync, useDebounced, useRememberScrollX, type AsyncState } from '../lib/hooks';
+import { useAsync, useDebounced, useRememberScrollX } from '../lib/hooks';
 import { extendQueue, markQueued, useListen } from '../lib/listen';
 import { canPlayAll } from '../lib/player';
-import { enc, navigate } from '../lib/router';
+import { Link, albumPath, artistPath, enc, navigate } from '../lib/router';
+import { useLiveSearch } from '../lib/search';
+import { spotifyURL } from '../lib/spotify';
 import { FOCUS_SEARCH } from '../components/TabBar';
 import { startChatWith } from './AssistantChat';
 
-export type SearchTab = 'catalog' | 'files' | 'reuploads';
+export type SearchTab = 'catalog' | 'playlists' | 'files' | 'reuploads';
 
-export const searchTab = (v: string | null): SearchTab => (v === 'files' || v === 'reuploads' ? v : 'catalog');
+export const searchTab = (v: string | null): SearchTab => (v === 'files' || v === 'reuploads' || v === 'playlists' ? v : 'catalog');
 
 export function SearchPage({ initialQuery, initialTab }: { initialQuery: string; initialTab: SearchTab }) {
   const [q, setQ] = useState(initialQuery);
   const [tab, setTab] = useState<SearchTab>(initialTab);
   const dq = useDebounced(q.trim(), 400);
+  const publicLink = spotifyURL(dq);
+  const scope = tab === 'files' ? 'sources' : tab === 'reuploads' ? 'reuploads' : 'catalog';
+  const search = useLiveSearch(dq, scope, !!dq && !publicLink);
   const inputRef = useRef<HTMLInputElement>(null);
   const shots = useRef<HTMLInputElement>(null);
   const [nothing, setNothing] = useState(false); // the search that is on the screen found nothing
@@ -61,47 +71,52 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
     <div>
       <header className="pt-safe sticky top-(--page-top) z-20 bg-bg/95 px-4 pb-3 backdrop-blur">
         <h1 className="sr-only">Поиск</h1>
-        <div className="relative pt-3">
-          <Icon name="search" size={20} className="pointer-events-none absolute left-3.5 top-[calc(50%+6px)] -translate-y-1/2 text-dim" />
-          <input
-            ref={inputRef}
-            type="search"
-            maxLength={512}
-            enterKeyHint="search"
-            className={cx('input h-12 rounded-2xl border-transparent bg-surface pl-11', STANDALONE ? 'pr-20' : 'pr-11')}
-            placeholder={STANDALONE ? 'Трек, исполнитель или просьба' : 'Исполнитель, альбом или трек'}
-            aria-label="Поиск"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== 'Enter') return;
-              (e.target as HTMLInputElement).blur();
-              // Enter is asking for it: the query is kept. What is merely typed is not («still lovi» on the way to a song)
-              if (q.trim().length >= 2) remember({ kind: 'query', title: q.trim() });
-            }}
-          />
-          <div className="absolute right-0.5 top-[calc(50%+6px)] flex -translate-y-1/2 items-center">
-            {q && (
-              <IconButton
-                icon="x"
-                label="Очистить"
-                className="!w-9 text-muted"
-                onClick={() => {
-                  setQ('');
-                  inputRef.current?.focus();
-                }}
-              />
-            )}
-            {STANDALONE && (
-              <>
-                <IconButton icon="image" label="Скриншот или список — ассистенту" className="!w-10 text-muted" onClick={() => shots.current?.click()} />
-                <input ref={shots} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length) ask(files); }} />
-              </>
-            )}
+        <div className="relative pt-3 max-[359px]:-mx-1.5">
+          <div className="flex min-h-12 items-center gap-1 rounded-2xl bg-surface pl-3 pr-0.5 ring-1 ring-inset ring-transparent focus-within:ring-fg/20">
+            <Icon name="search" size={20} className="pointer-events-none shrink-0 text-dim" />
+            <input
+              ref={inputRef}
+              type="search"
+              maxLength={512}
+              enterKeyHint="search"
+              className="h-12 w-0 min-w-0 flex-1 appearance-none bg-transparent pl-1.5 text-base outline-none [&::-webkit-search-cancel-button]:appearance-none"
+              placeholder={STANDALONE ? 'Трек, исполнитель или просьба' : 'Исполнитель, альбом или трек'}
+              aria-label="Поиск"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                (e.target as HTMLInputElement).blur();
+                const link = spotifyURL(q);
+                if (link) { navigate(`/open?url=${enc(link)}`); return; }
+                // Enter is asking for it: the query is kept. What is merely typed is not («still lovi» on the way to a song)
+                if (q.trim().length >= 2) remember({ kind: 'query', title: q.trim() });
+              }}
+            />
+            {q.trim() === dq && search.sources.length > 0 && <SourceStatuses key={search.key} sources={search.sources} label="Статусы источников поиска" />}
+            <div className="flex shrink-0 items-center">
+              {q && (
+                <IconButton
+                  icon="x"
+                  label="Очистить"
+                  className="!w-8 text-muted"
+                  onClick={() => {
+                    setQ('');
+                    inputRef.current?.focus();
+                  }}
+                />
+              )}
+              {STANDALONE && (
+                <>
+                  <IconButton icon="image" label="Скриншот или список — ассистенту" className="!w-9 text-muted sm:!w-10" onClick={() => shots.current?.click()} />
+                  <input ref={shots} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length) ask(files); }} />
+                </>
+              )}
+            </div>
           </div>
         </div>
         {/* where to search is asked only once there is something to search for */}
-        {q.trim() && (
+        {q.trim() && !publicLink && (
           <div className="mt-3">
             <Segmented<SearchTab>
               label="Где искать"
@@ -109,6 +124,7 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
               onChange={setTab}
               options={[
                 { value: 'catalog', label: 'Каталог' },
+                { value: 'playlists', label: 'Плейлисты' },
                 { value: 'files', label: 'Файлы' },
                 { value: 'reuploads', label: 'Без цензуры' },
               ]}
@@ -124,16 +140,45 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
         )}
       </header>
 
-      {!dq ? (
+      {publicLink ? (
+        <div className="p-4"><Button icon="link" onClick={() => navigate(`/open?url=${enc(publicLink)}`)}>Открыть ссылку Spotify</Button></div>
+      ) : !dq ? (
         <RecentSearches onPick={setQ} />
       ) : tab === 'catalog' ? (
-        <CatalogResults q={dq} onNothing={setNothing} />
-      ) : tab === 'files' ? (
-        <ProviderResults q={dq} onNothing={setNothing} />
+        <CatalogResults q={dq} search={search} onNothing={setNothing} />
+      ) : tab === 'playlists' ? (
+        <PlaylistResults q={dq} search={search} />
       ) : (
-        <ReuploadResults q={dq} onNothing={setNothing} />
+        <FileResults search={search} reuploads={tab === 'reuploads'} onNothing={setNothing} />
       )}
     </div>
+  );
+}
+
+type SearchRun = ReturnType<typeof useLiveSearch>;
+
+function PlaylistResults({ q, search }: { q: string; search: SearchRun }) {
+  const data = search.data && 'library' in search.data ? search.data : undefined;
+  const playlists = data?.playlists ?? [];
+  if (!playlists.length && search.loading) return <SkeletonRows n={5} />;
+  if (!playlists.length && search.error) return <ErrorState text={search.error} onRetry={search.reload} />;
+  if (!playlists.length) return <Empty icon="playlist" title="Плейлисты не найдены" />;
+  return (
+    <ul className="space-y-1 px-4">
+      {search.error && <li><ErrorState text={search.error} onRetry={search.reload} /></li>}
+      {playlists.map((p) => (
+        <li key={p.id}>
+          <Link to={`/spotify/playlist/${enc(p.id)}?q=${enc(q)}`} className="flex items-center gap-3 rounded-lg p-2 hover:bg-hover">
+            <Cover src={p.cover_url} size={48} alt="" icon="playlist" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[15px] font-semibold">{p.title}</span>
+              <ServiceBadge service="spotify" label={p.owner ? `Spotify · ${p.owner}` : 'Spotify'} size={14} className="text-xs text-muted" />
+            </span>
+            <Icon name="chevron" size={18} className="text-dim" />
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -182,7 +227,7 @@ function RecentSearches({ onPick }: { onPick: (q: string) => void }) {
   };
 
   const forget = (key: string) => {
-    res.setData((prev) => (prev ? { items: prev.items.filter((x) => x.key !== key), frequent: prev.frequent.filter((x) => x.key !== key) } : prev));
+    res.setData((prev) => (prev ? { items: prev.items.filter((x) => x.key !== key) } : prev));
     api.forgetSearch(key).catch((e) => {
       setClearError(`Не удалось убрать из недавнего. ${errorMessage(e)}`);
       res.reload(true);
@@ -193,7 +238,7 @@ function RecentSearches({ onPick }: { onPick: (q: string) => void }) {
   if (!res.data && res.loading) return <SkeletonRows n={3} />;
   if (res.error && !recent.length) return <ErrorState text={res.error} onRetry={() => res.reload()} />;
   if (!recent.length) {
-    return <Empty icon="search" title="Что будем слушать?" text="Ищите по каталогу Deezer и hitmoz, по своей библиотеке или по файлам в источниках." />;
+    return <Empty icon="search" title="Что будем слушать?" text={<ServiceText text="Ищите по каталогу Deezer и hitmoz, по своей библиотеке или по файлам в источниках." />} />;
   }
   return (
     <div>
@@ -224,7 +269,7 @@ function RecentSearches({ onPick }: { onPick: (q: string) => void }) {
                 <Cover src={r.cover_url} size={40} round={r.kind === 'artist'} icon={r.kind === 'artist' ? 'user' : r.kind === 'album' ? 'disc' : 'note'} alt="" />
               )}
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[15px]">{r.title}</span>
+                <span className="block truncate text-[15px]"><TrackTitle title={r.title} track={r.kind === 'track' ? r : undefined} /></span>
                 <span className="block truncate text-[13px] text-muted">{[RECENT_KIND[r.kind], r.subtitle].filter(Boolean).join(' · ')}</span>
               </span>
             </button>
@@ -239,19 +284,6 @@ function RecentSearches({ onPick }: { onPick: (q: string) => void }) {
           </Button>
         </div>
       )}
-      {!!res.data?.frequent.length && (
-        <section aria-label="Вы часто ищете">
-          <SectionTitle>Вы часто ищете</SectionTitle>
-          <div className="flex flex-wrap gap-2 px-4">
-            {res.data.frequent.map((r) => (
-              <button key={r.key} type="button" onClick={() => (r.link ? navigate(r.link) : onPick(r.title))} className="flex min-h-10 max-w-full items-center gap-2 rounded-full bg-surface px-4 text-[15px] hover:bg-raised">
-                {r.kind === 'query' && <Icon name="search" size={15} className="shrink-0 text-dim" />}
-                <span className="truncate">{r.title}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
     </div>
   );
 }
@@ -262,7 +294,7 @@ const MORE_AT = 10;
 interface MoreTracks {
   q: string;
   first: SearchOut | undefined;
-  pages: TrackOut[][];
+  pages: SearchTrackOut[][];
   next: number | null;
   loading: boolean;
   failed: boolean;
@@ -271,7 +303,7 @@ interface MoreTracks {
 /** Pages loaded earlier for this search are still in the request cache: "back" to the results gets them (and the
  * scroll position) again at once. */
 function restoreMore(q: string, first: SearchOut | undefined): MoreTracks {
-  const pages: TrackOut[][] = [];
+  const pages: SearchTrackOut[][] = [];
   let next = first?.tracks_next ?? null;
   for (let p: SearchTracksOut | undefined; next !== null && (p = peekCache(withQuery('/api/search/tracks', { q, offset: next }))); ) {
     pages.push(p.tracks);
@@ -347,35 +379,34 @@ function useNothing(nothing: boolean, tell: (nothing: boolean) => void) {
   }, [nothing, tell]);
 }
 
-function CatalogResults({ q, onNothing }: { q: string; onNothing: (nothing: boolean) => void }) {
-  const res = useAsync((s) => api.search(q, s).then((out) => ({ q, out })), [q]);
-  const fresh = res.data?.q === q ? res.data.out : peekCache<SearchOut>(withQuery('/api/search', { q }));
-  // while a new search loads, the results of the previous one stay on screen
-  const [dataQ, data] = fresh ? [q, fresh] : res.data ? [res.data.q, res.data.out] : [q, undefined];
-  const more = useMoreTracks(dataQ, data);
+function CatalogResults({ q, search, onNothing }: { q: string; search: SearchRun; onNothing: (nothing: boolean) => void }) {
+  const data = search.data && 'library' in search.data ? search.data : undefined;
+  const more = useMoreTracks(q, data);
   const artistsRow = useRememberScrollX(`search:${q}:artists`);
   const albumsRow = useRememberScrollX(`search:${q}:albums`);
-  useNothing(!!data && dataQ === q && !res.error && !data.library.length && !data.artists.length && !data.albums.length && !data.tracks.length, onNothing);
-  if (res.loading && !data) return <SkeletonRows n={8} />;
-  if (res.error) return <ErrorState text={res.error} onRetry={() => res.reload()} />;
+  const empty = !!data && !data.library.length && !data.artists.length && !data.albums.length && !data.tracks.length;
+  useNothing(!search.loading && !search.error && empty, onNothing);
+  if (search.loading && (!data || empty)) return <SkeletonRows n={8} />;
+  if (search.error && !data) return <ErrorState text={search.error} onRetry={search.reload} />;
   if (!data) return null;
-  const empty = !data.library.length && !data.artists.length && !data.albums.length && !data.tracks.length;
   return (
     <div className="pb-4">
+      {search.error && <ErrorState text={search.error} onRetry={search.reload} />}
       {data.errors.length > 0 && (
         <div className="px-4 pt-2">
-          <Notice>{data.errors.join('. ')}</Notice>
+          <Notice><ServiceText text={data.errors.join('. ')} /></Notice>
         </div>
       )}
-      {empty && <Empty icon="search" title="Ничего не найдено" text="Попробуйте другое написание или поищите среди файлов в источниках." />}
+      {empty && !search.error && <Empty icon="search" title="Ничего не найдено" text="Попробуйте другое написание или поищите среди файлов в источниках." />}
 
       {data.artists.length > 0 && (
         <section aria-label="Исполнители">
           <SectionTitle>Исполнители</SectionTitle>
           <div ref={artistsRow} className="no-scrollbar flex gap-3 overflow-x-auto px-4 pb-1">
             {data.artists.map((a) => (
-              <Opened key={a.ref} item={{ kind: 'artist', ref: a.ref, title: a.name, cover_url: a.picture_small_url ?? a.picture_url, link: `/artist/${enc(a.ref)}` }}>
+              <Opened key={a.ref} item={{ kind: 'artist', ref: a.ref, title: a.name, cover_url: a.picture_small_url ?? a.picture_url, link: artistPath(a) }}>
                 <ArtistBubble artist={a} />
+                <div className="mt-1 flex justify-center"><CatalogSourceMarks services={a.found_in} /></div>
               </Opened>
             ))}
           </div>
@@ -387,8 +418,8 @@ function CatalogResults({ q, onNothing }: { q: string; onNothing: (nothing: bool
           <SectionTitle>Альбомы</SectionTitle>
           <div ref={albumsRow} className="no-scrollbar flex gap-4 overflow-x-auto px-4 pb-1">
             {data.albums.map((a) => (
-              <Opened key={a.ref} className="w-36 shrink-0" item={{ kind: 'album', ref: a.ref, title: a.title, subtitle: a.artist, cover_url: a.cover_small_url ?? a.cover_url, link: `/album/${enc(a.ref)}` }}>
-                <ReleaseCard album={a} showArtist />
+              <Opened key={a.ref} className="w-36 shrink-0" item={{ kind: 'album', ref: a.ref, title: a.title, subtitle: a.artist, cover_url: a.cover_small_url ?? a.cover_url, link: albumPath(a) }}>
+                <ReleaseCard album={a} showArtist showSources />
               </Opened>
             ))}
           </div>
@@ -398,13 +429,15 @@ function CatalogResults({ q, onNothing }: { q: string; onNothing: (nothing: bool
       {more.tracks.length > 0 && (
         <section aria-label="Треки">
           <SectionTitle>Треки</SectionTitle>
-          <TrackTableHeader numbered album />
-          {more.tracks.map((t, i) => (
-            <Opened key={t.ref} item={{ kind: 'track', ref: t.ref, title: t.title, subtitle: t.artists?.length ? t.artists.join(', ') : t.artist, cover_url: t.cover_small_url ?? t.cover_url, link: t.album_ref ? `/album/${enc(t.album_ref)}` : null }}>
-              {i === more.trigger && <div ref={more.sentinel} aria-hidden />}
-              <TrackRow track={t} showAlbum queue={more.tracks} index={i + 1} />
-            </Opened>
-          ))}
+          <TrackTable tracks={more.tracks} numbered album>
+            <TrackTableHeader numbered album />
+            {more.tracks.map((t, i) => (
+              <Opened key={t.ref} item={{ kind: 'track', ref: t.ref, title: t.title, subtitle: t.artists?.length ? t.artists.join(', ') : t.artist, cover_url: t.cover_small_url ?? t.cover_url, link: t.album_ref ? `/album/${enc(t.album_ref)}` : null }}>
+                {i === more.trigger && <div ref={more.sentinel} aria-hidden />}
+                <TrackRow track={t} showAlbum queue={more.tracks} index={i + 1} foundIn={t.found_in} />
+              </Opened>
+            ))}
+          </TrackTable>
           {more.loading && (
             <div className="flex justify-center py-4 text-muted" role="status" aria-label="Загружаю ещё">
               <Spinner size={20} />
@@ -427,39 +460,18 @@ function CatalogResults({ q, onNothing }: { q: string; onNothing: (nothing: bool
 /** A result of the search: whatever is done with it — opened, played, ♥ — it was found, and goes to «Недавнее». */
 function Opened({ item, className, children }: { item: Omit<SearchRecent, 'key'>; className?: string; children: ReactNode }) {
   return (
-    <div className={className} onClickCapture={() => remember(item)}>
+    <div className={className} onClickCapture={(e) => {
+      if (!(e.target instanceof Element && e.target.closest('[data-source-details]'))) remember(item);
+    }}>
       {children}
     </div>
   );
 }
 
-function ProviderResults({ q, onNothing }: { q: string; onNothing: (nothing: boolean) => void }) {
-  const res = useAsync<ProviderSearchOut>((s) => api.searchProviders(q, s, 'sources'), [q]);
-  useNothing(!res.loading && !!res.data && !res.data.candidates.length, onNothing);
-  return (
-    <div className="pb-4">
-      <p className="px-4 pt-1 text-xs text-muted">Сырые файлы из hitmoz, hitmos.fm и YouTube. Выберите конкретный файл, если автоматический выбор не подходит; ▷ — послушать его до скачивания.</p>
-      <FileResults res={res} skeleton={6} empty={<Empty icon="search" title="Файлы не найдены" />} />
-    </div>
-  );
-}
-
-/** Re-uploads by small channels (slower: SoundCloud answers in ~7 s). */
-function ReuploadResults({ q, onNothing }: { q: string; onNothing: (nothing: boolean) => void }) {
-  const res = useAsync<ProviderSearchOut>((s) => api.searchProviders(q, s, 'reuploads'), [q]);
-  useNothing(!res.loading && !!res.data && !res.data.candidates.length, onNothing);
-  return (
-    <div className="pb-4">
-      <p className="px-4 pt-1 text-xs text-muted">
-        Копии с маленьких каналов YouTube и SoundCloud: там выкладывают треки, которые после закона 2026 года отредактировали в официальных версиях. Перед скачиванием их можно послушать.
-      </p>
-      <FileResults res={res} skeleton={4} empty={<Empty icon="search" title="Перезаливов не нашлось" />} />
-    </div>
-  );
-}
-
-function FileResults({ res, skeleton, empty }: { res: AsyncState<ProviderSearchOut>; skeleton: number; empty: ReactNode }) {
+function FileResults({ search, reuploads, onNothing }: { search: SearchRun; reuploads: boolean; onNothing: (nothing: boolean) => void }) {
   const [queued, setQueued] = useState<Record<string, 'busy' | 'done'>>({});
+  const data = search.data && 'candidates' in search.data ? search.data : undefined;
+  useNothing(!search.loading && !search.error && !!data && !data.candidates.length, onNothing);
 
   const download = async (c: Candidate) => {
     const key = `${c.provider}:${c.provider_id}`;
@@ -474,19 +486,24 @@ function FileResults({ res, skeleton, empty }: { res: AsyncState<ProviderSearchO
     });
   };
 
-  if (res.loading) return <SkeletonRows n={skeleton} />;
-  if (res.error) return <ErrorState text={res.error} onRetry={() => res.reload()} />;
-  const data = res.data;
-  if (!data) return null;
   return (
-    <>
-      {data.errors.length > 0 && (
+    <div className="pb-4">
+      <p className="px-4 pt-1 text-xs text-muted">
+        <ServiceText text={reuploads
+          ? 'Копии с маленьких каналов YouTube и SoundCloud: там выкладывают треки, которые после закона 2026 года отредактировали в официальных версиях. Перед скачиванием их можно послушать.'
+          : 'Сырые файлы из hitmoz, hitmos.fm и YouTube. Выберите конкретный файл, если автоматический выбор не подходит; ▷ — послушать его до скачивания.'} />
+      </p>
+      {search.loading && !data?.candidates.length && <SkeletonRows n={reuploads ? 4 : 6} />}
+      {search.error && <ErrorState text={search.error} onRetry={search.reload} />}
+      {!!data?.errors.length && (
         <div className="px-4 pt-2">
-          <Notice>{data.errors.join('. ')}</Notice>
+          <Notice><ServiceText text={data.errors.join('. ')} /></Notice>
         </div>
       )}
-      {!data.candidates.length && empty}
-      <ul className="divide-y divide-line/60">
+      {!search.loading && !search.error && data && !data.candidates.length && (
+        <Empty icon="search" title={reuploads ? 'Перезаливов не нашлось' : 'Файлы не найдены'} />
+      )}
+      {!!data?.candidates.length && <ul className="divide-y divide-line/60">
         {data.candidates.map((c) => {
           const key = `${c.provider}:${c.provider_id}`;
           return (
@@ -495,8 +512,8 @@ function FileResults({ res, skeleton, empty }: { res: AsyncState<ProviderSearchO
             </li>
           );
         })}
-      </ul>
-    </>
+      </ul>}
+    </div>
   );
 }
 

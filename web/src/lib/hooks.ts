@@ -1,5 +1,24 @@
 import { useCallback, useEffect, useRef, useState, type DependencyList } from 'react';
 import { errorMessage, isAbort } from '../api/client';
+import type { SourceStatus } from '../api/types';
+
+export function useSourceRequest<T>(key: string,
+  load: (signal: AbortSignal, onSources: (sources: SourceStatus[]) => void) => Promise<T>, revision = 0) {
+  const [progress, setProgress] = useState<{ key: string; sources: SourceStatus[] }>({ key, sources: [] });
+  const res = useAsync(async (signal) => {
+    setProgress({ key, sources: [] });
+    try {
+      return await load(signal, (sources) => {
+        if (!signal.aborted) setProgress({ key, sources });
+      });
+    } catch (error) {
+      if (!signal.aborted) setProgress((current) => ({ key, sources: current.sources.map((source) =>
+        source.state === 'searching' ? { ...source, state: 'error' } : source) }));
+      throw error;
+    }
+  }, [key, revision], true, key);
+  return { res, sources: progress.key === key ? progress.sources : [] };
+}
 
 export interface AsyncState<T> {
   data: T | undefined;
@@ -60,6 +79,18 @@ export function forgetLast() {
     for (const k of Object.keys(localStorage)) if (k.startsWith(LAST)) localStorage.removeItem(k); // the index too
   } catch {
     /* nothing to clear */
+  }
+}
+
+export function forgetSavedPages(keys: string[]) {
+  const clear = new Set(keys);
+  for (const key of clear) last.delete(key);
+  try {
+    for (const key of clear) localStorage.removeItem(LAST + key);
+    const index = JSON.parse(localStorage.getItem(LAST_INDEX) ?? '[]') as [string, number][];
+    localStorage.setItem(LAST_INDEX, JSON.stringify(index.filter(([key]) => !clear.has(key))));
+  } catch {
+    /* Storage may be unavailable. */
   }
 }
 

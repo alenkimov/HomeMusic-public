@@ -1,3 +1,5 @@
+import { TrackTitle, VersionBadge } from '../components/TrackTitle';
+import { titleWithVersion, useVersionLabel, type VersionIdentity } from '../lib/versionLabels';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, errorMessage, uploadCoverUrl } from '../api/client';
 import type { CoverInfo, TrackOut, UploadAlbumIn, UploadOut, UploadTrackIn } from '../api/types';
@@ -5,7 +7,7 @@ import { Icon } from '../components/Icon';
 import { PlaylistsPick } from '../components/PlaylistsButton';
 import { Button, Cover, Empty, ErrorState, Field, IconButton, Loading, PageHeader, ProgressBar, Sheet, Spinner, cx } from '../components/ui';
 import { useDesktop } from '../lib/desktop';
-import { fmtDuration, fmtSize, plural, toIntOrNull, tracksWord } from '../lib/format';
+import { fmtDuration, fmtSize, pictureWords, plural, toIntOrNull, tracksWord } from '../lib/format';
 import { useAsync, useDebounced } from '../lib/hooks';
 import { imageUrl } from '../lib/img';
 import { listen, useListen, type ListenTrack } from '../lib/listen';
@@ -203,7 +205,7 @@ function changesOf(u: UploadOut, inAlbum: boolean): string[] {
   const m = u.match;
   if (!m?.ref) return [];
   const out: string[] = [];
-  if (!same(u.title, m.title)) out.push(`название → ${m.title}`);
+  if (!same(u.title, m.title)) out.push(`название → ${titleWithVersion(m.title ?? '', m)}`);
   const mine = u.artists ?? [];
   const theirs = m.artists?.length ? m.artists : [m.artist ?? ''];
   if (mine.map(low).join('|') !== theirs.map(low).join('|')) out.push(same(mine.join(', '), theirs.join(', ')) || (mine.length === theirs.length && mine.every((a, i) => same(a, theirs[i]))) ? 'исполнители по отдельности' : `исполнители → ${theirs.join(' · ')}`);
@@ -228,7 +230,7 @@ function TwinNote({ u, r, onChange }: { u: UploadOut; r: RowState; onChange: (pa
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-info">
       <span className="min-w-0 truncate" title={!twin.sure ? 'Звучит похоже, но не одинаково: так бывает у версии на другом языке или кавера на ту же музыку' : twin.by === 'sound' ? 'Та же запись — определено по звучанию файлов' : 'То же название, исполнитель и длительность'}>
-        {twin.sure ? 'Уже есть' : 'Похоже на'}: «{twin.title}»{theirs ? ` · ${theirs}` : ''} · {twin.by === 'sound' ? 'по звуку' : 'по названию'}
+        {twin.sure ? 'Уже есть' : 'Похоже на'}: «<TrackTitle title={twin.title} track={twin} />»{theirs ? ` · ${theirs}` : ''} · {twin.by === 'sound' ? 'по звуку' : 'по названию'}
         {twin.better ? ' · этот файл лучше' : ''}
         {!twin.sure ? ' · возможно, другая версия' : ''}
       </span>
@@ -284,8 +286,6 @@ function useCatalogCover(upload: number | null): CoverInfo | null {
   }, [upload]);
   return info;
 }
-
-const pictureWords = (i?: CoverInfo | null): [string, string] => [i?.w && i?.h ? `${i.w}×${i.h}` : '…', [i?.format === 'JPEG' ? 'JPEG' : i?.format, i?.size ? fmtSize(i.size) : null].filter(Boolean).join(' · ')];
 
 export function UploadPage() {
   const desktop = useDesktop();
@@ -944,7 +944,7 @@ export function UploadPage() {
           {shown.length === 0 && <div className="mx-4 mt-3 rounded-2xl bg-surface lg:mx-6"><Empty icon="search" title={needle ? 'Ничего не найдено' : 'Под эту метку ничего не подходит'} /></div>}
           {shownGroups.map(({ g, files }) => (
             <section key={g.key} className="mx-4 mt-3 rounded-2xl bg-surface lg:mx-6" aria-label={g.single ? `Сингл «${titleOf(g.files[0])}»` : `Альбом «${albumOf(g).title}»`}>
-              <AlbumHead g={g} now={albumOf(g)} name={g.single ? titleOf(g.files[0]) : albumOf(g).title} onChoose={(patch) => choose(g, patch)} shown={files.length} canLink={g.files.some((u) => !!u.match?.ref && !usesCatalog(u, rowOf(u)))} onUnlink={() => linkAlbum(g, false)} onLink={() => linkAlbum(g, true)} />
+              <AlbumHead g={g} now={albumOf(g)} name={g.single ? titleOf(g.files[0]) : albumOf(g).title} versionTrack={g.single && usesCatalog(g.files[0], rowOf(g.files[0])) ? g.files[0].match : null} onChoose={(patch) => choose(g, patch)} shown={files.length} canLink={g.files.some((u) => !!u.match?.ref && !usesCatalog(u, rowOf(u)))} onUnlink={() => linkAlbum(g, false)} onLink={() => linkAlbum(g, true)} />
               {files.map((u, i) => row(u, g, i))}
             </section>
           ))}
@@ -1027,7 +1027,7 @@ export function Steps({ at }: { at: 1 | 2 }) {
  * rewritten here — the broken chain by the name takes the files off the release, and then it is an album of one's
  * own, with the three written by hand (the files' words to start with). The cover is chosen either way: one is
  * shown, with how many there are; a tap lays the others out to the right. */
-function AlbumHead({ g, now, name, onChoose, shown, canLink, onUnlink, onLink }: { g: Group; now: { title: string; artist: string; year: string; cover: Picture | null }; /** what the head is called: the album, or a single's track */ name: string; onChoose: (patch: AlbumChoice) => void; shown: number; /** the catalog has a record for a file that is not filed by it */ canLink: boolean; onUnlink: () => void; onLink: () => void }) {
+function AlbumHead({ g, now, name, versionTrack, onChoose, shown, canLink, onUnlink, onLink }: { g: Group; now: { title: string; artist: string; year: string; cover: Picture | null }; /** what the head is called: the album, or a single's track */ name: string; versionTrack?: VersionIdentity | null; onChoose: (patch: AlbumChoice) => void; shown: number; /** the catalog has a record for a file that is not filed by it */ canLink: boolean; onUnlink: () => void; onLink: () => void }) {
   const [open, setOpen] = useState(false); // the other covers are laid out
   const linked = !!g.release;
   const kind = g.single ? 'Сингл' : 'Альбом';
@@ -1075,7 +1075,7 @@ function AlbumHead({ g, now, name, onChoose, shown, canLink, onUnlink, onLink }:
         <div className="text-xs text-muted">{linked ? kind : g.single ? 'Новый сингл' : 'Новый альбом'}</div>
         {linked || g.single ? (
           <div className="flex min-w-0 items-center gap-1">
-            <h3 className="min-w-0 truncate text-xl font-bold">{name || 'без названия'}</h3>
+            <h3 className="min-w-0 truncate text-xl font-bold"><TrackTitle title={name || 'без названия'} track={versionTrack} /></h3>
             {/* the release the catalog took it for: its page, in a tab of its own — the choices made here stay */}
             {linked && g.release?.match?.album_ref && (
               <a href={`#/album/${encodeURIComponent(g.release.match.album_ref)}`} target="_blank" rel="noreferrer" aria-label={`${kind} в каталоге`} title={`${kind} в каталоге`} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-info hover:bg-fg/10">
@@ -1232,7 +1232,8 @@ function FileRow({ u, r, desktop, cols, inAlbum, number, picture, picked, menu, 
       <span className="hidden @[15rem]:inline">{mark.word}</span>
     </button>
   );
-  const record = [m?.title ? `«${m.title}»` : null, m?.artist, m?.album, m?.duration_s ? fmtDuration(m.duration_s) : null].filter(Boolean).join(' · ');
+  const recordDetails = [m?.artist, m?.album, m?.duration_s ? fmtDuration(m.duration_s) : null].filter(Boolean).join(' · ');
+  const record = <>{m?.title && <>«<TrackTitle title={m.title} track={m} />»</>}{m?.title && recordDetails && ' · '}{recordDetails}</>;
   const say = (patch: Partial<RowState>) => {
     setTip(false);
     onChange(patch);
@@ -1308,10 +1309,10 @@ function FileRow({ u, r, desktop, cols, inAlbum, number, picture, picked, menu, 
                 {r.also && <span className="text-dim">также: </span>}
                 {u.title}
               </button>{' '}
-              {pill(m?.title)}
+              {pill(<TrackTitle title={m?.title} track={m} />)}
             </>
           ) : (
-            title
+            <TrackTitle title={title} track={by ? m : undefined} />
           )}
         </span>
         {status}
@@ -1346,7 +1347,7 @@ function FileRow({ u, r, desktop, cols, inAlbum, number, picture, picked, menu, 
       {[fmtSize(u.size), quality, fmtDuration(u.duration_s)].filter(Boolean).join(' · ')}
       {has && (
         <span className="block truncate pt-1">
-          В каталоге{m?.state === 'doubt' ? ' похожая' : ''}: «{m?.title}» — {(m?.artists?.length ? m.artists : [m?.artist]).join(', ')}
+          В каталоге{m?.state === 'doubt' ? ' похожая' : ''}: «<TrackTitle title={m?.title} track={m} />» — {(m?.artists?.length ? m.artists : [m?.artist]).join(', ')}
           {m?.album ? ` · «${m.album}»` : ''}
           {m?.why ? ` · ${m.why}` : ''}
         </span>
@@ -1458,6 +1459,7 @@ function FileRow({ u, r, desktop, cols, inAlbum, number, picture, picked, menu, 
 /** The names of a file written by hand: its own, not the catalog's. What its album is — and a single's artist, year
  * and picture — is said in the head over it; a file is put into another album by its menu. */
 function EditNames({ u, r, onChange, onClose }: { u: UploadOut; r: RowState; onChange: (patch: Partial<RowState>) => void; onClose: () => void }) {
+  const label = useVersionLabel(usesCatalog(u, r) ? u.match : null);
   return (
     <Sheet
       open
@@ -1472,7 +1474,10 @@ function EditNames({ u, r, onChange, onClose }: { u: UploadOut; r: RowState; onC
       <p className="truncate pb-3 text-xs text-muted" title={u.orig_name}>{u.orig_name}</p>
       <div className="space-y-3">
         <Field label="Название">
-          <input className="input" autoFocus value={r.title} onChange={(e) => onChange({ title: e.target.value })} />
+          <span className="flex min-w-0 items-center gap-2">
+            <input className="input min-w-0 flex-1" autoFocus value={r.title} onChange={(e) => onChange({ title: e.target.value })} />
+            <VersionBadge label={label} />
+          </span>
         </Field>
         <Field label="Исполнители (через запятую)">
           <input className="input" value={r.artist} onChange={(e) => onChange({ artist: e.target.value })} />
@@ -1557,7 +1562,7 @@ function FindRecord({ u, onClose, onPick }: { u: UploadOut; onClose: () => void;
                 </button>
                 <button type="button" title="Это она — взять эту запись" onClick={() => onPick(t.ref)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[15px]">{t.title}</span>
+                    <span className="block truncate text-[15px]"><TrackTitle title={t.title} track={t} /></span>
                     <span className="block truncate text-[13px] text-muted">{[t.artists?.length ? t.artists.join(', ') : t.artist, t.album_title].filter(Boolean).join(' · ')}</span>
                   </span>
                   <span className="shrink-0 text-xs tabular-nums text-dim">{fmtDuration(t.duration_s)}</span>

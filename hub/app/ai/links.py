@@ -5,7 +5,7 @@
   (the async client needs aiohttp, which is not installed). The old web handlers (`/handlers/playlist.jsx`) are gone
   (they redirect to the home page), so there is no web fallback.
 - YouTube / YouTube Music: playlists, albums (OLAK5uy_… / browse/MPREb_…) and single videos via yt-dlp flat extraction.
-- Spotify: playlists, albums and tracks from the public embed page (`__NEXT_DATA__` JSON) — best effort.
+- Spotify: guest catalogue, with the public embed page as a fallback for tracks and albums.
 """
 
 from __future__ import annotations
@@ -22,8 +22,11 @@ import yt_dlp
 from yt_dlp.utils import DownloadError, ExtractorError
 
 from app.ai.extract import ExtractedItem, Extraction, ExtractionContext
+from app.catalog.spotify import expand as expand_spotify
+from app.catalog.spotify import resource as spotify_resource
 from app.config import get_settings
 from app.net import make_client, request_with_backoff
+from app.services import svc
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +90,8 @@ def _join_names(names: list[str | None]) -> str:
 async def extract_from_link(url: str) -> Extraction:
     """Read the track list behind a link. Raises UnsupportedLink (or its subclass LinkFetchError)."""
     raw = find_url(url) or (url or "").strip()
+    if target := spotify_resource(raw):
+        return await _spotify(*target)
     if m := _SPOTIFY_URI_RE.match(raw):
         return await _spotify(m.group(1).lower(), m.group(2))
     if "://" not in raw:
@@ -402,6 +407,30 @@ def spotify_extraction(data: dict) -> Extraction:
 
 
 async def _spotify(kind: str, sid: str) -> Extraction:
+    if svc.spotify is not None:
+        try:
+            if kind == "playlist":
+                playlist, tracks, _ = await svc.spotify.playlist(sid)
+                ctx, page = ExtractionContext(playlist_name=playlist.title), "playlist"
+            elif kind == "album":
+                album = await svc.spotify.album(sid)
+                tracks = album.tracks or []
+                ctx, page = ExtractionContext(album_title=album.title, album_artist=album.artist), "album"
+            elif kind == "artist":
+                artist = await svc.spotify.artist_page(sid)
+                tracks = artist.top_tracks
+                ctx, page = ExtractionContext(), "other"
+            else:
+                tracks = [await svc.spotify.track(sid)]
+                ctx, page = ExtractionContext(), "other"
+        except Exception as error:
+            log.info("Spotify %s %s: %r", kind, sid, error)
+            if kind in ("playlist", "artist"):
+                raise LinkFetchError("Spotify: не удалось прочитать публичную страницу") from error
+        else:
+            return Extraction(source_app="spotify", page_type=page, context=ctx, items=[
+                ExtractedItem(artist_raw=", ".join(t.artists) or t.artist, title_raw=t.title, album_raw=t.album_title,
+                              duration=fmt_duration(t.duration_s), conf=1) for t in tracks])
     url = f"https://open.spotify.com/embed/{kind}/{sid}"
     try:
         async with make_client(http2=False, headers={"Accept-Language": "en"}) as client:
@@ -420,11 +449,9 @@ async def _spotify(kind: str, sid: str) -> Extraction:
 
 async def _spotify_short(url: str) -> Extraction:
     try:
-        async with make_client(http2=False) as client:
-            resp = await client.get(url)
+        target = await expand_spotify(url)
     except Exception as e:
         raise LinkFetchError(f"Spotify недоступен: {e}") from e
-    final = urlparse(str(resp.url))
-    if final.hostname == "open.spotify.com" and (m := _SPOTIFY_RE.match(final.path)):
-        return await _spotify(m.group(1).lower(), m.group(2))
+    if target:
+        return await _spotify(*target)
     raise UnsupportedLink()

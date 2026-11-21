@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
-import type { AlbumOut, TrackOut } from '../api/types';
+import type { AlbumOut, SourceStatus, TrackOut } from '../api/types';
 import { TrackRow, TrackTableHeader } from '../components/catalog';
+import { TrackTable } from '../components/TrackTable';
+import { AlbumSourceMarks } from '../components/CatalogSourceMarks';
+import { SourceStatuses } from '../components/SourceStatuses';
 import { Icon } from '../components/Icon';
 import { ListBar } from '../components/ListBar';
 import { useSearchField } from '../components/ListSearch';
@@ -9,7 +12,7 @@ import { Button, Checkbox, Cover, Empty, ErrorState, Loading, PageHeader, Segmen
 import { plural, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { attempt, toast } from '../lib/ui';
-import { Link, enc, navigate, useRoute } from '../lib/router';
+import { Link, albumPath, artistPath, enc, navigate, useCanonicalPath, useRoute } from '../lib/router';
 
 /** «Дискография» (`/artist/<ref>/discography`): everything an artist released, shown one of two ways. «Релизы» —
  * the releases alone, newest first, by kind; a tap opens the release. «Треки» (`?view=tracks`, what «Все треки» of
@@ -27,6 +30,7 @@ const KINDS: Array<{ value: Kind; label: string }> = [
 ];
 const KIND_NAME: Record<string, string> = { album: 'Альбом', single: 'Сингл', ep: 'EP', compile: 'Сборник' };
 const STEP = 8; // releases drawn at once; more as the end comes into view
+const SOURCE_LABELS = { searching: 'Загружает', ready: 'Ответил', empty: 'Нет данных', error: 'Ошибка запроса' };
 
 const kindOf = (a: AlbumOut): Kind => (a.record_type === 'ep' ? 'single' : a.record_type === 'single' || a.record_type === 'compile' ? a.record_type : 'album');
 const yearOf = (a: AlbumOut) => a.year ?? (a.release_date ? Number(a.release_date.slice(0, 4)) : null);
@@ -53,7 +57,19 @@ interface Row {
 }
 
 export function DiscographyPage({ refId }: { refId: string }) {
-  const res = useAsync((s) => api.discography(refId, s), [refId], true, `discography:${refId}`);
+  const [statuses, setStatuses] = useState<SourceStatus[]>([]);
+  const res = useAsync(async (signal) => {
+    try {
+      return await api.discography(refId, signal, (sources) => {
+        if (!signal.aborted) setStatuses(sources);
+      });
+    } catch (error) {
+      if (!signal.aborted) setStatuses((sources) => sources.map((s) =>
+        s.state === 'searching' ? { ...s, state: 'error' } : s,
+      ));
+      throw error;
+    }
+  }, [refId], true, `discography:${refId}`);
   const route = useRoute();
   // which of the two the page shows is in its address: «Дискография» opens the releases, «Все треки» the tracks
   const view: View = route.query.get('view') === 'tracks' ? 'tracks' : 'releases';
@@ -64,6 +80,8 @@ export function DiscographyPage({ refId }: { refId: string }) {
   // «это другой исполнитель»: the releases being picked as a namesake's (null: not picking)
   const [picked, setPicked] = useState<ReadonlySet<string> | null>(null);
   const [busy, setBusy] = useState(false);
+  const d = res.data;
+  const deezerRef = d?.profiles?.find((ref) => ref.startsWith('dz:'));
   const pick = (ref: string) =>
     setPicked((cur) => {
       const next = new Set(cur ?? []);
@@ -71,9 +89,9 @@ export function DiscographyPage({ refId }: { refId: string }) {
       return next;
     });
   const exclude = async () => {
-    if (!picked?.size) return;
+    if (!picked?.size || !deezerRef) return;
     setBusy(true);
-    const r = await attempt(() => api.namesakesExclude(refId, [...picked]));
+    const r = await attempt(() => api.namesakesExclude(deezerRef, [...picked]));
     setBusy(false);
     if (!r) return;
     setPicked(null);
@@ -81,20 +99,25 @@ export function DiscographyPage({ refId }: { refId: string }) {
     res.reload(true);
   };
   const needle = sf.q.trim().toLocaleLowerCase('ru');
-  const d = res.data;
-  const at = (v: View) => `/artist/${enc(refId)}/discography${v === 'tracks' ? '?view=tracks' : ''}`;
-  // the artist's page has one address, whichever record of the catalog it was opened by
-  const own = d?.profiles?.[0];
+  const visibleSources = new Map(statuses.map((source) => [source.service, source]));
+  if (d?.spotify_pending && !res.error) visibleSources.set('spotify', { service: 'spotify', state: 'searching' });
+  const sourceMarks = visibleSources.size > 0 && (
+    <SourceStatuses sources={[...visibleSources.values()]} label="Статусы источников дискографии" labels={SOURCE_LABELS} />
+  );
   useEffect(() => {
-    if (own && own !== refId) navigate(`/artist/${enc(own)}/discography${view === 'tracks' ? '?view=tracks' : ''}`, { replace: true });
-  }, [own, refId, view]);
+    if (!d?.spotify_pending || res.loading || res.error) return;
+    const timer = window.setTimeout(() => res.reload(true), 8000);
+    return () => window.clearTimeout(timer);
+  }, [d, res.loading, res.error, res.reload]);
+  const back = d ? artistPath(d.artist) : `/artist/${enc(refId)}`;
+  const at = (v: View) => `${back}/discography${v === 'tracks' ? '?view=tracks' : ''}`;
+  useCanonicalPath(`/artist/${enc(refId)}/discography`, d?.artist.hub_artist_id ? `${back}/discography` : undefined);
   // asked for from the artist's page by its search: the field is open at once
   const asked = route.query.get('search') === '1';
   useEffect(() => {
     if (asked && d) sf.show();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asked, !!d]);
-  const back = `/artist/${enc(refId)}`;
 
   const albums = useMemo(() => (d?.albums ?? []).filter((a) => kind === 'all' || kindOf(a) === kind), [d, kind]);
   // every song of the artist once: a single that went into an album later is the album's track
@@ -114,9 +137,11 @@ export function DiscographyPage({ refId }: { refId: string }) {
   }, [songs, sort]);
   // the search looks through everything the artist has, whichever of the two is shown: their releases by name, and
   // every track
-  const foundReleases = useMemo(() => (needle ? (d?.albums ?? []).filter((a) => a.title.toLocaleLowerCase('ru').includes(needle)) : null), [d, needle]);
+  const foundReleases = useMemo(() => (needle ? (d?.albums ?? []).filter((a) =>
+    [a.title, ...(a.alternate_titles ?? [])].some((title) => title.toLocaleLowerCase('ru').includes(needle))) : null), [d, needle]);
   const foundTracks = useMemo(
-    () => (needle ? tracks.filter(({ t }) => `${t.title} ${t.artists?.join(' ') ?? t.artist}`.toLocaleLowerCase('ru').includes(needle)) : null),
+    () => (needle ? tracks.filter(({ t }) => [t.title, ...(t.alternate_titles ?? [])].some((title) =>
+      `${title} ${t.artists?.join(' ') ?? t.artist}`.toLocaleLowerCase('ru').includes(needle))) : null),
     [tracks, needle],
   );
   useEffect(() => setShown(STEP), [kind, refId, view, sort]);
@@ -130,30 +155,53 @@ export function DiscographyPage({ refId }: { refId: string }) {
     return () => io.disconnect();
   }, [albums.length, tracks.length, view, !!needle]);
 
-  if (res.loading && !d) return (<><PageHeader title="Дискография" back={back} /><Loading text="Собираю дискографию — у исполнителя с десятками релизов это несколько секунд…" /></>);
-  if (!d) return (<><PageHeader title="Дискография" back={back} /><ErrorState text={res.error ?? 'Не удалось получить дискографию'} onRetry={() => res.reload()} /></>);
+  if (!d) return (
+    <>
+      <PageHeader title="Дискография" back={back} right={sourceMarks} />
+      {res.loading
+        ? <Loading text="Собираю дискографию…" />
+        : <ErrorState text={res.error ?? 'Не удалось получить дискографию'} onRetry={() => res.reload()} />}
+    </>
+  );
 
   const named = (x: Row): TrackOut => ({ ...x.t, album_title: `${x.a.title}${yearOf(x.a) ? ` · ${yearOf(x.a)}` : ''}` });
   const release = (a: AlbumOut) => (
     <li key={a.ref} className={cx('flex items-center gap-3 px-4 py-2 lg:px-6', picked?.has(a.ref) && 'opacity-50')}>
       {picked && <Checkbox checked={picked.has(a.ref)} onChange={() => pick(a.ref)} label={`«${a.title}» — другого исполнителя`} />}
-      <Link to={`/album/${enc(a.ref)}`} className="flex min-w-0 flex-1 items-center gap-3 rounded-lg hover:bg-fg/5">
+      <div className="relative flex min-w-0 flex-1 items-center gap-3 rounded-lg hover:bg-fg/5">
         <Cover src={a.cover_small_url || a.cover_url} size={56} alt="" />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[15px] font-semibold">{a.title}</span>
-          <span className="block truncate text-[13px] text-muted">
-            {[KIND_NAME[a.record_type] ?? 'Релиз', yearOf(a), a.tracks?.length ? tracksWord(a.tracks.length) : a.nb_tracks ? tracksWord(a.nb_tracks) : null].filter(Boolean).join(' · ')}
+          <Link to={albumPath(a)} className="block truncate text-[15px] font-semibold after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-fg">{a.title}</Link>
+          <span className="flex items-center gap-1.5">
+            <span className="truncate text-[13px] text-muted">
+              {[KIND_NAME[a.record_type] ?? 'Релиз', yearOf(a), a.tracks?.length ? tracksWord(a.tracks.length) : a.nb_tracks ? tracksWord(a.nb_tracks) : null].filter(Boolean).join(' · ')}
+            </span>
+            <AlbumSourceMarks album={a} className="relative z-1" />
           </span>
         </span>
         <Icon name="chevron" size={18} className="shrink-0 text-dim" />
-      </Link>
+      </div>
     </li>
   );
-  const list = (rows: Row[], queue: TrackOut[]) => rows.map((x, i) => <TrackRow key={`${x.a.ref}:${x.t.ref}`} track={named(x)} showAlbum queue={queue} index={i + 1} />);
+  const list = (rows: Row[], queue: TrackOut[]) => {
+    const displayed = rows.map(named);
+    return (
+      <TrackTable tracks={displayed} numbered album>
+        {displayed.length > 0 && <TrackTableHeader numbered album />}
+        {displayed.map((track, i) => <TrackRow key={`${rows[i].a.ref}:${track.ref}`} track={track} showAlbum queue={queue} index={i + 1} />)}
+      </TrackTable>
+    );
+  };
 
   return (
     <div>
-      <ListBar plain title={d.artist.name} back={back} search={{ found: null, open: sf.open, alone: sf.alone, show: sf.show, close: sf.close, field: sf.field(needle ? (foundReleases?.length ?? 0) + (foundTracks?.length ?? 0) : undefined) }} />
+      <ListBar plain title={d.artist.name} back={back} end={sourceMarks} search={{
+        found: null, open: sf.open, alone: sf.alone, show: sf.show, close: sf.close,
+        field: <>{sf.field(needle ? (foundReleases?.length ?? 0) + (foundTracks?.length ?? 0) : undefined)}{sf.alone && sourceMarks}</>,
+      }} />
+      {d.spotify_partial && !d.spotify_pending && <p className="px-4 pb-2 text-sm text-muted lg:px-6">
+        Часть релизов Spotify пока недоступна.
+      </p>}
       {picked ? (
         <div className="sticky top-[calc(var(--page-top)+3.5rem)] z-10 flex flex-wrap items-center gap-2 bg-bg/95 px-4 py-2 backdrop-blur lg:px-6">
           <span className="mr-auto text-sm font-semibold">{picked.size ? `Выбрано: ${picked.size}` : 'Отметьте релизы другого исполнителя'}</span>
@@ -172,7 +220,7 @@ export function DiscographyPage({ refId }: { refId: string }) {
               {view === 'releases' ? (
                 <>
                   <Segmented<Kind> label="Какие релизы" value={kind} onChange={setKind} options={KINDS.filter((k) => k.value === 'all' || (d.albums ?? []).some((a) => kindOf(a) === k.value))} />
-                  {refId.startsWith('dz:') && (
+                  {deezerRef && (
                     <button type="button" onClick={() => setPicked(new Set())} title="Каталог держит тёзок под одним исполнителем: отметьте релизы, которые не его" className="text-sm text-muted hover:text-fg hover:underline">
                       Здесь есть чужие?
                     </button>
@@ -206,7 +254,6 @@ export function DiscographyPage({ refId }: { refId: string }) {
           <Empty icon="note" title="Треков нет" text="Каталог не отдал треки этого исполнителя." />
         ) : (
           <div className="pb-4">
-            <TrackTableHeader numbered album />
             {list(tracks.slice(0, (shown / STEP) * TRACKS_STEP), tracks.map((x) => x.t))}
             <div ref={end} className="h-8" />
           </div>

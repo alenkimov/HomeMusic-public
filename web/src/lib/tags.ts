@@ -22,8 +22,27 @@ export interface TagGroup {
 
 export interface TagsData {
   groups: TagGroup[];
-  /** Navidrome song id -> the ids of its tags */
+  /** Hub track id -> the ids of its tags */
   map: Record<string, number[]>;
+  genre_sources: Record<string, TrackGenreSources>;
+}
+
+export type GenreSource = 'spotify' | 'file' | 'deezer' | 'yandex' | 'hitmoz' | 'lastfm' | 'manual' | 'unknown';
+export type TrackGenreSources = Record<number, GenreSource[]>;
+export const GENRE_SOURCES: readonly GenreSource[] = ['file', 'spotify', 'deezer', 'yandex', 'hitmoz', 'lastfm', 'manual', 'unknown'];
+
+export function genreSourcesFor(data: TagsData['genre_sources'], songIds?: readonly (string | null | undefined)[]) {
+  const byGenre = new Map<number, Set<GenreSource>>();
+  const rows = songIds ? songIds.flatMap((id) => id && data[id] ? [data[id]] : []) : Object.values(data);
+  for (const row of rows) {
+    for (const [id, sources] of Object.entries(row)) {
+      const key = Number(id);
+      const existing = byGenre.get(key) ?? new Set<GenreSource>();
+      for (const source of sources) existing.add(source);
+      byGenre.set(key, existing);
+    }
+  }
+  return byGenre;
 }
 
 interface State extends TagsData {
@@ -31,7 +50,7 @@ interface State extends TagsData {
   byId: Map<number, Tag>;
 }
 
-let state: State = { groups: [], map: {}, loaded: false, byId: new Map() };
+let state: State = { groups: [], map: {}, genre_sources: {}, loaded: false, byId: new Map() };
 let loading: Promise<void> | null = null;
 const subs = new Set<() => void>();
 const subscribe = (cb: () => void) => {
@@ -40,7 +59,7 @@ const subscribe = (cb: () => void) => {
 };
 
 export function setTagsData(data: TagsData) {
-  state = { ...data, loaded: true, byId: new Map(data.groups.flatMap((g) => g.tags.map((t) => [t.id, t] as const))) };
+  state = { ...data, genre_sources: data.genre_sources ?? {}, loaded: true, byId: new Map(data.groups.flatMap((g) => g.tags.map((t) => [t.id, t] as const))) };
   subs.forEach((f) => f());
 }
 
@@ -52,6 +71,10 @@ export function refreshTags(): Promise<void> {
       loading = null;
     });
   return loading;
+}
+
+export function refreshLoadedTags() {
+  if (state.loaded) void refreshTags();
 }
 
 export function useTags(): State {

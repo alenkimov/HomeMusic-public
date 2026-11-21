@@ -161,6 +161,7 @@ class Settings(BaseSettings):
     share_page_url: str = "https://alenkimov.github.io/HomeMusic-public/"
 
     hub_secret_key: str = ""
+    telegram_bot_token: str = ""
     session_days: int = 60
     # OAuth client id ("Web application" type) of the Google Cloud project for "Sign in with Google" in the app;
     # empty — no Google sign-in (README, «Вход через Google»)
@@ -187,6 +188,7 @@ class Settings(BaseSettings):
 
     # Last.fm API (similar tracks/artists, tags for mix names): https://www.last.fm/api/account/create
     lastfm_api_key: str = ""
+    deezer_catalog: bool = True
     # Yandex Music as one more catalog (app/catalog/yandex_catalog.py): read without signing in, no key
     yandex_catalog: bool = True
     # the audio vector service (MIXES.md 4.2) in the compose network; empty, or it doesn't answer — mixes are built

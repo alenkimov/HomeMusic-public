@@ -1,14 +1,4 @@
-"""Sending library tracks to the user's own Telegram bot (aiogram).
-
-Each user connects a bot of their own: the token BotFather gave (kept encrypted, as the Navidrome password is) and
-the private chat the bot may write to — a bot cannot start a conversation, so the user presses Start in it and the
-Hub finds that chat in the bot's updates.
-
-The Hub has no bot of its own and many users' bots, so there is no long-lived `Bot`: one is made for a call
-(`bot_of`) and its session is closed after it. Receiving messages (a search from Telegram, group chats) will need a
-long poll of each connected bot: that is `app/telegram_chats.py`, which keeps the list of the chats a bot can send
-to (the private one, groups, channels).
-"""
+"""Telegram transport for the Hub's shared bot."""
 
 from __future__ import annotations
 
@@ -17,6 +7,7 @@ import io
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +41,16 @@ LYRICS_MESSAGES = 3  # a longer text is cut: nobody reads a wall of messages
 
 class TelegramError(Exception):
     """Telegram refused or did not answer (the message is user-facing, Russian)."""
+
+
+@dataclass(frozen=True)
+class SharedBot:
+    id: str
+    username: str
+    token: str = field(repr=False)
+
+
+_shared: SharedBot | None = None
 
 
 def clean_token(value: str) -> str:
@@ -113,11 +114,21 @@ async def bot_of(token: str, wait_s: float = 30) -> AsyncIterator[Bot]:
         await bot.session.close()
 
 
-async def get_me(token: str) -> dict[str, Any]:
-    """The bot of a token: {id, username, first_name}."""
+async def shared_bot() -> SharedBot | None:
+    global _shared
+
+    token = get_settings().telegram_bot_token.strip()
+    if not token:
+        return None
+    if _shared is not None and _shared.token == token:
+        return _shared
+    token = clean_token(token)
     async with bot_of(token) as bot:
         me = await bot.get_me()
-    return {"id": me.id, "username": me.username, "first_name": me.first_name}
+    if not me.username:
+        raise TelegramError("У бота Telegram не задано имя")
+    _shared = SharedBot(str(me.id), me.username, token)
+    return _shared
 
 
 def chat_name(chat: Any) -> str:
@@ -147,13 +158,13 @@ def _quote(text: str) -> str:
     return f"<blockquote expandable>{html.escape(text, quote=False)}</blockquote>"
 
 
-def lyrics_messages(text: str) -> tuple[str | None, list[str]]:
+def lyrics_messages(text: str, *, caption_room: int = CAPTION_MAX) -> tuple[str | None, list[str]]:
     """How a track's text goes with it: (the audio's caption, the messages after it). A short text fits the
     caption; a long one follows the audio as collapsed quotes, cut after `LYRICS_MESSAGES` of them."""
     text = (text or "").strip()
     if not text:
         return None, []
-    if len(text) <= CAPTION_MAX - 40:
+    if len(text) <= caption_room - 40:
         return _quote(text), []
     room = MESSAGE_MAX - 200
     chunks: list[str] = []
@@ -173,13 +184,20 @@ def lyrics_messages(text: str) -> tuple[str | None, list[str]]:
 
 async def send_audio(token: str, chat_id: str, path: Path, *, filename: str, title: str, performer: str,
                      duration_s: int | None = None, cover: bytes | None = None, lyrics: str | None = None,
-                     link: str | None = None) -> None:
+                     link: str | None = None, sender_id: int | None = None) -> None:
     """`link`: the track's «HomeMusic» link — a button under the audio, for whoever wants it in their own library."""
     thumb = thumbnail(cover)
     markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Открыть в HomeMusic", url=link)]]) if link else None
-    caption, after = lyrics_messages(lyrics or "")
     chat = int(chat_id) if chat_id.lstrip("-").isdigit() else chat_id
     async with bot_of(token, SEND_WAIT_S) as bot:
+        signature = ""
+        if sender_id is not None:
+            sender = await bot.get_chat(chat_id=sender_id, request_timeout=10)
+            if sender.username:
+                signature = f"От @{html.escape(sender.username)}"
+        room = CAPTION_MAX - (len(signature) + 2 if signature else 0)
+        lyrics_caption, after = lyrics_messages(lyrics or "", caption_room=room)
+        caption = "\n\n".join(part for part in (signature, lyrics_caption) if part) or None
         sent = await bot.send_audio(
             chat_id=chat,
             audio=FSInputFile(path, filename=filename),

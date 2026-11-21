@@ -4,6 +4,7 @@ import { Heatmap } from '../../components/charts/Heatmap';
 import { SOURCE_GROUPS, seriesColor, sourceGroup } from '../../components/charts/palette';
 import { ShareBar } from '../../components/charts/ShareBar';
 import { ErrorState, Loading, Notice } from '../../components/ui';
+import { ServiceText } from '../../components/ServiceBadge';
 import { fmtDay, fmtListened, fmtNum, fmtPct, fmtStamp, fmtWhen, plural, seedKindLabel, sourceLabel, waveOriginLabel } from '../../lib/format';
 import { useAsync } from '../../lib/hooks';
 import { periodOf, periodRange, trackLink } from '../../lib/insights';
@@ -64,13 +65,13 @@ function Listening({ d, userId }: { d: ListeningOut; userId: number }) {
           <BarsByDay days={bars} series={SOURCE_GROUPS.map((g) => ({ id: g.id, label: g.label, color: g.color }))} />
         </Block>
         <Block title="Источники">
-          <ShareBar parts={sources.map((s, i) => ({ id: s.source, label: sourceLabel(s.source), value: s.heard, color: seriesColor(i, sources.length) }))} />
+          <ShareBar parts={sources.map((s, i) => ({ id: s.source, label: <ServiceText text={sourceLabel(s.source)} />, value: s.heard, color: seriesColor(i, sources.length) }))} />
           <div className="mt-3">
             <ScrollTable
               rows={sources}
               rowKey={(r) => r.source}
               cols={[
-                { label: 'Источник', cell: (r) => sourceLabel(r.source) },
+                { label: 'Источник', cell: (r) => <ServiceText text={sourceLabel(r.source)} /> },
                 { label: 'Запуски', cell: (r) => fmtNum(r.launches), align: 'right' },
                 { label: 'Прослуш.', cell: (r) => fmtNum(r.heard), align: 'right' },
                 { label: 'Дослуш.', cell: (r) => fmtPct(r.finished, r.starts), align: 'right' },
@@ -145,7 +146,7 @@ function Listening({ d, userId }: { d: ListeningOut; userId: number }) {
         <ShowAll
           items={d.discoveries}
           render={(x, i) => (
-            <Line key={x.key ?? i} title={trackName(x)} sub={`${fmtDay(x.first_heard_at)} · ${sourceLabel(x.source)}`} onClick={x.key ? () => navigate(trackLink(userId, x.key!)) : undefined} />
+            <Line key={x.key ?? i} title={trackName(x)} sub={<>{fmtDay(x.first_heard_at)} · <ServiceText text={sourceLabel(x.source)} /></>} onClick={x.key ? () => navigate(trackLink(userId, x.key!)) : undefined} />
           )}
         />
       </Block>
@@ -193,7 +194,7 @@ function Listening({ d, userId }: { d: ListeningOut; userId: number }) {
           <ul className="divide-y divide-line/50 text-sm">
             <Line title="События без контекста" value={fmtNum(q.events_without_context)} />
             <Line title="События без id попытки (старые клиенты)" value={fmtNum(q.events_without_playback)} />
-            <Line title="Из истории Navidrome" value={fmtNum(q.scrobbles)} />
+            <Line title={<ServiceText text="Из истории Navidrome" />} value={fmtNum(q.scrobbles)} />
             <Line title="Старые «дослушал» без замера" value={fmtNum(q.legacy_finishes)} />
             <Line title="Первое событие" value={fmtStamp(q.first_event_at)} />
           </ul>

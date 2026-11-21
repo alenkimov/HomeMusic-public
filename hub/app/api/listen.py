@@ -14,6 +14,7 @@ from app import listen
 from app.api.schemas import ListenOut, ListenPrefetchIn, ListenPrefetchOut
 from app.auth import current_user
 from app.db import session_scope
+from app.events import bus
 from app.library.owned import file_out, with_journal
 from app.library.tracks import by_ref, current_file
 from app.models import TrackFile, User
@@ -21,20 +22,18 @@ from app.models import TrackFile, User
 router = APIRouter(prefix="/api/listen", tags=["listen"])
 
 
-
-async def _choose(ref: str, *, background: bool = False) -> listen.Choice:
-    try:
-        return await listen.choose(ref, background=background)
-    except listen.ListenError as e:
-        raise HTTPException(e.status, str(e)) from e
-
-
 @router.get("", response_model=ListenOut)
 async def resolve(ref: str, ahead: Literal["whole", "head"] | None = None, user: User = Depends(current_user)):
     """Picks the file (may take a while: providers are searched), then the client plays `stream_url`. `ahead`: the
     client's queue plays the track soon — the Hub opens the file and copies it to its disk now (`listen.load_ahead`):
     "whole" for the track that plays next, "head" for the ones after it (their start only)."""
-    c = await (_choose(ref, background=True) if ahead == "head" else _choose(ref))
+    try:
+        c = await listen.choose(ref, background=ahead == "head")
+    except listen.ListenError as e:
+        if isinstance(e, listen.RecordingUnavailable):
+            bus.publish(user.id, "recording", {"ref": ref, "unavailable": True})
+        raise HTTPException(e.status, str(e)) from e
+    bus.publish(user.id, "recording", {"ref": ref, "unavailable": False})
     if ahead:
         listen.load_ahead(c, whole=ahead == "whole")
     cand = c.candidate
@@ -78,9 +77,9 @@ async def prefetch(body: ListenPrefetchIn, user: User = Depends(current_user)):
 
 
 @router.get("/stream")
-async def stream(ref: str, request: Request, q: str | None = None, full: bool = False, user: User = Depends(current_user)):
+async def stream(ref: str, request: Request, q: str | None = None, user: User = Depends(current_user)):
     """Audio of the chosen file (Range → 206): the library file, the server copy of the picked file (read while
-    it downloads), the copy of a file of a source without plain HTTP audio, or a preview proxied from its source.
+    it downloads), or the copy of a file of a source without plain HTTP audio.
     `q=mobile`: the light variant for a metered network (Opus copy of a heavy file, `app.light`); the answer says
     which variant it is in `X-HomeMusic-Variant`."""
     rng = request.headers.get("range") or ""
@@ -88,8 +87,10 @@ async def stream(ref: str, request: Request, q: str | None = None, full: bool = 
     # `start` event is (app/api/plays.py), and its server copy waits for those of played tracks
     ahead = request.headers.get("x-homemusic-prefetch") == "1"
     try:
-        m = await listen.open_media(ref, rng or None, ahead=ahead, quality=q, full_only=full)
+        m = await listen.open_media(ref, rng or None, ahead=ahead, quality=q)
     except listen.ListenError as e:
+        if isinstance(e, listen.RecordingUnavailable):
+            bus.publish(user.id, "recording", {"ref": ref, "unavailable": True})
         raise HTTPException(e.status, str(e)) from e
     if m.choice.kind == "full" and not ahead and (not rng or rng.startswith("bytes=0-")):
         from app.imports.core import listened

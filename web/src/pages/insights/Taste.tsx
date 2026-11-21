@@ -97,7 +97,7 @@ function Summary({ d, userId }: { d: TasteOut; userId: number }) {
                     <span className="min-w-0 flex-1 truncate">{f.artists.join(', ') || 'без имени'}</span>
                     <span className="shrink-0 text-xs text-muted">{f.size}</span>
                   </div>
-                  <p className="truncate pl-4.5 text-xs text-muted">{f.top_members.map((m) => trackName(m)).join(' · ')}</p>
+                  <p className="truncate pl-4.5 text-xs text-muted">{f.top_members.map((m, i) => <span key={m.key}>{i > 0 && ' · '}{trackName(m)}</span>)}</p>
                 </li>
               ))}
             </ul>

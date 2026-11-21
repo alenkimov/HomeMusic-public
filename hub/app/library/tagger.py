@@ -470,6 +470,11 @@ def _read_raw(path: Path) -> tuple[mutagen.FileType, dict[str, list[str]], bytes
     return f, c, cover
 
 
+def read_genres(path: Path) -> list[str]:
+    _, tags, _ = _read_raw(path)
+    return tags.get("GENRE", [])
+
+
 def read_tag_fields(path: Path) -> dict[str, Any]:
     """Existing tags as TagData field values (only present ones, incl. `cover`); not validated."""
     _, c, cover = _read_raw(Path(path))

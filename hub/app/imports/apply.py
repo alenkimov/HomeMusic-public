@@ -23,7 +23,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.catalog.models import CATALOGS, CatalogTrack, split_ref
@@ -121,12 +121,20 @@ async def pick(s: AsyncSession, imp: Import, it: ImportItem) -> DownloadItem:
     user picks the file on its page, as for any download that needs review. The file of a row the catalog does not
     know is the file of the row's track (`tracks.by_name`): the track stays where it stands — in its playlists, in
     «Любимое» — and plays from then on."""
+    previous = await s.get(DownloadItem, it.download_item_id) if it.download_item_id else None
+    if previous is not None:
+        manual = (previous.query_json or {}).get("pick_only")
+        if manual and previous.status in (*ACTIVE_STATUSES, "needs_review"):
+            return previous
+        if it.match != "probable" and previous.status == "needs_review" and previous.candidates_json:
+            return previous
+
     meta: dict[str, Any] = {}
     if it.match == "not_found" and (track := await track_of(s, it, imp.user_id)) is not None:
         it.track_id = track.id
         meta["track_id"] = track.id
     qj = {"query": track_query(it.raw_json or {}).model_dump(), "meta": meta, "import": {"id": imp.id, "item": it.id},
-          "requested": True}  # a like gets its ♥ from the import, in order (`sync_likes`)
+          "requested": True, "pick_only": True}  # a like gets its ♥ from the import, in order (`sync_likes`)
     dl = await new_download(s, imp, qj, 0)
     it.download_item_id, it.status, it.ref = dl.id, "queued", None
     return dl
@@ -157,7 +165,7 @@ async def queue_track(s: AsyncSession, imp: Import, it: ImportItem, kind: str, *
 
     raw = it.raw_json or {}
     src, id_ = split_ref(it.ref)
-    cat = await remembered_track(it.ref) if src in ("dz", "ym") else None
+    cat = await remembered_track(it.ref) if src in ("dz", "ym", "sp") else None
     if cat is not None:
         # the download is of the catalog's track the row was matched with — its names, its artists with their
         # records — as one asked for from the search is: what the service called the song found it, no more
@@ -177,7 +185,7 @@ async def queue_track(s: AsyncSession, imp: Import, it: ImportItem, kind: str, *
 
 async def queue_album(s: AsyncSession, imp: Import, it: ImportItem) -> int:
     """A liked album, downloaded whole (its downloads point back to the row: `import.album`)."""
-    from app.catalog.deezer import CatalogNotFound
+    from app.catalog.models import CatalogNotFound
     from app.jobs.downloads import get_catalog_album, meta_from_catalog, query_from_track
     from app.jobs.queue import PermanentError
 
@@ -190,7 +198,7 @@ async def queue_album(s: AsyncSession, imp: Import, it: ImportItem) -> int:
     n = 0
     for t in album.tracks or []:
         if await find_owned(s, artist=t.artist, title=t.title, duration_s=t.duration_s, isrc=t.isrc,
-                               deezer_track_id=t.id if t.source == "dz" else None):
+                            catalog_ref=t.ref):
             continue
         qj = {"query": query_from_track(t).model_dump(), "meta": meta_from_catalog(t, album),
               "import": {"id": imp.id, "album": it.id}}
@@ -218,12 +226,14 @@ async def refresh_items(s: AsyncSession, imp: Import) -> None:
     """Rows follow their downloads; a waiting row whose track got into the library (♥, a search) is done."""
     rows = (await s.execute(
         select(ImportItem, DownloadItem).join(DownloadItem, DownloadItem.id == ImportItem.download_item_id)
-        .where(ImportItem.import_id == imp.id, ImportItem.status == "queued"))).all()
+        .where(ImportItem.import_id == imp.id, ImportItem.status.in_(("queued", "failed"))))).all()
     for it, dl in rows:
         if dl.status == "done":
             it.status, it.track_id = "done", dl.track_id or it.track_id
         elif dl.status in ("failed", "needs_review", "cancelled"):
             it.status = "failed"
+        elif dl.status in ACTIVE_STATUSES:
+            it.status = "queued"
     albums = (await s.execute(select(ImportItem).join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
                               .where(ImportItem.import_id == imp.id, ImportItem.status == "queued",
                                      ImportCollection.kind == "albums"))).scalars().all()
@@ -239,9 +249,8 @@ async def refresh_items(s: AsyncSession, imp: Import) -> None:
                ImportCollection.kind.in_(("likes", "playlist"))))).scalars().all()
     for it in waiting:
         raw = it.raw_json or {}
-        src, id_ = split_ref(it.ref) if it.ref else ("", "")
         lib = await find_owned(s, artist=raw.get("artist") or "", title=raw.get("title") or "",
-                                  duration_s=raw.get("duration_s"), deezer_track_id=id_ if src == "dz" else None)
+                               duration_s=raw.get("duration_s"), catalog_ref=it.ref)
         if lib is not None:
             it.status, it.track_id = "done", lib.id
     await s.flush()
@@ -296,7 +305,7 @@ async def track_of(s: AsyncSession, it: ImportItem, user_id: int) -> Track | Non
                                       isrc=q.isrc, user_id=user_id)
     if (track := await registry.by_ref(s, it.ref)) is not None:
         return track
-    if src in ("dz", "ym") and (cat := await remembered_track(it.ref)) is not None:
+    if src in ("dz", "ym", "sp") and (cat := await remembered_track(it.ref)) is not None:
         return await registry.of_catalog(s, cat, user_id=user_id)
     raw = it.raw_json or {}
     if not raw.get("title"):
@@ -321,6 +330,8 @@ async def sync_playlists(s: AsyncSession, imp: Import) -> None:
         ImportCollection.import_id == imp.id, ImportCollection.kind == "playlist",
         ImportCollection.selected.is_(True)))).scalars().all()
     for c in colls:
+        given = list(c.given or [])
+        already_given = set(given)
         items = list((await s.execute(select(ImportItem).where(ImportItem.collection_id == c.id)
                                       .order_by(ImportItem.position, ImportItem.id))).scalars())
         want: list[int] = []
@@ -345,15 +356,18 @@ async def sync_playlists(s: AsyncSession, imp: Import) -> None:
                 continue
             p = await playlists.create(s, imp.user_id, c.title)
             c.playlist_id = p.id
-        elif want == list(c.given or []):
+        # Previously offered tracks can be absent because the listener removed them. An update of another
+        # row must never make those tracks new again.
+        fresh = [tid for tid in want if tid not in already_given]
+        if not fresh:
             continue
-        for track_id in want:
+        for track_id in fresh:
             await playlists.add(s, p, [track_id], at=dates[track_id])
         # the service's order for its tracks; what the user put in by hand stays after them
         rows = await playlists.items(s, p.id)
         first = {t.id: i.id for i, t in reversed(rows)}
         await playlists.reorder(s, p, [first[t] for t in want if t in first])
-        c.given = want
+        c.given = [*given, *fresh]
         await enqueue_mirror(s, p.id)
     if colls:
         from app.lyrics.service import enqueue_scan_once
@@ -472,13 +486,26 @@ async def apply_extras(s: AsyncSession, imp: Import) -> None:
 
 
 async def album_owned(s: AsyncSession, ref: str | None) -> bool:
+    album_id = await _library_album_id(s, ref)
+    return bool(album_id and await s.scalar(select(Track.id).where(Track.album_id == album_id).limit(1)))
+
+
+async def _library_album_id(s: AsyncSession, ref: str | None) -> int | None:
+    from app.catalog import registry
+    from app.library.album_names import catalog_uid
+
     if not ref:
-        return False
-    src, id_ = split_ref(ref)
-    if src != "dz":
-        return False
-    return (await s.execute(select(Track.id).join(Album, Album.id == Track.album_id)
-                            .where(Album.deezer_album_id == id_).limit(1))).scalar_one_or_none() is not None
+        return None
+    record = await registry.by_address(s, ref)
+    if record and record.album_id is not None:
+        return record.album_id
+    if registry.numeric_id(ref) is not None:
+        return None
+    source, ident = split_ref(ref)
+    clauses = [Album.uid == catalog_uid(ref)]
+    if source == "dz":
+        clauses.append(Album.deezer_album_id == ident)
+    return await s.scalar(select(Album.id).where(or_(*clauses)).order_by(Album.id).limit(1))
 
 
 async def star_albums_artists(s: AsyncSession, imp: Import) -> None:
@@ -495,10 +522,9 @@ async def star_albums_artists(s: AsyncSession, imp: Import) -> None:
     artist_ids: list[str] = []
     try:
         for it, kind in rows:
-            if kind == "albums" and it.ref and split_ref(it.ref)[0] == "dz":
-                song = (await s.execute(select(Track.nd_song_id).join(Album, Album.id == Track.album_id).where(
-                    Album.deezer_album_id == split_ref(it.ref)[1], Track.nd_song_id.is_not(None)).limit(1)
-                )).scalar_one_or_none()
+            if kind == "albums" and (album_id := await _library_album_id(s, it.ref)) is not None:
+                song = await s.scalar(select(Track.nd_song_id).where(
+                    Track.album_id == album_id, Track.nd_song_id.is_not(None)).limit(1))
                 if song and (nd_album := (await nd.get_song(song)).get("albumId")):
                     album_ids.append(nd_album)
                     from app.api.schemas import FavoriteTarget

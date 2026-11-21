@@ -16,12 +16,13 @@ from typing import Any
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.catalog.models import CatalogTrack, make_ref, split_ref
+from app.catalog import lookup
+from app.catalog.models import CatalogTrack, make_ref
 from app.config import get_settings
 from app.library.owned import find_owned
-from app.matching.normalize import clean_isrc, has_cyrillic, normalize_artist, split_version
+from app.matching.normalize import has_cyrillic
 from app.matching.score import score
-from app.matching.select import classify_scores, match_catalog, rank_candidates
+from app.matching.select import classify_scores, rank_candidates
 from app.models import SourceMap, Track, utcnow
 from app.providers.base import TrackQuery
 from app.services import svc
@@ -29,12 +30,7 @@ from app.services import svc
 log = logging.getLogger(__name__)
 
 VERDICT = {"auto": "exact", "confirm": "probable", "not_found": "not_found"}
-ISRC_DURATION_TOLERANCE_S = 5  # the same recording; a wider gap is another edit under a reused code
 NOT_FOUND_TTL_DAYS = 7  # a catalog miss is looked up again after this long (catalogs and sources grow)
-
-
-class CatalogDown(Exception):
-    """The catalog did not answer: the row stays pending and is tried again later."""
 
 
 @dataclass
@@ -66,62 +62,20 @@ async def _remember(s: AsyncSession, source: str, kind: str, external_id: str, r
 
 
 async def _owned(s: AsyncSession, raw: dict[str, Any], ref: str | None = None) -> Track | None:
-    dz_id = None
-    if ref:
-        src, id_ = split_ref(ref)
-        dz_id = id_ if src == "dz" else None
     return await find_owned(s, artist=raw.get("artist") or "", title=raw.get("title") or "",
-                               duration_s=raw.get("duration_s"), deezer_track_id=dz_id)
+                            duration_s=raw.get("duration_s"), catalog_ref=ref)
 
 
 async def catalog_track(raw: dict[str, Any]) -> Resolution:
-    """Deezer first, then Yandex Music — it knows the Russian-language music Deezer lacks; a Cyrillic track neither
-    has may be found on hitmoz (never `exact`: no curated metadata)."""
     cfg = get_settings().cfg.matching
     artist, title = raw.get("artist") or "", raw.get("title") or ""
     main = (raw.get("artists") or [artist])[0]
-    base, _ = split_version(title)
-    best: list = []
-    if svc.deezer is not None and (isrc := clean_isrc(raw.get("isrc"))):
-        # the recording's code is exact where names are not (Deezer romanizes Japanese titles)
-        try:
-            by_code = await svc.deezer.get_track_by_isrc(isrc)
-        except Exception as e:
-            raise CatalogDown(repr(e)) from e
-        want = raw.get("duration_s")
-        if by_code is not None and (not want or not by_code.duration_s
-                                    or abs(by_code.duration_s - want) <= ISRC_DURATION_TOLERANCE_S):
-            return Resolution("exact", by_code.ref, 1.0, catalog=by_code)
-    if svc.deezer is not None:
-        for qa, qt in dict.fromkeys([(main, title), (main, base), (artist, title)]):
-            try:
-                found = await svc.deezer.search_tracks(qa, qt, limit=10)
-            except Exception as e:
-                raise CatalogDown(repr(e)) from e
-            if not found:
-                continue
-            scored = match_catalog(artist, title, found, album=raw.get("album"), duration=raw.get("duration_s"))
-            if not best or scored[0][1].total > best[0][1].total:
-                best = scored
-            if classify_scores([x[1].total for x in best], cfg) == "auto":
-                break
-    if best:
-        verdict = VERDICT[classify_scores([x[1].total for x in best], cfg)]
-        if verdict != "not_found":
-            return Resolution(verdict, best[0][0].ref, round(best[0][1].total, 3), catalog=best[0][0])
-    if svc.yandex is not None:
-        try:
-            found = await svc.yandex.search_tracks(main, title)
-        except Exception as e:  # Yandex is away: the row is as Deezer left it
-            log.info("import: Yandex search failed for %s - %s: %r", artist, title, e)
-            found = []
-        if found:
-            scored = match_catalog(artist, title, found, album=raw.get("album"), duration=raw.get("duration_s"))
-            verdict = VERDICT[classify_scores([x[1].total for x in scored], cfg)]
-            if verdict != "not_found":
-                return Resolution(verdict, scored[0][0].ref, round(scored[0][1].total, 3), catalog=scored[0][0])
+    q = TrackQuery(artist=main, title=title, album=raw.get("album"), duration_s=raw.get("duration_s"),
+                   isrc=raw.get("isrc"), explicit=raw.get("explicit"))
+    best = await lookup.match_track(q, credited=raw.get("artists"))
+    if best is not None and best.verdict != "not_found":
+        return Resolution(VERDICT[best.verdict], best.track.ref, round(best.score, 3), catalog=best.track)
     if has_cyrillic(artist + title) and (hm := svc.providers.get("hitmoz")) is not None:
-        q = TrackQuery(artist=main, title=title, album=raw.get("album"), duration_s=raw.get("duration_s"))
         try:
             ranked = rank_candidates(q, await hm.search(q, limit=5), cfg)
         except Exception as e:
@@ -129,7 +83,7 @@ async def catalog_track(raw: dict[str, Any]) -> Resolution:
             ranked = []
         if ranked and ranked[0].score >= cfg.auto_threshold:
             return Resolution("probable", make_ref("hm", ranked[0].provider_id), round(ranked[0].score, 3))
-    return Resolution("not_found", None, round(best[0][1].total, 3) if best else None)
+    return Resolution("not_found", None, round(best.score, 3) if best else None)
 
 
 async def resolve_track(s: AsyncSession, source: str, external_id: str, raw: dict[str, Any]) -> Resolution:
@@ -140,7 +94,11 @@ async def resolve_track(s: AsyncSession, source: str, external_id: str, raw: dic
     if known is not None:
         r = Resolution(known.match, known.ref, known.score)
     else:
-        r = await catalog_track(raw)
+        if source == "spotify" and (record := raw.get("catalog")):
+            c = CatalogTrack.model_validate(record)
+            r = Resolution("exact", c.ref, 1.0, catalog=c)
+        else:
+            r = await catalog_track(raw)
         await _remember(s, source, "track", external_id, r)
         if r.catalog is not None:
             # the catalog's own record is kept: the track the Hub makes of the row is named by it, not by the service
@@ -158,17 +116,14 @@ async def resolve_album(s: AsyncSession, source: str, external_id: str, raw: dic
         return Resolution(known.match, known.ref, known.score)
     cfg = get_settings().cfg.matching
     r = Resolution("not_found")
-    if svc.deezer is not None:
-        try:
-            albums = await svc.deezer.search_albums(raw.get("artist") or "", raw.get("title") or "", limit=5)
-        except Exception as e:
-            raise CatalogDown(repr(e)) from e
-        scored = sorted(((score(raw.get("artist") or "", raw.get("title") or "", a.artist, a.title).total, a)
-                         for a in albums), key=lambda x: -x[0])
-        if scored:
-            verdict = VERDICT[classify_scores([x[0] for x in scored], cfg)]
-            if verdict != "not_found":
-                r = Resolution(verdict, scored[0][1].ref, round(scored[0][0], 3))
+    artist, title = raw.get("artist") or "", raw.get("title") or ""
+    albums = await lookup.search(f"{artist} {title}".strip(), kinds=("album",), limit=5)
+    scored = sorted(((score(artist, title, a.artist, a.title).total, a) for a in albums.albums), key=lambda x: -x[0])
+    if scored:
+        best, album = scored[0]
+        verdict = VERDICT[classify_scores([value for value, a in scored if a.source == album.source], cfg)]
+        if verdict != "not_found":
+            r = Resolution(verdict, album.ref, round(best, 3))
     await _remember(s, source, "album", external_id, r)
     return r
 
@@ -179,16 +134,9 @@ async def resolve_artist(s: AsyncSession, source: str, external_id: str, raw: di
         return Resolution(known.match, known.ref, known.score)
     r = Resolution("not_found")
     name = raw.get("name") or ""
-    if svc.deezer is not None and name:
-        try:
-            found = await svc.deezer.search(name, kinds=("artist",), limit=5)
-        except Exception as e:
-            raise CatalogDown(repr(e)) from e
-        want = normalize_artist(name)
-        for a in found.artists:
-            got = normalize_artist(a.name)
-            if (got.text and got.text == want.text) or (got.latin and got.latin == want.latin):
-                r = Resolution("exact", a.ref, 1.0)
-                break
+    if name:
+        results = await lookup.search(name, kinds=("artist",), limit=5)
+        if artist := lookup.named_artist(name, results.artists):
+            r = Resolution("exact", artist.ref, 1.0)
     await _remember(s, source, "artist", external_id, r)
     return r

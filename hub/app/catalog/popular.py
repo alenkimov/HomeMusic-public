@@ -1,14 +1,4 @@
-"""An artist's page beyond what the catalog says: how many listen to them on Last.fm, and popular tracks where the
-catalog's own list is short.
-
-The catalog's «popular» is its own listeners' — and for an artist it hardly has an audience of (a vocaloid producer
-heard on YouTube and Spotify) it gives three tracks, or one. Last.fm counts listens from everywhere, so where the
-catalog gives fewer than `WANT`, the rest is taken from Last.fm's top of the artist: each of its tracks is looked up
-in the catalog among this artist's own (so it plays, has a cover and is theirs, not a namesake's) and the ones found
-follow the catalog's, in Last.fm's order. Spotify, Deezer and Yandex are tried in that order, checking the
-artist's linked profile where one is known. The catalog's list is never replaced.
-Without a Last.fm key, or when it does not answer, the page is what the catalog said.
-"""
+"""Popular tracks in ranking-source order, and Last.fm audience statistics."""
 
 from __future__ import annotations
 
@@ -19,7 +9,7 @@ from typing import Any
 
 from app.catalog import namesakes
 from app.catalog.cache import cached
-from app.catalog.models import CatalogArtist, CatalogTrack
+from app.catalog.models import ArtistPage, CatalogArtist, CatalogTrack
 from app.matching.normalize import normalize_title
 from app.mixes import sources
 from app.services import svc
@@ -34,7 +24,7 @@ STATS_TTL_S = 7 * 86400
 
 async def listeners(name: str) -> int | None:
     """How many listened to the artist on Last.fm (all time); None: no key, no answer, nobody of that name."""
-    if not sources.lastfm_configured() or not name.strip():
+    if not await sources.lastfm_configured() or not name.strip():
         return None
 
     async def produce() -> dict[str, Any]:
@@ -71,7 +61,7 @@ def song(title: str) -> str:
 async def heard(name: str) -> dict[str, int]:
     """How many listened to each of the artist's most listened tracks on Last.fm (all time), by `song` of its name.
     Empty: no key, no answer."""
-    if not sources.lastfm_configured() or not name.strip():
+    if not await sources.lastfm_configured() or not name.strip():
         return {}
     try:
         top = await _top(name)
@@ -85,15 +75,62 @@ async def heard(name: str) -> dict[str, int]:
     return out
 
 
+async def track_listeners(artist: str, title: str) -> int | None:
+    """The Last.fm audience for one track, including songs outside the artist's top."""
+    if not await sources.lastfm_configured() or not artist.strip() or not title.strip():
+        return None
+
+    async def produce() -> dict[str, int | None]:
+        body = await sources._lastfm("track.getInfo", artist=artist, track=title, autocorrect=0)
+        count = (body.get("track") or {}).get("listeners")
+        return {"listeners": int(count) if str(count).isdecimal() else None}
+
+    info = await cached(f"lfm:track_listeners:{sources._key(artist, title)}", STATS_TTL_S, produce)
+    return info["listeners"]
+
+
 def _same(a: str, b: str) -> bool:
     return normalize_title(a).text == normalize_title(b).text
+
+
+async def ranked(artist: CatalogArtist, pages: list[ArtistPage]) -> list[tuple[CatalogTrack, str]]:
+    """Fill the list in priority order and retain the service that gave each position."""
+    result: list[tuple[CatalogTrack, str]] = []
+    seen: set[str] = set()
+
+    def add(tracks: list[CatalogTrack], service: str) -> None:
+        for track in tracks:
+            if len(result) >= WANT:
+                return
+            key = song(track.title) or track.ref
+            if key not in seen:
+                seen.add(key)
+                result.append((track, service))
+
+    def from_catalog(source: str, *, own_only: bool = False) -> list[CatalogTrack]:
+        shelves = [[t for t in namesakes.own_tracks(p.artist.ref, p.top_tracks)
+                    if not own_only or t.artist_ref == p.artist.ref or
+                    (t.artist_ref is None and sources._key(t.artist) == sources._key(p.artist.name))]
+                   for p in pages if p.artist.source == source]
+        tracks = [t for shelf in shelves for t in shelf]
+        if len(shelves) > 1:
+            tracks.sort(key=lambda t: (t.spotify_plays if source == "sp" else t.rank) or 0, reverse=True)
+            return tracks[:max(map(len, shelves))]
+        return tracks
+
+    add(from_catalog("sp"), "spotify")
+    add(from_catalog("dz"), "deezer")
+    add(await more(artist, [t for t, _ in result], [p.artist.ref for p in pages]), "lastfm")
+    add(from_catalog("ym", own_only=bool(result)), "yandex")
+    add(from_catalog("hm"), "hitmoz")
+    return result
 
 
 async def more(artist: CatalogArtist, have: list[CatalogTrack], refs: list[str] | None = None) -> list[CatalogTrack]:
     """Popular tracks of the artist to follow the catalog's `have`, up to `WANT` in all: Last.fm's top, each found
     in the catalog as this artist's own. Empty when the catalog's list is long enough or Last.fm has nothing."""
     need = WANT - len(have)
-    if need <= 0 or not sources.lastfm_configured():
+    if need <= 0 or not await sources.lastfm_configured():
         return []
     searches: dict[str, Callable[[str, str, int], Awaitable[list[CatalogTrack]]]] = {}
     if spotify := getattr(svc, "spotify", None):

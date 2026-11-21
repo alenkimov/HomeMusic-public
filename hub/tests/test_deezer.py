@@ -11,7 +11,8 @@ import httpx
 import pytest
 import respx
 
-from app.catalog.deezer import BASE_URL, CatalogNotFound, DeezerClient, DeezerError, dedupe_and_sort, map_album
+from app.catalog.models import CatalogNotFound
+from app.catalog.deezer import BASE_URL, DeezerClient, DeezerError, dedupe_and_sort, map_album
 from app.config import CatalogCfg
 from app.db import dispose, init_engine
 

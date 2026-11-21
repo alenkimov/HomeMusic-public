@@ -78,7 +78,7 @@ TOOLS = [
     # --- reading ---
     _fn("account_overview", "Everything about the account in short: library size, ♥ counts, playlists, imports "
         "with their collections, downloads by status and the latest ones, uploads, recently played, AI spending.", {}),
-    _fn("search_catalog", "Search the music catalog (Deezer). Returns refs like dz:123 with ownership flags.",
+    _fn("search_catalog", "Search music catalogs. Returns catalog references with ownership flags.",
         {"q": STR, "kind": {"type": "string", "enum": ["track", "album", "artist"]},
          "limit": {"type": "integer", "default": 5}}, ["q", "kind"]),
     _fn("get_artist_discography", "Releases of an artist, newest first.",
@@ -286,14 +286,15 @@ class ChatTools:
         return out
 
     async def search_catalog(self, q: str, kind: str = "track", limit: int = 5) -> Any:
-        from app.services import svc
+        from app.catalog import lookup
 
-        res = await svc.deezer.search(q, kinds=(kind,), limit=min(limit, 10))
+        limit = max(1, min(limit, 10))
+        res = await lookup.search(q, kinds=(kind,), limit=limit)
         if kind == "artist":
-            return table(["ref", "name", "fans"], [[a.ref, a.name, a.nb_fans] for a in res.artists])
+            return table(["ref", "name"], [[a.ref, a.name] for a in res.artists[:limit]])
         if kind == "album":
-            return _albums(await annotate_albums(self.s, res.albums))
-        return _tracks(await annotate_tracks(self.s, res.tracks))
+            return _albums(await annotate_albums(self.s, res.albums[:limit]))
+        return _tracks(await annotate_tracks(self.s, res.tracks[:limit]))
 
     async def get_artist_discography(self, artist_ref: str, types: list[str] | None = None, limit: int = 20) -> Any:
         from app.services import svc

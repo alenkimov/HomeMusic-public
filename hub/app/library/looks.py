@@ -23,7 +23,7 @@ import time
 from typing import Any
 from urllib.parse import quote
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.catalog.models import CatalogArtist, split_ref
@@ -40,17 +40,40 @@ async def of(s: AsyncSession, artist_id: int) -> ArtistLook | None:
     return await s.get(ArtistLook, artist_id)
 
 
-async def _record(ref: str | None) -> CatalogArtist | None:
+async def profile_card(ref: str | None) -> CatalogArtist | None:
     """The catalog's own card of a record (kept by the catalog's client); None: the catalog is away, or knows it no more."""
     from app.services import svc
 
-    if not ref or svc.deezer is None:
+    if not ref:
         return None
     try:
         src, id_ = split_ref(ref)
-        return await svc.deezer.get_artist(id_) if src == "dz" else None
+        if src == "dz" and svc.deezer is not None:
+            return await svc.deezer.get_artist(id_)
+        if src == "sp" and svc.spotify is not None:
+            return (await svc.spotify.artist_page(id_)).artist
+        return None
     except Exception:
         return None
+
+
+async def spotify_photos(s: AsyncSession) -> dict[str, str]:
+    """Cover fallbacks for library lists from profiles already linked and read."""
+    from app.models import ArtistName, ArtistRef, CatalogCache
+
+    rows = await s.execute(
+        select(ArtistName.key, CatalogCache.payload_json)
+        .join(ArtistRef, ArtistRef.artist_id == ArtistName.artist_id)
+        .join(CatalogCache, CatalogCache.key == "sp:artist:" + func.substr(ArtistRef.ref, 4))
+        .where(ArtistRef.ref.like("sp:%"))
+        .order_by(ArtistRef.tied_at)
+    )
+    photos = {}
+    for name, value in rows:
+        a = (value.get("v") or {}).get("artist") or {}
+        if url := a.get("picture_small_url") or a.get("picture_url"):
+            photos.setdefault(name, url)
+    return photos
 
 
 async def _album_cover(s: AsyncSession, artist_id: int) -> str | None:
@@ -73,15 +96,16 @@ async def photo(s: AsyncSession, artist: Artist, look: ArtistLook | None = None,
         if url:
             return url, url
     if choice and choice.startswith("profile:"):
-        a = await _record(choice.partition(":")[2])
+        a = await profile_card(choice.partition(":")[2])
         if a is not None and (a.picture_url or a.picture_small_url):
             return a.picture_url or a.picture_small_url, a.picture_small_url or a.picture_url
     if chosen_only:
         return None
     refs = await artists.profiles(s, artist.id)
-    a = await _record(refs[0]) if refs else None
-    if a is not None and (a.picture_url or a.picture_small_url):
-        return a.picture_url or a.picture_small_url, a.picture_small_url or a.picture_url
+    for ref in refs:
+        a = await profile_card(ref)
+        if a is not None and (a.picture_url or a.picture_small_url):
+            return a.picture_url or a.picture_small_url, a.picture_small_url or a.picture_url
     url = await _album_cover(s, artist.id)
     return (url, url) if url else None
 
@@ -104,10 +128,10 @@ async def _titles(s: AsyncSession, artist: Artist) -> list[str]:
         select(Track.title).join(TrackArtist, TrackArtist.track_id == Track.id).where(TrackArtist.artist_id == artist.id).limit(200))).scalars())
     for ref in await artists.profiles(s, artist.id):
         try:
-            src, id_ = split_ref(ref)
-            if src != "dz" or svc.deezer is None:
+            src, _ = split_ref(ref)
+            if src not in ("dz", "sp"):
                 continue
-            page = await svc.deezer.get_artist_page(id_)
+            page = await svc.artist_page(ref)
             out += [t.title for t in page.top_tracks] + [a.title for a in page.albums]
         except Exception:  # a record the catalog does not give just now says nothing
             continue
@@ -144,9 +168,9 @@ async def options(s: AsyncSession, artist: Artist) -> dict[str, Any]:
     look = await of(s, artist.id)
     photos: list[dict[str, Any]] = []
     for i, ref in enumerate(await artists.profiles(s, artist.id)):
-        a = await _record(ref)
+        a = await profile_card(ref)
         if a is not None and (a.picture_url or a.picture_small_url):
-            photos.append({"choice": f"profile:{ref}", "label": f"профиль {i + 1}", "note": ref.partition(":")[0] == "dz" and "Deezer" or "каталог",
+            photos.append({"choice": f"profile:{ref}", "label": f"профиль {i + 1}", "note": {"dz": "Deezer", "sp": "Spotify"}.get(a.source, "каталог"),
                            "url": a.picture_small_url or a.picture_url})
     album = await _album_cover(s, artist.id)
     if album:
@@ -155,6 +179,9 @@ async def options(s: AsyncSession, artist: Artist) -> dict[str, Any]:
         photos.append({"choice": "own", "label": "своё", "note": "загружено", "url": f"/api/artists/{artist.id}/photo?v={look.photo_key}"})
     banners_ = [{"choice": f"name:{n}", "label": n, "note": "найдена по этому имени", "url": f"/api/artists/{artist.id}/banner-found?name={quote(n)}"}
                 for n in await spellings(s, artist)]
+    for ref in await artists.profiles(s, artist.id):
+        if ref.startswith("sp:") and (a := await profile_card(ref)) and a.banner_url:
+            banners_.insert(0, {"choice": f"profile:{ref}", "label": "Spotify", "note": "", "url": a.banner_url})
     if look is not None and look.banner_choice == "own" and look.banner_key:
         banners_.append({"choice": "own", "label": "своя", "note": "загружена", "url": f"/api/artists/{artist.id}/banner?v={look.banner_key}"})
     return {"id": artist.id, "name": artist.name,
@@ -208,6 +235,14 @@ async def choose_banner(s: AsyncSession, user_id: int | None, artist: Artist, ch
     picture), or None — the one the Hub finds by itself."""
     from app.catalog.banners import WIDTH
 
+    spotify_banner = None
+    if choice and choice.startswith("profile:"):
+        from app.jobs.downloads import fetch_cover
+
+        ref = choice.partition(":")[2]
+        a = await profile_card(ref) if ref.startswith("sp:") and ref in await artists.profiles(s, artist.id) else None
+        if a is None or not a.banner_url or not (spotify_banner := await fetch_cover(a.banner_url, max_bytes=8_000_000)):
+            raise ValueError("Обложка Spotify недоступна")
     look = await _row(s, artist)
     was = look.banner_choice
     if choice == "own":
@@ -215,6 +250,9 @@ async def choose_banner(s: AsyncSession, user_id: int | None, artist: Artist, ch
             look.banner_image, look.banner_key = await asyncio.to_thread(_jpeg, image, WIDTH), secrets.token_hex(4)
         elif look.banner_choice != "own" or not look.banner_key:
             raise ValueError("Сначала загрузите картинку")
+    elif spotify_banner is not None:
+        look.banner_image = await asyncio.to_thread(_jpeg, spotify_banner, WIDTH)
+        look.banner_key = secrets.token_hex(4)
     elif choice and choice.startswith("name:"):
         found = await found_banner(s, artist, choice.partition(":")[2])
         if found is None:

@@ -14,15 +14,15 @@ from datetime import date
 from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.library import tagger
 from app.library.layout import album_dirname, next_version_path, sanitize_component, track_filename, unique_path
-from app.library.tracks import by_ref, dz_id, dz_ref
+from app.library.tracks import bind_refs, by_ref, current_file, dz_id, dz_ref
 from app.matching.normalize import fingerprint, normalize_artist, normalize_title
-from app.models import Album, Track, TrackFile, utcnow
+from app.models import Album, AlbumName, CatalogRelease, CatalogReleaseRef, Track, TrackFile, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +39,7 @@ class ImportSpec(BaseModel):
     album: str | None = None
     album_artist: str | None = None
     album_id: int | None = None  # existing Hub album (uploads, editor)
+    catalog_album_ref: str | None = None
     year: int | None = None
     release_date: date | None = None
     release_type: str | None = None
@@ -46,6 +47,7 @@ class ImportSpec(BaseModel):
     track_total: int | None = None
     disc_no: int | None = None
     genre: str | None = None
+    genre_source: str | None = None
     isrc: str | None = None
     explicit: bool | None = None
     deezer_track_id: str | None = None
@@ -74,27 +76,59 @@ def library_abs(rel: str | PurePosixPath) -> Path:
     return get_settings().library_dir / Path(*PurePosixPath(rel).parts)
 
 
-async def find_album(s: AsyncSession, *, title: str, album_artist: str, deezer_album_id: str | None) -> Album | None:
+async def find_album(s: AsyncSession, *, title: str, album_artist: str, deezer_album_id: str | None,
+                     upc: str | None = None, year: int | None = None, catalog_refs: tuple[str, ...] = (),
+                     track_refs: tuple[str, ...] = ()) -> Album | None:
+    from app.library.album_names import catalog_uid
+    from app.library.artists import key
+
     if deezer_album_id:
         a = (
             await s.execute(select(Album).where(Album.deezer_album_id == str(deezer_album_id)).limit(1))
         ).scalar_one_or_none()
         if a:
             return a
-    nt, na = normalize_title(title).text, normalize_artist(album_artist).text
+    if catalog_refs:
+        known = (await s.scalars(select(Album).where(Album.uid.in_([catalog_uid(ref) for ref in catalog_refs])))).all()
+        by_uid = {a.uid: a for a in known}
+        for ref in catalog_refs:
+            if a := by_uid.get(catalog_uid(ref)):
+                return a
+        album_ids = select(Track.album_id).where(or_(
+            Track.ref.in_(track_refs), Track.catalog["album_ref"].as_string().in_(catalog_refs),
+        ))
+        if a := await s.scalar(select(Album).where(Album.id.in_(album_ids)).order_by(Album.id).limit(1)):
+            return a
+    nt, na = normalize_title(title), normalize_artist(album_artist).text
+
+    def compatible(a: Album) -> bool:
+        return (normalize_artist(a.album_artist).text == na
+                and not (deezer_album_id and a.deezer_album_id and a.deezer_album_id != str(deezer_album_id))
+                and not (upc and a.upc and a.upc.lstrip("0") != upc.lstrip("0"))
+                and not (year and a.year and year != a.year))
+
     rows = (await s.execute(select(Album).where(Album.title == title))).scalars().all()
     if not rows:
         # same album typed with a different case/ё/punctuation
         rows = (await s.execute(select(Album))).scalars().all()
     for a in rows:
-        if normalize_title(a.title).text == nt and normalize_artist(a.album_artist).text == na:
-            if deezer_album_id and a.deezer_album_id and a.deezer_album_id != str(deezer_album_id):
-                continue  # same name, different release (e.g. deluxe)
+        current = normalize_title(a.title)
+        if (current.text, current.version) == (nt.text, nt.version) and compatible(a):
             return a
+    if catalog_refs:
+        former = (await s.scalars(select(Album).join(AlbumName).where(
+            AlbumName.key == key(title), AlbumName.source.in_(["catalog", "renamed"]),
+        ))).all()
+        matches = [a for a in former if compatible(a)]
+        if len(matches) == 1:
+            return matches[0]
     return None
 
 
 async def get_or_create_album(s: AsyncSession, spec: ImportSpec) -> Album:
+    from app.catalog import release_matches
+    from app.library import album_names
+
     if spec.album_id:
         a = await s.get(Album, spec.album_id)
         if a is None:
@@ -102,23 +136,38 @@ async def get_or_create_album(s: AsyncSession, spec: ImportSpec) -> Album:
         return a
     title = spec.album or spec.title
     album_artist = spec.album_artist or spec.artist
-    a = await find_album(s, title=title, album_artist=album_artist, deezer_album_id=spec.deezer_album_id)
+    ref = spec.catalog_album_ref or dz_ref(spec.deezer_album_id)
+    group = (await release_matches.groups_for(s, [ref])).get(ref, []) if ref else []
+    deezer_id = next((item.id for item in group if item.source == "dz"), spec.deezer_album_id)
+    refs = tuple(item.ref for item in group) or ((ref,) if ref else ())
+    if group:
+        title = group[0].title
+    a = await find_album(s, title=title, album_artist=album_artist, deezer_album_id=deezer_id,
+                         upc=spec.upc, year=spec.year or (spec.release_date.year if spec.release_date else None),
+                         catalog_refs=refs, track_refs=tuple(t.ref for item in group for t in item.tracks or []))
     if a is None:
         a = Album(
-            uid=str(uuid.uuid4()),
+            uid=album_names.catalog_uid(refs[0]) if refs else str(uuid.uuid4()),
             title=title,
             album_artist=album_artist,
             year=spec.year or (spec.release_date.year if spec.release_date else None),
             release_type=spec.release_type or ("single" if not spec.album else "album"),
-            deezer_album_id=spec.deezer_album_id,
+            deezer_album_id=deezer_id,
             upc=spec.upc,
             genre=spec.genre,
             created_by=spec.added_by,
         )
         s.add(a)
         await s.flush()
-    elif spec.deezer_album_id and not a.deezer_album_id:
-        a.deezer_album_id = spec.deezer_album_id
+    elif deezer_id and not a.deezer_album_id:
+        a.deezer_album_id = deezer_id
+    for item in group:
+        await album_names.add(s, a, item.title, "catalog")
+    if refs:
+        registered = select(CatalogReleaseRef.release_id).where(CatalogReleaseRef.ref.in_(refs))
+        await s.execute(update(CatalogRelease).where(
+            CatalogRelease.id.in_(registered), CatalogRelease.album_id.is_(None),
+        ).values(album_id=a.id))
     return a
 
 
@@ -172,9 +221,16 @@ def is_original(source_date: date | None, explicit: bool | None) -> bool:
     return bool(explicit) or (source_date is not None and source_date < cutoff)
 
 
-async def import_file(s: AsyncSession, src: Path, spec: ImportSpec) -> Track:
+class TrackAlreadyFiled(ValueError):
+    """The current file changed while a manual file selection was being prepared."""
+
+
+async def import_file(s: AsyncSession, src: Path, spec: ImportSpec, *, require_missing: bool = False,
+                      fallback_cover: bytes | None = None) -> Track:
     """Tag `src` (a file in staging/), move it into the library and make its track and file rows (caller
-    commits)."""
+    commits). `fallback_cover` is a prepared JPEG used when the track and album have no saved cover."""
+    from app import tags
+    from app.catalog import release_matches
     from app.library import artists, titles
 
     # the name is the name: a guest written into it is one of the artists, the producer has a field of their own
@@ -182,12 +238,21 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec) -> Track:
     if guests:
         spec.artist, spec.artists = titles.with_guests(spec.artist, spec.artists, guests)
     spec.producer = spec.producer or (", ".join(producers) or None)
+    file_genres = []
+    try:
+        file_genres = tags.genre_names(await asyncio.to_thread(tagger.read_genres, src))
+    except Exception:
+        log.debug("unable to read original file genre: %s", src.name, exc_info=True)
+    if spec.genre is None and file_genres:
+        spec.genre = file_genres[0]
     ref = spec.ref or dz_ref(spec.deezer_track_id)
     met = await by_ref(s, ref)
     # The library is taken before anything is written: SQLite has one writer, and a filing that wrote first (an
     # artist the Hub did not know) and then waited for the library would keep the database from the very filing that
     # has the library and waits to write — each waiting for the other until one of them gives up
     async with library_lock:
+        if require_missing and spec.track_id is not None and await current_file(s, spec.track_id) is not None:
+            raise TrackAlreadyFiled()
         # who the music is by — by the catalog's records of them where the catalog said, else by the names — and the
         # lines in their names: a spelling that is somebody's is filed under their name
         refs = artists.beside(spec.artists, spec.artist_refs) or artists.refs_of(met.catalog if met else None)
@@ -203,6 +268,8 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec) -> Track:
         album_dir = library_abs(album_dir_rel)
         if cover is None and (album_dir / "cover.jpg").is_file():
             cover = (album_dir / "cover.jpg").read_bytes()
+        if cover is None:
+            cover = fallback_cover
 
         # a file of a song the Hub knows is one more file of that track: its tags, lyrics and places stay with it
         known = await s.get(Track, spec.track_id) if spec.track_id else met
@@ -236,6 +303,17 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec) -> Track:
                 known.artist, known.title = spec.artist, spec.title
                 known.fingerprint = fingerprint(spec.artist, spec.title)
                 known.isrc = known.isrc or (spec.isrc.upper() if spec.isrc else None)
+        sources = dict(track.genre_sources or {})
+        if file_genres:
+            sources["file"] = file_genres
+        else:
+            sources.pop("file", None)
+        if spec.genre_source and spec.genre:
+            sources[spec.genre_source] = tags.genre_names([spec.genre])
+        genres_changed = sources != (track.genre_sources or {})
+        if genres_changed:
+            track.genre_sources = sources
+        track.genres_checked_at = None
         file = TrackFile(
             uid=str(uuid.uuid4()),
             path="",
@@ -274,12 +352,23 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec) -> Track:
             file.chroma = got[0] if got else None
         s.add(track)
         await s.flush()
+        await bind_refs(s, track, [ref])
+        catalog_album = spec.catalog_album_ref or dz_ref(spec.deezer_album_id) or (track.catalog or {}).get("album_ref")
+        if catalog_album:
+            group = (await release_matches.groups_for(s, [catalog_album])).get(catalog_album)
+            if group:
+                versions = release_matches.track_versions(group, ref or track.ref)
+                await bind_refs(s, track, [other.ref for other in versions])
+                for other in versions:
+                    await artists.add_title(s, track, other.title, "catalog")
         await artists.credit_track(s, track, by if track.artist == spec.artist else None)
         if album_by and album.album_artist == spec.album_artist:
             await artists.credit_album(s, album, album_by)
         file.track_id = track.id
         s.add(file)
         await s.flush()
+        if track.genre or genres_changed:
+            await tags.sync(s, [track.id])
         log.info("imported %s", file.path, extra={"user_id": spec.added_by})
         return track
 
@@ -288,6 +377,17 @@ def staging_dir_for(kind: str, key: str | int) -> Path:
     d = get_settings().staging_dir / kind / str(key)
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def copy_limited(src, dest: Path, limit: int) -> int:
+    size = 0
+    with dest.open("wb") as output:
+        while chunk := src.read(1024 * 1024):
+            size += len(chunk)
+            if size > limit:
+                raise ValueError("too large")
+            output.write(chunk)
+    return size
 
 
 def cleanup_dir(d: Path) -> None:

@@ -2,16 +2,21 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ArtistSourceOut } from '../api/types';
 import { useDesktop } from '../lib/desktop';
-import { plural } from '../lib/format';
+import { fmtCompactCount, plural } from '../lib/format';
 import { imageUrl } from '../lib/img';
-import { BrandIcon, hasBrand } from './BrandIcon';
+import { ServiceBadge } from './ServiceBadge';
 import { Icon } from './Icon';
 import { Sheet, cx } from './ui';
 
 const num = (n: number) => n.toLocaleString('ru-RU');
-const NAMES: Record<string, string> = { deezer: 'Deezer', yandex: 'Яндекс Музыка', lastfm: 'Last.fm', catalog: 'Каталог' };
+const NAMES: Record<string, string> = { deezer: 'Deezer', yandex: 'Яндекс Музыка', spotify: 'Spotify', lastfm: 'Last.fm', catalog: 'Каталог' };
+const monthly = (n: number) => `${num(n)} ${plural(n, ['слушатель', 'слушателя', 'слушателей'])} в месяц`;
 const people = (s: ArtistSourceOut) =>
-  s.followers ? `${num(s.followers)} ${plural(s.followers, ['поклонник', 'поклонника', 'поклонников'])}` : s.listeners ? `${num(s.listeners)} ${plural(s.listeners, ['слушатель', 'слушателя', 'слушателей'])}` : '';
+  s.monthly_listeners != null ? monthly(s.monthly_listeners)
+    : s.followers != null ? `${num(s.followers)} ${plural(s.followers, ['поклонник', 'поклонника', 'поклонников'])}`
+    : s.listeners == null ? ''
+    : s.service === 'yandex' ? monthly(s.listeners)
+    : `${num(s.listeners)} ${plural(s.listeners, ['слушатель', 'слушателя', 'слушателей'])}`;
 
 /** Where an artist is known, as buttons of their page's row — after the other projects: one button a service, with
  * its mark (what tells it from a project, which has a round picture), its name and how many follow or listen there
@@ -39,13 +44,22 @@ function ServiceButton({ service, records }: { service: string; records: ArtistS
   const [at, setAt] = useState<{ left: number; top: number } | null>(null); // where the list hangs (a computer)
   const button = useRef<HTMLButtonElement>(null);
   const total = records.reduce((n, s) => n + (s.followers ?? s.listeners ?? 0), 0);
+  const count = service === 'spotify'
+    ? records.length === 1 ? records[0].monthly_listeners ?? null : null
+    : total > 0 ? total : null;
+  const audience = count == null ? '' : records.length === 1 ? people(records[0]) : `${num(count)} суммарно по профилям`;
   const name = NAMES[service] ?? service;
   const box = 'flex h-9 items-center gap-2 rounded-full border border-fg/40 pl-1.5 pr-4 text-sm text-fg transition hover:border-fg active:scale-95';
   const body = (
     <>
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center">{hasBrand(service) ? <BrandIcon service={service} size={18} /> : <Icon name="external" size={16} />}</span>
-      {name}
-      {total > 0 && <span className="tabular-nums text-dim">{num(total)}</span>}
+      <ServiceBadge service={service} label={name} size={18} />
+      {count != null && (
+        <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap tabular-nums text-dim">
+          <Icon name="headphones" size={14} />
+          <span aria-hidden="true">{fmtCompactCount(count)}</span>
+          <span className="sr-only">{audience}</span>
+        </span>
+      )}
     </>
   );
 
@@ -66,12 +80,13 @@ function ServiceButton({ service, records }: { service: string; records: ArtistS
 
   if (records.length === 1) {
     const s = records[0];
+    const title = [s.name, audience].filter(Boolean).join(' · ');
     return s.url ? (
-      <a href={s.url} target="_blank" rel="noopener noreferrer" title={`${name}: ${s.name}${people(s) ? ` · ${people(s)}` : ''}`} className={box}>
+      <a href={s.url} target="_blank" rel="noopener noreferrer" title={title} className={box}>
         {body}
       </a>
     ) : (
-      <span className={cx(box, 'hover:border-fg/40 active:scale-100')}>{body}</span>
+      <span title={title} className={cx(box, 'hover:border-fg/40 active:scale-100')}>{body}</span>
     );
   }
 
@@ -106,7 +121,7 @@ function ServiceButton({ service, records }: { service: string; records: ArtistS
   });
   return (
     <>
-      <button ref={button} type="button" onClick={show} aria-expanded={open} aria-haspopup="menu" title={`${name}: ${records.length} ${plural(records.length, ['профиль', 'профиля', 'профилей'])}`} className={cx(box, open && 'border-fg')}>
+      <button ref={button} type="button" onClick={show} aria-expanded={open} aria-haspopup="menu" title={[`${records.length} ${plural(records.length, ['профиль', 'профиля', 'профилей'])}`, audience].filter(Boolean).join(' · ')} className={cx(box, open && 'border-fg')}>
         {body}
         <Icon name="chevron" size={12} className={cx('-mr-1 text-dim transition-transform', open ? '-rotate-90' : 'rotate-90')} />
       </button>
@@ -117,14 +132,14 @@ function ServiceButton({ service, records }: { service: string; records: ArtistS
             <>
               <button type="button" aria-label="Закрыть" className="fixed inset-0 z-40 cursor-default" onClick={() => setOpen(false)} />
               <div role="menu" aria-label={`Профили в ${name}`} style={{ left: at.left, top: at.top }} className="anim-up fixed z-50 w-80 rounded-2xl bg-raised p-2 shadow-2xl">
-                <p className="px-2 pb-1 pt-1 text-xs text-dim">Профили в {name}</p>
+                <p className="px-2 pb-1 pt-1 text-xs text-dim">Профили в <ServiceBadge service={service} label={name} /></p>
                 {list}
               </div>
             </>,
             document.body,
           )
         : (
-          <Sheet open={open} onClose={() => setOpen(false)} title={`Профили в ${name}`}>
+          <Sheet open={open} onClose={() => setOpen(false)} title={<>Профили в <ServiceBadge service={service} label={name} size={18} /></>}>
             <div className="-mx-1">{list}</div>
           </Sheet>
         )}

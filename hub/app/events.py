@@ -1,4 +1,4 @@
-"""In-process pub/sub for Server-Sent Events. Each user gets only their own events."""
+"""In-process pub/sub for private events and shared library notifications."""
 
 from __future__ import annotations
 
@@ -29,6 +29,10 @@ class EventBus:
                 q.put_nowait(msg)
             except asyncio.QueueFull:
                 pass  # slow client: drop, it will refetch state on reconnect
+
+    def broadcast(self, event: str, data: dict[str, Any]) -> None:
+        for user_id in list(self._subs):
+            self.publish(user_id, event, data)
 
 
 bus = EventBus()

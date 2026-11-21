@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { ArtistFollowButton, ArtistMap, ArtistMapPanel, useArtistMap } from '../components/ArtistMap';
 import { Icon } from '../components/Icon';
+import { ServiceText } from '../components/ServiceBadge';
 import { Cover, Empty, ErrorState, IconButton, PageHeader, SkeletonRows } from '../components/ui';
 import { useAsync, useDebounced } from '../lib/hooks';
 import { enc, navigate } from '../lib/router';
@@ -34,7 +35,7 @@ export function ArtistMapPage({ refId }: { refId?: string }) {
     return (
       <div>
         <PageHeader title="Карта похожих" back="/home" />
-        <Empty icon="nodes" title="Карты здесь нет" text="Кто на кого похож, карта узнаёт у Last.fm, а на этом сервере ключ Last.fm не задан. Похожих по каталогу можно посмотреть на странице исполнителя." />
+        <Empty icon="nodes" title="Карты здесь нет" text={<ServiceText text="Кто на кого похож, карта узнаёт у Last.fm, а на этом сервере ключ Last.fm не задан. Похожих по каталогу можно посмотреть на странице исполнителя." />} />
       </div>
     );
   return (

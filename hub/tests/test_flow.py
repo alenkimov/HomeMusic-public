@@ -5,6 +5,7 @@ Needs ffmpeg/ffprobe (generates real audio and runs the post-download check) —
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import os
@@ -139,7 +140,7 @@ async def env(hub_env, src_mp3):
             mock.get("https://img.test/cover.jpg").mock(
                 return_value=httpx.Response(200, content=jpeg_bytes(), headers={"content-type": "image/jpeg"}))
             async with app_client(app) as client:
-                yield {"client": client, "state": state, "music": music, "fake": fake, "src": src, "mock": mock}
+                yield {"app": app, "client": client, "state": state, "music": music, "fake": fake, "src": src, "mock": mock}
 
 
 async def drain_jobs(max_rounds: int = 20) -> None:
@@ -543,11 +544,21 @@ async def test_app_precache_of_a_track_is_no_listen(env, monkeypatch):
     assert heard == ["dz:100"]
 
 
-async def test_download_after_listening_takes_the_heard_file(env):
+@pytest.mark.parametrize("by_hub_id", [False, True])
+async def test_download_after_listening_takes_the_heard_file(env, by_hub_id):
     c, fake = env["client"], env["fake"]
-    env["mock"].get("https://hm.test/get/1").mock(return_value=httpx.Response(
+    audio = env["mock"].get("https://hm.test/get/1").mock(return_value=httpx.Response(
         200, content=env["src"].read_bytes(), headers={"content-type": "audio/mpeg"}))
-    r = await c.get("/api/listen", params={"ref": "dz:100"})
+    ref = "dz:100"
+    if by_hub_id:
+        from app.db import session_scope
+        from app.library.tracks import of_catalog
+        from app.services import svc
+
+        async with session_scope() as s:
+            track = await of_catalog(s, await svc.deezer.get_track("100"))
+            ref = f"lib:{track.id}"
+    r = await c.get("/api/listen", params={"ref": ref})
     assert r.status_code == 200, r.text
     assert r.json()["kind"] == "full" and r.json()["page_url"] == "https://hm.test/song/1"
     assert fake.searched == 1
@@ -559,7 +570,7 @@ async def test_download_after_listening_takes_the_heard_file(env):
     await drain_jobs()
     items = (await c.get("/api/downloads")).json()
     assert [(i["status"], i["chosen"]["page_url"]) for i in items] == [("done", "https://hm.test/song/1")]
-    assert fake.searched == 1 and fake.fetched == 1  # no new search: the listened file went first
+    assert fake.searched == 1 and fake.fetched == 0 and audio.call_count == 1
 
     # now owned: listening plays the library file
     r = await c.get("/api/listen", params={"ref": "dz:100"})
@@ -671,6 +682,96 @@ async def test_search_tracks_come_in_pages(env):
     page = r.json()
     assert [t["ref"] for t in page["tracks"]] == [f"dz:{200 + i}" for i in range(23, 29)]
     assert page["next_offset"] is None
+
+
+@pytest.mark.parametrize("scope", ["catalog", "sources"])
+async def test_search_stream_sends_matches_while_another_source_is_pending(env, monkeypatch, scope):
+    from app.services import svc
+
+    partial_sent = asyncio.Event()
+
+    async def slow_search(*args, **kwargs):
+        await partial_sent.wait()
+        raise OSError("upstream unavailable")
+
+    if scope == "catalog":
+        fast, slow, result_key = "deezer", "spotify", "tracks"
+        monkeypatch.setattr(svc.spotify, "search", slow_search)
+    else:
+        fast, slow, result_key = "hitmoz", "ytdlp", "candidates"
+        svc.providers[slow] = FakeProvider(slow)
+        monkeypatch.setattr(svc.providers[slow], "search", slow_search)
+
+    async def capture(request_scope, receive, send):
+        async def observe(message):
+            await send(message)
+            if message["type"] == "http.response.body" and message.get("body"):
+                if json.loads(message["body"])["type"] == "partial":
+                    partial_sent.set()
+
+        await env["app"](request_scope, receive, observe)
+
+    transport = httpx.ASGITransport(app=capture)
+    async with httpx.AsyncClient(transport=transport, base_url="http://hub.test", cookies=env["client"].cookies) as c:
+        r = await asyncio.wait_for(c.get("/api/search/stream", params={"q": "Кино - Группа крови", "scope": scope}), 5)
+
+    assert r.status_code == 200 and r.headers["Content-Type"] == "application/x-ndjson"
+    events = [json.loads(line) for line in r.text.splitlines()]
+    assert events[0]["type"] == "sources"
+    assert {"service": slow, "state": "searching"} in events[0]["data"]
+    partial = next(i for i, event in enumerate(events) if event["type"] == "partial")
+    assert {"type": "source", "data": {"service": fast, "state": "ready"}} in events[:partial]
+    assert events[partial]["data"][result_key]
+    assert {"type": "source", "data": {"service": slow, "state": "error"}} in events[partial + 1:]
+    assert events[-1]["type"] == "done"
+    assert events[-1]["data"][result_key] == events[partial]["data"][result_key]
+
+
+async def test_search_keeps_the_sources_of_each_match(env, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.catalog.models import CatalogAlbum, CatalogArtist, CatalogTrack, SearchResults
+    from app.services import svc
+
+    def catalog(source):
+        artist = CatalogArtist(ref=f"{source}:1", source=source, id="1", name="TAK")
+        album = CatalogAlbum(ref=f"{source}:2", source=source, id="2", artist_ref=artist.ref,
+                             title="PPPP", artist=artist.name)
+        track = CatalogTrack(ref=f"{source}:3", source=source, id="3", artist_ref=artist.ref, album_ref=album.ref,
+                             title="PPPP", artist=artist.name, album_title=album.title, duration_s=180)
+        return SearchResults(artists=[artist], albums=[album], tracks=[track])
+
+    deezer, yandex, spotify = (catalog(source) for source in ("dz", "ym", "sp"))
+    spotify.artists.append(CatalogArtist(ref="sp:4", source="sp", id="4", name="TAK"))
+    spotify.tracks.append(spotify.tracks[0].model_copy(update={"ref": "sp:5", "id": "5", "title": "PPPP (Live)"}))
+
+    async def deezer_search(*args, **kwargs):
+        return deezer
+
+    async def deezer_page(*args):
+        return deezer.tracks, 25
+
+    async def yandex_search(*args, **kwargs):
+        return yandex
+
+    async def spotify_search(*args, **kwargs):
+        return spotify
+
+    monkeypatch.setattr(svc.deezer, "search", deezer_search)
+    monkeypatch.setattr(svc.deezer, "search_track_page", deezer_page)
+    monkeypatch.setattr(svc, "yandex", SimpleNamespace(search=yandex_search, aclose=svc.deezer.aclose))
+    monkeypatch.setattr(svc.spotify, "search", spotify_search)
+    c = env["client"]
+    r = await c.get("/api/search/stream", params={"q": "TAK"})
+    assert r.status_code == 200, r.text
+    result = json.loads(r.text.splitlines()[-1])["data"]
+    full = ["spotify", "deezer", "yandex"]
+    assert [(a["ref"], a["found_in"]) for a in result["artists"]] == [("sp:1", full), ("sp:4", ["spotify"])]
+    assert [(a["ref"], a["found_in"]) for a in result["albums"]] == [("sp:2", full)]
+    assert [(t["ref"], t["found_in"]) for t in result["tracks"]] == [("sp:3", full), ("sp:5", ["spotify"])]
+    assert result["tracks"][0]["spotify_id"] == "3"
+    page = (await c.get("/api/search/tracks", params={"q": "TAK", "offset": 25})).json()
+    assert page["tracks"][0]["found_in"] == ["deezer"]
 
 
 async def add_unlinked(path: str, title: str, album: str = "Альбом", artist: str = "Артист") -> int:

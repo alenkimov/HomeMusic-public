@@ -1,3 +1,4 @@
+import { useVersionLabelsSync } from './lib/versionLabels';
 import { setListeningAccount } from './lib/plays';
 import { forgetLast } from './lib/hooks';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
@@ -18,6 +19,7 @@ import { restoreWave } from './lib/wave';
 import { resetInPlaylists } from './lib/inPlaylists';
 import { resetReleases } from './lib/releases';
 import { resetStars } from './lib/stars';
+import { refreshLoadedTags } from './lib/tags';
 import { startNotificationWatcher, stopNotificationWatcher } from './lib/notify';
 import { SessionContext } from './lib/session';
 import { matchPath, navigate, useRoute, type Route } from './lib/router';
@@ -36,7 +38,7 @@ import { DownloadDetailPage } from './pages/DownloadDetail';
 import { DownloadsPage } from './pages/Downloads';
 import { ArtistMapPage } from './pages/ArtistMapPage';
 import { HomePage } from './pages/Home';
-import { ImportItemsPage, ImportPage, ImportsPage } from './pages/Import';
+import { ImportPage, ImportsPage } from './pages/Import';
 import { FilesPage } from './pages/Files';
 import { QualityPage } from './pages/Quality';
 import { LibraryPage, LibrarySearchPage } from './pages/Library';
@@ -59,8 +61,9 @@ import { OpenPage } from './pages/Open';
 import { PlayerPage } from './pages/Player';
 import { PlaylistsPage } from './pages/Playlists';
 import { SearchPage, searchTab } from './pages/Search';
+import { SpotifyPlaylistPage } from './pages/SpotifyPlaylist';
 import { SharePage } from './pages/Share';
-import { ListenBrainzPage } from './pages/ListenBrainz';
+import { IntegrationsPage } from './pages/Integrations';
 import { SubscriptionsPage } from './pages/Subscriptions';
 import { StatsPage } from './pages/Stats';
 import { UploadPage } from './pages/Upload';
@@ -92,7 +95,7 @@ const STANDALONE_ROUTES: RouteDef[] = [
   ['/offline', 'more', () => <OfflinePage />, 'text'],
   ['/subscriptions', 'library', () => <SubscriptionsPage />],
   ['/discoveries', 'library', () => <ForYouPage key="weekly" kind="weekly" />],
-  ['/listenbrainz', 'more', () => <ListenBrainzPage />, 'text'],
+  ['/integrations', 'more', () => <IntegrationsPage />, 'text'],
   ['/auto/:kind', 'library', (p) => <ForYouPage key={p.kind} kind={p.kind} />],
   ['/lib/albums', 'library', () => <NdAlbumsPage />],
   ['/lib/album/:id', 'library', (p) => <NdAlbumPage key={p.id} id={p.id} />],
@@ -105,6 +108,7 @@ const START = STANDALONE ? '/home' : '/search';
 const ROUTES: RouteDef[] = [
   ...(STANDALONE ? STANDALONE_ROUTES : []),
   ['/search', 'search', (_, r) => <SearchPage initialQuery={r.query.get('q') ?? ''} initialTab={searchTab(r.query.get('tab'))} />],
+  ['/spotify/playlist/:id', 'search', (p, r) => <SpotifyPlaylistPage key={p.id} id={p.id} query={r.query.get('q')} />],
   ['/artist/:ref/discography', 'search', (p) => <DiscographyPage key={p.ref} refId={p.ref} />],
   ['/artist/:ref', 'search', (p) => <ArtistPage key={p.ref} refId={p.ref} />],
   ['/artist-named/:name', 'search', (p) => <ArtistNamedPage key={p.name} name={p.name} />],
@@ -116,7 +120,7 @@ const ROUTES: RouteDef[] = [
   ['/map/:ref', 'search', (p) => <ArtistMapPage refId={p.ref} />],
   ['/map', 'search', () => <ArtistMapPage />],
   ['/downloads', 'downloads', () => <DownloadsPage />],
-  ['/downloads/:id', 'downloads', (p) => <DownloadDetailPage key={p.id} id={Number(p.id)} />, 'text'],
+  ['/downloads/:id', 'downloads', (p) => <DownloadDetailPage key={p.id} id={Number(p.id)} />, 'wide'],
   ['/library/search', 'library', () => <LibrarySearchPage />],
   ['/library', 'library', () => <LibraryPage />, 'text'],
   ['/files', 'more', () => <FilesPage key="files" />],
@@ -130,20 +134,6 @@ const ROUTES: RouteDef[] = [
   ['/file/:id', 'library', (p) => <FileJournalPage key={p.id} id={Number(p.id)} />, 'text'],
   ['/import', 'more', (_, r) => <ImportsPage key={r.query.get('from') ?? ''} from={(['yandex', 'spotify', 'vk'] as const).find((x) => x === r.query.get('from')) ?? null} />, 'text'],
   ['/import/:id', 'more', (p) => <ImportPage key={p.id} id={Number(p.id)} />, 'text'],
-  [
-    '/import/:id/items',
-    'more',
-    (p, r) => (
-      <ImportItemsPage
-        key={r.full}
-        id={Number(p.id)}
-        collectionId={r.query.get('c') ? Number(r.query.get('c')) : undefined}
-        match={r.query.get('match') ?? undefined}
-        status={r.query.get('status') ?? undefined}
-      />
-    ),
-    'text',
-  ],
   ['/more', 'more', () => <MorePage />, 'text'],
   ['/admin', 'more', () => <AdminPage />, 'text'],
   ['/lyrics-sources', 'more', () => <LyricsSettingsPage />, 'text'],
@@ -180,6 +170,11 @@ export function App() {
     setMe(next);
   }, []);
 
+  const refresh = useCallback(async () => {
+    const next = await api.me().catch(() => undefined);
+    if (next) updateSession(next);
+  }, [updateSession]);
+
   const boot = useCallback(() => {
     setBootError(undefined);
     api
@@ -211,9 +206,17 @@ export function App() {
 
   useEffect(() => {
     if (!me) return;
+    const offGenres = hubEvents.on('genres', refreshLoadedTags);
+    const offReconnect = hubEvents.on('reconnect', refreshLoadedTags);
+    const offLibrary = hubEvents.on('library', ({ kind }) => {
+      if (kind === 'imported') refreshLoadedTags();
+    });
     hubEvents.start();
     startNotificationWatcher();
     return () => {
+      offGenres();
+      offReconnect();
+      offLibrary();
       stopNotificationWatcher();
       hubEvents.stop();
     };
@@ -233,6 +236,7 @@ export function App() {
   }, []);
   // whom the user does not listen to: the player needs it from the start, to go past their tracks
   const uid = me?.id;
+  useVersionLabelsSync(uid);
   useEffect(() => {
     if (uid != null) void refreshDislikes(true);
   }, [uid]);
@@ -285,7 +289,7 @@ export function App() {
   // a computer's page fills the panel unless its route says otherwise (`Width`); a phone's is a phone's column
   const width = !panel ? 'max-w-(--app-w)' : resolved?.width === 'text' ? 'max-w-(--app-w)' : resolved?.width === 'wide' ? 'max-w-6xl' : '';
   return (
-    <SessionContext.Provider value={{ me, logout }}>
+    <SessionContext.Provider value={{ me, logout, refresh }}>
       {/* a computer's page is a panel beside the side panel, and fills it unless its route makes it a column
           (`Width`); the frame over it keeps its corners round while the window scrolls under them */}
       <div className={cx(panel && 'pl-[calc(var(--side-w)+8px)] pr-2 pt-(--page-top)')}>

@@ -32,6 +32,7 @@ class Services:
         from app.catalog.deezer import DeezerClient
         from app.catalog.hitmoz_catalog import HitmozCatalog
         from app.catalog.musicbrainz import MusicBrainzClient
+        from app.catalog.spotify import SpotifyCatalog
         from app.providers.hitmos_fm import HitmosFmProvider
         from app.providers.hitmoz import HitmozProvider
         from app.providers.reuploads import SoundcloudProvider, YtReuploadProvider
@@ -47,12 +48,14 @@ class Services:
             "yt_reupload": YtReuploadProvider(cfg.ytdlp, access=youtube),
             "soundcloud": SoundcloudProvider(cfg.ytdlp),
         }
-        self.deezer = DeezerClient(cfg.catalog)
+        self.deezer = DeezerClient(cfg.catalog) if get_settings().deezer_catalog else None
         self.hitmoz_catalog = HitmozCatalog(hitmoz)
         from app.catalog.yandex_catalog import YandexCatalog
 
         self.yandex = YandexCatalog() if get_settings().yandex_catalog else None
         self.musicbrainz = MusicBrainzClient(cfg.catalog)
+        self.spotify = SpotifyCatalog()
+        self.spotify.warm()
 
     async def stop(self) -> None:
         for p in self.providers.values():
@@ -60,17 +63,18 @@ class Services:
                 await p.aclose()
             except Exception:
                 log.exception("closing provider %s", p.name)
-        for c in (self.deezer, self.musicbrainz):
+        for c in (self.deezer, self.musicbrainz, self.spotify):
             if c is not None:
                 try:
                     await c.aclose()
                 except Exception:
                     log.exception("closing catalog client")
+        self.spotify = None
 
     # --- a record of a catalog, read from the catalog it is of (`CatalogNotFound`: no such record, or catalog) ---
 
     async def artist_page(self, ref: str) -> ArtistPage:
-        from app.catalog.deezer import CatalogNotFound
+        from app.catalog.models import CatalogNotFound
         from app.catalog.models import split_ref
 
         src, id_ = split_ref(ref)
@@ -86,7 +90,7 @@ class Services:
 
     async def album(self, ref: str, *, credited: bool = False) -> CatalogAlbum:
         """`credited`: with everyone credited on each track (Deezer says so only track by track)."""
-        from app.catalog.deezer import CatalogNotFound
+        from app.catalog.models import CatalogNotFound
         from app.catalog.models import split_ref
 
         src, id_ = split_ref(ref)
@@ -101,7 +105,7 @@ class Services:
         raise CatalogNotFound(ref)
 
     async def track(self, ref: str) -> CatalogTrack:
-        from app.catalog.deezer import CatalogNotFound
+        from app.catalog.models import CatalogNotFound
         from app.catalog.models import split_ref
 
         src, id_ = split_ref(ref)

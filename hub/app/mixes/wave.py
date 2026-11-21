@@ -259,21 +259,22 @@ def generators(p: Profile, seed: CatalogTrack | None, seed_artist: dict[str, Any
     if seed_artist is not None:
         ref = seed_artist.get("ref")
         songs: list[CatalogTrack] = list(seed_artist.get("songs") or [])
+        deezer = bool(ref and ref.startswith("dz:") and svc.deezer is not None)
 
         async def top() -> list[CatalogTrack]:
-            if svc.deezer is None:
-                raise build.Off("Deezer")
-            return await svc.deezer.get_artist_top(split_ref(ref)[1], limit=10)
+            if deezer:
+                return await svc.deezer.get_artist_top(split_ref(ref)[1], limit=10)
+            return songs[:10]
 
         async def own() -> list[CatalogTrack]:
             return random.sample(songs, len(songs))
 
         async def radios() -> list[CatalogTrack]:
-            tracks = (await top())[:2] if ref else random.sample(songs, min(2, len(songs)))
+            tracks = (await top())[:2] if deezer else random.sample(songs, min(2, len(songs)))
             return await build._by_seeds([taste_of(t) for t in tracks],
                                          lambda x: sources.ytm_radio(x.artist, x.title), "ytm")
 
-        out = {"deezer_radio": lambda: artist_radio(ref), "favorites": top} if ref else {}
+        out = {"deezer_radio": lambda: artist_radio(ref), "favorites": top} if deezer else {}
         if songs:
             out[ARTIST_SONGS] = own
         return {**out, "ytm_radio": radios}
@@ -739,10 +740,10 @@ async def learn(sid: str, rt: Runtime, events: list[PlayEvent]) -> None:
 async def _download(sid: str, rt: Runtime, x: Played) -> None:
     """A track played to its end that the library lacks: a quiet download (`query_json.wave`), unless one is under
     way already (the ♥ one, another session's)."""
-    from app.jobs.downloads import query_from_track
+    from app.jobs.downloads import meta_from_catalog, query_from_track
 
     st = rt.state
-    if not rt.download_finished or x.nd_song_id or not x.track or x.ref in st.downloads or not x.ref.startswith("dz:"):
+    if not rt.download_finished or x.nd_song_id or not x.track or x.ref in st.downloads or not x.ref.startswith(("dz:", "sp:", "ym:")):
         return
     st.downloads.append(x.ref)
     t = CatalogTrack.model_validate(x.track)
@@ -755,7 +756,7 @@ async def _download(sid: str, rt: Runtime, x: Played) -> None:
         from app.library.owned import find_owned
 
         if await find_owned(s, artist=t.artist, title=t.title, duration_s=t.duration_s, isrc=t.isrc,
-                               deezer_track_id=t.id) is not None:
+                            catalog_ref=t.ref) is not None:
             return
         row = await s.get(WaveSession, sid)
         if row is None:
@@ -767,7 +768,7 @@ async def _download(sid: str, rt: Runtime, x: Played) -> None:
             row.batch_id = batch.id
         item = DownloadItem(batch_id=row.batch_id, user_id=rt.user_id, query_json={
             "query": query_from_track(t).model_dump(),
-            "meta": {"track_ref": x.ref, "deezer_track_id": t.id, "artists": t.artists or [t.artist]},
+            "meta": meta_from_catalog(t),
             "wave": {"session": sid}})
         s.add(item)
         await s.flush()
@@ -846,19 +847,18 @@ async def _artist_songs(nd, artist_id: str, name: str) -> list[CatalogTrack]:
 
 
 async def _catalog_artist(name: str, songs: list[CatalogTrack]) -> str | None:
-    """The Deezer artist of a library artist: from a song's catalog record, else the search by the exact name."""
-    if svc.deezer is None:
-        return None
+    """Find a catalog artist by a known song or by name."""
+    from app.catalog import lookup
+
     key = artist_key(name)
     for t in songs:
-        if t.source == "dz" and (full := await catalog_track(t.ref)) is not None and full.artist_ref                 and artist_key(full.artist) == key:
+        if (lookup.source_available(t.ref) and (full := await catalog_track(t.ref)) is not None
+                and full.artist_ref and artist_key(full.artist) == key):
             return full.artist_ref
     try:
-        found = await svc.deezer.search(name, kinds=("artist",), limit=5)
-    except Exception as e:  # The wave goes on with the library songs.
-        log.warning("wave: Deezer artist search %r failed: %s", name, e)
+        return await build.artist_by_name(name)
+    except lookup.CatalogUnavailable:
         return None
-    return next((a.ref for a in found.artists if artist_key(a.name) == key), None)
 
 
 async def _seed(seed: dict[str, Any], user: User | None = None) -> tuple[CatalogTrack | None, dict[str, Any] | None]:
@@ -880,10 +880,20 @@ async def _seed(seed: dict[str, Any], user: User | None = None) -> tuple[Catalog
                 await nd.aclose()
             if artist_id:
                 return await _seed({"nd_artist_id": artist_id}, user)
-        elif ref.startswith("dz:"):
+        elif ref.startswith(("dz:", "sp:", "ym:")):
             track = await catalog_track(ref)
             if track and track.artist_ref:
                 return await _seed({"artist_ref": track.artist_ref}, user)
+        elif ref.startswith("lib:"):
+            from app.catalog.registry import numeric_id
+            from app.models import TrackArtist
+
+            async with session_scope() as s:
+                ident = await s.scalar(select(TrackArtist.artist_id).where(
+                    TrackArtist.track_id == numeric_id(ref[4:]),
+                ).order_by(TrackArtist.position).limit(1))
+            if ident is not None:
+                return await _seed({"artist_ref": f"artist:{ident}"}, user)
         raise WaveError(404, "Исполнитель трека не найден")
     if nd := seed.get("nd_song_id"):
         async with session_scope() as s:
@@ -906,15 +916,43 @@ async def _seed(seed: dict[str, Any], user: User | None = None) -> tuple[Catalog
             return CatalogTrack(ref=ref, source="file", id=c.provider_id, title=c.title, artist=c.artist,
                                 artists=[c.artist], album_title=c.album, duration_s=c.duration_s,
                                 explicit=c.explicit, cover_url=c.cover_url, cover_small_url=c.cover_url), None
-        if not ref.startswith("dz:") or (t := await catalog_track(ref)) is None:
+        if ref.startswith("lib:"):
+            from app.catalog.registry import library_track as registered_track
+            from app.library.tracks import by_ref
+
+            async with session_scope() as s:
+                if track := await by_ref(s, ref):
+                    return registered_track(track), None
+        if not ref.startswith(("dz:", "sp:", "ym:")) or (t := await catalog_track(ref)) is None:
             raise WaveError(404, "Трек не найден в каталоге")
         return t, None
-    if (ref := seed.get("artist_ref")) and svc.deezer is not None:
+    if ref := seed.get("artist_ref"):
+        if ref.startswith("dz:") and svc.deezer is not None:
+            try:
+                a = await svc.deezer.get_artist(split_ref(ref)[1])
+                return None, {"ref": a.ref, "name": a.name}
+            except Exception as e:
+                log.info("wave artist %s unavailable from Deezer: %r", ref, e)
+        from fastapi import HTTPException
+
+        from app.api.catalog import whole_artist
+        from app.catalog.registry import library_track as registered_track
+        from app.models import TrackArtist
+
         try:
-            a = await svc.deezer.get_artist(split_ref(ref)[1])
-        except Exception as e:
-            raise WaveError(404, "Исполнитель не найден") from e
-        return None, {"ref": a.ref, "name": a.name}
+            async with session_scope() as s:
+                a, _, _, pages = await whole_artist(s, ref, include_sources=False)
+                songs = list({t.ref: t for page in pages for t in page.top_tracks}.values())
+                if not songs:
+                    tracks = (await s.scalars(select(Track).join(TrackArtist).where(
+                        TrackArtist.artist_id == a.hub_artist_id, Track.path.is_not(None),
+                    ).order_by(Track.id.desc()).limit(10))).all()
+                    songs = [registered_track(t) for t in tracks]
+        except HTTPException as e:
+            raise WaveError(e.status_code, str(e.detail)) from e
+        if not songs and not (a.ref.startswith("dz:") and svc.deezer is not None):
+            raise WaveError(404, "Для этого исполнителя пока нет треков для волны")
+        return None, {"ref": a.ref, "name": a.name, "songs": songs}
     if (nd_id := seed.get("nd_artist_id")) and user is not None:
         from app.auth import user_navidrome
 

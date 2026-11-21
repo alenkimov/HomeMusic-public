@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
-from app.catalog.models import CatalogAlbum, CatalogArtist, CatalogTrack
+from app.catalog.models import CatalogAlbum, CatalogArtist, CatalogPlaylist, CatalogTrack
 from app.providers.base import Candidate
 
 # --- auth ------------------------------------------------------------------------------
@@ -185,6 +185,8 @@ class AiMonthOut(BaseModel):
 class AdminDownloadOut(BaseModel):
     artist: str
     title: str
+    track_id: int | None = None
+    track_ref: str | None = None
     status: str
     created_at: datetime
 
@@ -240,6 +242,7 @@ class LibAlbumOut(BaseModel):
     deezer_album_id: str | None
     track_count: int = 0
     has_cover: bool = False
+    cover_url: str | None = None
     # the album itself (its name, its picture, merging) can be changed by who asks: all of its tracks are theirs
     can_edit: bool = True
     nd_album_id: str | None = None
@@ -304,6 +307,14 @@ class VersionOut(BaseModel):
     has_file: bool = False
 
 
+class VersionLabelOut(BaseModel):
+    track_id: int
+    ref: str | None = None
+    nd_song_ids: list[str]
+    source_urls: list[str]
+    label: str
+
+
 class VersionsOut(BaseModel):
     """The song a track is: every version of it, the preferred one first (one alone: the track is nobody's version)."""
 
@@ -313,7 +324,7 @@ class VersionsOut(BaseModel):
     versions: list[VersionOut] = []
 
 
-class TrackNameOut(BaseModel):
+class AlternateNameOut(BaseModel):
     id: int | None = None
     name: str
     source: str  # renamed / file / manual / catalog
@@ -338,7 +349,20 @@ class TrackEditOut(BaseModel):
     has_file: bool = False
     producer: str | None = None  # who made the beat, where the track's name said so
     # the other names it is known by (`id` None: the catalog's, which is not kept here and cannot be dropped)
-    names: list[TrackNameOut] = []
+    names: list[AlternateNameOut] = []
+
+
+class AlbumEditOut(BaseModel):
+    album_id: int | None = None
+    title: str
+    album_artist: str
+    names: list[AlternateNameOut] = []
+    can_edit: bool = True
+
+
+class AlbumRenameIn(BaseModel):
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=512)]
+    album_artist: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=512)] | None = None
 
 
 class TrackPatchIn(BaseModel):
@@ -430,15 +454,29 @@ class FileJournalOut(BaseModel):
     download_id: int | None = None  # the download itself, when it is the asker's own (its page has more: the files found)
 
 
+class ImportReviewOut(BaseModel):
+    id: int
+    source: str
+    title: str
+    artist: str
+    duration_s: int | None = None
+    cover_url: str | None = None
+
+
 class TrackOut(CatalogTrack):
     owned: bool = False
     versions: int = 0  # how many recordings the song it is has here, itself among them (0: it is nobody's version)
     file: FileOut | None = None  # an owned track: its file
     library_track_id: int | None = None
+    release_id: int | None = None
+    hub_artist_id: int | None = None
+    hub_artist_ids: list[int | None] = []
     nd_song_id: str | None = None
     downloading: bool = False  # a download of it is under way (not counting the Hub's own quiet ones)
     # known by its name alone: no file and no record of the catalog — nothing to play until it is given a file
     unknown: bool = False
+    unavailable: bool = False  # a catalog track whose latest completed search yielded no playable recording
+    import_review: ImportReviewOut | None = None
     # in a list: when the track was added to it (a playlist, the likes); else when it came into the library
     added_at: datetime | None = None
     # among an artist's most listened: how many listened to it on Last.fm (None: Last.fm does not say)
@@ -454,10 +492,15 @@ class ServiceLinkOut(BaseModel):
 
 class AlbumOut(CatalogAlbum):
     owned_status: OwnedStatus = "none"
+    library_album_id: int | None = None
+    release_id: int | None = None
+    hub_artist_id: int | None = None
+    hub_artist_ids: list[int | None] = []
     owned_count: int = 0
     tracks: list[TrackOut] | None = None  # type: ignore[assignment]
     # where the release can be opened: its own catalog, and another that has the same release (its own page only)
     links: list[ServiceLinkOut] = []
+    found_in: list[str] = []  # catalogs whose records were combined into this search or discography result
 
 
 class ArtistSourceOut(BaseModel):
@@ -470,6 +513,7 @@ class ArtistSourceOut(BaseModel):
     picture_url: str | None = None
     followers: int | None = None
     listeners: int | None = None
+    monthly_listeners: int | None = None
     releases: int | None = None
     url: str | None = None  # their page there
 
@@ -483,9 +527,8 @@ class ArtistPageOut(BaseModel):
     excluded: int = 0  # releases said to be a namesake's: not among these
     lastfm_listeners: int | None = None  # how many listened to the artist on Last.fm (None: not known)
     banner_url: str | None = None  # the wide picture over the page (None: there is none — the round photo then)
-    # how many of the last `top_tracks` are Last.fm's popular ones, added where the catalog's own list is short
-    top_from_lastfm: int = 0
-    # the catalog's records the page is drawn of — one artist may have several; the first is the page's own address
+    top_track_sources: list[str] = []  # the ranking source for each displayed track, in list order
+    # the catalog's records the page is drawn of — one artist may have several
     profiles: list[str] = []
     sources: list[ArtistSourceOut] = []  # each of them, and Last.fm, as they show the artist
 
@@ -516,15 +559,33 @@ class DiscographyOut(BaseModel):
     albums: list[AlbumOut] = []
     excluded: int = 0  # releases said to be a namesake's: not among `albums`
     profiles: list[str] = []  # as `ArtistPageOut.profiles`
+    spotify_partial: bool = False
+    spotify_pending: bool = False
+
+
+class SearchArtistOut(CatalogArtist):
+    found_in: list[str] = []
+
+
+class SearchTrackOut(TrackOut):
+    found_in: list[str] = []
 
 
 class SearchOut(BaseModel):
     library: list[LibTrackOut] = []
-    artists: list[CatalogArtist] = []
+    artists: list[SearchArtistOut] = []
     albums: list[AlbumOut] = []
-    tracks: list[TrackOut] = []
+    tracks: list[SearchTrackOut] = []
+    playlists: list[CatalogPlaylist] = []
     tracks_next: int | None = None  # offset of the next page of tracks (GET /api/search/tracks); None — that's all
     errors: list[str] = []  # e.g. "Deezer недоступен"
+
+
+class CatalogPlaylistOut(BaseModel):
+    playlist: CatalogPlaylist
+    tracks: list[TrackOut] = []
+    local_tracks: int = 0
+    skipped: int = 0
 
 
 class SearchMineOut(BaseModel):
@@ -534,10 +595,23 @@ class SearchMineOut(BaseModel):
     tracks: list[TrackOut] = []
 
 
+class CoverOptionOut(BaseModel):
+    key: str
+    title: str
+    artist: str
+    source: str
+    track_id: int | None = None
+
+
+class CoverSearchOut(BaseModel):
+    covers: list[CoverOptionOut]
+    incomplete: bool = False
+
+
 class SearchTracksOut(BaseModel):
     """A further page of the catalog track search."""
 
-    tracks: list[TrackOut] = []
+    tracks: list[SearchTrackOut] = []
     next_offset: int | None = None  # None — the end of the results
 
 
@@ -579,7 +653,7 @@ class ListenOut(BaseModel):
     """What plays for a catalog track before it is downloaded (GET /api/listen)."""
 
     ref: str
-    kind: Literal["full", "preview", "library"]  # the file a download would pick / Deezer 30 s preview / own file
+    kind: Literal["full", "library"]  # the file a download would pick / own file
     artist: str
     title: str
     duration_s: int | None = None
@@ -623,10 +697,12 @@ class DownloadItemOut(BaseModel):
     artist: str
     title: str
     album: str | None = None
+    duration_s: int | None = None
     provider: str | None = None
     error: str | None = None
     warnings: list[Any] = []
     track_id: int | None = None
+    attach_to_track_id: int | None = None  # a manually selected file goes into this existing recording
     nd_song_id: str | None = None  # Navidrome song once imported and scanned
     playlist_id: str | None = None  # target Navidrome playlist of the batch (Android: sync only that one offline)
     track_ref: str | None = None  # catalog track the item was made from (dz:…)
@@ -635,7 +711,7 @@ class DownloadItemOut(BaseModel):
     quiet: bool = False
     import_id: int | None = None  # queued by this import (`/api/imports`)
     candidates: list[Candidate] | None = None  # only in detail view
-    # the journal, only in detail view: the steps in order — {t, kind: info/ok/warn/bad, text, cand?: the file
+    # the journal, only in detail view: the steps in order — {t, kind: info/ok/warn/bad, text, failed_provider?, cand?: the file
     # the step is about ({artist, title, provider, bitrate_kbps, duration_s, page_url})}
     log: list[dict[str, Any]] | None = None
     chosen: Candidate | None = None
@@ -650,7 +726,12 @@ class DownloadIdsIn(BaseModel):
 
 class RetryIn(BaseModel):
     candidate_index: int | None = None
+    candidate_ref: str | None = Field(default=None, max_length=300)
     url: str | None = None  # hitmoz/hitmos.fm song page or a YouTube link
+
+
+class DownloadLinkIn(BaseModel):
+    url: str = Field(min_length=1)
 
 
 # --- uploads -----------------------------------------------------------------------------
@@ -868,6 +949,8 @@ class NdAlbumOut(BaseModel):
     song_count: int = 0
     duration_s: int = 0
     cover_url: str | None = None
+    library_album_id: int | None = None
+    release_id: int | None = None
     starred: bool = False
     tracks: list[NdSongOut] | None = None
 
@@ -882,6 +965,7 @@ class NdArtistOut(BaseModel):
 
 class NdArtistPageOut(BaseModel):
     artist: NdArtistOut
+    hub_artist_id: int | None = None
     albums: list[NdAlbumOut] = []
     # the same artist in the catalog — by what the Hub knows of their tracks, else by the very name: their page is
     # the catalog's then
@@ -982,7 +1066,7 @@ class AssistantTextIn(BaseModel):
 # --- imports from music services ----------------------------------------------------------
 
 ImportSource = Literal["yandex", "spotify", "vk"]
-ImportMethod = Literal["device", "token", "profile", "csv", "password", "link"]
+ImportMethod = Literal["device", "token", "profile", "csv", "password", "link", "saved"]
 ImportMode = Literal["economy", "full"]
 
 
@@ -990,6 +1074,7 @@ class ImportIn(BaseModel):
     source: ImportSource = "yandex"
     method: ImportMethod = "device"
     token: str | None = None  # method "token"
+    connection_id: int | None = None  # method "saved": a session belonging to this user
     url: str | None = None  # method "profile": a link to the profile or the login; "link": to a playlist or an album
     # method "password" (VK): used for the sign-in only, never kept beyond it
     login: str | None = None
@@ -1043,6 +1128,11 @@ class ImportCollectionOut(BaseModel):
     playlist_id: str | None = None  # the Hub's playlist made of the collection
 
 
+class ImportDestinationOut(BaseModel):
+    playlist_id: str | None = None  # None for «Любимое»
+    name: str
+
+
 class ImportOut(BaseModel):
     id: int
     source: ImportSource
@@ -1058,6 +1148,7 @@ class ImportOut(BaseModel):
     error: str | None = None
     stats: ImportStatsOut = Field(default_factory=ImportStatsOut)
     collections: list[ImportCollectionOut] = []
+    destinations: list[ImportDestinationOut] = []
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None

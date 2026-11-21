@@ -1,17 +1,22 @@
 import { useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { TrackOut } from '../api/types';
+import { AlbumEdit } from '../components/AlbumEdit';
 import { TrackRow, TrackTableHeader } from '../components/catalog';
+import { TrackTable } from '../components/TrackTable';
 import { Icon, type IconName } from '../components/Icon';
 import { ListBar } from '../components/ListBar';
 import { BrandIcon } from '../components/BrandIcon';
 import { ErrorState, ExplicitBadge, HeroSkeleton, IconButton, OwnedBadge, PageHeader, Sheet } from '../components/ui';
 import { startDownload } from '../lib/actions';
+import { openAlbumArtwork } from '../lib/coverPicker';
 import { useHubEvent } from '../lib/events';
+import { needsTrackFile, withRecordingAvailability } from '../lib/findFile';
 import { fmtLength, recordTypeLabel, tracksWord, yearOf } from '../lib/format';
-import { useAsync } from '../lib/hooks';
+import { SourceStatuses } from '../components/SourceStatuses';
+import { useSourceRequest } from '../lib/hooks';
 import { canPlay, canPlayAll, playList } from '../lib/player';
-import { Link, enc } from '../lib/router';
+import { Link, albumPath, artistPath, enc, useCanonicalPath } from '../lib/router';
 import { copyText } from '../lib/share';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 import { Hero } from './MediaLibrary';
@@ -24,8 +29,11 @@ import { Hero } from './MediaLibrary';
 
 export function AlbumPage({ refId }: { refId: string }) {
   const [menu, setMenu] = useState(false);
+  const [rename, setRename] = useState(false);
   const [rev, setRev] = useState(0);
-  const res = useAsync((s) => api.album(refId, s, rev > 0), [refId, rev], true, `album:${refId}`);
+  const { res, sources } = useSourceRequest(`album:${refId}`, (s, update) => api.album(refId, s, rev > 0, update), rev);
+  const status = sources.length > 0 && <SourceStatuses sources={sources} label="Статусы источников альбома" />;
+  useCanonicalPath(`/album/${enc(refId)}`, res.data?.release_id ? albumPath(res.data) : undefined);
   const [dlBusy, setDlBusy] = useState(false);
 
   const reloadTimer = useRef<number | undefined>(undefined);
@@ -36,8 +44,14 @@ export function AlbumPage({ refId }: { refId: string }) {
     window.clearTimeout(reloadTimer.current);
     reloadTimer.current = window.setTimeout(() => setRev((r) => r + 1), 1500);
   });
+  useHubEvent('recording', (event) => res.setData((prev) => {
+    if (!prev?.tracks) return prev;
+    const tracks = withRecordingAvailability(prev.tracks, event);
+    return tracks === prev.tracks ? prev : { ...prev, tracks };
+  }));
 
   const tracks = useMemo(() => res.data?.tracks ?? [], [res.data]);
+  const playableTracks = useMemo(() => tracks.filter((track) => !needsTrackFile(track)), [tracks]);
   const discs = useMemo(() => {
     const m = new Map<number, TrackOut[]>();
     for (const t of tracks) {
@@ -51,14 +65,14 @@ export function AlbumPage({ refId }: { refId: string }) {
   if (res.loading && !res.data)
     return (
       <>
-        <PageHeader hero title="Альбом" back="/search" />
+        <PageHeader hero title="Альбом" back="/search" right={status} />
         <HeroSkeleton buttons />
       </>
     );
   if (res.error || !res.data)
     return (
       <>
-        <PageHeader hero title="Альбом" back="/search" />
+        <PageHeader hero title="Альбом" back="/search" right={status} />
         <ErrorState text={res.error ?? 'Альбом не найден'} onRetry={() => res.reload()} />
       </>
     );
@@ -76,7 +90,7 @@ export function AlbumPage({ refId }: { refId: string }) {
 
   const downloadAlbum = async () => {
     setDlBusy(true);
-    const r = await startDownload({ album_ref: album.ref });
+    const r = await startDownload({ album_ref: String(album.release_id ?? album.ref) });
     setDlBusy(false);
     if (r) markDownloading(new Set(missing.map((t) => t.ref)));
   };
@@ -85,7 +99,7 @@ export function AlbumPage({ refId }: { refId: string }) {
 
   const share = async () => {
     setMenu(false);
-    const url = `${window.location.origin}/#/album/${enc(album.ref)}`;
+    const url = `${window.location.origin}/#${albumPath(album)}`;
     toast((await copyText(url)) ? 'Ссылка на релиз скопирована' : url, 'success');
   };
   /** The catalog keeps namesakes under one artist: this release is not of the one whose page led here. */
@@ -110,17 +124,19 @@ export function AlbumPage({ refId }: { refId: string }) {
   );
   const allHere = tracks.length > 0 && missing.length === 0;
   const facts = [year, tracks.length ? tracksWord(tracks.length) : null, total ? fmtLength(total) : null].filter(Boolean);
+  const artwork = { albumId: album.library_album_id, catalogRef: album.ref, title: album.title, artist: album.artist, src: album.cover_url, tracks };
 
   return (
     <div>
       <ListBar
         title={album.title}
         back="/search"
-        tracks={tracks}
+        tracks={playableTracks}
         context="album"
         // what is done with the release as a whole stands at the top, as on a playlist's page
         extra={
           <>
+            {(res.loading || sources.some((s) => s.state === 'searching')) && status}
             <IconButton icon="more" label="Ещё" onClick={() => setMenu(true)} />
             <IconButton
               icon={allHere ? 'check' : 'download'}
@@ -136,16 +152,17 @@ export function AlbumPage({ refId }: { refId: string }) {
       <Hero
         kicker={recordTypeLabel(album.record_type) || 'Релиз'}
         cover={album.cover_url}
+        onCover={() => openAlbumArtwork(artwork)}
         title={album.title}
         sub={
           <span className="flex flex-wrap items-center gap-x-1.5">
             {album.explicit && <ExplicitBadge />}
             {/* everyone the release is credited to, each with their page */}
-            {(album.artists?.length ? album.artists.map((name, i) => ({ name, ref: album.artist_refs?.[i] ?? null })) : [{ name: album.artist, ref: album.artist_ref ?? null }]).map((a, i) => (
+            {(album.artists?.length ? album.artists.map((name, i) => ({ name, ref: album.artist_refs?.[i], id: album.hub_artist_ids?.[i] })) : [{ name: album.artist, ref: album.artist_ref, id: album.hub_artist_id }]).map((a, i) => (
               <span key={`${a.name}:${i}`} className="font-semibold text-fg">
                 {i > 0 && <span className="pr-1.5 font-normal text-muted">,</span>}
-                {a.ref ? (
-                  <Link to={`/artist/${enc(a.ref)}`} className="hover:underline">
+                {a.ref || a.id ? (
+                  <Link to={artistPath({ ref: a.ref ?? '', hub_artist_id: a.id })} className="hover:underline">
                     {a.name}
                   </Link>
                 ) : (
@@ -156,7 +173,7 @@ export function AlbumPage({ refId }: { refId: string }) {
             {facts.length > 0 && <span>· {facts.join(' · ')}</span>}
           </span>
         }
-        tracks={tracks}
+        tracks={playableTracks}
         context="album"
       />
 
@@ -167,15 +184,17 @@ export function AlbumPage({ refId }: { refId: string }) {
       )}
 
       <section aria-label="Треки" className="pt-2">
-        {tracks.length > 0 && <TrackTableHeader numbered />}
-        {discs.map(([disc, list]) => (
-          <div key={disc}>
-            {discs.length > 1 && <div className="px-4 pb-1 pt-3 text-sm font-semibold text-muted">Диск {disc}</div>}
-            {list.map((t, i) => (
-              <TrackRow key={t.ref} track={t} number={t.track_no ?? i + 1} link={false} onPlay={() => play(t)} queue={tracks} />
-            ))}
-          </div>
-        ))}
+        <TrackTable tracks={tracks} numbered kind="album">
+          {tracks.length > 0 && <TrackTableHeader numbered />}
+          {discs.map(([disc, list]) => (
+            <div key={disc}>
+              {discs.length > 1 && <div className="px-4 pb-1 pt-3 text-sm font-semibold text-muted">Диск {disc}</div>}
+              {list.map((t, i) => (
+                <TrackRow key={t.ref} track={t} number={t.track_no ?? i + 1} link={false} onPlay={() => play(t)} queue={playableTracks} />
+              ))}
+            </div>
+          ))}
+        </TrackTable>
         {!tracks.length && <p className="px-4 py-6 text-center text-muted">Треклист недоступен</p>}
       </section>
 
@@ -183,16 +202,18 @@ export function AlbumPage({ refId }: { refId: string }) {
 
       <Sheet open={menu} onClose={() => setMenu(false)} title={album.title}>
         <div className="-mx-1">
+          {item('edit', 'Переименовать', () => { setMenu(false); setRename(true); })}
+          {item('image', 'Сменить обложку', () => { setMenu(false); openAlbumArtwork(artwork, 'edit'); })}
           {item('link', 'Скопировать ссылку', () => void share())}
           {/* every service that has the release: the catalog its record is of, and the other one where it is too */}
           {(album.links ?? []).map((x) => (
             <a key={x.service} href={x.url} target="_blank" rel="noopener noreferrer" onClick={() => setMenu(false)} className="flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-[15px] hover:bg-fg/5">
               <BrandIcon service={x.service} size={21} />
-              {x.service === 'yandex' ? 'Открыть в Яндекс Музыке' : 'Открыть в Deezer'}
+              {x.service === 'yandex' ? 'Открыть в Яндекс Музыке' : x.service === 'spotify' ? 'Открыть в Spotify' : 'Открыть в Deezer'}
             </a>
           ))}
-          {album.artist_ref && (
-            <Link to={`/artist/${enc(album.artist_ref)}`} onClick={() => setMenu(false)} className="flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-[15px] hover:bg-fg/5">
+          {(album.artist_ref || album.hub_artist_id) && (
+            <Link to={artistPath({ ref: album.artist_ref ?? '', hub_artist_id: album.hub_artist_id })} onClick={() => setMenu(false)} className="flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-[15px] hover:bg-fg/5">
               <Icon name="user" size={21} className="text-muted" />
               Перейти к исполнителю
             </Link>
@@ -205,6 +226,11 @@ export function AlbumPage({ refId }: { refId: string }) {
           )}
         </div>
       </Sheet>
+      {rename && <AlbumEdit target={{ ref: String(album.release_id ?? album.ref) }} onClose={() => setRename(false)} onSaved={(saved) => {
+        res.setData((prev) => prev && { ...prev, title: saved.title, artist: saved.album_artist,
+          artists: saved.album_artist === prev.artist ? prev.artists : [saved.album_artist], library_album_id: saved.album_id });
+        res.reload(true);
+      }} />}
 
     </div>
   );

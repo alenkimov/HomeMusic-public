@@ -1,8 +1,9 @@
+import { TrackTitle } from './TrackTitle';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import type { VersionOut, VersionsOut } from '../api/types';
 import { fmtDuration } from '../lib/format';
-import { useAsync } from '../lib/hooks';
+import { useAsync, useWindowEvent } from '../lib/hooks';
 import { imageUrl } from '../lib/img';
 import { listen, useListen } from '../lib/listen';
 import { EDITED_EVENT } from '../lib/trackEdit';
@@ -10,6 +11,66 @@ import { attempt, toast } from '../lib/ui';
 import { closeVersions, useVersions, type VersionsOf } from '../lib/versions';
 import { Icon } from './Icon';
 import { Cover, ErrorState, Sheet, Spinner, cx } from './ui';
+
+function playVersion(v: VersionOut, ref: string) {
+  listen({
+    ref,
+    nd_song_id: v.nd_song_id,
+    library_track_id: v.track_id,
+    title: v.title,
+    artist: v.artist,
+    cover_url: v.cover_url,
+    cover_small_url: v.cover_url,
+    album: v.album ?? undefined,
+    duration_s: v.duration_s ?? null,
+  });
+}
+
+/** The versions linked to the recording playing now. A known id lets the player look them up without registering a catalog track. */
+export function OtherVersions({ trackId, songId }: { trackId?: number | null; songId?: string | null }) {
+  const { data, reload } = useAsync(
+    (signal) => api.versions(trackId != null ? { track_id: trackId } : { nd_song_id: songId ?? undefined }, signal),
+    [trackId, songId],
+  );
+  useWindowEvent(EDITED_EVENT, () => reload(true));
+
+  const versions = data?.versions.filter((v) => v.track_id !== data.track_id);
+  if (!versions?.length) return null;
+
+  return (
+    <section aria-label="Другие версии" className="mx-4 mt-3 rounded-2xl bg-surface px-4 pb-2 pt-3">
+      <h2 className="pb-1 text-base font-bold">Другие версии</h2>
+      <ul className="-mx-2">
+        {versions.map((v) => {
+          // Play the linked recording directly when it has a file indexed by Navidrome.
+          const ref = v.nd_song_id ? `nd:${v.nd_song_id}` : v.ref;
+          return (
+            <li key={v.track_id}>
+              <button
+                type="button"
+                aria-label={`Слушать: ${[v.title, v.label, v.artist].filter(Boolean).join(' · ')}`}
+                disabled={!ref}
+                onClick={() => ref && playVersion(v, ref)}
+                className="flex min-h-14 w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left enabled:hover:bg-fg/5 focus-visible:bg-fg/10"
+              >
+                <Cover src={v.cover_url} size={40} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[15px]"><TrackTitle title={v.title} label={v.label ?? null} /></span>
+                  <span className="block truncate text-[13px] text-muted">{[v.artist, fmtDuration(v.duration_s)].filter(Boolean).join(' · ')}</span>
+                </span>
+                {ref && (
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-fg/30" aria-hidden="true">
+                    <Icon name="play" size={14} filled />
+                  </span>
+                )}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
 
 /** «Версии песни»: the recordings of one song — the album cut, an older take, a remix, a live one. Each is a track
  * of its own, in its album, with its artists and its file; here they stand together, as the rows of a playlist:
@@ -54,17 +115,12 @@ function Window({ of }: { of: VersionsOf }) {
     if (done) toast(done, 'success');
     return true;
   };
-  const refOf = (v: VersionOut) => v.ref ?? (v.nd_song_id ? `nd:${v.nd_song_id}` : null);
-  const play = (v: VersionOut) => {
-    const ref = refOf(v);
-    if (ref) listen({ ref, nd_song_id: v.nd_song_id, library_track_id: v.track_id, title: v.title, artist: v.artist, cover_url: v.cover_url, cover_small_url: v.cover_url, album: v.album ?? undefined, duration_s: v.duration_s ?? null });
-  };
   const row = (v: VersionOut, actions: React.ReactNode, joined: boolean) => {
-    const ref = refOf(v);
+    const ref = v.ref ?? (v.nd_song_id ? `nd:${v.nd_song_id}` : null);
     const on = !!ref && playing === ref;
     return (
       <li key={v.track_id} className="flex items-center gap-3 border-b border-line/60 py-1.5 last:border-0">
-        <button type="button" disabled={!ref} aria-label={`Слушать: ${v.title}`} onClick={() => play(v)} className="group/c relative flex h-10 w-10 shrink-0 items-center justify-center">
+        <button type="button" disabled={!ref} aria-label={`Слушать: ${v.title}`} onClick={() => ref && playVersion(v, ref)} className="group/c relative flex h-10 w-10 shrink-0 items-center justify-center">
           <Cover src={imageUrl(v.cover_url)} size={40} alt="" />
           {ref && (
             <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !on && 'opacity-0 group-hover/c:opacity-100')}>
@@ -74,7 +130,7 @@ function Window({ of }: { of: VersionsOf }) {
         </button>
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-1.5">
-            <span className={cx('truncate text-[15px]', on && 'text-accent')}>{v.title}</span>
+            <span className={cx('min-w-0 truncate text-[15px]', on && 'text-accent')}><TrackTitle title={v.title} track={joined ? undefined : v} /></span>
             {joined &&
               (writing === v.track_id ? (
                 <input

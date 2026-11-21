@@ -4,6 +4,7 @@ import type { MeOut } from '../api/types';
 export interface Session {
   me: MeOut;
   logout: () => Promise<void>;
+  refresh: () => Promise<void>;
 }
 
 export const SessionContext = createContext<Session | null>(null);

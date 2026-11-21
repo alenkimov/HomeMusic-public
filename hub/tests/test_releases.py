@@ -87,3 +87,34 @@ async def test_the_feed_of_followed_artists(env, monkeypatch):
     r = (await c.get("/api/releases")).json()
     assert (r["artists"], r["items"]) == (0, [])
     assert (await c.get("/api/releases/count")).json() == {"unseen": 0, "artists": 0}
+
+
+async def test_saved_release_gets_complete_track_credits(env, monkeypatch):
+    from sqlalchemy import select
+
+    from app import releases
+    from app.catalog.models import CatalogTrack
+    from app.db import session_scope
+    from app.models import ArtistRelease, utcnow
+    from app.services import svc
+
+    original = CatalogTrack(ref="dz:1000", id="1000", source="dz", title="БЕССЕРДЕШНЫЙ", artist="OSA", artists=["OSA"])
+    full = original.model_copy(update={"artists": ["OSA", "ЛСП", "old honda", "Selfish"], "credits_complete": True})
+
+    async def credited(id_):
+        assert id_ == "71"
+        return album("71", original.title, 1, "single").model_copy(update={"tracks": [full]})
+
+    monkeypatch.setattr(svc.deezer, "get_album_credited", credited)
+    stamp = utcnow()
+    async with session_scope() as s:
+        s.add(ArtistRelease(user_id=1, artist_ref="dz:7", artist="OSA", album_ref="dz:71", title=original.title,
+                            record_type="single", release_date=date.today(), seen_at=stamp,
+                            tracks_json=[original.model_dump(mode="json")]))
+
+    assert await releases.fill_tracks(1, repair_credits=True) == 1
+    assert await releases.fill_tracks(1, repair_credits=True) == 0
+    async with session_scope() as s:
+        row = await s.scalar(select(ArtistRelease).where(ArtistRelease.album_ref == "dz:71"))
+        assert row.seen_at == stamp
+        assert row.tracks_json[0]["artists"] == full.artists

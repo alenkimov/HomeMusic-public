@@ -348,7 +348,8 @@ async def remember(s: AsyncSession, target: FavoriteTarget, *, extra_aliases: It
     else:
         row = FavoriteSubject(target_type=typ, canonical_key=min(keys), aliases=[], data={})
         s.add(row)
-    if target.ref and (not row.ref or target.ref.startswith("dz:") or row.ref.startswith("file:")):
+    if target.ref and (not row.ref or target.ref.startswith("artist:") or target.ref.isdecimal()
+                       or row.ref.startswith("file:")):
         row.ref = target.ref
     # A snapshot can still contain an old replaced song: observing that alias alone
     # must not move the canonical library id back from the verified replacement.
@@ -519,7 +520,8 @@ async def _liked_track(s: AsyncSession, user_id: int, ref: str | None, nd_id: st
         cover_small_url=data.get("cover_small_url") or data.get("cover_url")), user_id=user_id)).id
 
 
-async def project_liked(s: AsyncSession, user_id: int, starred: list[dict] | None = None) -> bool:
+async def project_liked(s: AsyncSession, user_id: int, starred: list[dict] | None = None, *,
+                        preserve_import_id: int | None = None) -> bool:
     """Make «Любимое» — the user's playlist of `kind` "liked" (app/playlists.py) — say what the journal says.
 
     The journal of likes and unlikes stays what decides (the taste profile reads it, and it is what is reconciled
@@ -559,13 +561,20 @@ async def project_liked(s: AsyncSession, user_id: int, starred: list[dict] | Non
         if it.ref and f"ref:{it.ref}" in decided:
             continue
         track = await track_of(s, it, user_id)
-        if track is None or track.id in want or (track.nd_song_id and f"nd:{track.nd_song_id}" in decided):
+        if track is None:
+            continue
+        it.track_id = track.id
+        if track.id in want or (track.nd_song_id and f"nd:{track.nd_song_id}" in decided):
             continue
         if f"t:{track.id}" in decided:  # a track known by its name alone has no other name to be decided about by
             continue
         # the service lists the newest like first: without its dates the order of the list still holds
         at = naive(parse_time((it.raw_json or {}).get("liked_at"))) or imported_at - timedelta(seconds=position)
         want[track.id] = at
+        if it.import_id == preserve_import_id:
+            await record(s, user_id, FavoriteTarget(track_id=track.id), True, ts=min(at, utcnow()), normalize=False,
+                         context="import", operation=f"import:{it.import_id}:liked:{track.id}",
+                         mirror_pending=not track.nd_song_id)
     p = await playlists.liked(s, user_id)
     have = await playlists.items(s, p.id)
     if starred is not None:

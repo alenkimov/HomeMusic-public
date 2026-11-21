@@ -2,8 +2,11 @@
 
 from types import SimpleNamespace as NS
 
+import pytest
+
 from app.catalog import yandex_catalog as ym
 from app.catalog.models import CatalogAlbum, CatalogArtist, CatalogTrack, SearchResults
+from app.db import dispose, session_scope
 
 
 def artist(id_, name):
@@ -51,19 +54,39 @@ def test_an_artist_has_their_picture_and_followers():
     assert (a.ref, a.nb_fans, a.nb_albums, a.picture_small_url) == ("ym:41052", 100, 17, "https://a.net/p/200x200")
 
 
-def test_what_another_catalog_found_is_added_once():
-    from app.api.search import _with
-
-    dz = SearchResults(tracks=[CatalogTrack(ref="dz:1", source="dz", id="1", title="Кукла колдуна", artist="Король и Шут")],
-                       artists=[CatalogArtist(ref="dz:9", source="dz", id="9", name="Король и Шут")])
-    more = SearchResults(tracks=[ym.track_of(track(version=None)), ym.track_of(track(id_=6, title="Лесник", version=None))],
-                         artists=[ym.artist_of(artist(41052, "король и шут")), ym.artist_of(artist(3, "Ария"))])
-    got = _with(dz, more)
-    assert [t.ref for t in got.tracks] == ["dz:1", "ym:6"]
-    assert [a.ref for a in got.artists] == ["dz:9", "ym:3"]
+@pytest.fixture
+async def db(hub_env):
+    yield
+    await dispose()
 
 
-def test_two_catalogs_records_of_one_release():
+async def test_search_groups_confirmed_yandex_matches_and_keeps_distinct_hits(db):
+    from app.api.search import _catalog_matches
+
+    dz = SearchResults(
+        artists=[CatalogArtist(ref="dz:9", source="dz", id="9", name="Король и Шут")],
+        tracks=[CatalogTrack(ref="dz:1", source="dz", id="1", title="Кукла колдуна", artist="Король и Шут",
+                             artist_ref="dz:9", album_title="Акустический альбом", duration_s=204)],
+    )
+    more = SearchResults(
+        artists=[ym.artist_of(artist(1, "Король и Шут")), ym.artist_of(artist(41052, "король и шут")),
+                 ym.artist_of(artist(3, "Ария"))],
+        tracks=[ym.track_of(track(version=None)), ym.track_of(track(id_=6, title="Лесник", version=None)),
+                ym.track_of(track(id_=8))],
+    )
+
+    async with session_scope() as s:
+        artists, _, tracks = await _catalog_matches(s, [dz, more], 1, "Король и Шут", complete=True)
+
+    assert [(t.ref, t.found_in) for t in tracks] == [
+        ("dz:1", ["deezer", "yandex"]), ("ym:6", ["yandex"]), ("ym:8", ["yandex"]),
+    ]
+    assert [(a.ref, a.found_in) for a in artists] == [
+        ("dz:9", ["deezer", "yandex"]), ("ym:41052", ["yandex"]), ("ym:3", ["yandex"]),
+    ]
+
+
+def test_release_comparison_keeps_different_editions_separate():
     from datetime import date
 
     from app.api.catalog import same_release
@@ -73,8 +96,8 @@ def test_two_catalogs_records_of_one_release():
 
     dz = rel("dz", "Любовь и Ракеты, Ч.1", year=None, day=date(2026, 3, 1))
     assert same_release(dz, rel("ym", "Любовь и ракеты, ч.1"))
-    assert same_release(dz, rel("ym", "Любовь и Ракеты, Ч.1 (Deluxe)"))  # what is written after the name is not it
-    assert same_release(dz, rel("ym", "Любовь и Ракеты, Ч.1", year=2027))  # a reissue: as many tracks
+    assert not same_release(dz, rel("ym", "Любовь и Ракеты, Ч.1 (Deluxe)"))
+    assert not same_release(dz, rel("ym", "Любовь и Ракеты, Ч.1", year=2027))
     assert not same_release(dz, rel("ym", "Любовь и Ракеты, Ч.1", year=2027, n=12))
     assert not same_release(dz, rel("ym", "Любовь и Ракеты, Ч.2"))
     assert not same_release(dz, rel("ym", "Любовь и Ракеты, Ч.1", artist="Другой"))

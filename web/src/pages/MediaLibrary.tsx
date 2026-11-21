@@ -1,9 +1,12 @@
+import { titleWithVersion } from '../lib/versionLabels';
 import { Children, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { imageUrl, retryImage } from '../lib/img';
 import { ArtistPage } from './Artist';
 import { api } from '../api/client';
 import type { NdAlbumOut, NdArtistOut, NdSongOut, TrackOut } from '../api/types';
+import { LibraryAlbumMenu } from '../components/AlbumEdit';
 import { playAll, TrackRow, TrackTableHeader, type ListSort } from '../components/catalog';
+import { TrackTable } from '../components/TrackTable';
 import { Icon } from '../components/Icon';
 import { ListBar } from '../components/ListBar';
 import { useListSearch, type Found } from '../components/ListSearch';
@@ -15,11 +18,13 @@ import { Button, Cover, Empty, ErrorState, HeroSkeleton, IconButton, PageHeader,
 import { fmtLength, tracksWord } from '../lib/format';
 import { playCount, usePlayCounts } from '../lib/stats';
 import { useDesktop } from '../lib/desktop';
+import { openAlbumArtwork } from '../lib/coverPicker';
 import { useHubEvent } from '../lib/events';
+import { needsTrackFile, withRecordingAvailability } from '../lib/findFile';
 import { useListSort } from '../lib/listSort';
 import { cyclePageShuffle, useListen } from '../lib/listen';
 import { useAsync, useRememberScrollX } from '../lib/hooks';
-import { Link, enc, navigate, useRoute } from '../lib/router';
+import { Link, enc, navigate, useCanonicalPath, useRoute } from '../lib/router';
 import { filterActive, filterOfQuery, filterWords, passes, selectionsChanged, tagKey, useTags, type TagFilter } from '../lib/tags';
 import { attempt, confirmDialog } from '../lib/ui';
 import { openPlaylistMenu } from '../lib/playlistMenu';
@@ -147,24 +152,26 @@ export function SongList<T extends TrackOut>({ tracks, extra, found, sort, onSor
     const list = found ? found.map((f) => ({ t: tracks[f.index], i: f.index, line: f.line })) : tracks.map((t, i) => ({ t, i, line: undefined as string | undefined }));
     return byAdded(list, sort);
   }, [tracks, found, sort, counts]);
-  // what plays on from a row: a track known by its name alone has nothing to play
-  const queue = useMemo(() => (found || sort ? rows.map((r) => r.t) : tracks).filter((t) => !t.unknown), [rows, tracks, found, sort]);
+  const displayed = useMemo(() => rows.map(({ t }) => t), [rows]);
+  const queue = useMemo(() => plays(found || sort ? rows.map((r) => r.t) : tracks), [rows, tracks, found, sort]);
   if (found && !rows.length) return <p className="px-4 py-10 text-center text-sm text-muted">Ничего не подходит — ни под поиск, ни под выбранные теги.</p>;
   return (
-    <ul>
-      {rows.length > 0 && <li><TrackTableHeader numbered album tags plays playsLabel={period?.label} added={dated} sort={sort} onSort={setSort} /></li>}
-      {rows.map(({ t, i, line }, at) => (
-        <li key={`${t.ref}:${i}`}>
-          <TrackRow track={t} queue={queue} link={false} showAlbum showTags showPlays playsOf={period ? (period.of[t.nd_song_id ?? ''] ?? 0) : undefined} showAdded={dated} menuExtra={extra?.(t, i)} index={sort ? at + 1 : i + 1} />
-          {line !== undefined && (
-            <div className="-mt-1 flex items-center gap-1.5 truncate pb-2 pl-16 pr-4 text-xs text-muted">
-              <Icon name="lyrics" size={13} className="shrink-0 text-accent" />
-              <span className="truncate">{line ? `«${line}»` : 'найдено в тексте'}</span>
-            </div>
-          )}
-        </li>
-      ))}
-    </ul>
+    <TrackTable tracks={displayed} numbered album tags plays added={dated} periodPlays={!!period}>
+      <ul>
+        {rows.length > 0 && <li><TrackTableHeader numbered album tags plays playsLabel={period?.label} added={dated} sort={sort} onSort={setSort} /></li>}
+        {rows.map(({ t, i, line }, at) => (
+          <li key={`${t.ref}:${i}`}>
+            <TrackRow track={t} queue={queue} link={false} showAlbum showTags showPlays playsOf={period ? (period.of[t.nd_song_id ?? ''] ?? 0) : undefined} showAdded={dated} menuExtra={extra?.(t, i)} index={sort ? at + 1 : i + 1} />
+            {line !== undefined && (
+              <div className="-mt-1 flex items-center gap-1.5 truncate pb-2 pl-16 pr-4 text-xs text-muted">
+                <Icon name="lyrics" size={13} className="shrink-0 text-accent" />
+                <span className="truncate">{line ? `«${line}»` : 'найдено в тексте'}</span>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </TrackTable>
   );
 }
 
@@ -220,7 +227,7 @@ export function Hero({ cover, round, title, sub, right, kicker, art, tracks, con
   );
 }
 
-const plays = <T extends TrackOut>(tracks: readonly T[]): T[] => tracks.filter((t) => !t.unknown);
+const plays = <T extends TrackOut>(tracks: readonly T[]): T[] => tracks.filter((t) => !needsTrackFile(t));
 
 // --- pages -------------------------------------------------------------------------------------------------
 
@@ -229,6 +236,11 @@ export function LikedPage() {
   useSmartPage('liked', null);
   useHubEvent('library', () => res.reload(true));
   useHubEvent('import', () => res.reload(true));
+  useHubEvent('recording', (event) => res.setData((prev) => {
+    if (!prev) return prev;
+    const songs = withRecordingAvailability(prev.songs, event);
+    return songs === prev.songs ? prev : { ...prev, songs };
+  }));
   useHubEvent('download', (d) => {
     if (['done', 'failed', 'cancelled', 'needs_review'].includes(d.status)) res.reload(true);
   });
@@ -319,6 +331,13 @@ export function SelectionPage({ id }: { id: string }) {
     },
     [scope],
   );
+  useHubEvent('recording', (event) => src.setData((prev) => {
+    if (!prev) return prev;
+    const tracks = withRecordingAvailability(prev.tracks, event);
+    return tracks === prev.tracks ? prev : { ...prev, tracks };
+  }));
+  useHubEvent('library', () => src.reload(true));
+  useHubEvent('reconnect', () => src.reload(true));
   const [filter, setFilter] = useState<TagFilter>({});
   const [sort, setSort] = useListSort(`selection:${id}`);
   const [saving, setSaving] = useState(false);
@@ -405,9 +424,15 @@ export function PlaylistPage({ id }: { id: string }) {
   // its name or its picture changed (the playlist's menu, the picture's window), or it is gone: the Hub says so
   useHubEvent('library', () => res.reload(true));
   useHubEvent('import', () => res.reload(true)); // a transfer settled its playlists
+  useHubEvent('recording', (event) => res.setData((prev) => {
+    if (!prev) return prev;
+    const tracks = withRecordingAvailability(prev.tracks, event);
+    return tracks === prev.tracks ? prev : { ...prev, tracks };
+  }));
+  useHubEvent('reconnect', () => res.reload(true));
 
   const remove = async (i: number, t: NdSongOut) => {
-    if (await attempt(() => api.removeFromPlaylist(id, [i]), `«${t.title}» убран из плейлиста`))
+    if (await attempt(() => api.removeFromPlaylist(id, [i]), `«${titleWithVersion(t.title, t)}» убран из плейлиста`))
       res.setData((prev) => (prev ? { ...prev, song_count: prev.song_count - (t.owned ? 1 : 0), duration_s: Math.max(0, prev.duration_s - (t.duration_s ?? 0)), tracks: prev.tracks.filter((_, j) => j !== i) } : prev));
   };
 
@@ -507,7 +532,9 @@ export function NdArtistPage({ id }: { id: string }) {
   const [naming, setNaming] = useState<'names' | 'projects' | 'looks' | 'menu' | null>(null);
   if (res.loading && !d) return (<><PageHeader hero title="Исполнитель" back="/artists" /><HeroSkeleton round buttons /></>);
   if (!d) return (<><PageHeader hero title="Исполнитель" back="/artists" /><ErrorState text={res.error ?? 'Исполнитель не найден'} onRetry={() => res.reload()} /></>);
-  if (d.catalog_ref) return <ArtistPage refId={d.catalog_ref} />;
+  if (d.hub_artist_id || d.catalog_ref) {
+    return <ArtistPage refId={String(d.hub_artist_id ?? d.catalog_ref)} initialPath={`/lib/artist/${enc(id)}`} />;
+  }
   const { artist, albums } = d;
   const tracks = d.tracks ?? [];
   const follow = async () => {
@@ -582,9 +609,12 @@ export function NdArtistPage({ id }: { id: string }) {
             Треки
             <span className="text-xs font-normal text-dim">в медиатеке</span>
           </h2>
-          {tracks.map((t, i) => (
-            <TrackRow key={t.ref} track={t} number={i + 1} queue={tracks} />
-          ))}
+          <TrackTable tracks={tracks} numbered>
+            <TrackTableHeader numbered />
+            {tracks.map((t, i) => (
+              <TrackRow key={t.ref} track={t} number={i + 1} queue={tracks} />
+            ))}
+          </TrackTable>
         </section>
       )}
       {albums.length > 0 && (
@@ -606,10 +636,13 @@ export function NdArtistPage({ id }: { id: string }) {
 
 export function NdAlbumPage({ id }: { id: string }) {
   const res = useAsync((s) => api.ndAlbum(id, s), [id], true, `nd-album:${id}`);
+  useCanonicalPath(`/lib/album/${enc(id)}`, res.data?.release_id ? `/album/${res.data.release_id}` : undefined);
   if (res.loading) return (<><PageHeader hero title="Альбом" back="/library" /><HeroSkeleton /></>);
   if (!res.data) return (<><PageHeader hero title="Альбом" back="/library" /><ErrorState text={res.error ?? 'Альбом не найден'} onRetry={() => res.reload()} /></>);
   const a = res.data;
   const tracks = a.tracks ?? [];
+  const artwork = { albumId: a.library_album_id, title: a.title, artist: a.artist,
+    src: a.cover_url?.replace(/size=\d+/, 'size=1000'), tracks };
   return (
     <div>
       <PageHeader
@@ -617,10 +650,14 @@ export function NdAlbumPage({ id }: { id: string }) {
         title={a.title}
         sub={a.artist}
         back="/library"
+        right={artwork.albumId != null && <LibraryAlbumMenu id={artwork.albumId} title={a.title}
+          onCover={() => openAlbumArtwork(artwork, 'edit')}
+          onSaved={(saved) => res.setData((prev) => prev && { ...prev, title: saved.title, artist: saved.album_artist })} />}
       />
       <Hero
         kicker="Альбом"
         cover={a.cover_url?.replace(/size=\d+/, 'size=600')}
+        onCover={() => openAlbumArtwork(artwork)}
         title={a.title}
         sub={
           <>
@@ -637,14 +674,16 @@ export function NdAlbumPage({ id }: { id: string }) {
         tracks={tracks}
         context="album"
       />
-      <ul>
-        {tracks.length > 0 && <li><TrackTableHeader numbered /></li>}
-        {tracks.map((t, i) => (
-          <li key={`${t.nd_song_id}:${i}`}>
-            <TrackRow track={t} index={t.track_no ?? i + 1} queue={tracks} link={false} />
-          </li>
-        ))}
-      </ul>
+      <TrackTable tracks={tracks} numbered kind="album">
+        <ul>
+          {tracks.length > 0 && <li><TrackTableHeader numbered /></li>}
+          {tracks.map((t, i) => (
+            <li key={`${t.nd_song_id}:${i}`}>
+              <TrackRow track={t} index={t.track_no ?? i + 1} queue={tracks} link={false} />
+            </li>
+          ))}
+        </ul>
+      </TrackTable>
     </div>
   );
 }

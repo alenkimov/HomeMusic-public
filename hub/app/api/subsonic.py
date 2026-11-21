@@ -23,7 +23,6 @@ is not let in.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import json
@@ -40,6 +39,8 @@ from sqlalchemy import select
 from starlette.background import BackgroundTask
 
 from app import guard, listen
+from app.catalog import lookup
+from app.catalog.identity import same_recording
 from app.catalog.models import CatalogAlbum, CatalogArtist, CatalogTrack, split_ref
 from app.config import get_settings
 from app.db import session_scope
@@ -332,11 +333,15 @@ async def _search(endpoint: str, params: list[tuple[str, str]], user: User, fmt:
     q = (_one(params, "query") or "").strip().strip('"').strip()
     count = _int(params, "songCount", 20)
     # an empty query is an app copying the whole library, a later page is the library's own: neither is a search
-    if resp.get("status") == "ok" and q and count > 0 and _int(params, "songOffset", 0) == 0 and svc.deezer is not None:
+    if resp.get("status") == "ok" and q and count > 0 and _int(params, "songOffset", 0) == 0:
         try:
-            tracks, _ = await asyncio.wait_for(svc.deezer.search_track_page(q, 0, min(count, SEARCH_LIMIT)), SEARCH_TIMEOUT_S)
-            seen: set[str] = set()
-            tracks = [t for t in tracks if not (t.ref in seen or seen.add(t.ref))]
+            results, _ = await lookup.track_page(q, 0, min(count, SEARCH_LIMIT), timeout=SEARCH_TIMEOUT_S)
+            tracks = []
+            for track in results:
+                if all(t.ref != track.ref and not same_recording(t, track) for t in tracks):
+                    tracks.append(track)
+                if len(tracks) >= min(count, SEARCH_LIMIT):
+                    break
             async with session_scope() as s:
                 found = await annotate_tracks(s, tracks, user.id)
             key = "searchResult3" if endpoint == "search3" else "searchResult2"
@@ -347,9 +352,9 @@ async def _search(endpoint: str, params: list[tuple[str, str]], user: User, fmt:
     # the catalog's albums and artists, for the apps that browse by tags (`search3`); the first page only
     wants = (_int(params, "albumCount", 20) > 0 and _int(params, "albumOffset", 0) == 0,
              _int(params, "artistCount", 20) > 0 and _int(params, "artistOffset", 0) == 0)
-    if resp.get("status") == "ok" and q and endpoint == "search3" and any(wants) and svc.deezer is not None:
+    if resp.get("status") == "ok" and q and endpoint == "search3" and any(wants):
         try:
-            more = await asyncio.wait_for(svc.deezer.search(q, kinds=("artist", "album"), limit=SEARCH_ROW), SEARCH_TIMEOUT_S)
+            more = await lookup.search(q, kinds=("artist", "album"), limit=SEARCH_ROW, timeout=SEARCH_TIMEOUT_S)
             box = resp.setdefault("searchResult3", {})
             if wants[0] and more.albums:
                 async with session_scope() as s:

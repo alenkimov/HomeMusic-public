@@ -5,9 +5,9 @@ has these as native screens (Tempus); the PWA in a plain browser shows them from
 
 from __future__ import annotations
 
-import logging
-
 import asyncio
+import logging
+from collections.abc import Iterable
 from datetime import datetime
 from urllib.parse import quote
 
@@ -17,14 +17,18 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.library import tracks as registry
-from app.library.owned import HAS_FILE, put_right, with_files
 from app.api.schemas import NdAlbumOut, NdArtistOut, NdArtistPageOut, NdHomeOut, NdLikedOut, NdSongOut
 from app.auth import current_user, user_navidrome
+from app.catalog import registry as releases
 from app.db import get_session
+from app.library import artists as artist_names
+from app.library import tracks as registry
+from app.library.artwork import album_cover_url
+from app.library.credits import split_artists
 from app.library.navidrome import NavidromeClient, SubsonicError
+from app.library.owned import HAS_FILE, put_right, with_cover_fallbacks, with_files
 from app.mixes.resolve import library_track
-from app.models import Track, TrackFile, User
+from app.models import Album, Track, TrackFile, User
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/nd", tags=["medialib"])
@@ -52,6 +56,27 @@ def artist_out(a: dict) -> NdArtistOut:
                        cover_url=cover_url(a.get("coverArt")), starred=bool(a.get("starred")))
 
 
+async def with_artist_links(s: AsyncSession, pairs: Iterable[tuple[NdSongOut, Track | None]]) -> None:
+    """Resolve each displayed credit using its own spelling and any catalog record for that spelling."""
+    entries = [(out, artist_names.refs_of(track.catalog if track is not None else None)) for out, track in pairs]
+    reader = await artist_names.reader(s, (name for out, _ in entries for name in [out.artist, *out.artists]),
+                                      (ref for _, refs in entries for ref in refs.values()))
+
+    for out, refs in entries:
+        def address(name: str) -> tuple[int | None, str | None]:
+            ref = refs.get(artist_names.key(name))
+            local = reader.artist(name)
+            linked = reader.artist(name, ref)
+            if out.owned and local and linked != local:
+                return local[0], None
+            return linked[0] if linked else None, ref
+
+        out.hub_artist_id, out.artist_ref = address(out.artist)
+        links = [address(name) for name in out.artists]
+        out.hub_artist_ids = [ident for ident, _ in links]
+        out.artist_refs = [ref for _, ref in links]
+
+
 async def songs_out(s: AsyncSession, songs: list[dict]) -> list[NdSongOut]:
     """Navidrome songs as tracks: the Hub's own record of the file gives the Deezer ref (mixes, «Моя волна» and
     listening data know the song by it), the rest are `nd:<song>`."""
@@ -75,16 +100,13 @@ async def songs_out(s: AsyncSession, songs: list[dict]) -> list[NdSongOut]:
         names = [a["name"] for a in credited] or ([artist] if artist else [])
         artist_ids = [a.get("id") for a in credited] or ([x.get("artistId")] if artist else [])
         cat = (t.catalog or {}) if t is not None else {}
-        main = cat.get("artist_ref") if str(cat.get("artist_ref") or "").startswith("dz:") else None
-        refs = cat.get("artist_refs") or []
-        # the catalog's artists of the song, by their places: the names may be spelt otherwise in the files
-        artist_refs = refs if len(refs) == len(names) else ([main, *[None] * (len(names) - 1)] if main and names else [])
         out.append(NdSongOut(
-            ref=ref, source="dz" if ref.startswith("dz:") else "nd", id=ref.split(":", 1)[1], title=x.get("title") or "",
-            artist=artist, artists=names, artist_ref=main, artist_refs=artist_refs, album_title=x.get("album"), album_artist=x.get("displayAlbumArtist"),
+            ref=ref, source=ref.split(":", 1)[0], id=ref.split(":", 1)[1], title=x.get("title") or "",
+            artist=artist, artists=names, album_title=x.get("album"), album_artist=x.get("displayAlbumArtist"),
             duration_s=x.get("duration"), track_no=x.get("track"), disc_no=x.get("discNumber"),
             isrc=(x.get("isrc") or [None])[0] if isinstance(x.get("isrc"), list) else x.get("isrc"),
             explicit=t.explicit if t is not None else None,
+            spotify_id=cat.get("spotify_id"), spotify_plays=cat.get("spotify_plays"),
             cover_url=cover_url(x.get("coverArt"), BIG_COVER), cover_small_url=cover_url(x.get("coverArt")),
             owned=True, library_track_id=t.id if t is not None else None, nd_song_id=sid,
             added_at=acquired.get(sid),
@@ -92,7 +114,9 @@ async def songs_out(s: AsyncSession, songs: list[dict]) -> list[NdSongOut]:
         ))
         if t is not None:
             put_right(out[-1], t)  # Navidrome learns a new name at its next scan; the Hub knows it now
+    await with_artist_links(s, [(song, rows.get(song.nd_song_id)) for song in out])
     await with_files(s, out)
+    await with_cover_fallbacks(s, [(o, rows[o.nd_song_id]) for o in out if o.nd_song_id in rows])
     from app.library import versions
 
     await versions.mark(s, out)  # how many recordings the song of each has
@@ -150,24 +174,46 @@ async def album(album_id: str, user: User = Depends(current_user), s: AsyncSessi
         raise HTTPException(404, "Альбом не найден")
     out = album_out(a)
     out.tracks = await songs_out(s, a.get("song") or [])
+    ids = [t.library_track_id for t in out.tracks if t.library_track_id is not None]
+    library_albums: set[int] = set()
+    for i in range(0, len(ids), 500):
+        library_albums.update((await s.execute(select(Track.album_id).where(
+            Track.id.in_(ids[i:i + 500]), Track.album_id.is_not(None)).distinct())).scalars())
+    if len(library_albums) == 1 and (local := await s.get(Album, library_albums.pop())):
+        out.library_album_id = local.id
+        _, ids = await releases.addresses(s, (), [local.id])
+        out.release_id = ids.get(local.id)
+        if out.release_id is None and (release := await releases.library_album(s, local.id)):
+            out.release_id = (await releases.opened(s, release, (), local.id)).id
+        out.cover_url = album_cover_url(local) or out.cover_url
+        out.title, out.artist = local.title, local.album_artist
     return out
 
 
 @router.get("/artists", response_model=list[NdArtistOut])
 async def artists(user: User = Depends(current_user)):
-    return [artist_out(a) for a in await nd_call(user, lambda nd: nd.get_artists())]
+    out = [artist_out(a) for a in await nd_call(user, lambda nd: nd.get_artists())]
+    from app.db import session_scope
+    from app.library.artists import key
+    from app.library.looks import spotify_photos
+
+    async with session_scope() as s:
+        photos = await spotify_photos(s)
+    for artist in out:
+        artist.cover_url = artist.cover_url or photos.get(key(artist.name))
+    return out
 
 
 LIB_ARTIST_TRACKS = 50
 
 
 def _credited(t: Track) -> list[str]:
-    return [x.strip().casefold() for x in (t.artist or "").split(",") if x.strip()]
+    return [artist_names.key(name) for name in split_artists(t.artist)]
 
 
 async def _artist_tracks(s: AsyncSession, name: str) -> list[Track]:
     """The library's tracks the artist is credited on, the newest first."""
-    want = name.strip().casefold()
+    want = artist_names.key(name)
     if not want:
         return []
     rows = (await s.execute(select(Track).where(HAS_FILE, Track.artist.ilike(f"%{name.strip()}%"))
@@ -175,17 +221,11 @@ async def _artist_tracks(s: AsyncSession, name: str) -> list[Track]:
     return [t for t in rows if want in _credited(t)]
 
 
-def _catalog_ref_of(tracks: list[Track], name: str) -> str | None:
-    """The catalog's artist these tracks are of: the main artist of the catalog's records of the tracks this artist
-    is named first on. It is the same person whatever the spelling — the catalog writes «Mikhail Krug» where the
-    files say «Михаил Круг», and a search by the name finds nobody."""
-    want = name.strip().casefold()
-    votes: dict[str, int] = {}
-    for t in tracks:
-        ref = (t.catalog or {}).get("artist_ref")
-        if ref and str(ref).startswith("dz:") and (_credited(t) or [""])[0] == want:
-            votes[ref] = votes.get(ref, 0) + 1
-    return max(votes, key=lambda r: votes[r]) if votes else None
+def _catalog_refs_of(tracks: list[Track], name: str) -> set[str]:
+    """Profiles that the tracks credit under this artist's spelling."""
+    want = artist_names.key(name)
+    return {ref for t in tracks if (_credited(t) or [""])[0] == want
+            and (ref := artist_names.refs_of(t.catalog).get(want))}
 
 
 @router.get("/artists/{artist_id}", response_model=NdArtistPageOut)
@@ -195,41 +235,61 @@ async def artist(artist_id: str, user: User = Depends(current_user),
     if not a.get("id"):
         raise HTTPException(404, "Исполнитель не найден")
     name = a.get("name") or ""
-    theirs = await _artist_tracks(s, name)
-    # the few of their own tracks that do not say yet who they are of in the catalog are asked about now
-    first = [t for t in theirs if (_credited(t) or [""])[0] == name.strip().casefold()][:3]
-    if await registry.fill_catalog(s, first):
-        await s.commit()
-    catalog_ref = _catalog_ref_of(theirs, name) or await _in_catalog(name)
-    tracks: list[NdSongOut] = []
-    if catalog_ref is None:  # the page is the library's own: their tracks, as the Hub has them
-        from app.api.playlists import track_with_file
-
-        tracks = [track_with_file(t) for t in theirs[:LIB_ARTIST_TRACKS]]
-        for o, t in zip(tracks, theirs, strict=False):
-            put_right(o, t)
-        await with_files(s, tracks)
     # newest year first, albums without a year last, ties by title
     albums_ = sorted(a.get("album") or [], key=lambda x: (not x.get("year"), -(x.get("year") or 0),
                                                           (x.get("name") or x.get("title") or "").casefold(), x.get("id") or ""))
-    return NdArtistPageOut(artist=artist_out(a), albums=[album_out(x) for x in albums_], catalog_ref=catalog_ref,
-                           tracks=tracks)
+    out = NdArtistPageOut(artist=artist_out(a), albums=[album_out(x) for x in albums_])
+    local = await artist_names.holder(s, name)
+    if local is not None:
+        out.hub_artist_id = local.id
+        if await artist_names.profiles(s, local.id):
+            return out
+
+    theirs = await _artist_tracks(s, name)
+    if local is None:
+        # Ask the catalog about a few of the artist's own tracks before looking up a name alone.
+        first = [t for t in theirs if (_credited(t) or [""])[0] == artist_names.key(name)][:3]
+        if await registry.fill_catalog(s, first):
+            await s.commit()
+        refs = _catalog_refs_of(theirs, name)
+        out.catalog_ref = next(iter(refs)) if len(refs) == 1 else None
+        if not refs:
+            out.catalog_ref = await _in_catalog(name)
+        if out.catalog_ref and (known := await artist_names.by_ref(s, out.catalog_ref)) is not None:
+            out.hub_artist_id = known.id
+    if out.catalog_ref is None:  # the page is the library's own: their tracks, as the Hub has them
+        from app.api.playlists import track_with_file
+
+        shown = theirs[:LIB_ARTIST_TRACKS]
+        out.tracks = [track_with_file(t) for t in shown]
+        pairs = list(zip(out.tracks, shown, strict=True))
+        for o, t in pairs:
+            put_right(o, t)
+        await with_artist_links(s, pairs)
+        await with_cover_fallbacks(s, pairs)
+        await with_files(s, out.tracks)
+    return out
 
 
 async def _in_catalog(name: str) -> str | None:
-    """The catalog's artist of this very name (the best known of them, as the catalog orders its search); none: the
-    catalog has nobody called so, or does not answer."""
+    """An exact spelling with a single matching profile in its catalog."""
     from app.services import svc
 
-    if not name.strip() or svc.deezer is None:
+    if not name.strip():
         return None
-    try:
-        found = await svc.deezer.search(name, kinds=("artist",), limit=5)
-    except Exception as e:
-        log.info("library artist %r not looked up in the catalog: %r", name, e)
-        return None
-    want = name.strip().casefold()
-    return next((x.ref for x in found.artists if x.name.strip().casefold() == want), None)
+    want = artist_names.key(name)
+    for catalog in (svc.deezer, svc.spotify):
+        if catalog is None:
+            continue
+        try:
+            found = await catalog.search(name, kinds=("artist",), limit=5)
+        except Exception as e:
+            log.info("library artist %r not looked up in the catalog: %r", name, e)
+            continue
+        matches = {x.ref for x in found.artists if artist_names.key(x.name) == want}
+        if matches:
+            return next(iter(matches)) if len(matches) == 1 else None
+    return None
 
 
 ALL_SONGS_PAGE = 500
@@ -260,7 +320,7 @@ async def liked(user: User = Depends(current_user), s: AsyncSession = Depends(ge
     await s.commit()
     body = body or {}
     rows = await playlists.items(s, (await playlists.liked(s, user.id)).id)
-    songs = await tracks_out(s, user, [t for _, t in rows])
+    songs = await tracks_out(s, user, [t for _, t in rows], import_state=True)
     for (item, _), song in zip(rows, songs, strict=True):
         song.added_at = item.added_at
     states = await snapshot(s, user.id)

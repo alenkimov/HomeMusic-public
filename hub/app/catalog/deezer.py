@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from app.catalog import namesakes
 from app.catalog.cache import cache_delete, cached
 from app.catalog.models import (
+    CatalogNotFound,
     ArtistPage,
     CatalogAlbum,
     CatalogArtist,
@@ -46,10 +47,6 @@ NOT_FOUND_CODE = 800
 USER_AGENT = "HomeMusic/0.1"
 
 M = TypeVar("M", bound=BaseModel)
-
-
-class CatalogNotFound(Exception):
-    """The requested catalog entity does not exist."""
 
 
 class DeezerError(Exception):
@@ -191,6 +188,7 @@ class DeezerClient:
         self._own_client = client is None
         self._client = client or make_client(headers={"User-Agent": USER_AGENT})
         self._limiter = WindowLimiter(cfg.deezer_rate.requests, cfg.deezer_rate.per_seconds)
+        self._credits_gate = asyncio.Semaphore(4)
 
     async def aclose(self) -> None:
         if self._own_client:
@@ -431,16 +429,17 @@ class DeezerClient:
         for (and kept: `get_track`), a few at once. An album's page shows this; a list of many releases does not
         ask for it. A track whose record does not come keeps its main artist."""
         album = await self.get_album(id_)
-        gate = asyncio.Semaphore(4)
-
         async def credited(t: CatalogTrack) -> CatalogTrack:
-            async with gate:
+            async with self._credits_gate:
                 try:
                     whole = await self.get_track(t.id)
                 except Exception as e:
                     log.info("deezer: credits of %s not read: %r", t.ref, e)
                     return t
-            return t.model_copy(update={"artists": whole.artists or t.artists, "artist_refs": whole.artist_refs or t.artist_refs})
+            if not whole.artists:
+                return t
+            return t.model_copy(update={"artists": whole.artists, "artist_refs": whole.artist_refs,
+                                        "credits_complete": True})
 
         tracks = list(await asyncio.gather(*(credited(t) for t in album.tracks or [])))
         return album.model_copy(update={"tracks": tracks})

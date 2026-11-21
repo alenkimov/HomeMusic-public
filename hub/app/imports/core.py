@@ -24,10 +24,11 @@ from typing import Any
 from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import links
+from app import integrations, links
 from app.api.schemas import (
     ImportAuthOut,
     ImportCollectionOut,
+    ImportDestinationOut,
     ImportItemOut,
     ImportOut,
     ImportStatsOut,
@@ -36,12 +37,13 @@ from app.config import get_settings
 from app.db import session_scope
 from app.events import bus
 from app.imports import apply
-from app.imports.resolve import CatalogDown, resolve_album, resolve_artist, resolve_track
-from app.imports.sources import vk, yandex
+from app.catalog.lookup import CatalogUnavailable
+from app.imports.resolve import Resolution, resolve_album, resolve_artist, resolve_track
+from app.imports.sources import spotify, vk, yandex
 from app.imports.sources.base import ITEM_KIND, AuthPending, Snapshot, SourceError
 from app.jobs.queue import PRIORITY_IMPORT, PermanentError, RetryLater, enqueue, handler, notify, on_final_failure
 from app.library.owned import find_owned
-from app.models import DownloadItem, Import, ImportCollection, ImportItem, Job, utcnow
+from app.models import DownloadItem, Import, ImportCollection, ImportItem, IntegrationConnection, Job, Playlist, utcnow
 from app.security import decrypt, encrypt
 
 log = logging.getLogger(__name__)
@@ -113,6 +115,23 @@ async def stats(s: AsyncSession, imp: Import, colls: list[ImportCollection]) -> 
     return out
 
 
+async def _destinations(s: AsyncSession, imp: Import, colls: list[ImportCollection]) -> list[ImportDestinationOut]:
+    if imp.started_at is None:
+        return []
+    extra = (imp.options_json or {}).get("extra") or {}
+    ids = [c.playlist_id for c in colls if c.selected and c.playlist_id is not None]
+    ids.extend(int(pid) for pid in extra.get("playlist_ids") or [] if str(pid).isdigit())
+    targets = []
+    if ids:
+        names = dict((await s.execute(select(Playlist.id, Playlist.name).where(
+            Playlist.user_id == imp.user_id, Playlist.kind == "user", Playlist.id.in_(ids)))).all())
+        targets.extend(ImportDestinationOut(name=names[pid], playlist_id=str(pid))
+                       for pid in dict.fromkeys(ids) if pid in names)
+    if extra.get("star") or any(c.selected and c.kind == "likes" for c in colls):
+        targets.append(ImportDestinationOut(name="Любимое"))
+    return targets
+
+
 async def import_out(s: AsyncSession, imp: Import) -> ImportOut:
     colls = (await s.execute(select(ImportCollection).where(ImportCollection.import_id == imp.id)
                              .order_by(ImportCollection.position))).scalars().all()
@@ -133,12 +152,13 @@ async def import_out(s: AsyncSession, imp: Import) -> ImportOut:
                              verification_url=a.get("verification_url") or "", expires_at=a["expires_at"])
     return ImportOut(
         id=imp.id, source=imp.source, method=imp.method, status=imp.status, mode=imp.mode, account=imp.account,
-        has_token=bool(imp.token_enc), keep_token=imp.keep_token,
+        has_token=bool(imp.connection_id), keep_token=imp.keep_token,
         download_albums=bool((imp.options_json or {}).get("download_albums")), auth=auth, error=imp.error,
         stats=await stats(s, imp, list(colls)),
         collections=[ImportCollectionOut(id=c.id, kind=c.kind, title=c.title, selected=c.selected,
                                          count=counts.get(c.id, (0, 0))[0], owned=counts.get(c.id, (0, 0))[1],
                                          cover_url=c.cover_url, playlist_id=str(c.playlist_id) if c.playlist_id else None) for c in colls],
+        destinations=await _destinations(s, imp, colls),
         created_at=imp.created_at, started_at=imp.started_at, finished_at=imp.finished_at,
     )
 
@@ -208,13 +228,13 @@ async def _create_vk(s: AsyncSession, user_id: int, *, method: str, token: str |
     if method == "token":
         if not (token or "").strip():
             raise SourceError("Вставьте токен")
-        imp.token_enc = encrypt(token.strip())
+        await integrations.set_import_credential(s, imp, token.strip())
     elif method == "password":
         login, password = (login or "").strip(), password or ""
         if not login or not password:
             raise SourceError("Введите логин и пароль от ВК")
         try:
-            imp.token_enc = encrypt(await vk.sign_in(login, password))
+            await integrations.set_import_credential(s, imp, await vk.sign_in(login, password))
         except (vk.NeedCode, vk.NeedCaptcha) as e:
             _vk_asks(imp, e, login=login, password=password)
     else:
@@ -247,15 +267,29 @@ async def answer_auth(s: AsyncSession, imp: Import, *, code: str | None, captcha
     except SourceError as e:
         imp.status, imp.error, imp.auth_json = "failed", str(e), {}
         return
-    imp.token_enc, imp.auth_json, imp.status = encrypt(token), {}, "fetching"
+    await integrations.set_import_credential(s, imp, token)
+    imp.auth_json, imp.status = {}, "fetching"
     await enqueue(s, "import_fetch", {"import_id": imp.id}, priority=PRIORITY_IMPORT)
 
 
 async def create(s: AsyncSession, user_id: int, *, source: str, method: str, token: str | None = None,
-                 url: str | None = None, login: str | None = None, password: str | None = None) -> Import:
+                 url: str | None = None, login: str | None = None, password: str | None = None,
+                 connection_id: int | None = None) -> Import:
+    if method == "saved":
+        row = await s.get(IntegrationConnection, connection_id) if connection_id else None
+        if (source not in {"spotify", "yandex", "vk"} or row is None or row.provider != source
+                or row.owner_user_id != user_id or not row.retained or row.state == "reauth"):
+            raise SourceError("Сохранённый вход не найден")
+        data = {"url": spotify.link_target(url.strip())} if source == "spotify" and url and url.strip() else {}
+        imp = Import(user_id=user_id, source=source, method=method, status="fetching", account=row.account,
+                     connection_id=row.id, keep_token=True, auth_json=data, options_json={})
+        s.add(imp)
+        await s.flush()
+        await enqueue(s, "import_fetch", {"import_id": imp.id}, priority=PRIORITY_IMPORT)
+        return imp
     if source == "vk":
         return await _create_vk(s, user_id, method=method, token=token, login=login, password=password)
-    if source != "yandex":
+    if source not in ("yandex", "spotify") or (source == "spotify" and method != "link"):
         raise SourceError("Этот сервис пока не поддерживается")
     imp = Import(user_id=user_id, source=source, method=method, status="fetching", auth_json={}, options_json={})
     if method == "device":
@@ -273,12 +307,13 @@ async def create(s: AsyncSession, user_id: int, *, source: str, method: str, tok
     if method == "token":
         if not (token or "").strip():
             raise SourceError("Вставьте токен")
-        imp.token_enc = encrypt(token.strip())
+        await integrations.set_import_credential(s, imp, token.strip())
     elif method == "profile":
         imp.account = yandex.profile_login(url or "")
     elif method == "link":  # one open playlist, read by its link: «Подтянуть новое» reads it again
-        yandex.link_target(url or "")
-        imp.auth_json = {"url": (url or "").strip()}
+        link = (url or "").strip()
+        (spotify if source == "spotify" else yandex).link_target(link)
+        imp.auth_json = {"url": link}
     else:
         raise SourceError("Неизвестный способ")
     s.add(imp)
@@ -325,7 +360,7 @@ async def handle_auth(job: Job) -> None:
         imp = await s.get(Import, import_id)
         if imp is None or imp.status != "auth":
             return
-        imp.token_enc = encrypt(token)
+        await integrations.set_import_credential(s, imp, token)
         imp.auth_json = {}
         imp.status = "fetching"
         await enqueue(s, "import_fetch", {"import_id": imp.id}, priority=PRIORITY_IMPORT)
@@ -337,14 +372,28 @@ async def handle_auth(job: Job) -> None:
 
 
 async def fetch_snapshot(imp: Import) -> Snapshot:
-    token = decrypt(imp.token_enc) if imp.token_enc else None
+    token = None
+    if imp.connection_id is not None:
+        async with session_scope() as s:
+            connection = await integrations.import_connection(s, imp)
+            if connection:
+                token = await integrations.credential(s, connection.id)
     if imp.source == "vk":
         if not token:
             raise SourceError("Вход в ВК не сохранён — войдите заново")
         return await vk.fetch(token)
+    if imp.source == "spotify" and imp.method == "saved":
+        if not token:
+            raise SourceError("Вход в Spotify не сохранён — войдите заново")
+        return await spotify.fetch_account(token, (imp.auth_json or {}).get("url"))
     if imp.method == "link":
-        return await asyncio.to_thread(yandex.fetch_link, (imp.auth_json or {}).get("url") or "")
+        url = (imp.auth_json or {}).get("url") or ""
+        if imp.source == "spotify":
+            return await spotify.fetch_link(url, fresh=imp.started_at is not None)
+        return await asyncio.to_thread(yandex.fetch_link, url)
     login = imp.account if imp.method == "profile" else None
+    if login is None and not token:
+        raise SourceError("Вход в Яндекс Музыку не сохранён — войдите заново")
     return await asyncio.to_thread(yandex.fetch, token, login)
 
 
@@ -353,6 +402,13 @@ async def store_snapshot(s: AsyncSession, imp: Import, snap: Snapshot) -> int:
     the new order and drops what left the service. Returns the number of new rows."""
     if snap.account and imp.method != "profile":
         imp.account = snap.account
+    if connection := await integrations.import_connection(s, imp):
+        connection.account = snap.account or connection.account
+        connection.plan = snap.plan if snap.plan is not None else connection.plan
+        connection.checked_at = utcnow()
+        connection.state = "connected"
+        if snap.account_subject:
+            imp.options_json = {**(imp.options_json or {}), "account_subject": snap.account_subject}
     colls = {c.external_id: c for c in (await s.execute(
         select(ImportCollection).where(ImportCollection.import_id == imp.id))).scalars()}
     fresh = 0
@@ -437,7 +493,9 @@ async def start(s: AsyncSession, imp: Import, *, collection_ids: list[int], mode
         if c.selected and c.kind == "likes" and not copy_likes:
             c.kind = "playlist"
     imp.mode = mode
-    imp.keep_token = keep_token
+    imp.keep_token = keep_token or imp.method == "saved"
+    if imp.keep_token:
+        await integrations.retain_import(s, imp)
     imp.options_json = {**(imp.options_json or {}), "download_albums": download_albums, "copy_likes": copy_likes,
                         "extra": extra or {}}  # «После переноса»: `apply.apply_extras`
     imp.status = "running"
@@ -469,15 +527,13 @@ async def handle_resolve(job: Job) -> None:
     sem = asyncio.Semaphore(RESOLVE_CONCURRENCY)
     down = False
 
-    async def one(item_id: int, kind: str) -> None:
+    async def one(item_id: int, kind: str) -> tuple[bool, Resolution | None]:
         nonlocal down
         async with sem:
-            if down:
-                return
             async with session_scope() as s:
                 it = await s.get(ImportItem, item_id)
                 if it is None or it.status != "pending":
-                    return
+                    return False, None
                 raw = it.raw_json or {}
                 try:
                     if kind == "albums":
@@ -485,20 +541,23 @@ async def handle_resolve(job: Job) -> None:
                     elif kind == "artists":
                         r = await resolve_artist(s, imp.source, it.external_id, raw)
                     elif it.match == "owned" and it.track_id:
-                        return await apply.decide(s, imp, it, kind, None)
+                        return True, None
                     else:
                         r = await resolve_track(s, imp.source, it.external_id, raw)
-                except CatalogDown as e:
+                except CatalogUnavailable as e:
                     log.warning("import %s: catalog down: %s", import_id, e)
                     down = True
-                    return
-                await apply.decide(s, imp, it, kind, r)
+                    return False, None
+                return True, r
 
-    await asyncio.gather(*(one(i, k) for i, k in ids))
+    resolved = await asyncio.gather(*(one(i, k) for i, k in ids))
     async with session_scope() as s:
         imp = await s.get(Import, import_id)
         if imp is None or imp.status != "running":
             return
+        for (item_id, kind), (ready, resolution) in zip(ids, resolved, strict=True):
+            if ready and (item := await s.get(ImportItem, item_id)) is not None and item.status == "pending":
+                await apply.decide(s, imp, item, kind, resolution)
         await enqueue_once(s, "import_playlists", import_id, delay_s=0 if not down else PLAYLISTS_DELAY_S)
         if down:
             await enqueue(s, "import_resolve", {"import_id": import_id}, delay_s=60, priority=PRIORITY_IMPORT)
@@ -546,7 +605,7 @@ async def handle_finish(job: Job) -> None:
         imp.status = "done"
         imp.finished_at = utcnow()
         if not imp.keep_token:
-            imp.token_enc = None
+            await integrations.release_import(s, imp)
     log.info("import %s done", import_id)
     publish(imp)
 
@@ -598,7 +657,15 @@ async def downloads_done(s: AsyncSession, items: list[DownloadItem]) -> None:
 
 async def remove(s: AsyncSession, imp: Import) -> None:
     """The import and its rows go; the music, the ♥ and the playlists stay. Its queued downloads are cancelled."""
+    from app.favorites import project_liked
+
+    has_likes = await s.scalar(select(ImportCollection.id).where(
+        ImportCollection.import_id == imp.id, ImportCollection.kind == "likes",
+        ImportCollection.selected.is_(True)).limit(1))
+    if imp.started_at is not None and has_likes is not None:
+        await project_liked(s, imp.user_id, preserve_import_id=imp.id)
     await apply.cancel_downloads(s, imp)
+    await integrations.release_import(s, imp)
     await links.collect(s)  # the service ids of its tracks stay with the tracks
     await s.execute(delete(ImportItem).where(ImportItem.import_id == imp.id))
     await s.execute(delete(ImportCollection).where(ImportCollection.import_id == imp.id))

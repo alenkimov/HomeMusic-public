@@ -1,6 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
+import { ServiceIcon, ServiceText } from '../components/ServiceBadge';
 import { Button, Cover, Empty, ErrorState, PageHeader, SkeletonRows } from '../components/ui';
 import { useHubEvent } from '../lib/events';
 import { fmtLength, tracksWord } from '../lib/format';
@@ -9,6 +10,7 @@ import { useAsync } from '../lib/hooks';
 import { playlistMenuProps } from '../lib/playlistMenu';
 import { Link, enc, navigate } from '../lib/router';
 import { attempt } from '../lib/ui';
+import { spotifyURL } from '../lib/spotify';
 
 export function PlaylistsPage() {
   const res = useAsync((s) => api.playlists(s), [], true, 'playlists');
@@ -24,7 +26,7 @@ export function PlaylistsPage() {
     e.preventDefault();
     if (!link.trim()) return;
     setCopying(true);
-    const imp = await attempt(() => api.createImport({ source: 'yandex', method: 'link', url: link.trim() }));
+    const imp = await attempt(() => api.createImport({ source: spotifyURL(link) ? 'spotify' : 'yandex', method: 'link', url: link.trim() }));
     setCopying(false);
     if (imp) navigate(`/import/${imp.id}`);
   };
@@ -50,16 +52,17 @@ export function PlaylistsPage() {
           Создать
         </Button>
       </form>
-      <form onSubmit={copy} className="flex gap-2 px-4 pb-3">
-        <input className="input flex-1" inputMode="url" placeholder="Или ссылка на плейлист Яндекс Музыки" aria-label="Ссылка на плейлист Яндекс Музыки" value={link} onChange={(e) => setLink(e.target.value)} />
+      <form onSubmit={copy} className="flex items-center gap-2 px-4 pb-3">
+        {link.trim() ? <ServiceIcon service={spotifyURL(link) ? 'spotify' : 'yandex'} size={20} /> : <Icon name="link" size={20} />}
+        <input className="input min-w-0 flex-1" inputMode="url" placeholder="Ссылка на плейлист Яндекс Музыки или Spotify" aria-label="Ссылка на плейлист" value={link} onChange={(e) => setLink(e.target.value)} />
         <Button type="submit" icon="transfer" busy={copying} disabled={!link.trim()}>
           Скопировать
         </Button>
       </form>
       <p className="px-4 pb-2 text-xs text-muted">
-        {STANDALONE
+        <ServiceText text={STANDALONE
           ? 'Плейлисты хранятся в Navidrome: те же, что в приложении HomeMusic.'
-          : 'Плейлисты хранятся в Navidrome: слушайте и скачивайте их для офлайна в плеере (Tempus).'}
+          : 'Плейлисты хранятся в Navidrome: слушайте и скачивайте их для офлайна в плеере (Tempus).'} />
       </p>
       {res.loading ? (
         <SkeletonRows />

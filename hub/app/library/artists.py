@@ -29,6 +29,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from sqlalchemy import delete, or_, select, update
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.library.credits import split_artists
@@ -46,6 +47,7 @@ from app.models import (
     TrackArtist,
     TrackFile,
     TrackName,
+    utcnow,
 )
 
 
@@ -86,7 +88,21 @@ async def holder(s: AsyncSession, name: str | None) -> Artist | None:
 async def by_ref(s: AsyncSession, ref: str | None) -> Artist | None:
     if not ref:
         return None
+    from app.catalog.registry import numeric_id
+
+    if ref.startswith("artist:") and (ident := numeric_id(ref[7:])) is not None:
+        return await by_id(s, ident)
     return (await s.execute(select(Artist).join(ArtistRef, ArtistRef.artist_id == Artist.id).where(ArtistRef.ref == ref))).scalar_one_or_none()
+
+
+async def by_id(s: AsyncSession, ident: int) -> Artist | None:
+    artist = await s.get(Artist, ident)
+    return await s.get(Artist, artist.merged_into_id) if artist and artist.merged_into_id else artist
+
+
+async def tie_profile(s: AsyncSession, artist_id: int, ref: str) -> None:
+    """Associate an independently verified profile without moving someone else's profile."""
+    await s.execute(insert(ArtistRef).values(ref=ref, artist_id=artist_id).on_conflict_do_nothing())
 
 
 async def profiles(s: AsyncSession, artist_id: int) -> list[str]:
@@ -112,10 +128,12 @@ async def addresses(s: AsyncSession, refs: Iterable[str | None]) -> dict[str, st
 
 
 async def records(s: AsyncSession) -> list[list[str]]:
-    """The artists a catalog keeps several records of: each one's records, the address first."""
-    by: dict[tuple[int, str], list[str]] = {}
+    """Each artist's verified catalog records, followed by their Hub addresses."""
+    by: dict[int, list[str]] = {}
     for id_, ref in (await s.execute(select(ArtistRef.artist_id, ArtistRef.ref).order_by(ArtistRef.tied_at, ArtistRef.ref))).all():
-        by.setdefault((id_, ref.partition(":")[0]), []).append(ref)
+        by.setdefault(id_, []).append(ref)
+    for ident, merged in (await s.execute(select(Artist.id, Artist.merged_into_id).order_by(Artist.id))).all():
+        by.setdefault(merged or ident, []).append(f"artist:{ident}")
     return [refs for refs in by.values() if len(refs) > 1]
 
 
@@ -129,7 +147,8 @@ async def _new(s: AsyncSession, name: str, source: str, *, spelling: bool) -> Ar
     return a
 
 
-async def who(s: AsyncSession, name: str | None, ref: str | None = None, source: str = "library") -> Artist | None:
+async def who(s: AsyncSession, name: str | None, ref: str | None = None, source: str = "library", *,
+              allow_name_match: bool = True) -> Artist | None:
     """The artist that a name — and, where a catalog said it, the catalog's record — stands for; somebody not met
     yet becomes an artist. None: neither was given.
 
@@ -146,7 +165,8 @@ async def who(s: AsyncSession, name: str | None, ref: str | None = None, source:
         return a or await _new(s, name, source, spelling=True)
     if a is None:
         a = await _new(s, name, source, spelling=True)
-    elif any(r.partition(":")[0] == ref.partition(":")[0] for r in await profiles(s, a.id)):
+    elif (not allow_name_match or ref.startswith("sp:")
+          or any(r.partition(":")[0] == ref.partition(":")[0] for r in await profiles(s, a.id))):
         a = await _new(s, name, source, spelling=False)
     s.add(ArtistRef(ref=ref, artist_id=a.id))
     await s.flush()
@@ -166,7 +186,8 @@ async def whole(s: AsyncSession, ref: str | None, name: str | None = None) -> tu
     for n in (a.name, *spelt):
         if key(n) not in {key(x) for x in names_}:
             names_.append(n)
-    return ([ref] if ref and ref not in refs else []) + refs, names_
+    refs = list(dict.fromkeys([*refs, f"artist:{a.id}", *([ref] if ref else [])]))
+    return refs, names_
 
 
 class Reader:
@@ -213,6 +234,8 @@ def put_right(o: Any, r: Reader) -> None:
     main = getattr(o, "artist", None)
     if isinstance(main, str):
         o.artist = r.name(main, main_ref)
+        if hasattr(o, "hub_artist_id") and (hit := r.artist(main, main_ref)):
+            o.hub_artist_id = hit[0]
         own = getattr(o, "album_artist", None)
         if isinstance(own, str):
             o.album_artist = r.name(own, main_ref if key(own) == key(main) else None)
@@ -220,10 +243,13 @@ def put_right(o: Any, r: Reader) -> None:
     if isinstance(names_, list) and names_:
         refs = list(getattr(o, "artist_refs", None) or [])
         refs += [None] * (len(names_) - len(refs))
-        o.artists = [r.name(n, ref) if isinstance(n, str) else n for n, ref in zip(names_, refs)]
+        if hasattr(o, "hub_artist_ids"):
+            o.hub_artist_ids = [hit[0] if isinstance(n, str) and (hit := r.artist(n, ref)) else None
+                                for n, ref in zip(names_, refs, strict=False)]
+        o.artists = [r.name(n, ref) if isinstance(n, str) else n for n, ref in zip(names_, refs, strict=False)]
 
 
-async def shown(s: AsyncSession, found_: list[Any]) -> list[Any]:
+async def shown(s: AsyncSession, found_: list[Any], *, exact: bool = False) -> list[Any]:
     """A catalog's artists (each with a `ref` and a `name`) as they are here: under their names, and once each —
     the several records a catalog keeps of one artist are one card, that of the record with the most followers,
     at the artist's one address (`addresses`): the same artist is the same `ref` wherever they are shown."""
@@ -237,11 +263,11 @@ async def shown(s: AsyncSession, found_: list[Any]) -> list[Any]:
     at: dict[int, int] = {}
     photos: dict[int, tuple[str, str] | None] = {}  # the photo chosen for an artist
     for a in found_:
-        hit = r.artist(a.name, a.ref)
+        hit = r.tied.get(a.ref) if exact else r.artist(a.name, a.ref)
         if hit is None:
             out.append(a)
             continue
-        card_ = a.model_copy(update={"name": hit[1]}) if hit[1] != a.name else a
+        card_ = a.model_copy(update={"name": hit[1], "hub_artist_id": hit[0]})
         if (addr := at_.get(a.ref, a.ref)) != a.ref:
             card_ = card_.model_copy(update={"ref": addr, **({"id": addr.partition(":")[2]} if hasattr(a, "id") else {})})
         if hit[0] not in photos:
@@ -369,7 +395,8 @@ async def _apart(s: AsyncSession, artist_id: int) -> set[int]:
 async def suggestions(s: AsyncSession, artist: Artist) -> list[Artist]:
     """Artists that look like this one: a name of theirs reads the same in Latin letters. Not the ones linked as
     projects, nor those a listener said are somebody else."""
-    rows = [*(await s.execute(select(ArtistName.artist_id, ArtistName.name))).all(), *(await s.execute(select(Artist.id, Artist.name))).all()]
+    rows = [*(await s.execute(select(ArtistName.artist_id, ArtistName.name))).all(),
+            *(await s.execute(select(Artist.id, Artist.name).where(Artist.merged_into_id.is_(None)))).all()]
     mine = {fold(n) for i, n in rows if i == artist.id} - {""}
     skip = {artist.id} | await _linked(s, artist.id) | await _apart(s, artist.id)
     ids = {i for i, n in rows if i not in skip and fold(n) in mine}
@@ -378,16 +405,9 @@ async def suggestions(s: AsyncSession, artist: Artist) -> list[Artist]:
 
 async def _catalog(ref: str | None) -> Any | None:
     """The catalog's own card of a record (kept by the catalog's client); None: no such record, or the catalog is away."""
-    from app.catalog.models import split_ref
-    from app.services import svc
+    from app.library.looks import profile_card
 
-    if not ref or svc.deezer is None:
-        return None
-    try:
-        src, id_ = split_ref(ref)
-        return await svc.deezer.get_artist(id_) if src == "dz" else None
-    except Exception:
-        return None
+    return await profile_card(ref)
 
 
 async def _picture(s: AsyncSession, artist: Artist, ref: str | None) -> str | None:
@@ -401,10 +421,8 @@ async def _picture(s: AsyncSession, artist: Artist, ref: str | None) -> str | No
     a = await _catalog(ref)
     if a is not None and (a.picture_small_url or a.picture_url):
         return a.picture_small_url or a.picture_url
-    album_id = (await s.execute(
-        select(Album.id).join(AlbumArtist, AlbumArtist.album_id == Album.id)
-        .where(AlbumArtist.artist_id == artist.id, Album.cover_path.is_not(None)).limit(1))).scalar_one_or_none()
-    return f"/api/library/albums/{album_id}/cover" if album_id else None
+    result = await looks.photo(s, artist)
+    return result[1] if result else None
 
 
 async def _brief(s: AsyncSession, a: Artist) -> dict[str, Any]:
@@ -443,7 +461,7 @@ async def find(s: AsyncSession, q: str, limit: int = 12) -> list[dict[str, Any]]
     if not want:
         return []
     rows = [*(await s.execute(select(ArtistName.artist_id, ArtistName.name, Artist.name).join(Artist, Artist.id == ArtistName.artist_id))).all(),
-            *(await s.execute(select(Artist.id, Artist.name, Artist.name))).all()]
+            *(await s.execute(select(Artist.id, Artist.name, Artist.name).where(Artist.merged_into_id.is_(None)))).all()]
     out: dict[int, dict[str, Any]] = {}
     for i, n, main in sorted(rows, key=lambda r: (not fold(r[1]).startswith(want), len(r[1]))):
         if want in fold(n) and i not in out:
@@ -538,7 +556,8 @@ async def merge(s: AsyncSession, user_id: int | None, into: Artist, other: Artis
         s.add(ArtistLink(low_id=_pair(into.id, i)[0], high_id=_pair(into.id, i)[1]))
     _journal(s, user_id, into.id, {"merged": [other.name, into.name]})
     await s.flush()
-    await s.delete(other)
+    await s.execute(update(Artist).where(Artist.merged_into_id == other.id).values(merged_into_id=into.id))
+    other.merged_into_id = into.id
     await s.flush()
 
 
@@ -571,6 +590,22 @@ async def apart(s: AsyncSession, a: Artist, b: Artist) -> None:
     if a.id != b.id and (await s.execute(select(ArtistApart).where(ArtistApart.low_id == low, ArtistApart.high_id == high))).scalar_one_or_none() is None:
         s.add(ArtistApart(low_id=low, high_id=high))
         await s.flush()
+
+
+async def detach_profile(s: AsyncSession, user_id: int, artist: Artist, ref: str, name: str) -> bool:
+    """Give the catalog record its own identity and remember that the two artists are separate."""
+    detached = await _new(s, name, "catalog", spelling=False)
+    moved = await s.execute(update(ArtistRef).where(
+        ArtistRef.ref == ref, ArtistRef.artist_id == artist.id,
+    ).values(artist_id=detached.id, tied_at=utcnow()).returning(ArtistRef.ref))
+    if moved.scalar_one_or_none() is None:
+        return False  # the caller rolls back the provisional artist
+    await s.execute(insert(ArtistName).values(
+        artist_id=detached.id, name=detached.name, key=key(detached.name), source="catalog",
+    ).on_conflict_do_nothing(index_elements=[ArtistName.key]))
+    await apart(s, artist, detached)
+    _journal(s, user_id, artist.id, {"profile": [ref, None], "detached_artist": [None, detached.id]})
+    return True
 
 
 async def _names_of(s: AsyncSession, table: Any, column: Any, owner_id: int) -> list[Artist]:
@@ -668,6 +703,9 @@ async def found(s: AsyncSession, q: str, limit: int = 20, *, among: Iterable[int
     other: dict[int, list[str]] = {}
     for tid, n in (await s.execute(select(TrackName.track_id, TrackName.name))).all():
         other.setdefault(tid, []).append(n)
+    from app.library import album_names
+
+    album_titles = await album_names.listed(s)
     spelt: dict[int, list[str]] = {}  # an artist -> every spelling of theirs
     for aid, n in (await s.execute(select(ArtistName.artist_id, ArtistName.name))).all():
         spelt.setdefault(aid, []).append(n)
@@ -685,6 +723,7 @@ async def found(s: AsyncSession, q: str, limit: int = 20, *, among: Iterable[int
     for t in rows:
         shown_ = fold(f"{t.artist} {t.title} {t.album or ''}")
         also = [*other.get(t.id, []), *([(t.catalog or {}).get("title")] if (t.catalog or {}).get("title") else [])]
+        also.extend(row.name for row in album_titles.get(t.album_id, []))
         for aid in by.get(t.id, []):
             also += spelt.get(aid, [])
         folded = [(n, fold(n)) for n in also]

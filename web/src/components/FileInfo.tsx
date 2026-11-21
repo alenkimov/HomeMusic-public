@@ -1,7 +1,7 @@
 import type { FileOut, ListenOut } from '../api/types';
 import { providerLabel } from '../lib/format';
 import { Link } from '../lib/router';
-import { BrandIcon } from './BrandIcon';
+import { ServiceBadge, ServiceIcon, ServiceText } from './ServiceBadge';
 import { Icon } from './Icon';
 import { cx } from './ui';
 
@@ -11,17 +11,6 @@ import { cx } from './ui';
 
 const CODECS: Record<string, string> = { mp3: 'MP3', flac: 'FLAC', opus: 'Opus', aac: 'AAC', vorbis: 'OGG', alac: 'ALAC', wav: 'WAV', pcm_s16le: 'WAV' };
 const LOSSLESS = new Set(['flac', 'alac', 'wav', 'pcm_s16le']);
-
-/** The source's own mark — YouTube's, SoundCloud's, hitmos.fm's (hitmoz is the same site); a file brought by the
- * listener — «upload». */
-export function SourceMark({ source, size = 14, className }: { source?: string | null; size?: number; className?: string }) {
-  const box = cx('inline-block shrink-0 align-[-0.15em]', className);
-  if (source === 'ytdlp' || source === 'yt_reupload') return <BrandIcon service="youtube" size={size} className={box} />;
-  if (source === 'soundcloud') return <BrandIcon service="soundcloud" size={size} className={box} />;
-  if (source === 'hitmoz' || source === 'hitmos_fm') return <BrandIcon service="hitmos" size={size} className={box} />;
-  if (source === 'upload') return <Icon name="upload" size={size} className={box} />;
-  return source ? <Icon name="note" size={size} className={box} /> : null;
-}
 
 /** «MP3 · 320 кбит/с» of the file (empty: the Hub does not know). A lossless file says no bitrate: it tells nothing. */
 export function fileWords(info: FileOut | null | undefined, short = false): string {
@@ -37,9 +26,8 @@ export function FileInfo({ info, className }: { info: FileOut | null | undefined
   if (!info || (!info.source && !words)) return null;
   return (
     <span className={cx(className, info.sounds_like_kbps ? '!text-warn' : undefined)} title={[providerLabel(info.source), fileWords(info), info.sounds_like_kbps ? `по звуку около ${info.sounds_like_kbps} кбит/с` : ''].filter(Boolean).join(' · ')}>
-      <SourceMark source={info.source} size={13} className="mr-1" />
-      {words || providerLabel(info.source)}
-      {info.sounds_like_kbps ? `, по звуку ~${info.sounds_like_kbps}` : ''}
+      {info.source && <ServiceBadge service={info.source} iconOnly={!!words} size={13} className={words ? "mr-1" : undefined} />}
+      {words}
     </span>
   );
 }
@@ -52,12 +40,12 @@ export function FileInfo({ info, className }: { info: FileOut | null | undefined
  * artists above it stays the artists'. */
 export function PlayLine({ phase, info, error, className }: { phase: string; info: ListenOut | null | undefined; error?: string | null; className?: string }) {
   if (phase === 'error') {
-    const from = info?.source ? providerLabel(info.source) : '';
-    const text = [from, error || 'не играет'].filter(Boolean).join(' · ');
+    const message = error || 'не играет';
+    const text = [providerLabel(info?.source), message].filter(Boolean).join(' · ');
     return (
       <span className={cx(className, '!text-danger')} title={text}>
-        {info?.source ? <SourceMark source={info.source} size={13} className="mr-1" /> : <Icon name="alert" size={13} className="mr-1 inline-block align-[-0.15em]" />}
-        {text}
+        {info?.source ? <><ServiceBadge service={info.source} /> · </> : <Icon name="alert" size={13} className="mr-1 inline-block align-[-0.15em]" />}
+        <ServiceText text={message} />
       </span>
     );
   }
@@ -72,12 +60,11 @@ export function PlayLine({ phase, info, error, className }: { phase: string; inf
       );
     return (
       <span className={className} role="status">
-        <SourceMark source={info.source} size={13} className="mr-1" />
-        {providerLabel(info.source)} · загрузка…
+        <ServiceBadge service={info.source} size={13} /> · загрузка…
       </span>
     );
   }
-  if (!info?.source || info.kind === 'preview') return null;
+  if (!info?.source) return null;
   return <FileInfo info={info} className={className} />;
 }
 
@@ -91,13 +78,13 @@ export function FileCard({ info }: { info: ListenOut | null | undefined }) {
       <h2 className="pb-2 text-base font-bold">Файл</h2>
       <div className="flex min-h-12 items-center gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-fg/10">
-          <SourceMark source={info.source} size={20} />
+          <ServiceIcon service={info.source} size={20} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[15px]">{words || providerLabel(info.source)}</span>
           <span className="block text-[13px] text-muted">
-            {providerLabel(info.source)}
-            {info.kind === 'full' ? ' · играет из источника, ещё не скачан' : info.kind === 'preview' ? ' · отрывок 30 секунд' : ''}
+            {words && providerLabel(info.source)}
+            {info.kind === 'full' && <>{words && ' · '}играет из источника, ещё не скачан</>}
           </span>
         </span>
         {info.page_url && (

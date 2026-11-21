@@ -105,14 +105,14 @@ export const seedKey = (seed?: WaveSeedIn | null) => (seed?.by_artist ? 'artist:
 type SeedTrack = { ref?: string | null; nd_song_id?: string | null; artist_ref?: string | null };
 export function trackSeed(t: SeedTrack): WaveSeedIn | null {
   const ref = t.ref?.trim();
-  if (ref && /^(dz|nd):.+/.test(ref)) return { ref };
+  if (ref && /^(dz|sp|ym|lib|nd):.+/.test(ref)) return { ref };
   const id = t.nd_song_id?.trim();
   if (id) return { nd_song_id: id };
   return ref && /^file:[^:]+:.+/.test(ref) ? { ref } : null;
 }
 export function artistSeed(t: SeedTrack): WaveSeedIn | null {
   const ref = t.artist_ref?.trim();
-  if (ref && /^dz:.+/.test(ref)) return { artist_ref: ref };
+  if (ref && /^(dz|sp|ym|artist):.+/.test(ref)) return { artist_ref: ref };
   const track = trackSeed(t);
   return track && !track.ref?.startsWith('file:') ? { ...track, by_artist: true } : null;
 }

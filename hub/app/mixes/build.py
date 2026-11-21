@@ -28,15 +28,16 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
+from app.catalog import lookup
 from app.catalog.models import CATALOGS, CatalogTrack, split_ref
 from app.config import get_settings
 from app.db import session_scope
-from app.matching.normalize import fingerprint, normalize_artist, split_version, version_kind
+from app.matching.normalize import fingerprint, split_version, version_kind
 from app.mixes import embedder, sources
 from app.mixes.resolve import resolve_hits
 from app.mixes.taste import Profile, TasteTrack, artist_key
 from app.mixes.taste_math import V2Profile
-from app.models import Import, Track, utcnow
+from app.models import Track, utcnow
 from app.services import svc
 
 log = logging.getLogger(__name__)
@@ -125,8 +126,9 @@ class Off(Exception):
 def taste_track(t: TasteTrack) -> CatalogTrack | None:
     if t.track is not None:
         return t.track
-    if t.ref and t.ref.startswith("dz:") and t.artist:
-        return CatalogTrack(ref=t.ref, source="dz", id=split_ref(t.ref)[1], title=t.title, artist=t.artist,
+    if t.ref and t.ref.partition(":")[0] in CATALOGS and t.artist:
+        source, ident = split_ref(t.ref)
+        return CatalogTrack(ref=t.ref, source=source, id=ident, title=t.title, artist=t.artist,
                             artists=[t.artist], duration_s=t.duration_s)
     if t.nd_song_id and t.artist:
         return CatalogTrack(ref=f"nd:{t.nd_song_id}", source="nd", id=t.nd_song_id, title=t.title, artist=t.artist,
@@ -186,7 +188,7 @@ def _interleave(lists: list[list[Any]]) -> list[Any]:
 
 
 async def artist_ref(p: Profile, key: str) -> str | None:
-    """The Deezer artist of an artist the profile knows by name."""
+    """A Hub or catalog reference for an artist in the user's profile."""
     if isinstance(p, V2Profile):
         for state in p.favorite_states.values():
             data = state.data or {}
@@ -204,44 +206,53 @@ async def artist_ref(p: Profile, key: str) -> str | None:
 
 
 async def artist_by_name(name: str) -> str | None:
-    if svc.deezer is None or not name:
+    if not name:
         return None
     from app.catalog.cache import cached
 
-    async def produce() -> str:
-        found = await svc.deezer.search(name, kinds=("artist",), limit=5)
-        want = normalize_artist(name)
-        for a in found.artists:
-            got = normalize_artist(a.name)
-            if (got.text and got.text == want.text) or (got.latin and got.latin == want.latin):
-                return a.ref
-        return ""
+    async def produce() -> str | None:
+        found = await lookup.search(name, kinds=("artist",), limit=5)
+        match = lookup.named_artist(name, found.artists)
+        return match.ref if match else None
 
-    return await cached(f"mix:dz_artist:{artist_key(name)}", sources.TTL_S, produce) or None
+    ref = await cached(f"artist:lookup:{artist_key(name)}", sources.TTL_S, produce)
+    if ref and not lookup.source_available(ref):
+        return await produce()
+    return ref
 
 
-async def _artist_refs(p: Profile, n: int) -> list[str]:
+async def _artist_refs(p: Profile, n: int, source: str | None = None) -> list[str]:
+    from app.library import artists
+
     keys = p.top_artists(n) or [artist_key(a.get("name")) for a in p.picked_artists][:n]
-    refs = await asyncio.gather(*(artist_ref(p, k) for k in keys))
-    return [r for r in refs if r and r.startswith("dz:")]
+    refs = await asyncio.gather(*(artist_ref(p, k) for k in keys), return_exceptions=True)
+    async with session_scope() as s:
+        records = [(await artists.whole(s, ref))[0] for ref in refs if isinstance(ref, str)]
+    return lookup.preferred_refs(ref for group in records for ref in group
+                                 if source is None or ref.startswith(source + ":"))
 
 
 async def deezer_radio(p: Profile) -> list[CatalogTrack]:
     if svc.deezer is None:
         raise Off("Deezer")
-    refs = await _artist_refs(p, 3)
+    refs = await _artist_refs(p, 3, "dz")
     lists = await asyncio.gather(*(svc.deezer.get_artist_radio(split_ref(r)[1]) for r in refs))
     return _interleave(list(lists))
 
 
 async def similar_artists(p: Profile) -> list[CatalogTrack]:
     """Top tracks of artists similar to the favourite ones that the user has not listened to."""
-    if svc.deezer is None:
-        raise Off("Deezer")
     refs = await _artist_refs(p, 3)
-    related = await asyncio.gather(*(svc.deezer.get_artist_related(split_ref(r)[1]) for r in refs))
-    names = [a.name for a in _interleave(list(related))]
-    if sources.lastfm_configured():
+    related = []
+    for ref in refs:
+        source, ident = split_ref(ref)
+        if source == "dz" and svc.deezer is not None:
+            related.append(svc.deezer.get_artist_related(ident))
+        elif source == "ym" and svc.yandex is not None:
+            related.append(svc.yandex.similar(ident))
+    shelves = await asyncio.gather(*related, return_exceptions=True)
+    names = [a.name for a in _interleave([shelf for shelf in shelves if isinstance(shelf, list)])]
+    if await sources.lastfm_configured():
         top = [p.artist_names.get(k, k) for k in p.top_artists(3)]
         try:
             more = await asyncio.gather(*(sources.lastfm_similar_artists(a) for a in top))
@@ -258,35 +269,29 @@ async def similar_artists(p: Profile) -> list[CatalogTrack]:
         picked.append(name)
         if len(picked) >= 15:
             break
-    found = await asyncio.gather(*(artist_by_name(n) for n in picked))
-    tops = await asyncio.gather(*(svc.deezer.get_artist_top(split_ref(r)[1], limit=3) for r in found if r))
-    return _interleave(list(tops))
+    found = await asyncio.gather(*(artist_by_name(n) for n in picked), return_exceptions=True)
+    pages = await asyncio.gather(*(lookup.artist_page([ref]) for ref in found if isinstance(ref, str)))
+    return _interleave([page.top_tracks[:3] for page in pages if page])
 
 
 async def new_releases(p: Profile) -> list[CatalogTrack]:
     """Releases of the favourite artists of the last 30 days."""
-    if svc.deezer is None:
-        raise Off("Deezer")
     since = (p.now - timedelta(days=30)).date()
     refs = await _artist_refs(p, 10)
-    pages = await asyncio.gather(*(svc.deezer.get_artist_albums(split_ref(r)[1]) for r in refs))
-    fresh = [a for albums in pages for a in albums if a.release_date and a.release_date >= since][:10]
-    albums = await asyncio.gather(*(svc.deezer.get_album(a.id) for a in fresh))
-    return _interleave([list(a.tracks or [])[:3] for a in albums])
+    pages = await asyncio.gather(*(lookup.artist_page([ref]) for ref in refs))
+    fresh = sorted((album for page in pages if page for album in page.albums
+                    if album.release_date and album.release_date >= since), key=lambda a: a.release_date, reverse=True)
+    albums = await asyncio.gather(*(svc.album(a.ref) for a in fresh[:10]), return_exceptions=True)
+    return _interleave([list(a.tracks or [])[:3] for a in albums if not isinstance(a, BaseException)])
 
 
 async def yandex_token(user_id: int) -> str | None:
-    """The token of the user's Yandex import kept for «Обновить» (M7)."""
-    from app.security import decrypt
+    """Personal recommendations use only the owner's connection."""
+    from app import integrations
 
     async with session_scope() as s:
-        enc = (await s.execute(select(Import.token_enc).where(
-            Import.user_id == user_id, Import.source == "yandex", Import.token_enc.is_not(None))
-            .order_by(Import.id.desc()).limit(1))).scalar_one_or_none()
-    try:
-        return decrypt(enc) if enc else None
-    except RuntimeError:
-        return None
+        row = await integrations.latest_owned(s, user_id, "yandex")
+        return await integrations.credential(s, row.id) if row and row.state != "reauth" else None
 
 
 async def yandex_wave(p: Profile) -> list[CatalogTrack]:
@@ -299,8 +304,8 @@ async def yandex_wave(p: Profile) -> list[CatalogTrack]:
 
 def generators(p: Profile, seeds: list[TasteTrack]) -> dict[str, Gen]:
     async def lastfm() -> list[CatalogTrack]:
-        if not sources.lastfm_configured():
-            raise Off("нет LASTFM_API_KEY")
+        if not await sources.lastfm_configured():
+            raise Off("Last.fm не подключён")
         return await _by_seeds(seeds, lambda t: sources.lastfm_similar_tracks(t.artist, t.title, limit=30), "lastfm")
 
     async def const(x: list[CatalogTrack]) -> list[CatalogTrack]:
@@ -338,22 +343,28 @@ async def run_generators(gens: dict[str, Gen]) -> list[GenResult]:
 
 async def cold_seeds(p: Profile, n: int) -> list[TasteTrack]:
     """A new user: the top tracks of the artists picked on «Что вы слушаете?»."""
-    if svc.deezer is None or not p.picked_artists:
+    if not p.picked_artists:
         return []
+    from app.catalog.registry import library_track
     from app.library import artists
+    from app.models import TrackArtist
 
-    refs = [a["ref"] for a in p.picked_artists if str(a.get("ref", "")).startswith("dz:")]
-    # a catalog may keep several records of one artist: their two most popular tracks are of all of them
+    refs = [a["ref"] for a in p.picked_artists if a.get("ref")]
     async with session_scope() as s:
-        theirs = [[x for x in (await artists.whole(s, r))[0] if x.startswith("dz:")] for r in refs]
-    flat = list(dict.fromkeys(x for xs in theirs for x in xs))
-    got = dict(zip(flat, await asyncio.gather(*(svc.deezer.get_artist_top(split_ref(r)[1], limit=2) for r in flat),
-                                              return_exceptions=True)))
-    tops = []
-    for xs in theirs:
-        own = {t.ref: t for r in xs if not isinstance(got[r], BaseException) for t in got[r]}
-        tops.append(sorted(own.values(), key=lambda t: -(t.rank or 0))[:2])
-    tracks = _interleave(tops)
+        theirs = [(await artists.whole(s, ref))[0] for ref in refs]
+    pages = await asyncio.gather(*(lookup.artist_page(group) for group in theirs))
+    shelves = []
+    async with session_scope() as s:
+        for ref, page in zip(refs, pages, strict=True):
+            if page and page.top_tracks:
+                shelves.append(page.top_tracks[:2])
+                continue
+            if artist := await artists.by_ref(s, ref):
+                local = await s.scalars(select(Track).join(TrackArtist).where(
+                    TrackArtist.artist_id == artist.id, Track.path.is_not(None),
+                ).order_by(Track.id.desc()).limit(2))
+                shelves.append([library_track(track) for track in local])
+    tracks = _interleave(shelves)
     return [TasteTrack(key=t.ref, ref=t.ref, artist=t.artist, title=t.title, duration_s=t.duration_s, track=t)
             for t in tracks][:n]
 
@@ -686,7 +697,7 @@ async def name_mix(user_id: int, songs: list[Cand], local: datetime, stats: dict
         counts[c.track.artist] = counts.get(c.track.artist, 0) + 1
     top = [a for a, _ in sorted(counts.items(), key=lambda x: -x[1])][:6]
     tags: list[str] = []
-    if sources.lastfm_configured():
+    if await sources.lastfm_configured():
         try:
             for row in await asyncio.gather(*(sources.lastfm_artist_tags(a) for a in top[:5])):
                 tags += row

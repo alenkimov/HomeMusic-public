@@ -3,6 +3,7 @@ import { insightsApi, type MapLayer, type MapOut, type MapPoint } from '../../ap
 import { ScatterMap, type Anchor, type Dot } from '../../components/charts/ScatterMap';
 import { facetColor } from '../../components/charts/palette';
 import { Button, ErrorState, Loading, Notice, Segmented, Sheet, cx } from '../../components/ui';
+import { ServiceText } from '../../components/ServiceBadge';
 import { fmtDec, fmtStamp, mapReasonLabel, outcomeLabel, seedKindLabel } from '../../lib/format';
 import { useAsync } from '../../lib/hooks';
 import { setQuery, trackLink } from '../../lib/insights';
@@ -80,7 +81,7 @@ export function MapTab({ userId }: { userId: number }) {
             {waves.data?.rows.filter((w) => !w.reconstructed).map((w) => (
               <option key={w.session_id} value={w.session_id}>
                 {fmtStamp(w.created_at)} · {seedKindLabel(w.seed_kind)}
-                {w.seed?.title ? ` «${w.seed.title}»` : ''}
+                {w.seed?.title && <> «{trackName({ ...w.seed, artist: null })}»</>}
               </option>
             ))}
           </select>
@@ -235,10 +236,10 @@ function PointInfo({ p, userId, facetName, color }: { p: MapPoint; userId: numbe
         {p.mix_position != null && (
           <li>
             В миксе №{p.mix_position + 1}
-            {p.generator_title ? ` · ${p.generator_title}` : ''}
+            {p.generator_title && <> · <ServiceText text={p.generator_title} /></>}
           </li>
         )}
-        {p.wave_position != null && <li>Выдан волной {p.wave_position + 1}-м{p.generator_title ? ` · ${p.generator_title}` : ''}</li>}
+        {p.wave_position != null && <li>Выдан волной {p.wave_position + 1}-м{p.generator_title && <> · <ServiceText text={p.generator_title} /></>}</li>}
         {p.outcome && <li>Итог: {outcomeLabel(p.outcome)}</li>}
       </ul>
       {p.s != null && (

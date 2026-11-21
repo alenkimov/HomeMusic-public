@@ -142,7 +142,7 @@ function Rename({ playlist, onClose }: { playlist: MenuPlaylist; onClose: () => 
 
 /** A list's picture, large, over the whole screen. Of a playlist one keeps (`playlistId`) it can be changed here:
  * «Выбрать другую обложку», and «Вернуть коллаж» when the picture is the user's own. */
-export function CoverView({ src, title, playlistId, own, onClose }: { src: string | null | undefined; title: string; playlistId?: string; own?: boolean; onClose: () => void }) {
+export function CoverView({ src, title, playlistId, own, onClose, onChange }: { src: string | null | undefined; title: string; playlistId?: string; own?: boolean; onClose: () => void; onChange?: () => void }) {
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -165,8 +165,9 @@ export function CoverView({ src, title, playlistId, own, onClose }: { src: strin
       <button type="button" aria-label="Закрыть" onClick={onClose} className="absolute left-3 top-[calc(env(safe-area-inset-top)+8px)] flex h-11 w-11 items-center justify-center rounded-full text-fg hover:bg-fg/10">
         <Icon name="x" size={24} />
       </button>
-      <Cover src={src} alt={title} icon="playlist" className="relative aspect-square w-[min(86vw,58dvh)] shadow-2xl" />
+      <Cover src={src} alt={title} icon={playlistId ? 'playlist' : 'disc'} className="relative aspect-square w-[min(86vw,58dvh)] shadow-2xl" />
       <div className="relative max-w-full truncate text-lg font-bold">{title}</div>
+      {onChange && <Button icon="image" onClick={onChange} className="relative">Выбрать другую обложку</Button>}
       {playlistId && (
         <div className="relative flex flex-col items-center gap-3">
           <label className={`inline-flex min-h-12 cursor-pointer items-center gap-2 rounded-full bg-fg px-6 font-semibold text-bg transition hover:scale-105 ${busy ? 'pointer-events-none opacity-60' : ''}`}>

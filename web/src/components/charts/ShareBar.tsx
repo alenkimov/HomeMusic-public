@@ -1,8 +1,9 @@
+import type { ReactNode } from 'react';
 import { fmtNum } from '../../lib/format';
 
 export interface Share {
   id: string;
-  label: string;
+  label: ReactNode;
   value: number;
   color: string;
 }

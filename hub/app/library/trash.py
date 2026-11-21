@@ -20,6 +20,7 @@ from sqlalchemy import Date, DateTime, LargeBinary, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.library import versions
 from app.library.importer import _move, library_abs, library_lock
 from app.library.layout import unique_path
 from app.models import (
@@ -79,6 +80,7 @@ async def remember(s: AsyncSession, track: Track, moved: dict[int, str], user_id
     s.add(TrashedTrack(
         track_id=track.id, title=track.title, artist=track.artist, album=track.album, deleted_by=user_id,
         data_json={"track": _row(track), "files": files, "playlists": places, "tags": tags,
+                   "version_label": await versions.label_of(s, track.id),
                    "album": _row(album) if album is not None else None},
         cover=cover))
 
@@ -89,6 +91,7 @@ async def listed(s: AsyncSession) -> list[dict[str, Any]]:
                             .order_by(TrashedTrack.id.desc()))).all()
     now = utcnow()
     return [{"id": t.id, "title": t.title, "artist": t.artist, "album": t.album, "deleted_by": who,
+             "version_label": (t.data_json or {}).get("version_label"),
              "deleted_at": t.deleted_at, "days_left": max(0, days - (now - t.deleted_at).days),
              "playlists": len((t.data_json or {}).get("playlists") or [])} for t, who in rows]
 

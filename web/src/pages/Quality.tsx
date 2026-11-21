@@ -1,10 +1,14 @@
+import { TrackTitle } from '../components/TrackTitle';
+import { titleWithVersion } from '../lib/versionLabels';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { QualityRow } from '../api/types';
 import { Icon } from '../components/Icon';
-import { ServiceText } from '../components/ServiceBadge';
 import { Button, Cover, Empty, ErrorState, PageHeader, ProgressBar, SkeletonRows, cx } from '../components/ui';
-import { fmtDuration, providerLabel, tracksWord } from '../lib/format';
+import { fmtDuration, tracksWord } from '../lib/format';
+import { ServiceBadge, ServiceText, serviceName } from '../components/ServiceBadge';
+import { SourceStatuses } from '../components/SourceStatuses';
+import { useHubEvent } from '../lib/events';
 import { useAsync, useInterval } from '../lib/hooks';
 import { EDITED_EVENT } from '../lib/trackEdit';
 import { attempt, confirmDialog, toast } from '../lib/ui';
@@ -50,6 +54,15 @@ export function QualityPage() {
   }, [rows]);
   const active = byTab.queue.length > 0;
   useInterval(() => res.reload(true), active ? 4000 : null);
+  const updates = useRef<number | undefined>(undefined);
+  useHubEvent('download', () => {
+    if (!active || updates.current !== undefined) return;
+    updates.current = window.setTimeout(() => {
+      updates.current = undefined;
+      res.reload(true);
+    }, 500);
+  });
+  useEffect(() => () => window.clearTimeout(updates.current), []);
   // the first look: what waits for a word, else what is going on, else what was done
   const first: Tab = byTab.found.length ? 'found' : byTab.queue.length ? 'queue' : byTab.replaced.length ? 'replaced' : 'none';
   const at = tab ?? first;
@@ -87,7 +100,7 @@ export function QualityPage() {
     res.reload(true);
   };
   const back = async (r: QualityRow) => {
-    if (!(await confirmDialog({ title: `Вернуть прежний файл: «${r.title}»?`, body: 'Найденный файл уйдёт в корзину, трек снова будет играть ваш.', okLabel: 'Вернуть' }))) return;
+    if (!(await confirmDialog({ title: `Вернуть прежний файл: «${titleWithVersion(r.title, r)}»?`, body: 'Найденный файл уйдёт в корзину, трек снова будет играть ваш.', okLabel: 'Вернуть' }))) return;
     setBusy(`${r.id}`);
     listening.stop();
     const ok = await attempt(() => api.qualityRevert(r.id), 'Прежний файл возвращён');
@@ -138,7 +151,7 @@ export function QualityPage() {
               <div className="flex items-center gap-2 text-sm">
                 <span className="min-w-0 flex-1 truncate">
                   Проверено {done} из {rows.length}
-                  {now ? ` · сейчас: «${now.title}»` : ''}
+                  {now && <> · сейчас: «<TrackTitle title={now.title} track={now} />»</>}
                 </span>
                 <span className="shrink-0 text-xs tabular-nums text-muted">осталось {byTab.queue.length}</span>
               </div>
@@ -171,15 +184,15 @@ export function QualityPage() {
               {shown.length === 0 ? (
                 <Empty icon="note" title={at === 'found' ? 'Решать пока нечего' : at === 'queue' ? 'Очередь пуста' : 'Пока пусто'} text={at === 'found' ? 'Одинаковые записи заменяются сами — сюда попадают только спорные.' : undefined} />
               ) : (
-                <ul className="mx-4 overflow-hidden rounded-2xl bg-surface lg:mx-6">
+                <ul className="mx-4 rounded-2xl bg-surface lg:mx-6">
                   {shown.map((r) => (
                     <li key={r.id} className="border-b border-line/60 px-4 py-3 last:border-0">
-                      <div className="flex items-center gap-3">
+                      <div className="relative flex items-center gap-3">
                         <Cover src={r.cover_url} size={40} alt="" />
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[15px]">{r.title}</span>
+                          <span className="block truncate text-[15px]"><TrackTitle title={r.title} track={r} /></span>
                           <span className="block truncate text-[13px] text-muted">{r.artist}</span>
-                          {r.kind === 'identify' && r.record && r.state !== 'replaced' && <span className="block truncate text-[11px] text-dim">та ли это запись: {r.record}</span>}
+                          {r.kind === 'identify' && r.record && r.state !== 'replaced' && <span className="block truncate text-[11px] text-dim">та ли это запись: <RecordTitle row={r} /></span>}
                         </span>
                         <RowState r={r} />
                         {r.can_revert && (
@@ -200,7 +213,7 @@ export function QualityPage() {
                         />
                       )}
                       {r.can_revert && open === r.id && <Compare r={r} listening={listening} busy={busy === `${r.id}`} onYes={() => setOpen(null)} onNo={() => void back(r)} />}
-                      {r.state === 'searching' && r.progress > 0 && <ProgressBar value={r.progress} className="mt-2 max-w-md" />}
+                      {r.phase === 'downloading' && <ProgressBar value={r.progress} className="mt-2 max-w-md" />}
                     </li>
                   ))}
                 </ul>
@@ -231,7 +244,24 @@ function RowState({ r }: { r: QualityRow }) {
       </span>
     );
   if (r.state === 'found') return pill(`сходство ${(r.likeness ?? 0).toFixed(2)}`, 'bg-warn/15 text-warn', r.note ?? undefined);
-  if (r.state === 'searching') return pill(r.progress > 0 ? `скачиваю · ${Math.round(r.progress * 100)}%` : 'ищу…', 'bg-info/15 text-info');
+  if (r.state === 'searching') {
+    const sources = Object.entries(r.search_sources ?? {}).map(([service, state]) => ({ service, state }));
+    if (r.phase === 'searching' && sources.length) {
+      return <SourceStatuses sources={sources} label="Источники поиска файла" />;
+    }
+    if (r.provider && (r.phase === 'downloading' || r.phase === 'checking')) {
+      const name = serviceName(r.provider);
+      const checking = r.phase === 'checking';
+      return (
+        <span title={checking ? `Проверка файла из ${name}` : `Скачивание из ${name}`}
+          className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-info/15 px-2 py-0.5 text-[11px] text-info">
+          <ServiceBadge service={r.provider} iconOnly />
+          {checking ? 'проверка' : `${Math.round(r.progress * 100)}%`}
+        </span>
+      );
+    }
+    return <span role="status" aria-label="Подготовка поиска" className="hm-spin h-4 w-4 shrink-0 rounded-full border-2 border-info border-r-transparent motion-reduce:animate-none" />;
+  }
   if (r.state === 'queued' && r.kind === 'identify') return pill('в очереди · уточняю запись', 'bg-fg/5 text-muted', 'Скачаю запись, которую предлагает каталог, и сравню с вашим файлом по звуку');
   if (r.state === 'queued') return pill(r.known ? 'в очереди' : 'в очереди · нет в каталоге', 'bg-fg/5 text-muted', r.known ? undefined : 'Каталог не знает эту песню: ищу по названию из файла, это дольше и реже удаётся');
   return (
@@ -276,6 +306,11 @@ function useTwoFiles() {
     void a.play().catch(() => setOn(null));
   };
   return { on, play, stop };
+}
+
+function RecordTitle({ row }: { row: QualityRow }) {
+  if (!row.record_title) return row.record;
+  return <><TrackTitle title={row.record_title} track={{ ref: row.record_ref }} />{row.record?.slice(row.record_title.length)}</>;
 }
 
 function Compare({ r, listening, busy, onYes, onNo, onVersion, onTake }: { r: QualityRow; listening: ReturnType<typeof useTwoFiles>; busy: boolean; onYes: () => void; onNo: () => void; /** «is it that record?» has a third answer: another version of the same song */ onVersion?: () => void; /** …and yes with the file found taken too, where it is the better one */ onTake?: () => void }) {
@@ -336,10 +371,10 @@ function Compare({ r, listening, busy, onYes, onNo, onVersion, onTake }: { r: Qu
     <div className="pt-2 md:pl-[3.25rem]">
       {r.kind === 'identify' && !done && (
         <p className="pb-1 text-xs text-muted">
-          Каталог считает, что это «{r.record}».{' '}
+          Каталог считает, что это «<RecordTitle row={r} />».{' '}
           {r.better
-            ? `Найденный файл${r.provider ? ` (${providerLabel(r.provider)})` : ''} лучше вашего по качеству — взять его можно отдельной кнопкой.`
-            : `Файл для сверки скачан${r.provider ? ` с ${providerLabel(r.provider)}` : ''}: он нужен только для этого сравнения, ваш файл останется.`}
+            ? <>Найденный файл{r.provider && <> (<ServiceBadge service={r.provider} />)</>} лучше вашего по качеству — взять его можно отдельной кнопкой.</>
+            : <>Файл для сверки скачан{r.provider && <> с <ServiceBadge service={r.provider} /></>}: он нужен только для этого сравнения, ваш файл останется.</>}
         </p>
       )}
       {done ? lane('was', 'Был', fileWords(r.was_codec, r.was_kbps), false) : lane('current', 'Сейчас', fileWords(r.was_codec, r.was_kbps), false)}
@@ -413,7 +448,9 @@ function Compare({ r, listening, busy, onYes, onNo, onVersion, onTake }: { r: Qu
           </>
         )}
         <span className="min-w-0 truncate text-[11px] text-dim">
-          {[r.provider ? `источник: ${providerLabel(r.provider)}` : null, r.duration_s ? fmtDuration(r.duration_s) : null, r.note].filter(Boolean).join(' · ')}
+          {r.provider && <ServiceBadge service={r.provider} />}
+          {r.provider && (r.duration_s || r.note) ? ' · ' : ''}
+          <ServiceText text={[r.duration_s ? fmtDuration(r.duration_s) : null, r.note].filter(Boolean).join(' · ')} />
         </span>
       </div>
     </div>

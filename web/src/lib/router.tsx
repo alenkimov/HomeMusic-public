@@ -1,5 +1,5 @@
 // A tiny hash router: FastAPI only has to serve index.html, everything after "#" is client side.
-import { useMemo, useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from 'react';
+import { useEffect, useMemo, useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from 'react';
 
 /** Fired by `navigate()` (pushState does not fire `hashchange`). */
 export const ROUTE_EVENT = 'hm:route';
@@ -95,3 +95,24 @@ export function Link({ to, replace, onClick, ...rest }: LinkProps) {
 }
 
 export const enc = encodeURIComponent;
+
+export const artistPath = (artist: { hub_artist_id?: number | null; ref: string }) =>
+  `/artist/${enc(artist.hub_artist_id ?? artist.ref)}`;
+
+export const albumPath = (album: { release_id?: number | null; ref: string }) =>
+  `/album/${enc(album.release_id ?? album.ref)}`;
+
+export function useCanonicalPath(from: string, path?: string) {
+  useEffect(() => {
+    const current = parseHash(window.location.hash);
+    if (!path || current.path === path) return;
+    try {
+      // A response can arrive after the user has already followed another link.
+      if (decodeURIComponent(current.path) !== decodeURIComponent(from)) return;
+    } catch {
+      return;
+    }
+    const query = current.query.toString();
+    navigate(query ? `${path}?${query}` : path, { replace: true });
+  }, [from, path]);
+}

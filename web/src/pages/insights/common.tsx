@@ -1,3 +1,5 @@
+import { TrackTitle } from '../../components/TrackTitle';
+import type { VersionIdentity } from '../../lib/versionLabels';
 import { useState, type ReactNode } from 'react';
 import { Segmented, cx } from '../../components/ui';
 import { PERIODS, periodOf, setQuery, type PeriodKey } from '../../lib/insights';
@@ -148,8 +150,8 @@ export function Swatch({ color, className }: { color: string; className?: string
 }
 
 /** «Артист — Название» of a name block. */
-export const trackName = (t: { artist?: string | null; title?: string | null }) =>
-  [t.artist, t.title].filter(Boolean).join(' — ') || 'Неизвестный трек';
+export const trackName = (t: VersionIdentity & { artist?: string | null; title?: string | null; key?: string | null }, prefix = '') =>
+  <TrackTitle title={prefix + ([t.artist, t.title].filter(Boolean).join(' — ') || 'Неизвестный трек')} track={{ ...t, ref: t.ref ?? t.key }} />;
 
 /** Filter chips: a single choice kept in the address. */
 export function Chips<T extends string>({ value, options, onChange, label }: { value: T; options: Array<{ value: T; label: string }>; onChange: (v: T) => void; label: string }) {

@@ -15,8 +15,10 @@ from typing import Any
 
 import httpx
 
+from app import integrations
 from app.catalog.cache import cached
 from app.config import get_settings
+from app.db import session_scope
 from app.net import RateLimiter, make_client, request_with_backoff
 from app.providers.ytdlp import (
     YTM_API_URL,
@@ -152,23 +154,26 @@ async def ytm_radio(artist: str, title: str) -> list[Hit]:
 _lastfm_limiter: RateLimiter | None = None
 
 
-def lastfm_configured() -> bool:
-    return bool(get_settings().lastfm_api_key.strip())
+async def lastfm_configured() -> bool:
+    async with session_scope() as s:
+        return await integrations.lastfm_connection(s) is not None
 
 
-async def _lastfm(method: str, **params: Any) -> dict[str, Any]:
+async def _lastfm(method: str, *, key: str | None = None, **params: Any) -> dict[str, Any]:
     """One call; an unknown artist/track (`error` 6) is an empty answer, other errors are `SourceDown`."""
     global _lastfm_limiter
     if _lastfm_limiter is None:
         _lastfm_limiter = RateLimiter(LASTFM_RATE)
-    q = {"method": method, "api_key": get_settings().lastfm_api_key.strip(), "format": "json", "autocorrect": 1,
-         **params}
+    key = key if key is not None else await integrations.lastfm_key()
+    if not key:
+        raise SourceDown("Last.fm не подключён")
+    q = {"method": method, "api_key": key, "format": "json", "autocorrect": 1, **params}
     try:
         async with make_client(timeout=20) as c:
             r = await request_with_backoff(c, "GET", LASTFM_URL, limiter=_lastfm_limiter, params=q, retries=2)
         body = r.json()
-    except (httpx.HTTPError, ValueError) as e:
-        raise SourceDown(f"Last.fm: {e!r}") from e
+    except (httpx.HTTPError, ValueError):
+        raise SourceDown("Last.fm не ответил") from None
     if isinstance(body, dict) and body.get("error"):
         if body["error"] == 6:  # not found
             return {}
@@ -220,6 +225,12 @@ async def lastfm_artist_tags(artist: str, limit: int = 5) -> list[str]:
         return [t["name"] for t in _as_list((body.get("toptags") or {}).get("tag"))[:limit] if t.get("name")]
 
     return await cached(f"mix:lfm_artist_tags:{_key(artist)}", TTL_S, produce) or []
+
+
+async def lastfm_track_tags(artist: str, title: str) -> list[str]:
+    body = await _lastfm("track.getTopTags", artist=artist, track=title, autocorrect=0)
+    return [t["name"] for t in _as_list((body.get("toptags") or {}).get("tag"))
+            if t.get("name") and int(t.get("count") or 0) >= 20]
 
 
 # --- Yandex Music ------------------------------------------------------------------------------------------------

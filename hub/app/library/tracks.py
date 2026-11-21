@@ -10,11 +10,14 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.catalog.models import CatalogTrack
+from app.catalog.identity import same_recording
+from app.catalog.models import CATALOGS, CatalogTrack
 from app.matching.normalize import fingerprint
-from app.models import Track, TrackFile
+from app.models import Track, TrackCatalogRef, TrackFile
+from app.providers.base import TrackQuery
 
 
 def _same_length(a: int | None, b: int | None, tol: int = 3) -> bool:
@@ -60,11 +63,12 @@ async def _unnamed(s: AsyncSession, *, artist: str, title: str, duration_s: int 
     length."""
     unnamed = select(Track).where(Track.ref.is_(None)).order_by(Track.id.desc())
     if isrc:
-        track = (await s.execute(unnamed.where(Track.isrc == isrc.upper()).limit(1))).scalar_one_or_none()
-        if track is not None:
-            return track
+        wanted = TrackQuery(artist=artist, title=title, duration_s=duration_s, isrc=isrc)
+        for track in await s.scalars(unnamed.where(Track.isrc == isrc.upper())):
+            if same_recording(wanted, track):
+                return track
     for t in (await s.execute(unnamed.where(Track.fingerprint == fingerprint(artist, title)))).scalars():
-        if _same_length(t.duration_s, duration_s):
+        if _same_length(t.duration_s, duration_s) and (not (isrc and t.isrc) or t.isrc == isrc.upper()):
             return t
     return None
 
@@ -96,30 +100,49 @@ async def of_catalog(s: AsyncSession, c: CatalogTrack, *, user_id: int | None = 
     takes the name instead of a second track being made. `word` False: `c` is what somebody else called the song
     (a music service's row matched with the catalog's track), not the catalog's record of it — the track is named
     by it, and the catalog's own word is asked for later (`fill_catalog`)."""
+    from app.catalog import release_matches
     from app.library import artists
 
     ref = c.ref if c.source != "nd" else None
-    said = c.model_dump(mode="json") if word else None
+    variants = []
+    if c.album_ref and ref:
+        group = (await release_matches.groups_for(s, [c.album_ref])).get(c.album_ref)
+        if group:
+            variants = release_matches.track_versions(group, ref)
     track = await by_ref(s, ref)
+    if track is None and variants:
+        known = await tracks_by_refs(s, [t.ref for t in variants])
+        track = min(known.values(), key=lambda t: (t.path is None, t.id), default=None)
+        if track is None:
+            c = release_matches.combined_track(variants)
+            ref = c.ref
+    said = c.model_dump(mode="json") if word else None
     if track is not None:
-        if track.title == ref or not track.artist:
+        await bind_refs(s, track, [ref, *(t.ref for t in variants)])
+        if (track.title == ref or not track.artist) and track.ref == ref:
             # met by its ref alone (a like that said nothing of the song): now it is known what the song is
             for k, v in _names(c).items():
                 setattr(track, k, v)
             track.catalog = said or track.catalog
             await artists.credit_track(s, track)
+        for other in variants:
+            await artists.add_title(s, track, other.title, "catalog")
         return track
     track = await _unnamed(s, artist=c.artist, title=c.title, duration_s=c.duration_s, isrc=c.isrc)
     if track is not None:
         if ref:
             track.ref = ref
         track.catalog = track.catalog or said
+        await bind_refs(s, track, [ref, *(t.ref for t in variants)])
         return track
     track = Track(ref=ref, **_names(c), catalog=said, created_by=user_id)
     s.add(track)
     await s.flush()
     await s.refresh(track)  # what is read with a track (its song, its path) is there to be read: none, for now
+    await bind_refs(s, track, [ref, *(t.ref for t in variants)])
     await artists.credit_track(s, track)
+    for other in variants:
+        await artists.add_title(s, track, other.title, "catalog")
     return track
 
 
@@ -134,11 +157,11 @@ async def fill_catalog(s: AsyncSession, tracks: Iterable[Track] | None = None, l
     from app.mixes.resolve import catalog_track
 
     def lacks(t: Track) -> bool:
-        return bool(t.ref and t.ref.startswith("dz:")) and not (t.catalog or {}).get("artist_ref")
+        return bool(t.ref and t.ref.partition(":")[0] in CATALOGS) and not (t.catalog or {}).get("artist_ref")
 
     rows = [t for t in tracks if lacks(t)] if tracks is not None else list(
         (await s.execute(select(Track).where(
-            Track.ref.like("dz:%"),
+            or_(*(Track.ref.like(f"{source}:%") for source in CATALOGS)),
             or_(Track.catalog.is_(None), func.json_extract(Track.catalog, "$.artist_ref").is_(None)))
             .order_by(Track.id.desc()).limit(limit))).scalars())
     filled: list[Track] = []
@@ -169,10 +192,37 @@ def dz_id(ref: str | None) -> str | None:
 
 
 async def by_ref(s: AsyncSession, ref: str | None) -> Track | None:
-    """The track the catalog calls `ref`."""
+    """Resolve a Hub track address or its known catalog reference."""
     if not ref:
         return None
-    return (await s.execute(select(Track).where(Track.ref == ref))).scalar_one_or_none()
+    from app.catalog.registry import numeric_id
+
+    if ref.startswith("lib:") and (ident := numeric_id(ref[4:])) is not None:
+        return await s.get(Track, ident)
+    return (await tracks_by_refs(s, [ref])).get(ref)
+
+
+async def tracks_by_refs(s: AsyncSession, refs: Iterable[str]) -> dict[str, Track]:
+    refs = set(refs)
+    if not refs:
+        return {}
+    linked = await s.execute(select(TrackCatalogRef.ref, Track).join(Track).where(TrackCatalogRef.ref.in_(refs)))
+    out = {ref: track for ref, track in linked}
+    missing = refs - out.keys()
+    if missing:
+        out.update((t.ref, t) for t in await s.scalars(select(Track).where(Track.ref.in_(missing))))
+    return out
+
+
+async def bind_refs(s: AsyncSession, track: Track, refs: Iterable[str | None]) -> None:
+    external = {ref for ref in refs if ref and ref.partition(":")[0] in CATALOGS}
+    if not external:
+        return
+    existing = await tracks_by_refs(s, external)
+    rows = [{"ref": ref, "track_id": track.id} for ref in external
+            if ref not in existing or existing[ref].id == track.id]
+    if rows:
+        await s.execute(insert(TrackCatalogRef).on_conflict_do_nothing(), rows)
 
 
 async def current_file(s: AsyncSession, track_id: int) -> TrackFile | None:

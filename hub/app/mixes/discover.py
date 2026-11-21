@@ -144,12 +144,11 @@ async def pick(p: Profile, cands: list[Cand], *, known_artists: set[str], past: 
 
 
 async def listenbrainz_tracks(user_id: int) -> list[CatalogTrack]:
-    from app import listenbrainz
+    from app import integrations, listenbrainz
     from app.mixes.resolve import resolve_hits
 
     async with session_scope() as s:
-        user = await s.get(User, user_id)
-        if user is None or not user.lb_token_enc:
+        if await integrations.latest_owned(s, user_id, "listenbrainz") is None:
             raise builder.Off("ListenBrainz не подключён")
     hits = await listenbrainz.weekly_exploration(user_id)
     return [t for t in await resolve_hits(LISTENBRAINZ, hits) if t is not None]

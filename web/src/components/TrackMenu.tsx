@@ -1,5 +1,7 @@
+import { TrackTitle } from './TrackTitle';
 import { useState, type MouseEvent, type ReactNode } from 'react';
 import { deleteFile } from '../lib/deleteFile';
+import { editTrackArtwork } from '../lib/coverPicker';
 import { openFindFile } from '../lib/findFile';
 import { openTrackEdit } from '../lib/trackEdit';
 import { openVersions } from '../lib/versions';
@@ -9,9 +11,7 @@ import { STANDALONE } from '../lib/embedded';
 import { addToQueue, next, stopListening, useListen, type ListenTrack } from '../lib/listen';
 import { useInPlaylists } from '../lib/inPlaylists';
 import { canPlayAll } from '../lib/player';
-import { enc, navigate } from '../lib/router';
-import { api } from '../api/client';
-import { attempt } from '../lib/ui';
+import { albumPath, artistPath, enc, navigate } from '../lib/router';
 import { useSession } from '../lib/session';
 import { openShare } from '../lib/shareTrack';
 import { useLiked } from '../lib/stars';
@@ -33,8 +33,11 @@ export interface MenuTrack {
   has_file?: boolean;
   /** known by its name alone — no file, no record of the catalog: «Выбрать файл» is offered, what plays is not */
   unknown?: boolean;
+  onFindFile?: () => void;
   artist_ref?: string | null;
+  hub_artist_id?: number | null;
   album_ref?: string | null;
+  release_id?: number | null;
   /** the song's Navidrome album and artist (the library pages of a browser) */
   nd_album_id?: string | null;
   nd_artist_id?: string | null;
@@ -104,8 +107,10 @@ function TrackMenu({ track, extra, inPlayer, lean, noTags, onClose }: { track: M
   const hasQueue = useListen((s) => !!s.track);
   // the page's own player plays here (a browser, an app without `playQueue`)
   const queueable = !!track.listen && !canPlayAll() && !playing;
-  const albumTo = track.album_ref ? `/album/${enc(track.album_ref)}` : STANDALONE && track.nd_album_id ? `/lib/album/${enc(track.nd_album_id)}` : null;
-  const artistTo = track.artist_ref ? `/artist/${enc(track.artist_ref)}` : STANDALONE && track.nd_artist_id ? `/lib/artist/${enc(track.nd_artist_id)}` : null;
+  const albumTo = track.album_ref || track.release_id ? albumPath({ ref: track.album_ref ?? '', release_id: track.release_id })
+    : STANDALONE && track.nd_album_id ? `/lib/album/${enc(track.nd_album_id)}` : null;
+  const artistTo = track.artist_ref || track.hub_artist_id ? artistPath({ ref: track.artist_ref ?? '', hub_artist_id: track.hub_artist_id })
+    : STANDALONE && track.nd_artist_id ? `/lib/artist/${enc(track.nd_artist_id)}` : null;
   const go = (to: string) => {
     onClose();
     navigate(to);
@@ -121,16 +126,16 @@ function TrackMenu({ track, extra, inPlayer, lean, noTags, onClose }: { track: M
   if (picking) return <TrackPlaylists track={track} onClose={onClose} />;
 
   return (
-    <Sheet open onClose={onClose} title={`${track.artist} — ${track.title}`}>
+    <Sheet open onClose={onClose} title={<TrackTitle title={`${track.artist} — ${track.title}`} track={track} />}>
       <div className="-mx-4 -my-3 flex flex-col py-1">
-        {track.unknown && track.library_track_id != null && (
+        {track.onFindFile && (
           <MenuItem
             icon="search"
             label="Выбрать файл"
             hint="Хаб поищет по источникам, а вы выберете подходящий — трек останется на своём месте"
             onClick={() => {
               onClose();
-              void attempt(() => api.trackFindFile(track.library_track_id as number)).then((r) => r && navigate(`/downloads/${r.download_item_id}`));
+              track.onFindFile?.();
             }}
           />
         )}
@@ -192,12 +197,18 @@ function TrackMenu({ track, extra, inPlayer, lean, noTags, onClose }: { track: M
           <MenuItem
             icon="edit"
             label="Переименовать"
-            hint="Название, исполнители и обложка — для всех"
+            hint="Название и исполнители — для всех"
             onClick={() => {
               onClose();
               openTrackEdit({ title: track.title, artist: track.artist, library_track_id: track.library_track_id, ref: track.ref, nd_song_id: track.nd_song_id });
             }}
           />
+        )}
+        {(track.library_track_id || track.nd_song_id || /^(dz|ym):/.test(track.ref ?? '')) && (
+          <MenuItem icon="image" label="Сменить обложку" onClick={() => {
+            onClose();
+            editTrackArtwork({ ...track, src: track.listen?.cover_url });
+          }} />
         )}
         {(track.library_track_id || track.ref || track.nd_song_id) && (
           <MenuItem
@@ -259,7 +270,7 @@ function TrackMenu({ track, extra, inPlayer, lean, noTags, onClose }: { track: M
             hint="Без цензуры или в лучшем качестве — вместо этого"
             onClick={() => {
               onClose();
-              openFindFile({ library_track_id: track.library_track_id as number, title: track.title, artist: track.artist });
+              openFindFile({ library_track_id: track.library_track_id as number, title: track.title, artist: track.artist, has_file: true });
             }}
           />
         )}

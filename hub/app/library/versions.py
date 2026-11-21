@@ -22,11 +22,45 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.library import edits
 from app.library.tracks import current_files
 from app.matching.normalize import split_version
-from app.models import Album, Edit, Song, SongTrack, Track
+from app.models import Album, Edit, Song, SongTrack, Track, TrackFile
 
 
 async def _row(s: AsyncSession, track_id: int) -> SongTrack | None:
     return await s.get(SongTrack, track_id)
+
+
+async def label_of(s: AsyncSession, track_id: int) -> str | None:
+    return await s.scalar(select(SongTrack.label).where(SongTrack.track_id == track_id))
+
+
+async def label_index(s: AsyncSession) -> list[dict[str, Any]]:
+    """Identify labeled recordings by their exact aliases, including files still known by an older song id."""
+    labeled = SongTrack.label.is_not(None) & (SongTrack.label != "")
+    rows = (await s.execute(
+        select(SongTrack.track_id, SongTrack.label, Track.ref, TrackFile.nd_song_id)
+        .join(Track, Track.id == SongTrack.track_id)
+        .outerjoin(TrackFile, TrackFile.track_id == Track.id)
+        .where(labeled)
+    )).all()
+    out: dict[int, dict[str, Any]] = {}
+    for track_id, label, ref, nd in rows:
+        entry = out.setdefault(track_id, {
+            "track_id": track_id, "label": label, "ref": ref, "nd_song_ids": set(), "source_urls": [],
+        })
+        if nd:
+            entry["nd_song_ids"].add(nd)
+    if out:
+        # A provider's URL only identifies a recording when all its saved copies belong to that recording.
+        labeled_urls = select(TrackFile.source_url).join(SongTrack, SongTrack.track_id == TrackFile.track_id).where(labeled)
+        urls = (await s.execute(
+            select(TrackFile.source_url, func.min(TrackFile.track_id))
+            .where(TrackFile.source_url.in_(labeled_urls))
+            .group_by(TrackFile.source_url)
+            .having(func.count(func.distinct(TrackFile.track_id)) == 1)
+        )).all()
+        for url, track_id in urls:
+            out[track_id]["source_urls"].append(url)
+    return [{**entry, "nd_song_ids": sorted(entry["nd_song_ids"])} for entry in out.values()]
 
 
 async def counts(s: AsyncSession, track_ids: Iterable[int]) -> dict[int, int]:
@@ -59,7 +93,8 @@ async def mark(s: AsyncSession, outs: list[Any]) -> None:
         o.versions = many.get(getattr(o, "library_track_id", None) or 0, 0)
 
 
-async def once(s: AsyncSession, outs: list[Any], track_id=lambda o: getattr(o, "library_track_id", None)) -> list[Any]:
+async def once(s: AsyncSession, outs: list[Any], track_id=lambda o: getattr(o, "library_track_id", None),
+               *, replace=lambda first, preferred: preferred) -> list[Any]:
     """A list that shows a song once (a search, an artist's most listened, what plays by itself): of the versions
     of one song that are in it only one stays — the preferred one where it is among them, else the first — in the
     place of the first of them. Tracks that are nobody's version stay as they are."""
@@ -77,7 +112,8 @@ async def once(s: AsyncSession, outs: list[Any], track_id=lambda o: getattr(o, "
             at[hit[0]] = len(out)
             out.append(o)
         elif tid == hit[1]:
-            out[at[hit[0]]] = o
+            pos = at[hit[0]]
+            out[pos] = replace(out[pos], o)
     return out
 
 
@@ -105,7 +141,7 @@ async def _cover(s: AsyncSession, t: Track) -> str | None:
 async def _out(s: AsyncSession, t: Track, row: SongTrack | None, preferred: bool, file: Any) -> dict[str, Any]:
     return {
         "track_id": t.id, "title": t.title, "artist": t.artist, "album": t.album, "duration_s": t.duration_s,
-        "label": (row.label if row else None) or _guess(t.title), "preferred": preferred, "cover_url": await _cover(s, t),
+        "label": row.label if row else None, "preferred": preferred, "cover_url": await _cover(s, t),
         "ref": t.ref, "nd_song_id": file.nd_song_id if file is not None else None,
         "codec": file.codec if file is not None else None, "bitrate_kbps": file.bitrate_kbps if file is not None else None,
         "has_file": file is not None,

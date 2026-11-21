@@ -5,7 +5,7 @@ Nothing here is needed for the Hub to work: a user without a token is not sent a
 built from the other sources. With a token (listenbrainz.org → Settings → User token):
 
 - listens go there — every listen the statistics count (app/stats.py: 30 seconds and longer), the history brought
-  from Spotify included, each once (`users.lb_sent_until` is how far they are sent). ListenBrainz builds its
+  from Spotify included, each once (`listenbrainz_sync.sent_until` is how far they are sent). ListenBrainz builds its
   recommendations out of them, and shows them on the user's public profile there;
 - «Weekly Exploration», the playlist ListenBrainz makes for the user every Monday, is one more source of
   «Открытия недели» (app/mixes/discover.py). It appears once ListenBrainz has a few weeks of listens.
@@ -21,12 +21,11 @@ from typing import Any
 import httpx
 from sqlalchemy import select
 
-from app import stats
+from app import integrations, stats
 from app.db import session_scope
 from app.mixes.sources import Hit
-from app.models import User
+from app.models import IntegrationConnection, ListenBrainzSync, utcnow
 from app.net import make_client
-from app.security import decrypt
 
 log = logging.getLogger(__name__)
 
@@ -87,10 +86,14 @@ async def send(token: str, listens: list[dict[str, Any]]) -> None:
 async def sync_user(user_id: int) -> int:
     """Sends the listens ListenBrainz has not got from the Hub yet. Returns how many went."""
     async with session_scope() as s:
-        user = await s.get(User, user_id)
-        if user is None or not user.lb_token_enc:
+        row = await integrations.latest_owned(s, user_id, "listenbrainz")
+        if row is None or row.state == "reauth":
             return 0
-        token, since = decrypt(user.lb_token_enc), user.lb_sent_until
+        token = await integrations.credential(s, row.id)
+        if not token:
+            return 0
+        checkpoint = await s.get(ListenBrainzSync, row.id)
+        since = checkpoint.sent_until if checkpoint else None
         lib = await stats.library(s)
         plays = [p for p in await stats.plays(s, user_id, lib) if p.counted and (since is None or p.ts > since)]
     if not plays:
@@ -100,11 +103,22 @@ async def sync_user(user_id: int) -> int:
         await send(token, listens)
     except Refused:
         log.warning("listenbrainz: the token of user %s is not taken any more", user_id)
+        async with session_scope() as s:
+            current = await s.get(IntegrationConnection, row.id)
+            if current and await integrations.credential(s, row.id) == token:
+                current.state, current.checked_at = "reauth", utcnow()
         return 0
     async with session_scope() as s:
-        user = await s.get(User, user_id)
-        if user is not None and user.lb_token_enc:
-            user.lb_sent_until = max(p.ts for p in plays)
+        current = await s.get(IntegrationConnection, row.id)
+        if current and await integrations.credential(s, row.id) == token:
+            checkpoint = await s.get(ListenBrainzSync, row.id)
+            if checkpoint is None:
+                checkpoint = ListenBrainzSync(connection_id=row.id)
+                s.add(checkpoint)
+            sent_until = max(p.ts for p in plays)
+            if checkpoint.sent_until is None or checkpoint.sent_until < sent_until:
+                checkpoint.sent_until = sent_until
+            current.state, current.checked_at = "connected", utcnow()
     return len(listens)
 
 
@@ -112,10 +126,12 @@ async def weekly_exploration(user_id: int) -> list[Hit]:
     """The tracks of the newest «Weekly Exploration» ListenBrainz made for the user, by name (empty: no account,
     or ListenBrainz has not made one yet)."""
     async with session_scope() as s:
-        user = await s.get(User, user_id)
-        if user is None or not user.lb_token_enc or not user.lb_user:
+        row = await integrations.latest_owned(s, user_id, "listenbrainz")
+        if row is None or not row.account or row.state == "reauth":
             return []
-        token, name = decrypt(user.lb_token_enc), user.lb_user
+        token, name = await integrations.credential(s, row.id), row.account
+        if not token:
+            return []
     best: tuple[str, str] | None = None  # (date, playlist id)
     offset = 0
     while True:
@@ -153,8 +169,13 @@ async def loop() -> None:
     while True:
         try:
             async with session_scope() as s:
-                users = list((await s.execute(select(User.id).where(User.lb_token_enc.is_not(None)))).scalars())
+                users = list((await s.execute(select(IntegrationConnection.owner_user_id).where(
+                    IntegrationConnection.provider == "listenbrainz",
+                    IntegrationConnection.state != "reauth",
+                ).distinct())).scalars())
             for user_id in users:
+                if user_id is None:
+                    continue
                 sent = await sync_user(user_id)
                 if sent:
                     log.info("listenbrainz: %s listens sent for user %s", sent, user_id)

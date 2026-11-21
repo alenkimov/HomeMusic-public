@@ -1,3 +1,4 @@
+import { titleWithVersion } from './versionLabels';
 import { useEffect, useSyncExternalStore } from 'react';
 import { ApiError, api, errorMessage } from '../api/client';
 import type { PlayEventIn, SmartOut, SmartRecOut } from '../api/types';
@@ -246,10 +247,10 @@ export async function addRec(track: ListenTrack): Promise<void> {
     if (s?.context === 'liked' || (!s && getListenState().context === 'liked')) {
       await toggleLike({ targetType: 'track', trackId: track.library_track_id, songId: track.nd_song_id, ref: track.ref, data: { ...track } });
       await api.smartAdd(rec.session, { ref: track.ref, nd_song_id: track.nd_song_id });
-      toast(`«${track.title}» в любимом`, 'success');
+      toast(`«${titleWithVersion(track.title, track)}» в любимом`, 'success');
     } else {
       const r = await api.smartAdd(rec.session, { ref: track.ref, nd_song_id: track.nd_song_id });
-      toast(r.status === 'downloading' ? `«${track.title}» скачивается и появится в плейлисте` : `«${track.title}» добавлен в плейлист`, 'success');
+      toast(r.status === 'downloading' ? `«${titleWithVersion(track.title, track)}» скачивается и появится в плейлисте` : `«${titleWithVersion(track.title, track)}» добавлен в плейлист`, 'success');
     }
     markOwn(track.ref);
     s?.recs.delete(track.ref);
@@ -271,7 +272,7 @@ export async function hideRec(track: ListenTrack): Promise<void> {
   if (gone >= 0 && gone !== getListenState().index) removeFromQueue(gone);
   try {
     await api.smartHide(rec.session, { ref: track.ref, nd_song_id: track.nd_song_id });
-    toast(`«${track.title}» больше не рекомендуется здесь`, 'info');
+    toast(`«${titleWithVersion(track.title, track)}» больше не рекомендуется здесь`, 'info');
   } catch (e) {
     toastError(e);
   }

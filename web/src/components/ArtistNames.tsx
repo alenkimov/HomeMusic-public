@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { api } from '../api/client';
-import type { ArtistCardOut, ArtistOtherIn, ArtistPickOut } from '../api/types';
-import { useAsync } from '../lib/hooks';
+import type { ArtistCardOut, ArtistOtherIn, ArtistPickOut, ArtistProfileOut } from '../api/types';
+import { forgetSavedPages, useAsync } from '../lib/hooks';
+import { plural } from '../lib/format';
 import { imageUrl } from '../lib/img';
 import { Link } from '../lib/router';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 import { Icon } from './Icon';
+import { ServiceBadge, serviceName } from './ServiceBadge';
 import { Button, Sheet, cx } from './ui';
 
 /** An artist as the Hub knows them — the one name, the other spellings, the other projects — for a page of theirs:
@@ -13,7 +15,11 @@ import { Button, Sheet, cx } from './ui';
 export function useArtistCard(name: string | null | undefined, ref?: string | null) {
   const res = useAsync((s) => (name || ref ? api.artistOf({ name: name ?? undefined, ref: ref ?? undefined }, s) : Promise.resolve(null)), [name, ref], true, `artist-card:${ref ?? name}`);
   const [said, setSaid] = useState<ArtistCardOut | null>(null); // what a change in a window answered
-  return { card: said ?? res.data ?? null, set: setSaid };
+  const reload = () => {
+    setSaid(null);
+    res.reload(true);
+  };
+  return { card: said ?? res.data ?? null, set: setSaid, reload };
 }
 
 const SOURCE: Record<string, string> = { catalog: 'каталог', library: 'из файлов', manual: 'вручную' };
@@ -52,9 +58,19 @@ export function ArtistProjects({ card }: { card: ArtistCardOut | null }) {
 export const artistHint = (card: ArtistCardOut | null) => (card?.suggestions.length ?? 0) > 0;
 
 /** The two windows of an artist's ⋯: «Имя и написания» and «Другие проекты». */
-export function ArtistWindow({ which, card, onChange, onClose }: { which: 'names' | 'projects' | null; card: ArtistCardOut | null; onChange: (next: ArtistCardOut) => void; onClose: () => void }) {
+type OnProfileDetached = (ref: string, card: ArtistCardOut) => void;
+
+export function ArtistWindow({ which, card, onChange, onClose, onProfileDetached }: {
+  which: 'names' | 'projects' | null;
+  card: ArtistCardOut | null;
+  onChange: (next: ArtistCardOut) => void;
+  onClose: () => void;
+  onProfileDetached?: OnProfileDetached;
+}) {
   if (!which || !card) return null;
-  return which === 'names' ? <NamesWindow card={card} onChange={onChange} onClose={onClose} /> : <ProjectsWindow card={card} onChange={onChange} onClose={onClose} />;
+  return which === 'names'
+    ? <NamesWindow card={card} onChange={onChange} onClose={onClose} onProfileDetached={onProfileDetached} />
+    : <ProjectsWindow card={card} onChange={onChange} onClose={onClose} />;
 }
 
 const REWRITE = 'Библиотека переписывается: треки, альбомы и теги файлов. Это займёт немного времени';
@@ -64,12 +80,12 @@ const mini = 'flex h-5 w-5 items-center justify-center rounded-full text-dim hov
 /** What a window does to the artist: said to the page, with a word when it worked. */
 function useRun(onChange: (next: ArtistCardOut) => void) {
   const [busy, setBusy] = useState(false);
-  const run = async (what: () => Promise<ArtistCardOut>, said?: string) => {
+  const run = async (what: () => Promise<ArtistCardOut>, said?: string, after = onChange) => {
     setBusy(true);
     const next = await attempt(what);
     setBusy(false);
     if (!next) return false;
-    onChange(next);
+    after(next);
     if (said) toast(said, 'success');
     return true;
   };
@@ -110,7 +126,12 @@ function OtherPicker({ card, placeholder, action, onPick }: { card: ArtistCardOu
 /** «Имя и написания»: the artist's one name among their spellings, and the artists that are the same one. Whatever
  * is changed here is changed for everyone; a new name, or an artist joined, rewrites the library — its tracks,
  * albums and the files' tags — which takes the Hub a little while. */
-function NamesWindow({ card, onChange, onClose }: { card: ArtistCardOut; onChange: (next: ArtistCardOut) => void; onClose: () => void }) {
+function NamesWindow({ card, onChange, onClose, onProfileDetached }: {
+  card: ArtistCardOut;
+  onChange: (next: ArtistCardOut) => void;
+  onClose: () => void;
+  onProfileDetached?: OnProfileDetached;
+}) {
   const { busy, run } = useRun(onChange);
   const [spelling, setSpelling] = useState('');
   const makeMain = async (id: number, name: string) => {
@@ -120,6 +141,26 @@ function NamesWindow({ card, onChange, onClose }: { card: ArtistCardOut; onChang
   const dropName = async (id: number, name: string, source: string) => {
     const ok = source === 'manual' || (await confirmDialog({ title: `«${name}» — другой исполнитель?`, body: 'Написание станет отдельным исполнителем: музыка, которая придёт под ним дальше, будет его. Треки, уже переписанные под основным именем, останутся как есть.', okLabel: 'Отделить' }));
     if (ok) await run(() => api.artistDropName(card.id, id));
+  };
+  const detach = async (profile: ArtistProfileOut) => {
+    const label = serviceName(profile.service);
+    const ok = await confirmDialog({
+      title: `Отвязать профиль «${profile.name}»?`,
+      body: `${label} · ${profile.ref}. Профиль получит отдельную карточку с релизами каталога. Операция действует для всех пользователей Хаба.`,
+      okLabel: 'Отвязать',
+      danger: true,
+    });
+    if (!ok) return;
+    await run(async () => {
+      const next = await api.artistDetachProfile(card.id, profile.ref);
+      forgetSavedPages([`artist-card:${card.name}`, ...(card.profiles ?? []).flatMap((ref) =>
+        [`artist:${ref}`, `artist-card:${ref}`, `discography:${ref}`],
+      )]);
+      return next;
+    }, 'Профиль отвязан', (next) => {
+      onChange(next);
+      onProfileDetached?.(profile.ref, next);
+    });
   };
   const merge = async (who: ArtistOtherIn, name: string) => {
     const ok = await confirmDialog({ title: `«${name}» — это ${card.name}?`, body: `Они станут одним исполнителем под именем «${card.name}». Треки и альбомы «${name}» будут переписаны под этим именем, в том числе теги в файлах. Отдельный проект того же человека со своими релизами добавляется иначе — в «Другие проекты».`, okLabel: 'Объединить' });
@@ -185,6 +226,7 @@ function NamesWindow({ card, onChange, onClose }: { card: ArtistCardOut; onChang
             </Button>
           </div>
         </section>
+        <LinkedProfiles card={card} onDetach={(profile) => void detach(profile)} />
         <section>
           <p className="pb-1.5 text-[13px] text-muted">Тот же исполнитель есть под другим именем — объединить их в одного.</p>
           <OtherPicker card={card} placeholder="Имя другого исполнителя" action="это тот же исполнитель" onPick={merge} />
@@ -192,6 +234,47 @@ function NamesWindow({ card, onChange, onClose }: { card: ArtistCardOut; onChang
         <p className="text-[12px] text-dim">Изменения видят все на этом сервере. Основное имя записывается и в файлы — так же исполнитель называется в Navidrome и других плеерах.</p>
       </div>
     </Sheet>
+  );
+}
+
+function LinkedProfiles({ card, onDetach }: { card: ArtistCardOut; onDetach: (profile: ArtistProfileOut) => void }) {
+  const refs = card.profiles ?? [];
+  const res = useAsync((signal) => api.artistProfiles(card.id, signal), [card.id, refs.join(',')], refs.length > 0);
+  const profiles = (res.data ?? []).filter((p) => refs.includes(p.ref));
+  return (
+    <section aria-label="Привязанные профили">
+      <h3 className="pb-1 text-sm font-semibold">Привязанные профили</h3>
+      {!refs.length && <p className="text-sm text-muted">Привязанных профилей нет</p>}
+      {res.loading && !profiles.length && <p className="text-sm text-muted" role="status">Загружаю профили…</p>}
+      {res.error && <Button small variant="ghost" onClick={() => res.reload()}>Повторить загрузку</Button>}
+      <ul className="divide-y divide-line">
+        {profiles.map((profile) => {
+          const details = (
+            <>
+              <Avatar name={profile.name} src={profile.picture_url} />
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium">{profile.name}</span>
+                <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted">
+                  <ServiceBadge service={profile.service} size={13} />
+                  {profile.followers != null
+                    ? <span>{profile.followers.toLocaleString('ru-RU')} {plural(profile.followers, ['поклонник', 'поклонника', 'поклонников'])}</span>
+                    : <span>{profile.ref}</span>}
+                </span>
+              </span>
+            </>
+          );
+          const layout = 'flex min-w-0 flex-1 items-center gap-2 rounded-lg py-1.5';
+          return (
+            <li key={profile.ref} className="flex min-h-12 items-center gap-2">
+              {profile.url ? <a href={profile.url} target="_blank" rel="noreferrer" className={cx(layout, 'hover:bg-fg/5')} title={profile.ref}>
+                {details}<Icon name="external" size={14} className="shrink-0 text-dim" />
+              </a> : <span className={layout}>{details}</span>}
+              <Button small variant="ghost" icon="unlink" onClick={() => onDetach(profile)}>Отвязать</Button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 

@@ -1,12 +1,14 @@
+import { TrackTitle } from './TrackTitle';
 import { askForQueue } from '../lib/playerQueue';
 import { openTagsSheet, tagKey } from '../lib/tags';
-import type { CSSProperties } from 'react';
+import { type CSSProperties } from 'react';
 import { fmtDuration } from '../lib/format';
 import { isUpload, artistTo, creditedOf, cycleRepeat, cycleShuffle, hasNext, hasPrev, next, prev, setVolume, toggle, useListen } from '../lib/listen';
 import { useSeek } from '../lib/seek';
-import { Link, enc } from '../lib/router';
+import { Link, albumPath } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
 import { PlayLine } from './FileInfo';
+import { ChoosePlaybackFile } from './FindFile';
 import { Icon } from './Icon';
 import { SaveButton } from './PlaylistsButton';
 import { SeekLine } from './SeekLine';
@@ -50,13 +52,12 @@ export function DesktopPlayer() {
               {/* the name leads to the album, each artist to their page; a long line runs under the mouse (`Marquee`) */}
               <span className="ml-2 min-w-0">
                 <Marquee className="text-sm font-medium leading-5">
-                  <Link to={track.album_ref ? `/album/${enc(track.album_ref)}` : '/player'} className="hover:underline">
-                    {track.title}
+                  <Link to={track.album_ref || track.release_id ? albumPath({ ref: track.album_ref ?? '', release_id: track.release_id }) : '/player'} className="hover:underline">
+                    <TrackTitle title={track.title} track={{ ...track, library_track_id: info?.track_id ?? track.library_track_id, nd_song_id: info?.nd_song_id ?? track.nd_song_id, page_url: info?.page_url ?? track.page_url }} />
                   </Link>
                 </Marquee>
                 <span className="flex items-center gap-1.5 text-xs text-muted">
                   {onWave && <Icon name="wave" size={13} className="shrink-0 text-accent" />}
-                  {info?.kind === 'preview' && <span className="shrink-0 rounded bg-warn/15 px-1 text-[11px] font-semibold text-warn">превью 30 сек</span>}
                   {/* the artists, always: what the player is doing is said by the line under them */}
                   <Marquee>
                     {creditedOf(track).map((a, i) => (
@@ -77,6 +78,7 @@ export function DesktopPlayer() {
                     doing about it */}
                 <PlayLine phase={phase} info={info} error={error} className="block truncate text-[11px] leading-4 text-dim" />
               </span>
+              <ChoosePlaybackFile compact />
               {!isUpload(track) && <SaveButton songId={info?.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} className="ml-1 !w-9" />}
             </>
           ) : (

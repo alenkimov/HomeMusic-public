@@ -24,7 +24,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.catalog.models import CatalogTrack, split_ref
+from app.catalog.models import CATALOGS, CatalogTrack
 from app.library.owned import quiet
 from app.matching.normalize import fingerprint, normalize_artist
 from app.mixes.embedder import song_key
@@ -187,23 +187,16 @@ class _Builder:
 
 
 async def _catalog_info(refs: list[str]) -> dict[str, CatalogTrack]:
-    """Catalog records of Deezer tracks the profile knows only by ref (streamed, not in the library)."""
-    from app.services import svc
+    """Catalog records the profile knows only by their external references."""
+    from app.mixes.resolve import catalog_track
 
-    if svc.deezer is None:
-        return {}
     sem = asyncio.Semaphore(4)
 
     async def one(ref: str) -> tuple[str, CatalogTrack | None]:
-        src, id_ = split_ref(ref)
-        if src != "dz":
+        if ref.partition(":")[0] not in CATALOGS:
             return ref, None
         async with sem:
-            try:
-                return ref, await svc.deezer.get_track(id_)
-            except Exception as e:
-                log.info("mix profile: catalog track %s: %r", ref, e)
-                return ref, None
+            return ref, await catalog_track(ref)
 
     return {r: t for r, t in await asyncio.gather(*(one(r) for r in refs)) if t is not None}
 
@@ -325,7 +318,7 @@ async def _names(s: AsyncSession, p: Profile, b: _Builder) -> None:
     for t in p.tracks.values():
         if t.nd_song_id and (tr := lib.get(t.nd_song_id)):
             t.artist, t.title, t.duration_s = tr.artist, tr.title, tr.duration_s
-            if not t.ref and tr.ref and tr.ref.startswith("dz:"):
+            if not t.ref and tr.ref and tr.ref.partition(":")[0] in CATALOGS:
                 t.ref = tr.ref
     need = [t.ref for t in p.tracks.values() if t.ref and (not t.artist or t.score > 0)]
     info = await _catalog_info(list(dict.fromkeys(need)))

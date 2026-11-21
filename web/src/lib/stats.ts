@@ -10,6 +10,8 @@ export type StatsBy = 'plays' | 'time';
 export interface StatsItem {
   name: string;
   sub?: string | null;
+  track_id?: number | null;
+  ref?: string | null;
   plays: number;
   ms: number;
   /** a library song of it (the track itself; of an artist, an album, a genre — one of theirs); none: not in the library */

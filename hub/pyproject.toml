@@ -28,6 +28,8 @@ dependencies = [
     "pykakasi>=2.3.0",
     "pypinyin>=0.55.0",
     "aiogram>=3.13,<4",
+    "spotapi==2.1.0",
+    "librespot @ git+https://github.com/Googolplexed0/librespot-python.git@01abfc8ad012dbc40e90417e640faaf271ea2f98",
 ]
 
 [dependency-groups]
@@ -59,3 +61,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[tool.hatch.metadata]
+allow-direct-references = true

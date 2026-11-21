@@ -1,25 +1,44 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
-import type { AlbumOut, ArtistPageOut } from '../api/types';
-import { ArtistBubble, ReleaseCard, TrackRow } from '../components/catalog';
+import type { AlbumOut, ArtistPageOut, TrackOut } from '../api/types';
+import { ArtistBubble, ReleaseCard, TrackRow, TrackTableHeader } from '../components/catalog';
+import { TrackTable, useTrackTable } from '../components/TrackTable';
 import { Icon, type IconName } from '../components/Icon';
+import { CatalogSourceMarks } from '../components/CatalogSourceMarks';
 import { ListBar } from '../components/ListBar';
 import { ArtistLooksWindow } from '../components/ArtistLooks';
 import { ArtistServiceButtons } from '../components/ArtistSources';
+import { SourceStatuses } from '../components/SourceStatuses';
 import { ArtistProjects, ArtistWindow, artistHint, useArtistCard } from '../components/ArtistNames';
 import { Button, Empty, ErrorState, HeroSkeleton, PageHeader, Sheet, Spinner, cx } from '../components/ui';
 import { startDownload } from '../lib/actions';
 import { setDisliked, useDisliked } from '../lib/dislikes';
 import { plural, tracksWord } from '../lib/format';
-import { useAsync, useRememberScrollX } from '../lib/hooks';
+import { useAsync, useRememberScrollX, useSourceRequest } from '../lib/hooks';
 import { imageUrl } from '../lib/img';
-import { Link, enc, navigate } from '../lib/router';
+import { Link, artistPath, enc, navigate, useCanonicalPath } from '../lib/router';
 import { copyText } from '../lib/share';
 import { useSession } from '../lib/session';
 import { toggleLike, useLiked, useLikesKnown } from '../lib/stars';
 import { confirmDialog, toast } from '../lib/ui';
 import { canWave, startWave } from '../lib/wave';
 import { PlayPair } from './MediaLibrary';
+
+function PopularTracks({ tracks }: { tracks: readonly TrackOut[] }) {
+  const twoLists = useTrackTable()?.twoLists;
+  const middle = Math.ceil(tracks.length / 2);
+  const lists = twoLists ? [tracks.slice(0, middle), tracks.slice(middle)] : [tracks];
+  return (
+    <div className={twoLists ? 'grid grid-cols-2 gap-x-4' : undefined}>
+      {lists.map((list, side) => (
+        <div key={side} className="min-w-0">
+          <TrackTableHeader numbered />
+          {list.map((track, i) => <TrackRow key={track.ref} track={track} number={side * middle + i + 1} queue={tracks} />)}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /** An artist's page (`/artist/<ref>`; a library artist the catalog knows opens it too): a list's head — the photo,
  * the name, ▶ and the shuffle of the popular tracks — then a row of buttons: «Подписаться», «Вам нравится» (the
@@ -66,15 +85,18 @@ export function ArtistNamedPage({ name }: { name: string }) {
   return (<><PageHeader hero title={name} back="/search" /><HeroSkeleton round buttons rows={10} /></>);
 }
 
-export function ArtistPage({ refId }: { refId: string }) {
-  const res = useAsync((s) => api.artist(refId, s), [refId], true, `artist:${refId}`);
+export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?: string }) {
+  const { res, sources } = useSourceRequest(`artist:${refId}`, (s, update) => api.artist(refId, s, false, update));
+  const status = sources.length > 0 && <SourceStatuses sources={sources} label="Статусы источников исполнителя" />;
   const canMap = !!useSession().me.artist_map; // «Карта похожих» is there
   const [menu, setMenu] = useState(false);
   const [naming, setNaming] = useState<'names' | 'projects' | 'looks' | null>(null); // a window of the artist's ⋯
   const [busy, setBusy] = useState<string | null>(null);
   const d: ArtistPageOut | undefined = res.data;
   const artist = d?.artist;
-  const target = { targetType: 'artist' as const, ref: refId, data: { name: artist?.name ?? '' } };
+  const catalogRef = artist?.ref ?? (refId.includes(':') ? refId : `artist:${refId}`);
+  const identityRef = artist?.hub_artist_id ? `artist:${artist.hub_artist_id}` : catalogRef;
+  const target = { targetType: 'artist' as const, ref: identityRef, data: { name: artist?.name ?? '' } };
   const followed = useLiked(target);
   const likesKnown = useLikesKnown(); // until the likes are read the button is not shown: it may be one to take back
   // «Подписаться» just pressed: the button says so ('said'), then folds away ('folding'), then is gone
@@ -85,25 +107,16 @@ export function ArtistPage({ refId }: { refId: string }) {
     const t = window.setTimeout(() => setLeaving(leaving === 'said' && followed ? 'folding' : null), leaving === 'said' ? 1100 : 350);
     return () => window.clearTimeout(t);
   }, [leaving, followed]);
-  const hidden = useDisliked({ artist_ref: refId });
-  const likedBy = useLikedBy(artist?.name, refId);
-
-  // a catalog may keep several records of one artist: their page has one address, that of the first of them
-  const own = d?.profiles?.[0];
-  useEffect(() => {
-    if (own && own !== refId) navigate(`/artist/${enc(own)}`, { replace: true });
-  }, [own, refId]);
+  const hidden = useDisliked({ artist_ref: identityRef });
+  const likedBy = useLikedBy(artist?.name, catalogRef);
+  useCanonicalPath(initialPath ?? `/artist/${enc(refId)}`, artist?.hub_artist_id ? artistPath(artist) : undefined);
   // the artist as the Hub knows them: the name everyone sees may be another spelling than the catalog's
-  const names = useArtistCard(d?.artist?.name, refId);
-  if (res.loading && !d) return (<><PageHeader hero title="Исполнитель" back="/search" /><HeroSkeleton round buttons rows={10} /></>);
-  if (!d || !artist) return (<><PageHeader hero title="Исполнитель" back="/search" /><ErrorState text={res.error ?? 'Исполнитель не найден'} onRetry={() => res.reload()} /></>);
+  const names = useArtistCard(artist?.name, artist ? identityRef : undefined);
+  if (res.loading && !d) return (<><PageHeader hero title="Исполнитель" back="/search" right={status} /><HeroSkeleton round buttons rows={10} /></>);
+  if (!d || !artist) return (<><PageHeader hero title="Исполнитель" back="/search" right={status} /><ErrorState text={res.error ?? 'Исполнитель не найден'} onRetry={() => res.reload()} /></>);
 
   const releases = [...d.albums, ...d.singles, ...d.compilations].sort((a, b) => (b.release_date ?? '').localeCompare(a.release_date ?? ''));
   const top = d.top_tracks.slice(0, POPULAR);
-  // whose list the first of them are: the catalog's that leads the page — Yandex's where the other has none
-  const topBy = top[0]?.ref.startsWith('ym:') ? 'Яндекс Музыке' : 'Deezer';
-  // how many of them, at the end, are Last.fm's
-  const lfm = Math.max(0, Math.min(d.top_from_lastfm ?? 0, top.length - (d.top_tracks.length - (d.top_from_lastfm ?? 0))));
 
   /** «Подписаться»: the button says «Вы подписаны» for a moment, then folds away — it is pressed once (an artist
    * followed has «Отписаться» in the ⋯); a word at the foot of the window takes a slip of the finger back. */
@@ -134,19 +147,19 @@ export function ArtistPage({ refId }: { refId: string }) {
     }
     const body = `Будет скачано релизов: ${base.length} (альбомы, синглы и EP)` + (tracks ? `, примерно ${tracksWord(tracks)}` : '') + '.\nУже скачанные треки пропускаются.' + (comp ? `\nСборники (${comp}) не включаются.` : '');
     if (!(await confirmDialog({ title: `Скачать всю дискографию ${artist.name}?`, body, okLabel: 'Скачать' }))) return;
-    await startDownload({ artist_ref: artist.ref, record_types: ['album', 'single', 'ep'] });
+    await startDownload({ artist_ref: String(artist.hub_artist_id ?? artist.ref), record_types: ['album', 'single', 'ep'] });
     res.reload(true);
   };
   const share = async () => {
     setMenu(false);
-    const url = `${window.location.origin}/#/artist/${enc(artist.ref)}`;
+    const url = `${window.location.origin}/#${artistPath(artist)}`;
     toast((await copyText(url)) ? 'Ссылка на исполнителя скопирована' : url, 'success');
   };
   const hide = async () => {
     setMenu(false);
-    if (hidden) return void setDisliked({ artist_ref: refId, artist: artist.name }, false);
+    if (hidden) return void setDisliked({ artist_ref: identityRef, artist: artist.name }, false);
     if (!(await confirmDialog({ title: `Не включать ${artist.name}?`, body: 'Треки этого исполнителя, и те, где он участвует, не будут попадать в волну, миксы и открытия, а в плейлистах будут пропускаться. Нажатый вручную трек сыграет. Вернуть можно здесь же или в «Меню → Скрытое».', okLabel: 'Не включать', danger: true }))) return;
-    await setDisliked({ artist_ref: refId, artist: artist.name }, true);
+    await setDisliked({ artist_ref: identityRef, artist: artist.name }, true);
   };
   const item = (icon: IconName, label: ReactNode, run: () => void, danger = false) => (
     <button type="button" onClick={run} className={cx('flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-left text-[15px] hover:bg-fg/5', danger && 'text-danger')}>
@@ -170,8 +183,9 @@ export function ArtistPage({ refId }: { refId: string }) {
         context="artist"
         end={
           <>
+          {(res.loading || sources.some((s) => s.state === 'searching')) && status}
           {/* the search through everything of the artist — their releases and every track: the page of them all */}
-          <button type="button" onClick={() => navigate(`/artist/${enc(artist.ref)}/discography?view=tracks&search=1`)} aria-label="Поиск по трекам и релизам исполнителя" title="Поиск по трекам и релизам" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-bg/40 text-fg hover:bg-bg/70">
+          <button type="button" onClick={() => navigate(`${artistPath(artist)}/discography?view=tracks&search=1`)} aria-label="Поиск по трекам и релизам исполнителя" title="Поиск по трекам и релизам" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-bg/40 text-fg hover:bg-bg/70">
             <Icon name="search" size={20} />
           </button>
           {/* the ⋯ of the artist: at the top right, and there still when the page is scrolled */}
@@ -190,7 +204,7 @@ export function ArtistPage({ refId }: { refId: string }) {
       {hidden ? (
         <div className="mx-4 mb-3 rounded-2xl bg-danger/15 px-4 py-3 text-sm text-fg lg:mx-6">
           <p>Вы не слушаете этого исполнителя. Его треков нет в волне, миксах и открытиях, а в плейлистах они пропускаются.</p>
-          <Button small className="mt-3" onClick={() => void setDisliked({ artist_ref: refId, artist: artist.name }, false)}>
+          <Button small className="mt-3" onClick={() => void setDisliked({ artist_ref: identityRef, artist: artist.name }, false)}>
             Вернуть
           </Button>
         </div>
@@ -236,22 +250,17 @@ export function ArtistPage({ refId }: { refId: string }) {
 
       {top.length > 0 && (
         <section aria-label="Популярное">
-          <h2 className="flex items-baseline gap-2 px-4 pb-1 pt-3 text-lg font-bold lg:px-6">
-            Популярное
-            {/* whose listens put them there: the catalog's own, and Last.fm's where the catalog's list is short */}
-            <span className="text-xs font-normal text-dim">{lfm >= top.length ? 'по Last.fm' : lfm > 0 ? `по ${topBy}, с ${top.length - lfm + 1}-го — по Last.fm` : `по ${topBy}`}</span>
-          </h2>
-          {/* a wide window: two columns, 1–5 and 6–10 — only where a row keeps room for its name, and only when
-              there are tracks for two */}
-          <div className={top.length > 5 ? 'min-[1700px]:grid min-[1700px]:grid-flow-col min-[1700px]:grid-cols-2 min-[1700px]:gap-x-4' : undefined} style={{ gridTemplateRows: `repeat(${Math.ceil(top.length / 2)}, auto)` }}>
-            {top.map((t, i) => (
-              <TrackRow key={t.ref} track={t} number={i + 1} queue={top} />
-            ))}
+          <div className="flex items-center gap-2 px-4 pb-1 pt-3 lg:px-6">
+            <h2 className="text-lg font-bold">Популярное</h2>
+            <CatalogSourceMarks services={d.top_track_sources?.slice(0, top.length) ?? []} ranked />
           </div>
+          <TrackTable tracks={top} numbered kind="popular">
+            <PopularTracks tracks={top} />
+          </TrackTable>
           {/* the rest of what they made: every track of theirs as one list, the most listened first */}
           {releases.length > 0 && (
             <div className="flex justify-center px-4 pt-2 lg:px-6">
-              <Link to={`/artist/${enc(artist.ref)}/discography?view=tracks`} className="inline-flex h-9 items-center rounded-full border border-fg/40 px-4 text-sm font-semibold text-fg transition hover:border-fg active:scale-95">
+              <Link to={`${artistPath(artist)}/discography?view=tracks`} className="inline-flex h-9 items-center rounded-full border border-fg/40 px-4 text-sm font-semibold text-fg transition hover:border-fg active:scale-95">
                 Все треки
               </Link>
             </div>
@@ -259,7 +268,7 @@ export function ArtistPage({ refId }: { refId: string }) {
         </section>
       )}
 
-      {releases.length > 0 && <Discography artistRef={artist.ref} releases={releases} />}
+      {releases.length > 0 && <Discography artistRef={String(artist.hub_artist_id ?? artist.ref)} releases={releases} />}
 
       {/* a name the catalogs know and no music of: said, not left as an empty page */}
       {!hidden && top.length === 0 && releases.length === 0 && (
@@ -274,7 +283,7 @@ export function ArtistPage({ refId }: { refId: string }) {
         <div className="-mx-1">
           {canWave() && item('wave', 'Волна по исполнителю', () => {
             setMenu(false);
-            void startWave({ artist_ref: artist.ref }, 'artist_page');
+            void startWave({ artist_ref: identityRef }, 'artist_page');
           })}
           {canMap && item('nodes', 'Карта похожих', () => {
             setMenu(false);
@@ -298,7 +307,16 @@ export function ArtistPage({ refId }: { refId: string }) {
           {item('ban', 'Не включать этого исполнителя', () => void hide(), true)}
         </div>
       </Sheet>
-      <ArtistWindow which={naming === 'looks' ? null : naming} card={names.card} onChange={names.set} onClose={() => setNaming(null)} />
+      <ArtistWindow
+        which={naming === 'looks' ? null : naming}
+        card={names.card}
+        onChange={names.set}
+        onClose={() => setNaming(null)}
+        onProfileDetached={() => {
+          names.reload();
+          res.reload(true);
+        }}
+      />
       {naming === 'looks' && names.card && <ArtistLooksWindow artistId={names.card.id} onChanged={() => res.reload()} onClose={() => setNaming(null)} />}
     </div>
   );
@@ -462,7 +480,7 @@ function Discography({ artistRef, releases }: { artistRef: string; releases: Alb
       <div ref={row} className="no-scrollbar flex gap-4 overflow-x-auto px-4 pb-1 lg:px-6">
         {shown.slice(0, IN_ROW).map((a) => (
           <div key={a.ref} className="w-36 shrink-0 lg:w-44">
-            <ReleaseCard album={a} />
+            <ReleaseCard album={a} showSources />
           </div>
         ))}
         {shown.length > IN_ROW && (

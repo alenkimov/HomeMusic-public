@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import unicodedata
 from datetime import date
 from pathlib import Path
@@ -20,8 +21,8 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import DownloadItemOut
-from app.catalog.deezer import CatalogNotFound
-from app.catalog.models import CATALOGS, CatalogAlbum, CatalogTrack, split_ref
+from app.api.progress import SourceState
+from app.catalog.models import CATALOGS, CatalogAlbum, CatalogNotFound, CatalogTrack, split_ref
 from app.catalog.yandex import russian_original
 from app.config import get_settings
 from app.db import session_scope
@@ -35,7 +36,6 @@ from app.library.owned import find_owned, quiet
 from app.library.tracks import current_file, has_file
 from app.matching.select import (
     classify,
-    match_catalog,
     needs_uncensored,
     rank_candidates,
     trusted_original,
@@ -43,7 +43,7 @@ from app.matching.select import (
 )
 from app.models import DownloadBatch, DownloadItem, Job, PlayEvent, PlaylistItem, Track, TrackFile, User, utcnow
 from app.net import make_client
-from app.providers.base import Candidate, ProviderError, TrackQuery, file_ref
+from app.providers.base import Candidate, Provider, ProviderError, TrackQuery, file_ref
 from app.services import svc
 
 log = logging.getLogger(__name__)
@@ -83,10 +83,12 @@ def item_out(item: DownloadItem, *, detail: bool = False,
         artist=q.get("artist", ""),
         title=q.get("title", ""),
         album=meta.get("album") or q.get("album"),
+        duration_s=q.get("duration_s"),
         provider=item.provider,
         error=item.error,
         warnings=item.warnings or [],
         track_id=item.track_id,
+        attach_to_track_id=meta.get("track_id"),
         nd_song_id=links[0],
         playlist_id=links[1],
         track_ref=item_ref(item),
@@ -114,9 +116,12 @@ ORIGINS = {"import": " из импорта", "mix": " из микса", "wave": 
            "upgrade": " — поиск лучшего файла"}
 
 
-async def step(item_id: int, kind: str, text: str, cand: Candidate | None = None) -> None:
+async def step(item_id: int, kind: str, text: str, cand: Candidate | None = None, *,
+               failed_provider: str | None = None) -> None:
     """One more line of the download's journal. `kind`: info, ok, warn or bad; `cand`: the file the line is about."""
     line: dict[str, Any] = {"t": utcnow().isoformat(), "kind": kind, "text": text}
+    if failed_provider is not None:
+        line["failed_provider"] = failed_provider
     if cand is not None:
         line["cand"] = {"artist": cand.artist, "title": cand.title, "provider": cand.provider,
                         "bitrate_kbps": cand.bitrate_kbps, "duration_s": cand.duration_s, "page_url": cand.page_url}
@@ -169,6 +174,8 @@ async def update_item(item_id: int, **fields: Any) -> DownloadItem | None:
 
 
 def meta_from_catalog(t: CatalogTrack, album: CatalogAlbum | None = None) -> dict[str, Any]:
+    from app.tags import RELEASE_GENRE_SOURCES
+
     m: dict[str, Any] = {
         "track_ref": t.ref,
         "album_ref": album.ref if album is not None else t.album_ref,
@@ -183,6 +190,8 @@ def meta_from_catalog(t: CatalogTrack, album: CatalogAlbum | None = None) -> dic
         "release_date": t.release_date.isoformat() if t.release_date else None,
         "cover_url": t.cover_url,
         "duration_s": t.duration_s,
+        "spotify_id": t.spotify_id,
+        "spotify_plays": t.spotify_plays,
     }
     if t.source == "dz":
         m["deezer_track_id"] = t.id
@@ -198,6 +207,7 @@ def meta_from_catalog(t: CatalogTrack, album: CatalogAlbum | None = None) -> dic
             year=album.year,
             cover_url=album.cover_url or m.get("cover_url"),
             genre=album.genre,
+            genre_source=RELEASE_GENRE_SOURCES.get(album.source) if album.genre else None,
             upc=album.upc,
             track_total=album.nb_tracks or (len(album.tracks) if album.tracks else None),
         )
@@ -232,28 +242,20 @@ async def complete_meta(meta: dict[str, Any]) -> dict[str, Any]:
 
 
 async def resolve_catalog_meta(q: TrackQuery) -> dict[str, Any] | None:
-    """Find the track in Deezer; only a confident match is used (download needs a catalog record, PLAN 8.5.3)."""
+    """Find a confident catalog match for the downloaded file's metadata."""
     t = await resolve_catalog_track(q)
     return meta_from_catalog(t) if t else None
 
 
 async def resolve_catalog_track(q: TrackQuery) -> CatalogTrack | None:
-    if svc.deezer is None:
-        return None
-    try:
-        found = await svc.deezer.search_tracks(q.artist, q.title, limit=10)
-    except Exception as e:
-        log.warning("deezer search failed: %r", e)
-        return None
-    if not found:
-        return None
-    scored = match_catalog(q.artist, q.title, found, album=q.album, duration=q.duration_s, version=q.version)
-    cfg = get_settings().cfg.matching
-    from app.matching.select import classify_scores
+    from app.catalog import lookup
 
-    if classify_scores([sc.total for _, sc in scored], cfg) != "auto":
+    try:
+        match = await lookup.match_track(q)
+    except lookup.CatalogUnavailable:
+        log.info("no catalog available to identify %r", q.title)
         return None
-    return scored[0][0]
+    return match.track if match is not None and match.verdict == "auto" else None
 
 
 # --- candidates ------------------------------------------------------------------------------
@@ -274,26 +276,30 @@ def _cover_kept(url: str) -> Path:
     return get_settings().staging_dir / "covers" / f"{hashlib.md5(url.encode()).hexdigest()}.img"
 
 
-async def fetch_cover(url: str | None) -> bytes | None:
+async def fetch_cover(url: str | None, *, max_bytes: int | None = None) -> bytes | None:
     if not url:
         return None
     kept = _cover_kept(url)
     if kept.is_file():
-        return await asyncio.to_thread(kept.read_bytes)
+        return await asyncio.to_thread(kept.read_bytes) if max_bytes is None or kept.stat().st_size <= max_bytes else None
     named = next((h for h in _COVER_HOSTS if f"//{h}/" in url), None)
     tries = list(dict.fromkeys(url.replace(named, h) for h in (*_COVER_HOSTS[1:], _COVER_HOSTS[0]))) if named else [url]
     async with _cover_gate:
         if kept.is_file():  # it came while this request waited its turn
-            return await asyncio.to_thread(kept.read_bytes)
+            return await asyncio.to_thread(kept.read_bytes) if max_bytes is None or kept.stat().st_size <= max_bytes else None
         for u in tries:
             await asyncio.sleep(_COVER_PACE_S)
             try:
-                async with make_client(timeout=30) as c:
-                    r = await c.get(u)
+                async with make_client(timeout=30) as c, c.stream("GET", u) as r:
                     if r.status_code == 200 and r.headers.get("content-type", "").startswith("image/"):
+                        image = bytearray()
+                        async for chunk in r.aiter_bytes():
+                            if max_bytes is not None and len(image) + len(chunk) > max_bytes:
+                                return None
+                            image.extend(chunk)
                         kept.parent.mkdir(parents=True, exist_ok=True)
-                        await asyncio.to_thread(kept.write_bytes, r.content)
-                        return r.content
+                        await asyncio.to_thread(kept.write_bytes, image)
+                        return bytes(image)
             except httpx.HTTPError as e:
                 log.warning("cover download failed %s: %r", u, e)
     log.info("cover not given just now: %s", url)
@@ -355,19 +361,31 @@ async def recover_unfiled() -> int:
             if item.id in waiting or await filed(s, item):
                 continue
             item.status, item.progress = "queued", 0
-            await enqueue(s, "download_item", {"item_id": item.id})
+            payload = {"item_id": item.id}
+            if prepared := (item.query_json or {}).get("attachment_file"):
+                payload["prepared_file"] = prepared
+            await enqueue(s, "download_item", payload)
             n += 1
         return n
 
 
 @handler("download_item")
 async def handle_download_item(job: Job) -> None:
+    path = get_settings().staging_dir / job.payload_json["prepared_file"] if job.payload_json.get("prepared_file") else None
+    await _handle_download_item(job, path)
+    if path is not None:
+        cleanup_dir(path.parent)
+
+
+async def _handle_download_item(job: Job, prepared: Path | None) -> None:
     item_id = int(job.payload_json["item_id"])
     async with session_scope() as s:
         item = await s.get(DownloadItem, item_id)
         if item is None or item.status in ("done", "cancelled") or await filed(s, item):
             return
         qj = dict(item.query_json or {})
+        if qj.get("attachment_file") != job.payload_json.get("prepared_file"):
+            return  # a retry or a different attachment superseded this job
         chosen = item.chosen_candidate_json
         force = item.force
         user_id = item.user_id
@@ -376,16 +394,18 @@ async def handle_download_item(job: Job) -> None:
         origin = ORIGINS.get(batch.origin if batch else "", "")
     q = TrackQuery(**qj["query"])
     meta: dict[str, Any] = dict(qj.get("meta") or {})
+    pick_only = bool(qj.get("pick_only"))
     await step(item_id, "info", "Ещё одна попытка" if again else f"Запрос{origin}: {q.artist} — {q.title}{_mmss(q.duration_s)}")
 
-    await update_item(item_id, status="searching", progress=0, error=None)
+    source_states: dict[str, SourceState] = {}
+    await update_item(item_id, status="searching", progress=0, provider=None, search_sources_json={}, error=None)
     await upgrade.mark(meta, state="searching")
 
     # 1. catalog record (needed for tags; without it only a user-picked candidate may be downloaded). A picked
     # re-upload is looked up too: names from its title ("Трек – Исполнитель (без цензуры)") make poor tags.
-    if not meta and not chosen:
+    if not meta and not chosen and not pick_only:
         meta = await resolve_catalog_meta(q) or {}
-    elif not meta and (chosen.get("extra") or {}).get("reupload"):
+    elif chosen and not meta and not pick_only and (chosen.get("extra") or {}).get("reupload"):
         if t := await resolve_catalog_track(q):
             q, meta = query_from_track(t), meta_from_catalog(t)
             qj["query"] = q.model_dump()
@@ -399,19 +419,20 @@ async def handle_download_item(job: Job) -> None:
         qj["meta"] = meta
         qj["query"] = q.model_dump()
         await update_item(item_id, query_json=qj)
-    elif not chosen:
+    elif not chosen and not pick_only:
         await step(item_id, "warn", "Записи в каталоге нет: без неё файл можно взять только по вашему выбору")
 
     # 2. already in the library?
-    if not force:
+    if not force and (not pick_only or chosen):
         async with session_scope() as s:
-            existing = await find_owned(
+            target_id = meta.get("track_id")
+            existing = await s.get(Track, target_id) if target_id else await find_owned(
                 s, artist=q.artist, title=q.title, duration_s=q.duration_s, isrc=q.isrc,
-                deezer_track_id=meta.get("deezer_track_id"),
+                catalog_ref=meta.get("track_ref"),
             )
-            existing_id = existing.id if existing else None
-            linked = bool(existing and existing.nd_song_id)
             have = await current_file(s, existing.id) if existing else None
+            existing_id = existing.id if existing and have else None
+            linked = bool(existing_id and existing.nd_song_id)
             old_song = have.nd_song_id if have else None
             other_file = bool(have and chosen and have.source_url != chosen.get("page_url"))
         if other_file:
@@ -450,12 +471,13 @@ async def handle_download_item(job: Job) -> None:
     last_reason = ""
     providers = svc.provider_order(pq, for_download=True)
     mcfg = get_settings().cfg.matching
-    guard = bool(meta) and not chosen and needs_uncensored(pq)
+    guard = bool(meta) and not pick_only and not chosen and needs_uncensored(pq)
     held: list[Candidate] = []
     try:
         if chosen:
             await step(item_id, "info", "Файл выбран вручную", Candidate(**chosen))
-            ok, last_reason = await try_candidates(item_id, user_id, q, meta, [Candidate(**chosen)], stage, force)
+            ok, last_reason = await try_candidates(item_id, user_id, q, meta, [Candidate(**chosen)], stage, force,
+                                                   prepared=prepared)
             if ok:
                 return
         else:
@@ -465,21 +487,21 @@ async def handle_download_item(job: Job) -> None:
             heard = await listened_candidate(meta.get("track_ref"))
             if heard and meta and guard and not trusted_original(heard, mcfg):
                 await step(item_id, "warn", "Файл, который вы слушали, отложен: возможно, это цензурная версия", heard)
-            if heard and meta and (not guard or trusted_original(heard, mcfg)):
+            if heard and meta and not pick_only and (not guard or trusted_original(heard, mcfg)):
                 await step(item_id, "info", "Сначала файл, который вы слушали", heard)
                 ok, last_reason = await try_candidates(item_id, user_id, q, meta, [heard], stage, force)
                 if ok:
                     return
             for p in providers:
-                cands, err = await search_provider(p, pq, item_id)
+                [(cands, err)] = await search_download_sources([p], pq, item_id, source_states)
                 if err:
                     errors.append(err)
-                    await step(item_id, "bad", f"Источник не ответил — {err}")
+                    await step(item_id, "bad", f"Источник не ответил — {err}", failed_provider=p.name)
                     continue
                 await step(item_id, "info", f"Поиск в {p.name}: {files_word(len(cands))}")
                 all_cands.extend(cands)
                 await update_item(item_id, candidates_json=[c.model_dump(mode="json") for c in all_cands[:MAX_SHOWN]])
-                if not meta or not cands:
+                if pick_only or not meta or not cands:
                     continue  # without a catalog record we only collect candidates for the user (PLAN 8.5.3)
                 tries = cands[:MAX_TRIES_PER_PROVIDER]
                 if guard:
@@ -495,7 +517,7 @@ async def handle_download_item(job: Job) -> None:
                     return
                 last_reason = reason or last_reason
             if guard:
-                if reups := await search_reuploads(pq, item_id, searched=providers):
+                if reups := await search_reuploads(pq, item_id, source_states, searched=providers):
                     shown = all_cands[:MAX_SHOWN - min(MAX_SHOWN_REUPLOADS, len(reups))] + reups[:MAX_SHOWN_REUPLOADS]
                     all_cands.extend(reups)
                     await update_item(item_id, candidates_json=[c.model_dump(mode="json") for c in shown])
@@ -526,6 +548,10 @@ async def handle_download_item(job: Job) -> None:
         if errors and len(errors) >= len(providers):
             raise RuntimeError("все источники недоступны: " + "; ".join(errors))
         verdict = "Не найдено ни в одном источнике"
+    elif pick_only:
+        await update_item(item_id, status="needs_review", error=None)
+        await step(item_id, "info", "Поиск завершён — выберите файл")
+        return
     elif not meta:
         sure = classify(all_cands, get_settings().cfg.matching) == "auto"
         verdict = "Нет записи в каталоге — " + ("подтвердите файл" if sure else "выберите файл")
@@ -560,12 +586,32 @@ async def search_provider(p, q: TrackQuery, item_id: int, *, limit: int = 15,
     return ranked, None
 
 
-async def search_reuploads(q: TrackQuery, item_id: int, *, searched: list | None = None) -> list[Candidate]:
+async def search_download_sources(providers: list[Provider], q: TrackQuery, item_id: int,
+                                  states: dict[str, SourceState]) -> list[tuple[list[Candidate], str | None]]:
+    if not providers:
+        return []
+    for provider in providers:
+        states[provider.name] = "searching"
+    await update_item(item_id, status="searching", provider=None, progress=0, search_sources_json=dict(states))
+    lock = asyncio.Lock()
+
+    async def search(provider: Provider) -> tuple[list[Candidate], str | None]:
+        candidates, error = await search_provider(provider, q, item_id)
+        async with lock:
+            states[provider.name] = "error" if error else "ready" if candidates else "empty"
+            await update_item(item_id, search_sources_json=dict(states))
+        return candidates, error
+
+    return await asyncio.gather(*(search(provider) for provider in providers))
+
+
+async def search_reuploads(q: TrackQuery, item_id: int, states: dict[str, SourceState], *,
+                           searched: list[Provider] | None = None) -> list[Candidate]:
     """Re-uploads by small channels known to be uncensored (titled so, or uploaded before the law), best first.
     Sources in `searched` (the regular order already had them) are not asked again."""
     cfg = get_settings().cfg.matching
     providers = [p for p in svc.reupload_providers() if p not in (searched or [])]
-    found = await asyncio.gather(*(search_provider(p, q, item_id) for p in providers))
+    found = await search_download_sources(providers, q, item_id, states)
     for _, err in found:
         if err:
             log.info("re-uploads: %s", err, extra={"item_id": item_id})
@@ -573,9 +619,12 @@ async def search_reuploads(q: TrackQuery, item_id: int, *, searched: list | None
 
 
 async def try_candidates(item_id: int, user_id: int, q: TrackQuery, meta: dict[str, Any], cands: list[Candidate],
-                         stage: Path, force: bool, *, warning: str | None = None) -> tuple[bool, str]:
+                         stage: Path, force: bool, *, warning: str | None = None,
+                         prepared: Path | None = None) -> tuple[bool, str]:
     """Download candidates one by one until one passes the post-download check and is imported. `warning` goes
     to the imported track's warnings."""
+    from app.listen import ListenError, stage_playback_file
+
     pcfg = get_settings().cfg
     last_reason = ""
     # a file that says more than it sounds like (made of a poorer one) waits: another may be the real thing
@@ -583,10 +632,8 @@ async def try_candidates(item_id: int, user_id: int, q: TrackQuery, meta: dict[s
     upgrade_of = upgrade.of_meta(meta)
     for cand in cands:
         provider = svc.providers.get(cand.provider)
-        if provider is None:
-            continue
-        await update_item(item_id, status="downloading", provider=cand.provider,
-                          chosen_candidate_json=cand.model_dump(mode="json"), progress=0)
+        await update_item(item_id, status="tagging" if prepared else "downloading", provider=cand.provider,
+                          chosen_candidate_json=cand.model_dump(mode="json"), progress=1 if prepared else 0)
         last_pub = [0.0]
         loop = asyncio.get_running_loop()
 
@@ -598,15 +645,42 @@ async def try_candidates(item_id: int, user_id: int, q: TrackQuery, meta: dict[s
                     lambda f=round(frac, 3): _loop.create_task(update_item(item_id, progress=f))
                 )
 
+        check = None
         try:
-            path = await provider.fetch(cand, stage, on_progress=on_progress)  # type: ignore[call-arg]
+            if prepared is not None:
+                path = stage / prepared.name
+                await asyncio.to_thread(shutil.copyfile, prepared, path)
+            else:
+                path = None
+                if not force and not upgrade_of:
+                    try:
+                        path = await stage_playback_file(cand, stage, meta.get("track_ref"))
+                    except ListenError:
+                        pass  # the copy expired or could not be prepared; the source can still provide a file
+                if path is not None:
+                    await update_item(item_id, status="tagging", progress=1)
+                    check = await probe.postcheck(path, q.duration_s or cand.duration_s,
+                                                  pcfg.matching.duration_tolerance_s, pcfg.postcheck.silence_warn_s)
+                    if check.ok:
+                        await step(item_id, "info", "Использована временная копия плеера", cand)
+                    else:
+                        await step(item_id, "warn", f"Временная копия плеера не подошла: {check.reason}", cand)
+                        path.unlink(missing_ok=True)
+                        path, check = None, None
+                        await update_item(item_id, status="downloading", progress=0)
+                if path is None:
+                    if provider is None:
+                        continue
+                    path = await provider.fetch(cand, stage, on_progress=on_progress)  # type: ignore[call-arg]
         except Exception as e:
             last_reason = f"{cand.provider}: {e}"
             log.warning("fetch failed %s: %r", cand.page_url, e, extra={"item_id": item_id})
             await step(item_id, "bad", f"Не скачался: {e}"[:300], cand)
             continue
-        check = await probe.postcheck(path, q.duration_s or cand.duration_s, pcfg.matching.duration_tolerance_s,
-                                      pcfg.postcheck.silence_warn_s)
+        if check is None:
+            await update_item(item_id, status="tagging", progress=1)
+            check = await probe.postcheck(path, q.duration_s or cand.duration_s, pcfg.matching.duration_tolerance_s,
+                                          pcfg.postcheck.silence_warn_s)
         if not check.ok:
             last_reason = f"{cand.provider}: {check.reason}"
             path.unlink(missing_ok=True)
@@ -670,6 +744,7 @@ async def import_downloaded(item_id: int, user_id: int, q: TrackQuery, meta: dic
         artist_refs=meta.get("artist_refs") or [],
         album=meta.get("album") or q.title,
         album_artist=meta.get("album_artist") or q.artist,
+        catalog_album_ref=meta.get("album_ref"),
         year=meta.get("year") or (release_date.year if release_date else cand.year),
         release_date=release_date,
         release_type={"compile": "compilation"}.get(meta.get("record_type", ""), meta.get("record_type"))
@@ -678,6 +753,7 @@ async def import_downloaded(item_id: int, user_id: int, q: TrackQuery, meta: dic
         track_total=meta.get("track_total"),
         disc_no=meta.get("disc_no") or 1,
         genre=meta.get("genre"),
+        genre_source=meta.get("genre_source"),
         isrc=meta.get("isrc") or q.isrc,
         explicit=meta.get("explicit") if meta.get("explicit") is not None else cand.explicit,
         deezer_track_id=meta.get("deezer_track_id"),
@@ -720,8 +796,12 @@ async def after_import(user_id: int, linked: bool) -> None:
 
 @on_final_failure("download_item")
 async def _download_failed(job: Job, exc: Exception) -> None:
+    if prepared := job.payload_json.get("prepared_file"):
+        cleanup_dir((get_settings().staging_dir / prepared).parent)
     async with session_scope() as s:
         item = await s.get(DownloadItem, int(job.payload_json["item_id"]))
+        if item is None or item.status == "cancelled" or (item.query_json or {}).get("attachment_file") != job.payload_json.get("prepared_file"):
+            return
         meta = dict(((item.query_json if item else None) or {}).get("meta") or {})
     await upgrade.mark(meta, state="none", note=f"поиск не удался: {exc}"[:300])
     await update_item(int(job.payload_json["item_id"]), status="failed", error=f"{exc}"[:500])
@@ -919,7 +999,7 @@ async def known_track(s: AsyncSession, q: TrackQuery, meta: dict[str, Any], user
     from app.library import tracks as registry
 
     have = await find_owned(s, artist=q.artist, title=q.title, duration_s=q.duration_s, isrc=q.isrc,
-                               deezer_track_id=meta.get("deezer_track_id"))
+                               catalog_ref=meta.get("track_ref"))
     if have is not None:
         return have
     ref = str(meta.get("track_ref") or "")
@@ -935,7 +1015,7 @@ async def known_track(s: AsyncSession, q: TrackQuery, meta: dict[str, Any], user
         album_title=meta.get("album") or q.album, album_artist=meta.get("album_artist"), track_no=meta.get("track_no"),
         disc_no=meta.get("disc_no"), isrc=q.isrc or meta.get("isrc"), explicit=q.explicit,
         release_date=meta.get("release_date"), duration_s=q.duration_s or meta.get("duration_s"),
-        album_ref=f"dz:{album}" if album else None, cover_url=meta.get("cover_url"),
+        album_ref=meta.get("album_ref") or (f"dz:{album}" if album else None), cover_url=meta.get("cover_url"),
         cover_small_url=meta.get("cover_url")), user_id=user_id)
 
 
@@ -980,10 +1060,19 @@ def query_from_track(t: CatalogTrack) -> TrackQuery:
 
 
 async def get_catalog_album(ref: str) -> CatalogAlbum:
+    from app.api.catalog import _release_record
+    from fastapi import HTTPException
+
     try:
-        return await svc.album(ref)
-    except ValueError as e:
-        raise PermanentError(f"unknown album ref {ref}") from e
+        async with session_scope() as s:
+            album, _, _, _ = await _release_record(s, ref, credited=False)
+            return album
+    except HTTPException as error:
+        if error.status_code == 404:
+            raise CatalogNotFound(ref) from error
+        if error.status_code == 400:
+            raise PermanentError(str(error.detail)) from error
+        raise
 
 
 @handler("expand_batch")
@@ -991,10 +1080,14 @@ async def handle_expand_batch(job: Job) -> None:
     p = job.payload_json
     album_refs: list[str] = list(p.get("album_refs") or [])
     if p.get("artist_ref"):
+        from app.api.catalog import whole_artist
+
         types = set(p.get("record_types") or ["album", "single", "ep"])
-        page = await svc.artist_page(p["artist_ref"])
+        async with session_scope() as s:
+            _, _, _, pages = await whole_artist(s, p["artist_ref"], include_sources=False)
         # oldest first, so singles that are later included in an album don't win the album slot
-        album_refs += [a.ref for a in sorted(page.albums, key=lambda a: a.release_date or date.min)
+        album_refs += [a.ref for a in sorted((a for page in pages for a in page.albums),
+                                            key=lambda a: a.release_date or date.min)
                        if a.record_type in types]
     entries: list[tuple[TrackQuery, dict[str, Any], Candidate | None]] = []
     seen: set[str] = set()

@@ -20,7 +20,8 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.library import editor, tagger
+from app.library import album_names, editor, tagger
+from app.library.artwork import album_cover_url
 from app.library.importer import library_abs
 from app.library.tracks import current_file
 from app.models import Album, Edit, Track, TrackCover, User, utcnow
@@ -62,6 +63,8 @@ async def update_album(s: AsyncSession, user: User, album: Album, **fields: Any)
     changes = {k: [getattr(album, k), v] for k, v in fields.items() if getattr(album, k) != v}
     if changes:
         await editor.update_album(s, album, **{k: v[1] for k, v in changes.items()})
+        if "title" in changes:
+            await album_names.renamed(s, album, changes["title"][0])
         _journal(s, user.id, "album", album.id, changes)
         await s.flush()
     return album
@@ -127,8 +130,8 @@ async def info(s: AsyncSession, track: Track) -> dict[str, Any]:
         "renamed": track.renamed_at is not None,
         "last_by": last[1] if last else None, "last_at": last[0].created_at if last else None,
         "own_cover": track.cover_key is not None,
-        "cover_url": cover_url(track) or (f"/api/library/albums/{album.id}/cover" if album is not None and album.cover_path
-                                           else cat.get("cover_small_url") or cat.get("cover_url")),
+        "cover_url": cover_url(track) or (album_cover_url(album) if album else None)
+                     or cat.get("cover_url") or cat.get("cover_small_url"),
         "album_id": album.id if album is not None else None, "album_title": album.title if album is not None else None,
         "has_file": await current_file(s, track.id) is not None,
         "producer": track.producer,

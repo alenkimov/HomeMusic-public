@@ -96,7 +96,7 @@ export function ArtistLooksWindow({ artistId, onChanged, onClose }: { artistId: 
                     {busy === b.choice && <span className="absolute inset-0 flex items-center justify-center bg-black/50"><Spinner size={16} /></span>}
                   </span>
                   <span className={cx('block truncate', label)}>
-                    {b.choice === 'own' ? 'своя' : `по имени «${b.label}»`}
+                    {b.choice === 'own' ? 'своя' : b.choice.startsWith('profile:') ? b.label : `по имени «${b.label}»`}
                     {sizes[b.choice] ? ` · ${sizes[b.choice]}` : ''}
                   </span>
                 </button>

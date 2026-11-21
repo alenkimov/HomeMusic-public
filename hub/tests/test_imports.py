@@ -393,7 +393,14 @@ async def test_second_import_reuses_the_matches(env):  # two whole imports: ~2x 
     assert len((await c.get("/api/imports")).json()) == 2
 
 
-async def test_not_found_track_is_picked_by_hand(env):
+async def test_not_found_track_is_picked_by_hand(env, tmp_path):
+    from app.db import session_scope
+    from app.imports.apply import refresh_items
+    from app.jobs.downloads import imports_done
+    from app.jobs.queue import run_job
+    from app.models import DownloadItem, Import
+    from app.services import svc
+
     c = env["client"]
     imp = await prepared(c)
     await c.post(f"/api/imports/{imp['id']}/start", json={"collection_ids": [imp["collections"][1]["id"]]})
@@ -404,7 +411,110 @@ async def test_not_found_track_is_picked_by_hand(env):
     assert r.status_code == 200, r.text
     dl = (await c.get(f"/api/downloads/{r.json()['download_item_id']}")).json()
     assert (dl["title"], dl["quiet"], dl["import_id"]) == ("Нет такого", False, imp["id"])  # a visible download
-    assert (await jobs("download_item"))[0].priority == 0
+    assert dl["attach_to_track_id"] == row["track_id"]
+    async with session_scope() as s:
+        item = await s.get(DownloadItem, dl["id"])
+        assert item.query_json["pick_only"] is True
+    assert (await c.post(f"/api/imports/items/{row['id']}/pick")).json() == r.json()
+    [job] = await jobs("download_item")
+    assert job.priority == 0
+    candidate = cand("manual", "https://hitmoz.test/file.mp3", title=NONE["title"]).model_copy(
+        update={"artist": NONE["artist"], "duration_s": NONE["duration_s"]})
+    fixture = tmp_path / "manual.mp3"
+    fixture.write_bytes(b"selected audio fixture")
+    svc.providers = {"hitmoz": FakeProvider("hitmoz", [candidate], src=fixture)}
+    await run_job(job)
+    found = (await c.get(f"/api/downloads/{dl['id']}")).json()
+    assert found["status"] == "needs_review"
+    assert [x["provider_id"] for x in found["candidates"]] == ["manual"]
+    preview = await c.get("/api/listen", params={"ref": "file:hitmoz:manual"})
+    assert preview.status_code == 200 and preview.json()["kind"] == "full"
+    async with session_scope() as s:
+        await refresh_items(s, await s.get(Import, imp["id"]))
+    [unresolved] = await items(c, imp, status="failed")
+    assert unresolved["id"] == row["id"]
+    response = await c.post(f"/api/downloads/items/{dl['id']}/prepare", json={"candidate_ref": "file:hitmoz:manual"})
+    assert response.status_code == 200, response.text
+    assert (await c.post(f"/api/downloads/items/{dl['id']}/retry", json={"candidate_index": 0})).status_code == 200
+    attached = await add_library_track(NONE, "ndPicked")
+    assert attached == row["track_id"]
+    async with session_scope() as s:
+        item = await s.get(DownloadItem, dl["id"])
+        item.status, item.track_id = "done", attached
+        await imports_done(s, [item])
+    await run_imports()
+    [settled] = await items(c, imp, match="not_found")
+    assert settled["status"] == "done" and settled["nd_song_id"] == "ndPicked"
+    assert ("Нет такого", "ndPicked") in await playlist_tracks(c, "Дорога")
+
+
+async def test_import_sync_does_not_restore_a_track_removed_by_the_listener(env):
+    from app.db import session_scope
+    from app.imports.apply import sync_playlists
+    from app.models import Import, ImportItem
+
+    c = env["client"]
+    imp = await prepared(c)
+    collection = imp["collections"][1]["id"]
+    await c.post(f"/api/imports/{imp['id']}/start", json={"collection_ids": [collection]})
+    await run_imports()
+    pid = next(p["id"] for p in (await c.get("/api/playlists")).json() if p["name"] == "Дорога")
+    assert (await c.post(f"/api/playlists/{pid}/remove", json={"indexes": [1]})).status_code == 200
+    async with session_scope() as s:
+        s.add(ImportItem(import_id=imp["id"], collection_id=collection, external_id="new",
+                         position=4, raw_json={"title": "Новый трек", "artist": "Исполнитель"},
+                         match="not_found", status="not_found"))
+        await sync_playlists(s, await s.get(Import, imp["id"]))
+    assert await playlist_tracks(c, "Дорога") == [
+        ("Группа крови", None), ("Нет такого", None), ("Осень", "ndB"), ("Новый трек", None),
+    ]
+
+
+async def test_review_from_playlists_and_liked_survives_reload(env):
+    from app.db import session_scope
+    from app.models import ImportItem
+
+    c = env["client"]
+    extra = (await c.post("/api/playlists", json={"name": "Ещё один"})).json()
+    imp = await prepared(c)
+    likes, playlist = [x["id"] for x in imp["collections"][:2]]
+    started = await c.post(f"/api/imports/{imp['id']}/start",
+                           json={"collection_ids": [likes, playlist], "playlist_ids": [extra["id"]], "star": True})
+    assert started.status_code == 200, started.text
+    await run_imports()
+    detail = (await c.get(f"/api/imports/{imp['id']}")).json()
+    dest = {x["name"]: x["playlist_id"] for x in detail["destinations"]}
+    assert dest == {"Дорога": detail["collections"][1]["playlist_id"], "Ещё один": extra["id"], "Любимое": None}
+
+    playlist_url = f"/api/playlists/{dest['Дорога']}"
+    async with session_scope() as s:
+        rows = (await s.scalars(select(ImportItem).where(ImportItem.import_id == imp["id"],
+                                                        ImportItem.external_id == "1"))).all()
+        assert {x.collection_id for x in rows} == {likes, playlist}
+        for row in rows:
+            row.match = "probable"
+            row.raw_json = {**row.raw_json, "duration_s": 255}
+
+    async def entry(url, key, title=KROVI["title"]):
+        r = await c.get(url)
+        assert r.status_code == 200, r.text
+        return next(x for x in r.json()[key] if x["title"] == title)
+
+    review = (await entry(playlist_url, "tracks"))["import_review"]
+    assert review["source"] == "yandex" and review["duration_s"] == 255
+    assert (await entry("/api/nd/liked", "songs"))["import_review"] is not None
+    confirm_url = f"/api/imports/items/{review['id']}/confirm_match"
+    assert (await c.post(confirm_url)).status_code == 200
+    assert (await c.post(confirm_url)).status_code == 200
+    assert (await entry(playlist_url, "tracks"))["import_review"] is None
+    assert (await entry("/api/nd/liked", "songs"))["import_review"] is None
+    assert all(row["match"] == "probable" for row in await items(c, imp, match="probable"))
+    assert (await entry(playlist_url, "tracks", NONE["title"]))["unknown"]
+
+    liked_at = (await entry("/api/nd/liked", "songs"))["added_at"]
+    assert (await c.delete(f"/api/imports/{imp['id']}")).status_code == 200
+    assert (await entry(playlist_url, "tracks"))["title"] == KROVI["title"]
+    assert (await entry("/api/nd/liked", "songs"))["added_at"] == liked_at
 
 
 async def test_unliking_a_waiting_track(env):
@@ -454,7 +564,8 @@ async def test_profile_link(env):
 async def test_matching_verdicts(env):
     from app.catalog.models import CatalogTrack
     from app.db import session_scope
-    from app.imports.resolve import CatalogDown, resolve_track
+    from app.catalog.lookup import CatalogUnavailable
+    from app.imports.resolve import resolve_track
     from app.services import svc
 
     svc.deezer.more = [CatalogTrack(ref="dz:300", source="dz", id="300", title="Звезда по имени Солнце",
@@ -478,7 +589,7 @@ async def test_matching_verdicts(env):
     svc.deezer.down = True
     async with session_scope() as s:
         assert (await resolve_track(s, "yandex", "exact", cases["exact"])).ref == "dz:100"  # remembered
-        with pytest.raises(CatalogDown):
+        with pytest.raises(CatalogUnavailable):
             await resolve_track(s, "yandex", "new", track("Кино", "Кукушка"))
 
 
@@ -586,6 +697,82 @@ async def test_spotify_csv_import_matches_by_isrc(env):
     assert r.status_code == 400 and "Exportify" in r.json()["detail"]
 
 
+async def test_public_spotify_playlist_import_keeps_local_tracks_and_first_occurrence(env, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.services import svc
+
+    id_ = "37i9dQZF1DXcBWIGoYBM5M"
+    uri = f"spotify:playlist:{id_}"
+    artist = {"uri": "spotify:artist:DDDDDDDDDDDDDDDDDDDDDD", "profile": {"name": "Неизвестный"}}
+
+    def entry(letter, title):
+        return {"itemV2": {"data": {"uri": "spotify:track:" + letter * 22, "name": title,
+                                   "artists": {"items": [artist]}, "trackDuration": {"totalMilliseconds": 180_000},
+                                   "playcount": "42"}}}
+
+    def local(raw):
+        return {"itemV2": {"data": {"__typename": "LocalTrack", "uri": f"spotify:local:{raw['title']}",
+                                   "name": raw["title"], "artistName": raw["artist"], "albumName": "Local album",
+                                   "localTrackDuration": {"totalMilliseconds": raw["duration_s"] * 1000}}}}
+
+    a, b, extra = entry("A", "Трек Spotify"), entry("B", "Второй трек"), entry("C", "Новый трек")
+    rows = [a, local(NONE), b, a, local(KROVI), local(NONE), {"itemV2": {"data": None}}]
+    reads = []
+
+    async def playlist_items(operation, args, *, extract_page):
+        from spotapi.catalogue import Operations
+
+        assert operation == Operations.FETCH_PLAYLIST_CONTENTS.value
+        reads.append(args["uri"])
+        for batch in (rows[:2], rows[2:]):
+            yield extract_page({"playlistV2": {"content": {"items": batch}}})
+
+    info = SimpleNamespace(uri=uri, name="Публичный плейлист", images=None, owner_v2=None)
+    client = SimpleNamespace(get_playlist=AsyncMock(return_value=info), queries=SimpleNamespace(paginate=playlist_items))
+    monkeypatch.setattr(svc.spotify, "_get", AsyncMock(return_value=client))
+    c = env["client"]
+    r = await c.get(f"/api/search/spotify/playlist/{id_}")
+    assert r.status_code == 200, r.text
+    assert (len(r.json()["tracks"]), r.json()["local_tracks"], r.json()["skipped"]) == (3, 3, 1)
+    r = await c.post("/api/imports", json={"source": "spotify", "method": "link",
+                                           "url": f"https://open.spotify.com/playlist/{id_}"})
+    assert r.status_code == 200, r.text
+    ident = r.json()["id"]
+    await run_imports()
+    imp = (await c.get(f"/api/imports/{ident}")).json()
+    assert imp["status"] == "preview" and not imp["has_token"]
+    [coll] = imp["collections"]
+    assert coll["count"] == 4
+    r = await c.post(f"/api/imports/{ident}/start", json={"collection_ids": [coll["id"]], "mode": "economy"})
+    assert r.status_code == 200, r.text
+    await run_imports()
+    resolved = await items(c, imp)
+    assert [(row["title"], row["ref"]) for row in resolved] == [
+        ("Трек Spotify", "sp:" + "A" * 22), (NONE["title"], None), ("Второй трек", "sp:" + "B" * 22),
+        (KROVI["title"], "dz:100")]
+    assert resolved[1]["status"] == "not_found" and resolved[1]["track_id"] is not None
+    pid = next(p["id"] for p in (await c.get("/api/playlists")).json() if p["name"] == info.name)
+    transferred = (await c.get(f"/api/playlists/{pid}")).json()["tracks"]
+    assert [t["title"] for t in transferred] == [r["title"] for r in resolved]
+    assert transferred[1]["unknown"] and transferred[1]["duration_s"] == NONE["duration_s"]
+    client.get_playlist.assert_awaited_once_with(uri)
+    assert reads == [uri]
+
+    rows.append(extra)
+    r = await c.post(f"/api/imports/{ident}/sync")
+    assert r.status_code == 200, r.text
+    await run_imports()
+    updated = await items(c, imp)
+    assert [row["id"] for row in updated[:-1]] == [row["id"] for row in resolved]
+    assert updated[-1]["title"] == "Новый трек"
+    assert reads == [uri, uri]
+    r = await c.get(f"/api/search/spotify/playlist/{id_}")
+    assert r.status_code == 200, r.text
+    assert len(r.json()["tracks"]) == 4 and reads == [uri, uri]
+
+
 async def test_isrc_of_another_edit_falls_back_to_the_names(env):
     """A reused code on a recording of another length is not trusted: the names decide."""
     from app.imports.resolve import catalog_track
@@ -596,6 +783,21 @@ async def test_isrc_of_another_edit_falls_back_to_the_names(env):
     r = await catalog_track({"artist": "Кино", "artists": ["Кино"], "title": "Группа крови", "duration_s": 245,
                              "isrc": "XX0000000000"})
     assert (r.match, r.ref) == ("exact", "dz:100")
+
+
+async def test_isrc_with_the_same_title_under_another_artist_is_rejected(env, monkeypatch):
+    from app.imports.resolve import catalog_track
+    from app.services import svc
+
+    candidate = (await svc.deezer.search_tracks("Кино", "Группа крови"))[0]
+
+    async def search_tracks(*args, **kwargs):
+        return [candidate]
+
+    monkeypatch.setattr(svc.deezer, "search_tracks", search_tracks)
+    result = await catalog_track({"artist": "Чужая группа", "title": "Группа крови", "duration_s": 245,
+                                  "isrc": "RUA1D8800001"})
+    assert result.ref is None
 
 
 async def test_vk_sign_in_waits_for_the_code_typed_in_the_hub(env, monkeypatch):

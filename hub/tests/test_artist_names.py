@@ -56,6 +56,138 @@ async def test_a_spelling_made_the_name_rewrites_the_library_and_its_files(env):
         assert (await artists.credits(s, "кино, Ноль"))[0] == "Kino, Ноль"
 
 
+async def test_detaching_a_profile_keeps_two_namesakes_separate(env, monkeypatch):
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.api import artists as api_artists
+    from app.api import catalog
+    from app.catalog.models import ArtistPage, CatalogAlbum, CatalogArtist
+    from app.db import session_scope
+    from app.models import Artist, Edit
+
+    profiles = {
+        "dz:50": CatalogArtist(ref="dz:50", source="dz", id="50", name="TAK", nb_fans=5103),
+        "dz:51": CatalogArtist(ref="dz:51", source="dz", id="51", name="TAK", nb_fans=17),
+    }
+
+    async def profile_card(ref):
+        return profiles.get(ref)
+
+    async def get_artist_page(ref):
+        who = profiles[ref]
+        return ArtistPage(artist=who, albums=[
+            CatalogAlbum(ref=f"dz:al{who.id}", source="dz", id=f"al{who.id}",
+                         title=f"Album {who.id}", artist=who.name, artist_ref=ref),
+        ])
+
+    monkeypatch.setattr(api_artists, "profile_card", profile_card)
+    monkeypatch.setattr(catalog, "get_artist_page", get_artist_page)
+    c = env["client"]
+    main = (await c.get("/api/artists/of", params={"name": "TAK", "ref": "dz:50"})).json()
+    namesake = (await c.get("/api/artists/of", params={"name": "TAK", "ref": "dz:51"})).json()
+    assert main["id"] != namesake["id"]
+    api = f"/api/artists/{main['id']}"
+    merged = await c.post(f"{api}/merge", json={"other_id": namesake["id"]})
+    assert merged.status_code == 200
+    rows = (await c.get(f"{api}/profiles")).json()
+    assert [(p["ref"], p["service"], p["followers"]) for p in rows] == [("dz:50", "deezer", 5103), ("dz:51", "deezer", 17)]
+    assert rows[1]["url"] == "https://www.deezer.com/artist/51"
+
+    detached = await asyncio.gather(*(c.delete(f"{api}/profiles/dz%3A51") for _ in range(2)))
+    assert sorted(r.status_code for r in detached) in ([200, 404], [200, 409])
+    assert next(r.json() for r in detached if r.status_code == 200)["profiles"] == ["dz:50"]
+    for ref, title in [("dz:50", "Album 50"), ("dz:51", "Album 51")]:
+        d = (await c.get(f"/api/catalog/artist/{ref}")).json()
+        assert d["profiles"] == [ref] and [a["title"] for a in d["albums"]] == [title]
+        card = (await c.get("/api/artists/of", params={"ref": ref})).json()
+        assert card["suggestions"] == []
+    bare_name = (await c.get("/api/artists/of", params={"name": "TAK"})).json()
+    assert bare_name["id"] == main["id"]
+    async with session_scope() as s:
+        assert len((await s.scalars(select(Artist).where(Artist.merged_into_id.is_(None)))).all()) == 2
+        edits = (await s.scalars(select(Edit).where(Edit.target_type == "artist", Edit.target_id == main["id"]))).all()
+        assert [e.changes_json["profile"] for e in edits if "profile" in e.changes_json] == [["dz:51", None]]
+
+
+async def test_discography_stream_reports_active_catalogs_and_pending_spotify(env, monkeypatch):
+    import asyncio
+    import json
+
+    import httpx
+    from fastapi import HTTPException
+
+    from app.api import catalog
+    from app.catalog.models import ArtistPage, CatalogAlbum, CatalogArtist
+    from app.db import session_scope
+    from app.library import artists
+    from app.services import svc
+
+    def page(source):
+        a = CatalogArtist(ref=f"{source}:50", source=source, id="50", name="TAK")
+        release = CatalogAlbum(ref=f"{source}:600", source=source, id="600", title=f"{source} album", artist=a.name)
+        return ArtistPage(artist=a, albums=[release])
+
+    pages = {source: page(source) for source in ("dz", "sp")}
+    async with session_scope() as s:
+        who = await artists.who(s, "TAK", "dz:50")
+        await artists.tie_profile(s, who.id, "sp:50")
+        await artists.tie_profile(s, who.id, "ym:50")
+
+    async def get_artist_page(ref):
+        source = ref.partition(":")[0]
+        if source == "ym":
+            raise HTTPException(502, "catalog unavailable")
+        return pages[source]
+
+    albums_started = asyncio.Event()
+    deezer_requests = 0
+    background_pending = True
+
+    async def get_album(ref):
+        source = ref.partition(":")[0]
+        if source == "dz":
+            await albums_started.wait()
+        return pages[source].albums[0]
+
+    async def spotify_discography(id_):
+        return pages["sp"].albums, background_pending, background_pending
+
+    monkeypatch.setattr(catalog, "get_artist_page", get_artist_page)
+    monkeypatch.setattr(catalog, "get_album", get_album)
+    monkeypatch.setattr(svc.spotify, "discography", spotify_discography)
+    monkeypatch.setattr(svc, "yandex", object())
+
+    async def capture(scope, receive, send):
+        async def observe(message):
+            nonlocal deezer_requests
+            await send(message)
+            if message["type"] != "http.response.body" or not message.get("body"):
+                return
+            event = json.loads(message["body"])
+            if event == {"type": "source", "data": {"service": "deezer", "state": "searching"}}:
+                deezer_requests += 1
+                if deezer_requests == 2:  # the album request starts after the artist response
+                    albums_started.set()
+
+        await env["app"](scope, receive, observe)
+
+    transport = httpx.ASGITransport(app=capture)
+    async with httpx.AsyncClient(transport=transport, base_url="http://hub.test", cookies=env["client"].cookies) as c:
+        path = "/api/catalog/artist/dz:50/discography"
+        headers = {"Accept": "application/x-ndjson"}
+        for pending in (True, False):
+            background_pending = pending
+            r = await asyncio.wait_for(c.get(path, headers=headers), 5)
+            assert r.status_code == 200 and r.headers["Content-Type"] == "application/x-ndjson"
+            events = [json.loads(line) for line in r.text.splitlines()]
+            states = {e["data"]["service"]: e["data"]["state"] for e in events if e["type"] == "source"}
+            assert states == {"deezer": "ready", "yandex": "error", "spotify": "searching" if pending else "ready"}
+            assert events[-1]["type"] == "done" and events[-1]["data"]["spotify_pending"] is pending
+            assert {a["ref"] for a in events[-1]["data"]["albums"]} == {"dz:600", "sp:600"}
+
+
 async def test_two_artists_are_joined_and_one_may_be_set_apart(env):
     c = env["client"]
     a = (await c.get("/api/artists/of", params={"name": "ЛСП"})).json()
@@ -208,7 +340,7 @@ async def test_a_catalog_keeps_several_records_of_one_artist_and_a_namesake_is_s
 
     # «Не включать» is of the whole artist: put on one record, it is of the other too — and not of the namesake
     r = await c.post("/api/dislikes", json={"artist_ref": "dz:2", "artist": "LSP"})
-    assert r.status_code == 200 and sorted(r.json()["artist_refs"]) == ["dz:1", "dz:2"], r.text
+    assert r.status_code == 200 and set(r.json()["artist_refs"]) == {"dz:1", "dz:2", f"artist:{a['id']}"}, r.text
     assert sorted(r.json()["artist_names"]) == ["LSP", "ЛСП"]
     assert (await c.post("/api/dislikes", json={"artist_ref": "dz:1", "artist": "ЛСП"})).json()["id"] == r.json()["id"]  # one mark
     from sqlalchemy import select
@@ -336,6 +468,30 @@ async def test_yandexs_record_adds_releases_to_an_artists_page_and_not_its_most_
     got = (await env["client"].get("/api/catalog/artist/dz:1")).json()
     assert got["profiles"] == ["dz:1", "ym:7"]  # tied: the same name, a release in common; Deezer's record leads
     assert [t["title"] for t in got["top_tracks"]] == ["Давай поправимся"]
-    assert sorted(a["title"] for a in [*got["albums"], *got["singles"]]) == ["Движение", "ОКЕАНАРИУМ", "Только в Яндексе"]
+    found_in = {a["title"]: a["found_in"] for a in [*got["albums"], *got["singles"]]}
+    assert found_in == {"Движение": ["deezer"], "ОКЕАНАРИУМ": ["deezer", "yandex"], "Только в Яндексе": ["yandex"]}
     yandex = next(x for x in got["sources"] if x["service"] == "yandex")
     assert (yandex["listeners"], yandex["url"]) == (4321, "https://music.yandex.ru/artist/7")
+
+    from app.db import session_scope
+    from app.library import artists
+
+    pages["sp:8"] = page("sp", 8, 0, [], [])
+    async with session_scope() as s:
+        who = await artists.by_ref(s, "dz:1")
+        await artists.tie_profile(s, who.id, "sp:8")
+        await s.commit()
+
+    async def spotify_discography(id_):
+        assert id_ == "8"
+        return page("sp", 8, 0, [(9, "Движение", "album")], []).albums, False, False
+
+    async def get_album(ref):
+        return next(a for p in pages.values() for a in p.albums if a.ref == ref)
+
+    monkeypatch.setattr(svc.spotify, "discography", spotify_discography)
+    monkeypatch.setattr(catalog, "get_album", get_album)
+    result = await env["client"].get("/api/catalog/artist/dz:1/discography")
+    assert result.status_code == 200
+    found_in["Движение"] = ["deezer", "spotify"]
+    assert {a["title"]: a["found_in"] for a in result.json()["albums"]} == found_in

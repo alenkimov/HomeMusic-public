@@ -28,6 +28,7 @@ class TagOut(BaseModel):
 class TagsOut(BaseModel):
     groups: list[dict[str, Any]]  # {id, title, tags: [TagOut]}
     map: dict[int, list[int]]  # track (the Hub's id) -> its tags
+    genre_sources: dict[int, dict[int, list[str]]]
 
 
 class TagCreateIn(BaseModel):
@@ -41,7 +42,8 @@ class TagAssignIn(BaseModel):
 
 
 async def _out(s: AsyncSession, user: User) -> TagsOut:
-    return TagsOut(groups=(await tags.catalog(s, user.id))["groups"], map=await tags.tag_map(s, user.id))
+    return TagsOut(groups=(await tags.catalog(s, user.id))["groups"], map=await tags.tag_map(s, user.id),
+                   genre_sources=await tags.genre_source_map(s, user.id))
 
 
 @router.get("", response_model=TagsOut)

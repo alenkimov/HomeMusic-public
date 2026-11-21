@@ -1,158 +1,108 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
-import { closeTelegramSetup, deliverToTelegram, useTelegramSetup, type TelegramStatus } from '../lib/telegram';
+import { useAsync, useInterval } from '../lib/hooks';
+import { closeTelegramSetup, deliverToTelegram, TELEGRAM_LINK_EVENT, useTelegramSetup } from '../lib/telegram';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 import { Icon } from './Icon';
-import { Button, Checkbox, Field, Loading, Notice, Sheet } from './ui';
+import { ServiceBadge } from './ServiceBadge';
+import { Button, Checkbox, ErrorState, Loading, Notice, Sheet } from './ui';
 
-/** The window of «Отправить в Telegram»: paste the key of your own bot, press Start in it, and the Hub knows where
- * to send. Opened by a share that found no bot (the track asked for is sent once the bot is ready) and from «Ещё»,
- * where a connected bot can be turned off. The key goes to the Hub and never comes back. */
 export function TelegramSetup() {
-  const { open, pending, withLyrics } = useTelegramSetup();
-  const [st, setSt] = useState<TelegramStatus | null>(null);
-  const [token, setToken] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [waiting, setWaiting] = useState(false); // «Проверить» found no chat yet
+  const { open } = useTelegramSetup();
+  return open ? <Connection /> : null;
+}
 
+function Connection() {
+  const { pending, options } = useTelegramSetup();
+  const setup = useAsync(async (signal) => {
+    const st = await api.telegram(signal);
+    return st.configured && !st.ready ? api.telegramLink(signal) : { ...st, start_url: null };
+  }, []);
+  const st = setup.data;
+  const [waiting, setWaiting] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [notFound, setNotFound] = useState(false);
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => () => request.current?.abort(), []);
   useEffect(() => {
-    if (!open) return;
-    setSt(null);
-    setToken('');
-    setWaiting(false);
-    void attempt(() => api.telegram()).then((r) => (r ? setSt(r) : closeTelegramSetup()));
-  }, [open]);
-
-  if (!open) return null;
-
-  const done = (r: TelegramStatus) => {
-    setSt(r);
-    if (!r.ready) return;
-    toast(`Telegram подключён: @${r.bot_username}`, 'success');
-    if (pending.length) {
+    if (st?.ready && pending.length) {
       closeTelegramSetup();
-      void deliverToTelegram(pending, withLyrics);
+      void deliverToTelegram(pending, options);
     }
-  };
-  const connect = async () => {
-    setBusy(true);
-    const r = await attempt(() => api.telegramConnect(token));
-    setBusy(false);
-    if (r) {
-      setToken('');
-      setWaiting(false);
-      done(r);
+  }, [st?.ready, pending, options]);
+
+  const check = async (manual = false) => {
+    if (request.current) return;
+    const ctl = new AbortController();
+    request.current = ctl;
+    if (manual) setChecking(true);
+    const fetch = () => api.telegramCheck(ctl.signal);
+    const next = await (manual ? attempt(fetch) : fetch().catch(() => undefined));
+    request.current = null;
+    if (ctl.signal.aborted) return;
+    setChecking(false);
+    if (!next?.ready) {
+      if (manual && next) setNotFound(true);
+      return;
     }
+    setup.setData({ ...next, start_url: null });
+    window.dispatchEvent(new Event(TELEGRAM_LINK_EVENT));
+    toast('Telegram подключён', 'success');
   };
-  const check = async () => {
-    setBusy(true);
-    const r = await attempt(() => api.telegramCheck());
-    setBusy(false);
-    if (r) {
-      setWaiting(!r.ready);
-      done(r);
-    }
-  };
+  useInterval(() => void check(), waiting && st?.configured && !st.ready ? 2500 : null);
+
   const disconnect = async () => {
-    if (!(await confirmDialog({ title: 'Отключить бота?', body: 'Ключ бота удалится из Хаба. Сам бот и переписка в Telegram останутся.', okLabel: 'Отключить', danger: true }))) return;
-    const r = await attempt(() => api.telegramDisconnect(), 'Бот отключён');
-    if (r) setSt(r);
+    if (!(await confirmDialog({ title: 'Отключить Telegram?', body: 'Чтобы снова получать треки в личку, потребуется подключить аккаунт заново.', okLabel: 'Отключить', danger: true }))) return;
+    const next = await attempt(() => api.telegramDisconnect(), 'Telegram отключён');
+    if (next) {
+      window.dispatchEvent(new Event(TELEGRAM_LINK_EVENT));
+      closeTelegramSetup();
+    }
   };
-  const botLink = st?.bot_username ? `https://t.me/${st.bot_username}` : null;
-  const link = 'font-semibold text-accent underline';
 
   return (
-    <Sheet open onClose={closeTelegramSetup} title="Отправка в Telegram">
-      {!st ? (
+    <Sheet open onClose={closeTelegramSetup} title={<ServiceBadge service="telegram" label="Отправка в Telegram" size={18} />}>
+      {setup.loading ? (
         <Loading />
-      ) : !st.connected ? (
-        <form
-          className="space-y-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (token.trim()) void connect();
-          }}
-        >
-          <p className="text-sm text-muted">
-            Треки отправляет ваш собственный бот — вам в личный чат, в группы и каналы.{pending.length === 1 ? ` Подключите его, и «${pending[0].title}» уйдёт сразу.` : pending.length ? ` Подключите его, и выбранные треки (${pending.length}) уйдут сразу.` : ''}
-          </p>
-          <ol className="list-decimal space-y-1 pl-5 text-sm text-muted">
-            <li>
-              Откройте{' '}
-              <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className={link}>
-                @BotFather
-              </a>{' '}
-              и отправьте ему /newbot.
-            </li>
-            <li>Придумайте боту имя — BotFather пришлёт ключ вида 123456:ABC…</li>
-            <li>Вставьте ключ сюда.</li>
-          </ol>
-          <Field label="Ключ бота">
-            <input className="input font-mono" value={token} onChange={(e) => setToken(e.target.value)} placeholder="123456789:AA…" autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false} autoFocus />
-          </Field>
-          <Button type="submit" variant="primary" block busy={busy} disabled={!token.trim()}>
-            Подключить бота
-          </Button>
-          <p className="text-xs text-dim">Ключ хранится в Хабе зашифрованным и никому не показывается. Отключить бота можно в «Ещё» → «Telegram».</p>
-        </form>
+      ) : setup.error || !st ? (
+        <ErrorState text={setup.error ?? 'Не удалось открыть настройки Telegram'} onRetry={() => setup.reload()} />
+      ) : !st.configured ? (
+        <p className="text-sm text-muted">Администратор Хаба ещё не настроил бота Telegram.</p>
       ) : !st.ready ? (
         <div className="space-y-3">
-          <p className="text-sm">
-            Бот <span className="font-semibold">@{st.bot_username}</span> подключён. Остался один шаг: бот не может написать первым.
-          </p>
-          <ol className="list-decimal space-y-1 pl-5 text-sm text-muted">
-            <li>
-              Откройте{' '}
-              {botLink ? (
-                <a href={botLink} target="_blank" rel="noopener noreferrer" className={link}>
-                  @{st.bot_username}
-                </a>
-              ) : (
-                'бота'
-              )}{' '}
-              в Telegram и нажмите Start.
-            </li>
-            <li>Вернитесь сюда и нажмите «Проверить».</li>
-          </ol>
-          {waiting && <Notice kind="warn">Бот пока не получил сообщение. Нажмите в нём Start (или напишите что-нибудь) и проверьте ещё раз.</Notice>}
+          <p className="text-sm">Откройте @{st.bot_username} и нажмите Start. После этого бот сможет отправлять треки вам в личку.</p>
+          {pending.length > 0 && <p className="text-sm text-muted">После подключения бот пришлёт {pending.length === 1 ? 'выбранный трек' : 'выбранные треки'}.</p>}
+          {notFound && <Notice kind="warn">Бот пока не получил команду Start. Если ссылка устарела, откройте новую.</Notice>}
           <div className="flex flex-wrap gap-2">
-            {botLink && (
-              <a href={botLink} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-full bg-fg/10 px-4 text-sm font-semibold">
-                <Icon name="external" size={18} />
-                Открыть бота
+            {st.start_url && (
+              <a href={st.start_url} target="_blank" rel="noopener noreferrer" onClick={() => setWaiting(true)}
+                className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-full bg-accent px-5 text-sm font-semibold text-on-accent">
+                <Icon name="external" size={18} /> Открыть бота
               </a>
             )}
-            <Button variant="primary" className="flex-1" busy={busy} onClick={check}>
-              Проверить
-            </Button>
+            <Button className="flex-1" busy={checking} onClick={() => void check(true)}>Проверить</Button>
           </div>
-          <Button variant="ghost" block onClick={disconnect}>
-            Подключить другого бота
-          </Button>
+          {notFound && (
+            <Button variant="ghost" onClick={() => { setWaiting(false); setNotFound(false); setup.reload(); }}>Обновить ссылку</Button>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
           <div className="card flex items-center gap-3 p-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/20 text-accent">
-              <Icon name="send" size={20} />
-            </span>
-            <div className="min-w-0">
-              <div className="truncate font-semibold">@{st.bot_username}</div>
-              <div className="truncate text-xs text-muted">Отправляет в чат: {st.chat_name}</div>
-            </div>
+            <ServiceBadge service="telegram" label={`@${st.bot_username}`} size={22} />
+            <span className="truncate text-xs text-muted">{st.chat_name}</span>
           </div>
-          <p className="text-sm text-muted">Чтобы отправить трек, нажмите у него «Поделиться» и выберите чат.</p>
-          <p className="text-sm text-muted">Чтобы отправлять в группу или канал, добавьте туда бота сами (в канал — администратором): чат появится в «Поделиться».</p>
+          <p className="text-sm text-muted">Нажмите «Поделиться» у трека и выберите чат.</p>
+          <p className="text-sm text-muted">Для отправки в группу бот должен быть её администратором. В канале право публикации требуется и вам, и боту.</p>
           <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-raised px-3 py-2 text-sm">
             <span>
               Отправлять с текстом песни
-              <span className="block text-xs text-muted">Свёрнутой цитатой под треком; эта же галочка есть в «Поделиться»</span>
+              <span className="block text-xs text-muted">Свёрнутой цитатой под треком</span>
             </span>
-            <Checkbox checked={!!st.with_lyrics} label="Отправлять с текстом песни" onChange={(v) => void attempt(() => api.telegramPrefs(v)).then((r) => r && setSt(r))} />
+            <Checkbox checked={!!st.with_lyrics} label="Отправлять с текстом песни"
+              onChange={(v) => void attempt(() => api.telegramPrefs(v)).then((r) => r && setup.setData({ ...r, start_url: null }))} />
           </label>
-          <Button variant="danger" block onClick={disconnect}>
-            Отключить бота
-          </Button>
+          <Button variant="danger" block onClick={disconnect}>Отключить Telegram</Button>
         </div>
       )}
     </Sheet>

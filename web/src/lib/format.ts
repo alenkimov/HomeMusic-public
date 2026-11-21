@@ -1,3 +1,5 @@
+import type { CoverInfo } from '../api/types';
+
 export function fmtDuration(s?: number | null): string {
   if (s == null || !Number.isFinite(s) || s <= 0) return '';
   const total = Math.round(s);
@@ -237,6 +239,12 @@ export function fmtUsd(v: number): string {
 /** A whole number the Russian way: "1 204". */
 export const fmtNum = (n?: number | null): string => (n == null ? '—' : Math.round(n).toLocaleString('ru-RU'));
 
+export function fmtCompactCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n > 10_000) return `${(n / 1_000).toFixed(1)}K`;
+  return fmtNum(n);
+}
+
 /** A weight or a share with a comma: "4,12". */
 export function fmtDec(n?: number | null, digits = 2): string {
   if (n == null || !Number.isFinite(n)) return '—';
@@ -372,3 +380,9 @@ export function cleanupLabel(v?: string | null): string {
 export const mixStateLabel = codeLabel({ active: 'в миксе', reserve: 'запас', failed: 'не скачался' });
 
 export const WEEKDAYS_SHORT = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
+export function pictureWords(info?: CoverInfo | null): [string, string] {
+  return [
+    info?.w && info?.h ? `${info.w}×${info.h}` : '…',
+    [info?.format, info?.size ? fmtSize(info.size) : null].filter(Boolean).join(' · '),
+  ];
+}

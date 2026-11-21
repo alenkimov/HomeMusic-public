@@ -3,6 +3,7 @@ import { Funnel } from '../../components/charts/Funnel';
 import { ShareBar } from '../../components/charts/ShareBar';
 import { facetColor } from '../../components/charts/palette';
 import { Empty, ErrorState, Loading, Notice, PageHeader } from '../../components/ui';
+import { ServiceText } from '../../components/ServiceBadge';
 import {
   attributionLabel,
   cleanupLabel,
@@ -176,7 +177,7 @@ function MixBody({ m }: { m: MixOut }) {
             })}
             rowKey={(r) => r.generator}
             cols={[
-              { label: 'Генератор', cell: (r) => (r.off ? `${r.title} (выкл.)` : r.title) },
+              { label: 'Генератор', cell: (r) => <ServiceText text={r.off ? `${r.title} (выкл.)` : r.title} /> },
               { label: 'Дал', cell: (r) => (r.error ? `ошибка` : fmtNum(r.tracks)), align: 'right' },
               { label: 'Взято', cell: (r) => fmtNum(r.used), align: 'right' },
               { label: 'Начато', cell: (r) => fmtNum(r.started), align: 'right' },
@@ -248,8 +249,8 @@ function MixItems({ items, max }: { items: MixItem[]; max: number }) {
       rows={items}
       rowKey={(r) => `${r.state}:${r.position}`}
       cols={[
-        { label: 'Трек', cell: (r) => `${r.position + 1}. ${trackName(r)}` },
-        { label: 'Генератор', cell: (r) => r.generator_title ?? r.generator ?? '—' },
+        { label: 'Трек', cell: (r) => trackName(r, `${r.position + 1}. `) },
+        { label: 'Генератор', cell: (r) => <ServiceText text={r.generator_title ?? r.generator ?? '—'} /> },
         { label: 'Знак./нов.', cell: (r) => (r.familiar ? 'знакомое' : 'новое') },
         { label: 'Оценка', cell: (r) => <PartsBar item={r} max={max} /> },
         { label: 'Итог', cell: (r) => outcomeLabel(r.outcome, r.early_skip_at) + (r.heard_outside ? ' · слушал вне микса' : '') },
@@ -305,17 +306,17 @@ export function WavesTab({ userId }: { userId: number }) {
   );
 }
 
-function seedText(w: WaveRow): string {
+function seedText(w: WaveRow) {
   if (w.reconstructed) return 'восстановлено по событиям';
-  const name = w.seed ? [w.seed.artist, w.seed.title].filter(Boolean).join(' — ') : '';
-  return `${seedKindLabel(w.seed_kind)}${name ? ` «${name}»` : ''}`;
+  const name = w.seed && (w.seed.artist || w.seed.title) ? trackName(w.seed) : null;
+  return <>{seedKindLabel(w.seed_kind)}{name && <> «{name}»</>}</>;
 }
 
 function WaveLine({ w }: { w: WaveRow }) {
   return (
     <Line
       onClick={() => navigate(`/admin/wave/${encodeURIComponent(w.session_id)}`)}
-      title={`${fmtStamp(w.created_at)} · ${w.restart ? 'перезапуск' : waveOriginLabel(w.origin)} · ${seedText(w)}`}
+      title={<>{fmtStamp(w.created_at)} · {w.restart ? 'перезапуск' : waveOriginLabel(w.origin)} · {seedText(w)}</>}
       sub={`${w.started} начато · ${w.heard} прослушано · ранних ${w.early_skips}${w.likes ? ` · ♥${w.likes}` : ''}${w.dislikes ? ` · 👎${w.dislikes}` : ''}${w.client ? ` · ${w.client}` : ''}`}
     />
   );
@@ -326,7 +327,7 @@ export function WaveDetailPage({ sid }: { sid: string }) {
   const w = res.data;
   return (
     <div className="pb-6">
-      <PageHeader title="Сессия волны" back="/admin" sub={w ? `${fmtStamp(w.created_at)} · ${seedText(w)}` : undefined} />
+      <PageHeader title="Сессия волны" back="/admin" sub={w ? <>{fmtStamp(w.created_at)} · {seedText(w)}</> : undefined} />
       {res.loading ? <Loading /> : res.error || !w ? <ErrorState text={res.error ?? 'Не найдено'} onRetry={() => res.reload()} /> : <WaveBody w={w} />}
     </div>
   );
@@ -375,10 +376,10 @@ function WaveBody({ w }: { w: WaveOut }) {
           rows={gens}
           rowKey={([g]) => g}
           cols={[
-            { label: 'Генератор', cell: ([, v]) => (v.off ? `${v.title} (выкл.)` : v.title) },
+            { label: 'Генератор', cell: ([, v]) => <ServiceText text={v.off ? `${v.title} (выкл.)` : v.title} /> },
             { label: 'Треков', cell: ([, v]) => fmtNum(v.tracks), align: 'right' },
             { label: 'Секунд', cell: ([, v]) => (v.seconds == null ? '—' : fmtDec(v.seconds, 1)), align: 'right' },
-            { label: 'Ошибка', cell: ([, v]) => v.error ?? '' },
+            { label: 'Ошибка', cell: ([, v]) => <ServiceText text={v.error ?? ''} /> },
           ]}
           empty="Не записано"
         />
@@ -388,8 +389,8 @@ function WaveBody({ w }: { w: WaveOut }) {
           rows={w.items}
           rowKey={(r) => `${r.position}:${r.key}`}
           cols={[
-            { label: 'Трек', cell: (r) => `${r.position + 1}. ${trackName(r)}` },
-            { label: 'Генератор', cell: (r) => r.generator_title ?? r.generator ?? '—' },
+            { label: 'Трек', cell: (r) => trackName(r, `${r.position + 1}. `) },
+            { label: 'Генератор', cell: (r) => <ServiceText text={r.generator_title ?? r.generator ?? '—'} /> },
             { label: 'Знак./нов.', cell: (r) => (r.familiar == null ? '—' : r.familiar ? 'знакомое' : 'новое') },
             { label: 'sim', cell: (r) => (r.sim == null ? '—' : fmtDec(r.sim)), align: 'right' },
             { label: 'Итог', cell: (r) => outcomeLabel(r.outcome, r.early_skip_at) + (r.handed_count > 1 ? ` · выдан ${r.handed_count} раза` : '') },

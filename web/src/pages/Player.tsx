@@ -1,6 +1,8 @@
+import { TrackTitle } from '../components/TrackTitle';
 import { tagKey } from '../lib/tags';
 import { imageUrl, retryImage } from '../lib/img';
 import { FileCard, PlayLine } from '../components/FileInfo';
+import { ChoosePlaybackFile } from '../components/FindFile';
 import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
@@ -8,8 +10,11 @@ import { LikeButton } from '../components/LikeButton';
 import { Lyrics } from '../components/Lyrics';
 import { SaveButton } from '../components/PlaylistsButton';
 import { TrackMenuButton } from '../components/TrackMenu';
+import { OtherVersions } from '../components/Versions';
+import { ServiceBadge } from '../components/ServiceBadge';
 import { Cover, Empty, IconButton, Sheet, Spinner, cx } from '../components/ui';
-import { fmtDuration, tracksWord } from '../lib/format';
+import { fmtDuration, fmtNum, tracksWord } from '../lib/format';
+import { useAsync } from '../lib/hooks';
 import { queueAsked } from '../lib/playerQueue';
 import { useSeek } from '../lib/seek';
 import { SeekLine } from '../components/SeekLine';
@@ -31,7 +36,7 @@ import { isUpload,
   artistTo,
   creditedOf,
 } from '../lib/listen';
-import { Link, enc, goBack } from '../lib/router';
+import { Link, albumPath, goBack } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
 import { addRec, hideRec } from '../lib/smartShuffle';
 
@@ -129,8 +134,9 @@ export function PlayerPage() {
   const waiting = phase === 'resolving' || phase === 'loading';
   const playing = phase === 'playing' || waiting;
   const owned = info?.kind === 'library';
-  // under the seek bar: only that this is a 30 s preview. Where the file came from is the card «Файл» below
-  const source = info?.kind === 'preview' ? 'превью 30 сек' : null;
+  const versionTrackId = info?.track_id ?? track.library_track_id;
+  const versionSongId = versionTrackId == null ? (info?.nd_song_id ?? track.nd_song_id) : null;
+  const versionIdentity = { library_track_id: versionTrackId, nd_song_id: versionSongId, ref: track.ref, page_url: info?.page_url ?? track.page_url };
   const download = async () => {
     setBusy(true);
     await downloadRef(track.ref);
@@ -194,12 +200,12 @@ export function PlayerPage() {
 
       <div className="flex items-center gap-2 px-6 pt-6">
         <div className="min-w-0 flex-1">
-          {track.album_ref ? (
-            <Link to={`/album/${enc(track.album_ref)}`} className="block truncate text-xl font-bold hover:underline">
-              {track.title}
+          {track.album_ref || track.release_id ? (
+            <Link to={albumPath({ ref: track.album_ref ?? '', release_id: track.release_id })} className="block truncate text-xl font-bold hover:underline">
+              <TrackTitle title={track.title} track={versionIdentity} />
             </Link>
           ) : (
-            <div className="truncate text-xl font-bold">{track.title}</div>
+            <div className="truncate text-xl font-bold"><TrackTitle title={track.title} track={versionIdentity} /></div>
           )}
           <div className="flex items-center gap-1.5 text-[15px] text-muted">
             {onWave && <Icon name="wave" size={16} className="shrink-0 text-accent" />}
@@ -250,7 +256,7 @@ export function PlayerPage() {
         <div className="flex justify-between pt-1 text-xs tabular-nums text-muted">
           <span>{fmtDuration(shownPos) || '0:00'}</span>
           <span className="min-w-0 truncate px-2">
-            {phase === 'error' || waiting ? <PlayLine phase={phase} info={info} error={error} className="max-w-full truncate" /> : source}
+            {(phase === 'error' || waiting) && <PlayLine phase={phase} info={info} error={error} className="max-w-full truncate" />}
           </span>
           <span>{fmtDuration(duration) || '–:––'}</span>
         </div>
@@ -294,12 +300,17 @@ export function PlayerPage() {
 
       <div className="flex items-center justify-between px-4 pt-2">
         {isUpload(track) ? <span /> : <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id, library_track_id: info?.track_id ?? track.library_track_id }} inPlayer lean />}
+        <ChoosePlaybackFile />
         <div className="flex items-center">
           {!isUpload(track) && <IconButton icon="share" label="Поделиться" onClick={() => openShare({ title: track.title, artist: track.artist, ref: track.ref, nd_song_id: info?.nd_song_id })} className="text-muted" />}
           <IconButton icon="queue" label={queueOpen ? 'Скрыть очередь' : 'Очередь'} aria-pressed={queueOpen} onClick={() => setQueueOpen((v) => !v)} className={queueOpen ? '!text-accent' : 'text-muted'} />
         </div>
       </div>
       <Credits track={track} />
+      {!isUpload(track) && <SpotifyTrackPlays key={track.ref} track={track} songId={info?.nd_song_id || track.nd_song_id} />}
+      {!isUpload(track) && (versionTrackId != null || versionSongId) && (
+        <OtherVersions key={versionTrackId ?? versionSongId} trackId={versionTrackId} songId={versionSongId} />
+      )}
       <FileCard info={info} />
         </div>
       </div>
@@ -307,6 +318,18 @@ export function PlayerPage() {
       <Sheet open={queueOpen && !wide} onClose={() => setQueueOpen(false)} title="Очередь" footer={<QueueModes onWave={onWave} />}>
         <QueueList queue={queue} index={index} onWave={onWave} shuffle={shuffle} />
       </Sheet>
+    </div>
+  );
+}
+
+function SpotifyTrackPlays({ track, songId }: { track: ListenTrack; songId?: string | null }) {
+  const fetched = useAsync((signal) => api.spotifyTrack({ nd_song_id: songId, ref: track.ref }, signal),
+    [track.ref, songId], track.spotify_plays == null);
+  const count = track.spotify_plays ?? fetched.data?.spotify_plays;
+  if (count == null) return null;
+  return (
+    <div className="mx-4 mt-3 rounded-2xl bg-surface px-4 py-3">
+      <ServiceBadge service="spotify" label={`${fmtNum(count)} прослушиваний в Spotify`} size={16} />
     </div>
   );
 }
@@ -321,9 +344,7 @@ function Credits({ track }: { track: ListenTrack }) {
         {people.map((a, i) => {
           const who = (
             <>
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-fg/10 text-muted">
-                <Icon name="user" size={20} />
-              </span>
+              <CreditPhoto refId={a.ref} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[15px]">{a.name}</span>
                 <span className="block text-[13px] text-muted">Исполнитель</span>
@@ -344,6 +365,11 @@ function Credits({ track }: { track: ListenTrack }) {
       </ul>
     </section>
   );
+}
+
+function CreditPhoto({ refId }: { refId?: string }) {
+  const res = useAsync((signal) => api.catalogArtistPhoto(refId!, signal), [refId], !!refId);
+  return <Cover src={res.data?.url} size={40} round alt="" icon="user" />;
 }
 
 /** The head of the player: what is playing — «Играет из плейлиста · JAPAN», a link to that list. */
@@ -443,7 +469,7 @@ function QueueList({ queue, index, onWave, shuffle }: { queue: readonly ListenTr
             <button type="button" onClick={() => playQueueAt(i)} className="flex min-w-0 flex-1 items-center gap-3 py-1.5 text-left" aria-label={`Слушать «${t.title}»`}>
               <Cover src={t.cover_small_url || t.cover_url} size={40} alt="" />
               <span className="min-w-0 flex-1">
-                <span className={cx('block truncate text-[15px]', i === index && 'font-semibold text-accent')}>{t.title}</span>
+                <span className={cx('block truncate text-[15px]', i === index && 'font-semibold text-accent')}><TrackTitle title={t.title} track={t} /></span>
                 <span className="flex items-center gap-1 text-[13px] text-muted">
                   {t.rec && (
                     <span title="Рекомендация" className="shrink-0 text-accent">

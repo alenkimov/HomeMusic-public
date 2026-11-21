@@ -1,14 +1,15 @@
-import { openTelegramSetup } from '../lib/telegram';
+import { openTelegramSetup, TELEGRAM_LINK_EVENT } from '../lib/telegram';
 import { useEffect, useState, type ReactNode } from 'react';
 import { STANDALONE } from '../lib/embedded';
 import { useSession } from '../lib/session';
 import { api } from '../api/client';
 import { useDislikes } from '../lib/dislikes';
 import { tracksWord } from '../lib/format';
-import { useAsync } from '../lib/hooks';
+import { useAsync, useWindowEvent } from '../lib/hooks';
 import { useKeptLists } from '../lib/offline';
 import { BrandIcon } from '../components/BrandIcon';
 import { Icon, type IconName } from '../components/Icon';
+import { ServiceBadge } from '../components/ServiceBadge';
 import { PageHeader, cx } from '../components/ui';
 import { notifyPermission, requestNotifyPermission, useActiveDownloads, type NotifyPermission } from '../lib/notify';
 import { Link } from '../lib/router';
@@ -33,13 +34,13 @@ export function MorePage() {
   const downloads = useActiveDownloads();
   // what stands now behind the lines: asked once the menu opens, kept between visits — a line waits for none of it
   const quality = useAsync((s) => (STANDALONE ? api.quality(s) : Promise.resolve(null)), [], true, 'menu:quality');
-  const telegram = useAsync(() => api.telegram(), [], true, 'menu:telegram');
-  const listenbrainz = useAsync((s) => (STANDALONE ? api.listenbrainz(s) : Promise.resolve(null)), [], true, 'menu:listenbrainz');
+  const telegram = useAsync(api.telegram, []);
+  useWindowEvent(TELEGRAM_LINK_EVENT, () => telegram.reload(true));
   const kept = useKeptLists().tracks;
   const hiddenCount = useDislikes().length;
   const waiting = (quality.data?.rows ?? []).filter((r) => r.state === 'found').length;
   const weak = quality.data?.weak ?? 0;
-  const linked = (d: { connected: boolean } | null | undefined, name?: string | null) => (d ? (d.connected ? (name || 'подключён') : 'не подключён') : undefined);
+  const telegramLabel = telegram.data?.ready ? 'подключён' : telegram.data?.configured ? 'не подключён' : telegram.data ? 'не настроен' : undefined;
   const standalone = window.matchMedia('(display-mode: standalone)').matches;
 
   useEffect(() => {
@@ -90,7 +91,7 @@ export function MorePage() {
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-lg font-bold uppercase text-on-accent">{me.username.slice(0, 1)}</span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-semibold">{me.username}</span>
-                <span className="block truncate text-[13px] text-muted">{[me.is_admin ? 'Администратор' : 'Пользователь', me.email, me.google_email ? `Google: ${me.google_email}` : null].filter(Boolean).join(' · ')}</span>
+                <span className="block truncate text-[13px] text-muted">{[me.is_admin ? 'Администратор' : 'Пользователь', me.email].filter(Boolean).join(' · ')}{me.google_email && <> · <ServiceBadge service="google" />: {me.google_email}</>}</span>
               </span>
               <button type="button" onClick={doLogout} aria-label="Выйти из аккаунта" title="Выйти из аккаунта" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-danger hover:bg-danger/10">
                 <Icon name="logout" size={20} />
@@ -117,34 +118,20 @@ export function MorePage() {
           )}
         </div>
         <div className="space-y-5">
-          <Group title="Импорт и интеграции">
-            <Item icon="transfer" brand="yandex" to="/import?from=yandex" title="Яндекс Музыка" />
+          <Group title="Администрирование">
+            {me.is_admin && <Item icon="user" tint="bg-[#3d8ef0]" to="/admin" title="Пользователи и приглашения" />}
+            <Item icon="link" tint="bg-[#537fe2]" to="/integrations" title="Сторонние сервисы" />
+            {me.is_admin && <Item icon="lyrics" tint="bg-[#c2528b]" to="/lyrics-sources" title="Тексты и перевод" />}
+            <Item icon="send" brand="telegram" title="Telegram бот" value={telegramLabel} onClick={() => openTelegramSetup()} />
+          </Group>
+          <Group title="Импорт">
+            <Item icon="transfer" brand="yandex" to="/import?from=yandex" title="Я.Музыка" />
             <Item icon="transfer" brand="vk" to="/import?from=vk" title="ВКонтакте" />
             <Item icon="transfer" brand="spotify" to="/import?from=spotify" title="Spotify" />
-            {STANDALONE && <Item icon="wave" brand="listenbrainz" to="/listenbrainz" title="ListenBrainz" value={linked(listenbrainz.data, listenbrainz.data?.user)} />}
-            <Item icon="send" brand="telegram" title="Telegram" value={telegram.data?.connected && !telegram.data.ready ? 'не завершён' : linked(telegram.data, telegram.data?.bot_username ? `@${telegram.data.bot_username}` : null)} onClick={() => openTelegramSetup()} />
           </Group>
-          {(me.is_admin || me.public_music_url) && (
+          {me.public_music_url && (
             <Group title="Сервер">
-              {me.is_admin && <Item icon="lyrics" tint="bg-[#c2528b]" to="/lyrics-sources" title="Тексты песен" />}
-              {me.is_admin && <Item icon="user" tint="bg-[#3d8ef0]" to="/admin" title="Пользователи и приглашения" />}
-              {me.is_admin && (
-                <Item
-                  icon="wave"
-                  brand="lastfm"
-                  title="Last.fm"
-                  value={me.artist_map ? 'ключ задан' : 'ключ не задан'}
-                  onClick={() =>
-                    toast(
-                      me.artist_map
-                        ? 'Ключ Last.fm задан: работают карта исполнителей, число слушателей и «похожее» в миксах'
-                        : 'Без ключа Last.fm нет карты исполнителей, числа слушателей и «похожего» по Last.fm в миксах. Ключ бесплатный (last.fm/api/account/create): впишите его в LASTFM_API_KEY в .env и перезапустите хаб',
-                      'info',
-                    )
-                  }
-                />
-              )}
-              {me.public_music_url && <Item icon="external" tint="bg-[#ef8b3a]" href={me.public_music_url} title="Navidrome" />}
+              <Item icon="external" brand="navidrome" href={me.public_music_url} title="Navidrome" />
             </Group>
           )}
           <Group title="Это устройство">

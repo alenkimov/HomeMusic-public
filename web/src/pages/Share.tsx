@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button, Empty, PageHeader, Spinner } from '../components/ui';
-import { navigate } from '../lib/router';
+import { enc, navigate } from '../lib/router';
+import { spotifyURL } from '../lib/spotify';
 import { clearShare, readShare } from '../lib/shareStore';
 import { toast } from '../lib/ui';
 import { startChatWith } from './AssistantChat';
@@ -36,6 +37,11 @@ export function SharePage() {
       const images = payload.files.filter((f) => f.type.startsWith('image/'));
       const audio = payload.files.filter((f) => !f.type.startsWith('image/') && isAudioFile(f));
       const text = [payload.title, payload.text, payload.url].map((s) => (s ?? '').trim()).filter(Boolean).join(' ');
+      const spotify = spotifyURL(payload.url || '') || spotifyURL(text);
+      if (!images.length && !audio.length && spotify) {
+        navigate(`/open?url=${enc(spotify)}`, { replace: true });
+        return;
+      }
 
       if (audio.length) {
         queueFilesForUpload(audio);

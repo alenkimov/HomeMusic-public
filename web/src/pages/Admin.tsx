@@ -2,6 +2,7 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { AdminUserOut, InviteOut } from '../api/types';
 import { Icon } from '../components/Icon';
+import { ServiceBadge } from '../components/ServiceBadge';
 import { Button, Empty, ErrorState, Field, IconButton, PageHeader, SectionTitle, Segmented, Sheet, SkeletonRows, cx } from '../components/ui';
 import { fmtDate, fmtUsd, fmtWhen, parseTime, plural } from '../lib/format';
 import { useAsync } from '../lib/hooks';
@@ -169,7 +170,7 @@ export function lastActivity(u: AdminUserOut): string | null {
 export function UserBadges({ u }: { u: AdminUserOut }) {
   const badges: ReactNode[] = [];
   if (u.is_admin) badges.push(<Badge key="a">Админ</Badge>);
-  if (u.google_email) badges.push(<Badge key="g">Google</Badge>);
+  if (u.google_email) badges.push(<Badge key="g"><ServiceBadge service="google" /></Badge>);
   if (u.email) badges.push(<Badge key="e">почта</Badge>);
   if (!u.in_hub) badges.push(<Badge key="p">только плеер</Badge>);
   return <>{badges}</>;

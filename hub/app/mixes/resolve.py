@@ -1,9 +1,4 @@
-"""What a source's «artist — title» is in the catalog (MIXES.md 4.1), the way imports match their rows
-(`app.imports.resolve`: `source_map` remembers each source id for everyone; `match_catalog` scores the Deezer search).
-
-Only a confident Deezer match (`auto`) is taken: a mix downloads what it suggests, a wrong song costs a download.
-The library is asked first (a song the library has needs no catalog search).
-"""
+"""Identify recommendation tracks in the library or one of the Hub's catalogs."""
 
 from __future__ import annotations
 
@@ -13,14 +8,14 @@ import logging
 
 from sqlalchemy.exc import IntegrityError
 
+from app.catalog import lookup
 from app.catalog.cache import cache_get, cache_put, cache_set
 from app.catalog.models import CatalogTrack, split_ref
-from app.config import get_settings
 from app.db import session_scope
 from app.imports.resolve import Resolution, _remember, _remembered
 from app.library.owned import find_owned
-from app.matching.select import classify_scores, match_catalog
 from app.mixes.sources import Hit
+from app.providers.base import TrackQuery
 from app.services import svc
 
 log = logging.getLogger(__name__)
@@ -30,11 +25,12 @@ PARALLEL = 4
 
 
 def library_track(t) -> CatalogTrack:
-    """A library song as a catalog-like track: its Deezer record when it has one, else `nd:<song>`."""
-    if t.ref and t.ref.startswith("dz:"):
-        return CatalogTrack(ref=t.ref, source="dz", id=t.ref[3:], title=t.title,
+    """Represent a library song in a list of recommendations."""
+    if t.ref and t.ref.startswith(("dz:", "sp:", "ym:")):
+        source, id_ = split_ref(t.ref)
+        return CatalogTrack(ref=t.ref, source=source, id=id_, title=t.title,
                             artist=t.artist, artists=[t.artist], album_title=t.album, duration_s=t.duration_s,
-                            isrc=t.isrc, explicit=t.explicit)
+                            isrc=t.isrc, explicit=t.explicit, spotify_id=id_ if source == "sp" else None)
     return CatalogTrack(ref=f"nd:{t.nd_song_id}", source="nd", id=str(t.nd_song_id), title=t.title, artist=t.artist,
                         artists=[t.artist], album_title=t.album, duration_s=t.duration_s, isrc=t.isrc,
                         explicit=t.explicit)
@@ -65,28 +61,35 @@ async def catalog_track(ref: str) -> CatalogTrack | None:
     """The catalog's record of a track (a source's match remembered, else read from the catalog it is of)."""
     if (hit := await remembered_track(ref)) is not None:
         return hit
-    if split_ref(ref)[0] not in ("dz", "ym"):
+    if split_ref(ref)[0] not in ("dz", "ym", "sp"):
         return None
     try:
         t = await svc.track(ref)
     except Exception as e:
         log.info("mix: catalog track %s: %r", ref, e)
-        return None
+        from app.library.tracks import by_ref
+
+        async with session_scope() as s:
+            own = await by_ref(s, ref)
+            if not own or not own.artist or not own.title or own.title == ref:
+                return None
+            saved = own.catalog or {}
+            source, ident = split_ref(ref)
+            return CatalogTrack.model_validate({
+                **saved, "ref": ref, "source": source, "id": ident,
+                "title": own.title, "artist": own.artist, "album_title": own.album,
+                "duration_s": own.duration_s, "isrc": own.isrc, "explicit": own.explicit,
+            })
     await remember_track(t)
     return t
 
 
 async def _search(hit: Hit) -> Resolution:
-    if svc.deezer is None:
-        return Resolution("not_found")
-    found = await svc.deezer.search_tracks(hit.artist, hit.title, limit=10)
-    if not found:
-        return Resolution("not_found")
-    scored = match_catalog(hit.artist, hit.title, found, duration=hit.duration_s)
-    if classify_scores([x[1].total for x in scored], get_settings().cfg.matching) != "auto":
-        return Resolution("not_found", None, round(scored[0][1].total, 3))
-    await remember_track(scored[0][0])
-    return Resolution("exact", scored[0][0].ref, round(scored[0][1].total, 3))
+    match = await lookup.match_track(TrackQuery(artist=hit.artist, title=hit.title, duration_s=hit.duration_s))
+    if match is None or match.verdict != "auto":
+        return Resolution("not_found", None, round(match.score, 3) if match else None)
+    await remember_track(match.track)
+    return Resolution("exact", match.track.ref, round(match.score, 3))
 
 
 async def resolve_hit(source: str, hit: Hit) -> CatalogTrack | None:
@@ -95,7 +98,7 @@ async def resolve_hit(source: str, hit: Hit) -> CatalogTrack | None:
         if lib is not None and lib.nd_song_id:
             return library_track(lib)
         known = await _remembered(s, source, "track", external_id(hit))
-    if known is None:
+    if known is None or (known.ref and not lookup.source_available(known.ref)):
         r = await _search(hit)
         try:
             async with session_scope() as s:

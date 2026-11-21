@@ -1,9 +1,12 @@
+import { TrackTitle } from '../components/TrackTitle';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSession } from '../lib/session';
 import { api, libraryCoverUrl } from '../api/client';
 import type { FileRowOut, ReleaseType, TrashedOut } from '../api/types';
 import { TrackRow, TrackTableHeader } from '../components/catalog';
+import { TrackTable } from '../components/TrackTable';
 import { Icon, type IconName } from '../components/Icon';
+import { ServiceIcon } from '../components/ServiceBadge';
 import { ListBar } from '../components/ListBar';
 import { useListSearch } from '../components/ListSearch';
 import { Button, Cover, Empty, ErrorState, IconButton, SkeletonRows, cx } from '../components/ui';
@@ -236,7 +239,7 @@ export function FilesPage({ trash = false }: { trash?: boolean }) {
       {only === 'all' && !search.found && <SplitAlbumsCard onJoined={() => res.reload(true)} />}
       {offerImport && (
         <Link to="/import" className="card mx-4 mb-4 flex items-center gap-3 p-3 hover:bg-hover lg:mx-6">
-          <Icon name="transfer" size={22} className="shrink-0 text-accent" />
+          <ServiceIcon service="yandex" size={22} />
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-semibold">Перенести музыку из Яндекс Музыки</span>
             <span className="block text-xs text-muted">♥, плейлисты, любимые альбомы и исполнители</span>
@@ -284,41 +287,43 @@ export function FilesPage({ trash = false }: { trash?: boolean }) {
       ) : shown.length === 0 ? (
         <Empty icon="search" title="Ничего не найдено" text={search.found ? 'Попробуйте другой запрос.' : 'Под эту метку ничего не подходит.'} />
       ) : (
-        <ul className="pb-6">
-          <li>
-            <TrackTableHeader
-              numbered
-              album
-              added
-              sort={sort === 'new' || sort === 'old' ? sort : null}
-              onSort={(next) => setSort(next === 'old' ? 'old' : 'new')}
-              heads={{
-                title: {
-                  label: sort === 'artist' || sort === 'artistZ' ? 'Исполнитель' : 'Название',
-                  mark: sort === 'title' || sort === 'artist' ? '▲' : sort === 'titleZ' || sort === 'artistZ' ? '▼' : null,
-                  title: 'Сортировать: по названию, потом по исполнителю',
-                  onClick: () => setSort(after(sort, ['title', 'titleZ', 'artist', 'artistZ'])),
-                },
-                album: { mark: sort === 'album' ? '▲' : sort === 'albumZ' ? '▼' : null, title: 'Сортировать по альбому', onClick: () => setSort(after(sort, ['album', 'albumZ'])) },
-                file: { mark: sort === 'quality' ? '▲' : sort === 'qualityBest' ? '▼' : null, title: 'Сортировать по качеству файла: сначала худшие, потом лучшие', onClick: () => setSort(after(sort, ['quality', 'qualityBest'])) },
-              }}
-            />
-          </li>
-          {shown.map((t, i) => {
-            const day = byDays ? dayOf(t.added_at) : null;
-            const head = day !== null && (i === 0 || dayOf(shown[i - 1].added_at) !== day);
-            return (
-              <li key={`${t.ref}:${t.library_track_id}`}>
-                {head && (
-                  <h2 className="px-4 pb-1 pt-4 text-xs font-semibold text-muted lg:px-6">
-                    {day} <span className="font-normal text-dim">· {tracksWord(days.get(day as string) ?? 0)}</span>
-                  </h2>
-                )}
-                <TrackRow track={t} queue={shown} link={false} showAlbum showAdded index={i + 1} />
-              </li>
-            );
-          })}
-        </ul>
+        <TrackTable tracks={shown} numbered album added>
+          <ul className="pb-6">
+            <li>
+              <TrackTableHeader
+                numbered
+                album
+                added
+                sort={sort === 'new' || sort === 'old' ? sort : null}
+                onSort={(next) => setSort(next === 'old' ? 'old' : 'new')}
+                heads={{
+                  title: {
+                    label: sort === 'artist' || sort === 'artistZ' ? 'Исполнитель' : 'Название',
+                    mark: sort === 'title' || sort === 'artist' ? '▲' : sort === 'titleZ' || sort === 'artistZ' ? '▼' : null,
+                    title: 'Сортировать: по названию, потом по исполнителю',
+                    onClick: () => setSort(after(sort, ['title', 'titleZ', 'artist', 'artistZ'])),
+                  },
+                  album: { mark: sort === 'album' ? '▲' : sort === 'albumZ' ? '▼' : null, title: 'Сортировать по альбому', onClick: () => setSort(after(sort, ['album', 'albumZ'])) },
+                  file: { mark: sort === 'quality' ? '▲' : sort === 'qualityBest' ? '▼' : null, title: 'Сортировать по качеству файла: сначала худшие, потом лучшие', onClick: () => setSort(after(sort, ['quality', 'qualityBest'])) },
+                }}
+              />
+            </li>
+            {shown.map((t, i) => {
+              const day = byDays ? dayOf(t.added_at) : null;
+              const head = day !== null && (i === 0 || dayOf(shown[i - 1].added_at) !== day);
+              return (
+                <li key={`${t.ref}:${t.library_track_id}`}>
+                  {head && (
+                    <h2 className="px-4 pb-1 pt-4 text-xs font-semibold text-muted lg:px-6">
+                      {day} <span className="font-normal text-dim">· {tracksWord(days.get(day as string) ?? 0)}</span>
+                    </h2>
+                  )}
+                  <TrackRow track={t} queue={shown} link={false} showAlbum showAdded index={i + 1} />
+                </li>
+              );
+            })}
+          </ul>
+        </TrackTable>
       )}
 
     </div>
@@ -376,7 +381,7 @@ function TrashList({ items, searching, onBack }: { items: TrashedOut[]; searchin
             <li key={t.id} className="mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 hover:bg-fg/5" style={grid}>
               {mark}
               <span className="min-w-0">
-                <span className="block truncate text-[15px]">{t.title}</span>
+                <span className="block truncate text-[15px]"><TrackTitle title={t.title} label={t.version_label ?? null} /></span>
                 <span className="block truncate text-[13px] text-muted">{[t.artist, was(t)].filter(Boolean).join(' · ')}</span>
               </span>
               <span className="truncate text-sm text-muted">{t.album || '—'}</span>
@@ -388,7 +393,7 @@ function TrashList({ items, searching, onBack }: { items: TrashedOut[]; searchin
             <li key={t.id} className="flex min-h-16 items-center gap-3 pl-4 pr-2">
               {mark}
               <span className="min-w-0 flex-1 py-2">
-                <span className="block truncate text-[15px]">{t.title}</span>
+                <span className="block truncate text-[15px]"><TrackTitle title={t.title} label={t.version_label ?? null} /></span>
                 <span className="block truncate text-[13px] text-muted">{t.artist}</span>
                 <span className={cx('block truncate text-xs', soon ? 'text-danger' : 'text-dim')}>{['осталось ' + left(t), was(t)].filter(Boolean).join(' · ')}</span>
               </span>

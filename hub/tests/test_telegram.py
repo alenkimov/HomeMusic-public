@@ -1,19 +1,23 @@
-"""«Отправить в Telegram»: connecting the user's own bot and sending a library track to it. The bot is a fake in
+"""«Отправить в Telegram»: pairing accounts and sending tracks through the shared bot. The bot is a fake in
 place of aiogram's (`telegram.make_bot`): it answers as Telegram would and keeps what was sent."""
 
 from __future__ import annotations
 
 import uuid
+from itertools import count
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 import respx
-from aiogram.exceptions import TelegramForbiddenError, TelegramUnauthorizedError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramUnauthorizedError
 
 from tests.support import app_client, filed_track
 
 TOKEN = "123456789:made-up-key-of-no-bot"  # made up: the shape of a key, no bot behind it
+BOT_ID = 123456789
+UPDATES = count(1)
 
 
 class FakeBot:
@@ -32,11 +36,11 @@ class FakeBot:
 
     async def get_me(self):
         self._check()
-        return SimpleNamespace(id=1, username="my_music_bot", first_name="Music")
+        return SimpleNamespace(id=BOT_ID, username="my_music_bot", first_name="Music")
 
     async def get_updates(self, **kw):
         self._check()
-        return self.state.get("updates", [])
+        return [item for item in self.state.get("updates", []) if item.update_id >= (kw.get("offset") or 0)]
 
     async def send_audio(self, **kw):
         self._check()
@@ -48,31 +52,50 @@ class FakeBot:
     async def send_message(self, **kw):
         self.state.setdefault("messages", []).append(kw)
 
-    async def get_chat(self, chat_id):
-        return self.state["chats"][chat_id]  # a chat the test did not describe: no picture, the name stays
+    async def get_chat(self, chat_id, **kw):
+        if chat_id > 0:
+            self.state.setdefault("profile_checks", []).append(chat_id)
+            return SimpleNamespace(username=self.state.get("usernames", {}).get(chat_id))
+        return self.state.get("chats", {}).get(chat_id, SimpleNamespace(title=None, photo=None))
+
+    async def get_chat_member(self, chat_id, user_id):
+        who = self.state.get("members", {}).get((chat_id, user_id))
+        if who is None:
+            raise TelegramBadRequest(method=None, message="Member not found")  # type: ignore[arg-type]
+        return who
 
     async def download(self, file_id, destination):
         destination.write(f"jpeg of {file_id}".encode())
 
 
-def update(chat_id: int, kind: str, **chat):
-    return SimpleNamespace(message=SimpleNamespace(chat=SimpleNamespace(id=chat_id, type=kind, **{
-        "first_name": None, "last_name": None, "username": None, **chat})))
+def message(chat_id: int, kind: str = "private", *, text: str = "", sender: int | None = None, **chat):
+    return SimpleNamespace(update_id=next(UPDATES), my_chat_member=None, message=SimpleNamespace(
+        chat=SimpleNamespace(id=chat_id, type=kind, **{"first_name": None, "last_name": None, "username": None, **chat}),
+        from_user=SimpleNamespace(id=sender if sender is not None else chat_id, is_bot=False),
+        text=text, migrate_to_chat_id=None))
 
 
-def member(chat_id: int, kind: str, status: str, by: int, title: str = "Друзья"):
-    """The bot's place in a chat changed: `by` did it."""
+def membership(status: str, **rights):
+    return SimpleNamespace(status=status, **rights)
+
+
+def member(chat_id: int, kind: str, status: str, *, title: str = "Друзья", **rights):
     chat = SimpleNamespace(id=chat_id, type=kind, title=title, first_name=None, last_name=None, username=None)
-    return SimpleNamespace(message=None, my_chat_member=SimpleNamespace(
-        chat=chat, new_chat_member=SimpleNamespace(status=status), from_user=SimpleNamespace(id=by)))
+    return SimpleNamespace(update_id=next(UPDATES), message=None, my_chat_member=SimpleNamespace(
+        chat=chat, new_chat_member=membership(status, **rights)))
 
 
 @pytest.fixture
 async def env(hub_env, monkeypatch):
-    from app import telegram
+    from app import telegram, telegram_chats
     from app.main import create_app
+    from app.config import get_settings
 
     state: dict = {}
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    monkeypatch.setattr(telegram, "_shared", None)
+    monkeypatch.setattr(telegram_chats, "_offsets", {})
     monkeypatch.setattr(telegram, "make_bot", lambda token, wait_s=30: FakeBot(token, state))
     app = create_app()
     async with app.router.lifespan_context(app):
@@ -80,7 +103,7 @@ async def env(hub_env, monkeypatch):
             mock.route(host="navidrome.test").mock(return_value=httpx.Response(200, json={"subsonic-response": {
                 "status": "ok", "version": "1.16.1", "user": {"adminRole": True}}}))
             async with app_client(app) as client:
-                yield {"client": client, "state": state, "music": hub_env}
+                yield {"client": client, "state": state, "music": hub_env, "app": app}
 
 
 async def add_track(music, nd_song_id: str, size: int = 2000) -> None:
@@ -95,33 +118,41 @@ async def add_track(music, nd_song_id: str, size: int = 2000) -> None:
                     title="Группа крови", duration_s=245, fingerprint=fingerprint("Кино", "Группа крови")))
 
 
-async def test_connect_bind_send_and_disconnect(env):
+async def code_for(c: httpx.AsyncClient) -> str:
+    r = await c.post("/api/telegram/link")
+    assert r.status_code == 200, r.text
+    assert r.headers["cache-control"] == "no-store" and TOKEN not in r.text
+    url = urlsplit(r.json()["start_url"])
+    assert url.hostname == "t.me" and url.path == "/my_music_bot"
+    return parse_qs(url.query)["start"][0]
+
+
+async def pair(c: httpx.AsyncClient, state: dict, chat_id: int, **name) -> None:
+    code = await code_for(c)
+    state.setdefault("usernames", {})[chat_id] = name.get("username")
+    state.setdefault("updates", []).append(message(chat_id, text=f"/start {code}", **name))
+    assert (await c.post("/api/telegram/check")).json()["ready"]
+
+
+async def test_link_send_and_disconnect(env):
     c, state = env["client"], env["state"]
     await add_track(env["music"], "nd1")
-    assert (await c.get("/api/telegram")).json() == {"connected": False, "ready": False, "bot_username": None, "chat_name": None, "with_lyrics": False}
-    # nothing is sent before a bot is connected
+    assert (await c.get("/api/telegram")).json() == {
+        "configured": True, "ready": False, "bot_username": "my_music_bot", "chat_name": None, "with_lyrics": False}
     assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1"})).status_code == 409
 
-    r = await c.post("/api/telegram/connect", json={"token": "not a token"})
-    assert r.status_code == 400 and "BotFather" in r.json()["detail"]
-
-    r = await c.post("/api/telegram/connect", json={"token": f"  {TOKEN}\n"})
-    assert r.status_code == 200, r.text
-    assert r.json() == {"connected": True, "ready": False, "bot_username": "my_music_bot", "chat_name": None, "with_lyrics": False}
-    assert TOKEN not in r.text  # the key never comes back
-
-    # the user pressed Start: the last private chat is theirs (a group the bot sits in is not)
-    state["updates"] = [update(42, "private", first_name="Алён", username="alen"), update(-100, "group")]
-    r = await c.post("/api/telegram/check")
-    assert r.json() == {"connected": True, "ready": True, "bot_username": "my_music_bot", "chat_name": "Алён @alen", "with_lyrics": False}
+    state["updates"] = [message(7, text="/start")]
+    assert not (await c.post("/api/telegram/check")).json()["ready"]
+    await pair(c, state, 42, first_name="Алён", username="alen")
+    assert (await c.get("/api/telegram")).json()["chat_name"] == "Алён @alen"
 
     r = await c.post("/api/telegram/send", json={"nd_song_id": "nd1"})
     assert r.status_code == 200, r.text
-    assert r.json() == {"ok": True, "title": "Группа крови", "light": False, "lyrics": False}
+    assert r.json() == {"ok": True, "title": "Группа крови", "version_label": None, "light": False, "lyrics": False}
     [sent] = state["sent"]
     assert (sent["chat_id"], sent["title"], sent["performer"], sent["duration"]) == (42, "Группа крови", "Кино", 245)
     assert sent["audio"].filename == "Кино - Группа крови.mp3" and sent["thumbnail"] is None
-    assert sent["caption"] is None and state["closed"] >= 4  # no text asked for; every call closed its bot's session
+    assert sent["caption"] == "От @alen" and state["closed"] >= 4
 
     # with the text: a short one is the audio's caption, collapsed; «by default» is the user's setting
     from sqlalchemy import select
@@ -132,11 +163,17 @@ async def test_connect_bind_send_and_disconnect(env):
     async with session_scope() as s:
         track = (await s.execute(select(Track))).scalar_one()
         s.add(Lyrics(track_id=track.id, kind="synced", source="lrclib", lines_json=[{"t": 0, "text": "Тёплое место"}, {"t": 9, "text": "<но>"}]))
-    r = await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "with_lyrics": True})
+    checks = len(state["profile_checks"])
+    r = await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "with_lyrics": True, "anonymous": True})
     assert r.json()["lyrics"] is True
     assert state["sent"][-1]["caption"] == "<blockquote expandable>Тёплое место\n&lt;но&gt;</blockquote>"
+    assert len(state["profile_checks"]) == checks
     assert state["sent"][-1]["parse_mode"] == "HTML"
     assert state["sent"][-1]["reply_markup"] is None
+    state["usernames"][42] = "alen_new"
+    r = await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "with_lyrics": True})
+    assert r.status_code == 200, r.text
+    assert state["sent"][-1]["caption"] == "От @alen_new\n\n<blockquote expandable>Тёплое место\n&lt;но&gt;</blockquote>"
     # the track's «HomeMusic» link as a button under the audio, when asked for
     assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "with_link": True})).status_code == 200
     [[button]] = state["sent"][-1]["reply_markup"].inline_keyboard
@@ -151,44 +188,83 @@ async def test_connect_bind_send_and_disconnect(env):
     r = await c.post("/api/telegram/send", json={"nd_song_id": "nd1"})
     assert r.status_code == 502 and "Start" in r.json()["detail"]
 
-    assert (await c.delete("/api/telegram")).json()["connected"] is False
-    assert (await c.post("/api/telegram/check")).status_code == 409
+    assert (await c.delete("/api/telegram")).json()["ready"] is False
+    assert (await c.get("/api/telegram")).json()["configured"] is True
+    assert (await c.get("/api/telegram/chats")).json() == []
 
 
-async def test_a_refused_key_is_not_saved(env):
+async def test_shared_bot_can_be_disabled(env, monkeypatch):
+    from app.config import get_settings
+
     c = env["client"]
-    other = "987654321:another-made-up-key-of-no-bot"  # well-formed, but Telegram does not know it
-    r = await c.post("/api/telegram/connect", json={"token": other})
-    assert r.status_code == 400 and other not in r.text and "не принял" in r.json()["detail"]
-    assert (await c.get("/api/telegram")).json()["connected"] is False
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
+    get_settings.cache_clear()
+    assert (await c.get("/api/telegram")).json()["configured"] is False
+    assert (await c.post("/api/telegram/link")).status_code == 409
 
 
-async def test_chats_the_owner_added_the_bot_to(env):
+async def test_link_is_private_expiring_and_single_use(env):
+    c, state = env["client"], env["state"]
+    from datetime import timedelta
+    from sqlalchemy import update
+    from app.db import session_scope
+    from app.models import TelegramAccount, utcnow
+
+    code = await code_for(c)
+    state["updates"] = [message(-100, "group", sender=42, text=f"/start {code}")]
+    assert not (await c.post("/api/telegram/check")).json()["ready"]
+    async with session_scope() as s:
+        await s.execute(update(TelegramAccount).values(link_expires_at=utcnow() - timedelta(seconds=1)))
+    state["updates"].append(message(42, text=f"/start {code}"))
+    assert not (await c.post("/api/telegram/check")).json()["ready"]
+    code = await code_for(c)
+    state["updates"].append(message(42, text=f"/start {code}"))
+    assert (await c.post("/api/telegram/check")).json()["ready"]
+    assert (await c.post("/api/telegram/link")).json()["start_url"] is None
+    await c.delete("/api/telegram")
+    state["updates"].append(message(42, text=f"/start {code}"))
+    assert not (await c.post("/api/telegram/check")).json()["ready"]
+
+
+async def test_listing_sending_and_photos_require_current_membership(env):
     c, state = env["client"], env["state"]
     await add_track(env["music"], "nd1")
-    await c.post("/api/telegram/connect", json={"token": TOKEN})
     assert (await c.get("/api/telegram/chats")).json() == []
-    me = update(42, "private", first_name="Алён", username="alen")
+    await pair(c, state, 42, first_name="Алён", username="alen")
     state["chats"] = {-100: SimpleNamespace(id=-100, title="Друзья и музыка", first_name=None, last_name=None, username=None,
                                             photo=SimpleNamespace(small_file_id="f1", small_file_unique_id="u1"))}
-    # the owner's group and channel are in; a stranger's group is not, nor a channel the bot cannot post to
-    state["updates"] = [me, member(-100, "supergroup", "member", by=42), member(-200, "group", "member", by=7),
-                        member(-300, "channel", "member", by=42), member(-400, "channel", "administrator", by=42, title="Канал")]
-    got = (await c.get("/api/telegram/chats")).json()
+    state["updates"].extend([member(-100, "supergroup", "administrator"), member(-200, "group", "member"),
+                             member(-400, "channel", "administrator", title="Канал", can_post_messages=True)])
+    state["members"] = {
+        (-100, BOT_ID): membership("administrator"), (-100, 42): membership("member"),
+        (-400, BOT_ID): membership("administrator", can_post_messages=True), (-400, 42): membership("member"),
+    }
+    got = (await c.post("/api/telegram/chats/refresh")).json()
     assert [(x["kind"], x["title"], x["photo"]) for x in got] == [
-        ("private", "Алён @alen", None), ("supergroup", "Друзья и музыка", "u1"), ("channel", "Канал", None)]
-    r = await c.get(f"/api/telegram/chats/{got[1]['id']}/photo")
+        ("private", "Алён @alen", None), ("supergroup", "Друзья и музыка", "u1")]
+    group, photo = got[1]["id"], f"/api/telegram/chats/{got[1]['id']}/photo"
+    data = {"nd_song_id": "nd1", "chat": group}
+    r = await c.get(photo)
     assert r.content == b"jpeg of f1" and r.headers["content-type"] == "image/jpeg"
-    assert (await c.get(f"/api/telegram/chats/{got[0]['id']}/photo")).status_code == 404
+    assert (await c.post("/api/telegram/send", json=data)).status_code == 200
+    assert (state["sent"][-1]["chat_id"], state["sent"][-1]["caption"]) == (-100, "От @alen")
+    assert (await c.post("/api/telegram/send", json={**data, "anonymous": True})).status_code == 200
+    assert (state["sent"][-1]["chat_id"], state["sent"][-1]["caption"]) == (-100, None)
+    async with app_client(env["app"], login=("other", "password")) as other:
+        await pair(other, state, 9)
+        assert [x["kind"] for x in (await other.get("/api/telegram/chats")).json()] == ["private"]
+        assert (await other.get(photo)).status_code == 404
+        assert (await other.post("/api/telegram/send", json=data)).status_code == 404
+        state["members"][-100, 9] = membership("member")
+        assert (await other.post("/api/telegram/send", json=data)).status_code == 200
+        assert (state["sent"][-1]["chat_id"], state["sent"][-1]["caption"]) == (-100, None)
 
-    assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "chat": got[1]["id"]})).status_code == 200
-    assert state["sent"][-1]["chat_id"] == -100
-    assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1"})).status_code == 200
-    assert state["sent"][-1]["chat_id"] == 42  # no chat named: the private one
-    assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "chat": 99999})).status_code == 404
-
-    # removed from the group: it leaves the list
-    state["updates"].append(member(-100, "supergroup", "left", by=42))
-    assert [x["title"] for x in (await c.post("/api/telegram/chats/refresh")).json()] == ["Алён @alen", "Канал"]
-    await c.delete("/api/telegram")
-    assert (await c.get("/api/telegram/chats")).json() == []
+    # A cached tile and its picture URL stop working as soon as the user leaves.
+    state["members"][-100, 42] = membership("left")
+    assert (await c.post("/api/telegram/send", json=data)).status_code == 404
+    assert (await c.get(photo)).status_code == 404
+    state["members"][-100, 42] = membership("member")
+    state["members"][-100, BOT_ID] = membership("member")
+    assert (await c.post("/api/telegram/send", json=data)).status_code == 404
+    state["members"][-400, 42] = membership("administrator", can_post_messages=True)
+    assert [x["title"] for x in (await c.get("/api/telegram/chats")).json()] == ["Алён @alen", "Канал"]

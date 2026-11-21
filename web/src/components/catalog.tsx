@@ -1,16 +1,19 @@
+import { TrackTitle } from './TrackTitle';
+import { ImportReviewButton } from './ImportReview';
+import { titleWithVersion, useVersionLabel } from '../lib/versionLabels';
 import { plural } from '../lib/format';
-import { openVersions } from '../lib/versions';
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { useOfHiddenArtist } from '../lib/dislikes';
 import { KeptMark, useUnreachable } from './Offline';
 import { FileInfo } from './FileInfo';
+import { filePickerTarget, needsTrackFile, openFindFile } from '../lib/findFile';
 import type { AlbumOut, CatalogArtist, TrackOut } from '../api/types';
-import { fmtAdded, fmtDuration, fmtNum, parseTime, recordTypeLabel, yearOf } from '../lib/format';
+import { fmtAdded, fmtCompactCount, fmtDuration, fmtNum, parseTime, recordTypeLabel, yearOf } from '../lib/format';
 import { useDesktop } from '../lib/desktop';
 import { addToQueue, downloadRef, listen, listenAll, shuffled, touchTrack, useListen, watchOnScreen, type ListenTrack } from '../lib/listen';
 import { canPlay, canPlayAll, playSongs, playTracks } from '../lib/player';
 import { STANDALONE } from '../lib/embedded';
-import { Link, enc, navigate } from '../lib/router';
+import { Link, albumPath, artistPath, enc, navigate } from '../lib/router';
 import { beginDragAction, dragActionOver, useDragMark } from '../lib/dragAction';
 import { beginDragSelect, dragSelectMoved, dragSelectOver, selectRange, showList, toggleSelected, useSelected, useSelectionCount, type SelTrack } from '../lib/selection';
 import { useInPlaylists } from '../lib/inPlaylists';
@@ -18,7 +21,11 @@ import { openTagsSheet, tagKey } from '../lib/tags';
 import { useLiked } from '../lib/stars';
 import { usePlayCounts } from '../lib/stats';
 import { PlaysCell } from './PlaysCell';
+import { GenreCell } from './GenreSources';
+import { ServiceIcon } from './ServiceBadge';
+import { AlbumSourceMarks, CatalogSourceMarks } from './CatalogSourceMarks';
 import { TRACK_COLUMN_LABELS, setTrackColumn, trackGrid, useTrackColumns, type TrackColumns } from '../lib/trackColumns';
+import { audienceKey } from '../lib/trackAudience';
 import { toast } from '../lib/ui';
 import { Icon } from './Icon';
 import { openShare } from '../lib/shareTrack';
@@ -27,6 +34,7 @@ import { QueueButton } from './QueueButton';
 import { SwipeRow } from './SwipeRow';
 import { SaveButton, TrackPlaylists } from './PlaylistsButton';
 import { TrackMenuButton, type MenuExtra, type MenuTrack } from './TrackMenu';
+import { useTrackTable } from './TrackTable';
 import { Checkbox, Cover, ExplicitBadge, IconButton, OwnedBadge, PlayingBars, Spinner, cx } from './ui';
 
 export function TrackStatus({
@@ -62,13 +70,14 @@ export function TrackStatus({
 }
 
 /** What the page player needs to know about a catalog track. */
-export function listenTrack(t: TrackOut & { nd_artist_id?: string | null; nd_artist_ids?: (string | null)[] }): ListenTrack {
+export function listenTrack(t: TrackOut & { nd_artist_id?: string | null; nd_artist_ids?: (string | null)[]; page_url?: string | null }): ListenTrack {
   // every credited artist with the page it opens, as a track's row has them: the catalog's, else the library's
   const credited = t.artists?.length ? t.artists : [t.artist];
   const artists = credited.map((name, i) => {
     const ref = t.artist_refs?.[i] ?? (name === t.artist ? t.artist_ref : null);
     const nd = t.nd_artist_ids?.[i] ?? (credited.length === 1 ? t.nd_artist_id : null);
-    return { name, ...(ref ? { ref } : {}), ...(nd ? { nd } : {}) };
+    const id = t.hub_artist_ids?.[i] ?? (name === t.artist ? t.hub_artist_id : null);
+    return { name, ...(ref ? { ref } : {}), ...(nd ? { nd } : {}), ...(id ? { id } : {}) };
   });
   return {
     ref: t.ref,
@@ -78,12 +87,16 @@ export function listenTrack(t: TrackOut & { nd_artist_id?: string | null; nd_art
     artist: t.artists?.length ? t.artists.join(', ') : t.artist,
     cover_url: t.cover_url,
     cover_small_url: t.cover_small_url,
+    page_url: t.page_url,
     album_ref: t.album_ref,
+    release_id: t.release_id,
     artist_ref: t.artist_ref,
+    hub_artist_id: t.hub_artist_id,
     artists,
     album: t.album_title ?? undefined, isrc: t.isrc ?? undefined,
     year: t.release_date ? Number(t.release_date.slice(0, 4)) || undefined : undefined,
     duration_s: t.duration_s,
+    spotify_plays: t.spotify_plays,
   };
 }
 
@@ -133,10 +146,14 @@ export function TrackRow({
   onPlay,
   queue,
   menuExtra,
+  note,
+  primaryAction,
+  onFindFile,
   index,
+  foundIn,
   releaseFeed = false,
 }: {
-  track: TrackOut & { nd_album_id?: string | null; nd_artist_id?: string | null; nd_artist_ids?: (string | null)[] };
+  track: TrackOut & { nd_album_id?: string | null; nd_artist_id?: string | null; nd_artist_ids?: (string | null)[]; page_url?: string | null };
   number?: number;
   showCover?: boolean;
   showAlbum?: boolean;
@@ -155,11 +172,15 @@ export function TrackRow({
   queue?: readonly TrackOut[];
   /** More actions of the row's ⋯ menu (a playlist's «Убрать из плейлиста»). */
   menuExtra?: MenuExtra[];
+  note?: ReactNode;
+  primaryAction?: ReactNode;
+  onFindFile?: () => void | Promise<void>;
+  foundIn?: readonly string[];
+  /** Compact rows with wrapped titles and duration inside the release feed. */
+  releaseFeed?: boolean;
   /** The row's place in its list, for the «#» column of the table on a computer (next to the cover; `number` is
    * drawn instead of the cover everywhere). */
   index?: number;
-  /** Compact rows with wrapped titles and duration inside the release feed. */
-  releaseFeed?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const dl = useListen((s) => s.downloads.get(track.ref));
@@ -168,14 +189,43 @@ export function TrackRow({
   const waiting = phase === 'resolving' || phase === 'loading';
   const playing = phase === 'playing' || waiting;
   const rowRef = useRef<HTMLDivElement>(null);
+  const desktop = useDesktop();
+  const table = useTrackTable();
+  const unknown = !!track.unknown;
+  const needsFile = needsTrackFile(track);
+  const grey = needsFile && '[&_img]:opacity-40 [&_img]:grayscale';
+  const titleColor = needsFile ? 'text-dim' : current ? 'text-accent' : 'text-fg';
+  const pickerTarget = filePickerTarget(track);
+  const findFile = !track.owned && ((unknown && onFindFile) || pickerTarget) ? async () => {
+    if (busy) return;
+    if (!unknown || !onFindFile) {
+      if (pickerTarget) openFindFile(pickerTarget);
+      return;
+    }
+    setBusy(true);
+    try {
+      await onFindFile();
+    } finally {
+      setBusy(false);
+    }
+  } : undefined;
+  const searchOnCover = !!findFile && (needsFile || phase === 'error');
   // among an artist's most listened: how many listened to the track on Last.fm, after who it is by
   const heard = track.lastfm_listeners ? (
     <span className="shrink-0 whitespace-nowrap tabular-nums text-dim" title="Слушателей на Last.fm">
       · {fmtNum(track.lastfm_listeners)} {plural(track.lastfm_listeners, ['слушатель', 'слушателя', 'слушателей'])}
     </span>
   ) : null;
+  const spotify = track.spotify_plays != null ? (
+    <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap tabular-nums text-dim"
+      title={`${fmtNum(track.spotify_plays)} прослушиваний в Spotify`}
+      aria-label={`${fmtNum(track.spotify_plays)} прослушиваний в Spotify`}>
+      <ServiceIcon service="spotify" size={13} />
+      {fmtNum(track.spotify_plays)}
+    </span>
+  ) : null;
   // on screen: the Hub picks the file in the background, so a tap starts at once
-  useEffect(() => (rowRef.current && !track.owned && !track.unknown ? watchOnScreen(rowRef.current, track.ref) : undefined), [track.ref, track.owned, track.unknown]);
+  useEffect(() => (rowRef.current && !track.owned && !needsFile ? watchOnScreen(rowRef.current, track.ref) : undefined), [track.ref, track.owned, needsFile]);
   const download = async () => {
     setBusy(true);
     await downloadRef(track.ref);
@@ -189,7 +239,46 @@ export function TrackRow({
   // owned: the app's player; in a browser there is none, so the page plays the library file
   const play = all ? listenHere : songId ? (onPlay ?? (() => playSongs([songId]))) : track.owned && !canPlay() ? listenHere : undefined;
   const rowPlays = STANDALONE && (!track.owned || (!(link && track.album_ref) && !!play));
-  const playLabel = playing ? `Пауза «${track.title}»` : `Слушать «${track.title}»`;
+  const label = useVersionLabel(track);
+  const displayTitle = titleWithVersion(track.title, track, label);
+  const playLabel = playing ? `Пауза «${displayTitle}»` : `Слушать «${displayTitle}»`;
+  const findLabel = `Найти файл: «${displayTitle}»`;
+  const review = !needsFile && track.import_review ? (
+    <ImportReviewButton review={track.import_review} track={track} playing={playing} onPlay={listenHere} />
+  ) : null;
+  const trackName = <TrackTitle title={releaseFeed ? <span className="line-clamp-2 whitespace-normal wrap-anywhere">{track.title}</span> : track.title} label={label} />;
+  const sourceMarks = foundIn?.length ? <CatalogSourceMarks services={foundIn} /> : null;
+  const action = needsFile || searchOnCover ? undefined : !track.owned ? listenHere : play;
+  const toAlbum = link && track.owned && (track.album_ref || track.release_id)
+    ? albumPath({ ref: track.album_ref ?? '', release_id: track.release_id }) : null;
+  const openTrack = toAlbum ? () => navigate(toAlbum) : action;
+  const tap = (className: string, children: ReactNode, linkToAlbum = true) =>
+    toAlbum && linkToAlbum ? (
+      <Link to={toAlbum} onClick={(e) => e.stopPropagation()} className={className}>{children}</Link>
+    ) : action ? (
+      <button type="button" onClick={(e) => { e.stopPropagation(); action(); }} onPointerDown={track.owned ? undefined : () => touchTrack(track.ref)} className={cx(className, 'cursor-pointer')} aria-label={playLabel}>
+        {children}
+      </button>
+    ) : (
+      <div className={className}>{children}</div>
+    );
+  const missingCover = (size: number) => (
+    <button
+      type="button"
+      data-row-actions
+      aria-label={findLabel}
+      title={findLabel}
+      aria-busy={busy || undefined}
+      disabled={busy}
+      onClick={(e) => { e.stopPropagation(); void findFile?.(); }}
+      className="relative shrink-0 cursor-pointer rounded-md"
+    >
+      <Cover src={track.cover_small_url || track.cover_url} size={size} alt="" />
+      <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white transition-opacity', desktop && !busy && 'opacity-0 group-hover/track:opacity-100 group-focus-within/track:opacity-100')}>
+        {busy ? <Spinner size={18} /> : <Icon name="search" size={18} />}
+      </span>
+    </button>
+  );
   const sub = track.artists?.length ? track.artists.join(', ') : track.artist; // the album is a column of its own, or nowhere
   const body = (
     <>
@@ -199,11 +288,13 @@ export function TrackRow({
       {number !== undefined || showCover ? (
         <span className={cx('relative flex h-12 shrink-0 items-center justify-center', showCover ? 'w-12' : 'w-7')}>
           {showCover ? (
-            <Cover src={track.cover_small_url || track.cover_url} size={48} alt="" />
+            searchOnCover ? missingCover(48) :
+              (review || sourceMarks) ? tap('shrink-0', <Cover src={track.cover_small_url || track.cover_url} size={48} alt="" />) :
+                <Cover src={track.cover_small_url || track.cover_url} size={48} alt="" />
           ) : (
             <span className={cx('text-sm tabular-nums text-dim', rowPlays && 'group-hover/track:opacity-0 group-focus-within/track:opacity-0', rowPlays && current && 'opacity-0')}>{number}</span>
           )}
-          {rowPlays && (
+          {rowPlays && !needsFile && !searchOnCover && (
             <span aria-hidden="true" className={cx(
               'pointer-events-none absolute inset-0 flex items-center justify-center rounded-md transition-opacity group-hover/track:opacity-100 group-focus-within/track:opacity-100',
               showCover ? 'bg-black/60 text-white' : 'text-fg',
@@ -215,25 +306,22 @@ export function TrackRow({
         </span>
       ) : null}
       <div className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className={cx('truncate text-[15px]', current ? 'text-accent' : 'text-fg')}>{track.title}</span>
-          {(track.versions ?? 0) > 1 && (
-            // the song has other recordings here: the mark opens them
-            <button type="button" title="Другие версии этой песни" onClick={(e) => { e.preventDefault(); e.stopPropagation(); openVersions({ title: track.title, library_track_id: track.library_track_id, ref: track.ref, nd_song_id: track.nd_song_id }); }} className="shrink-0 rounded-full bg-info/20 px-1.5 text-[11px] leading-[1.35] text-info hover:bg-info/30">
-              {track.versions} {plural(track.versions ?? 0, ['версия', 'версии', 'версий'])}
-            </button>
-          )}
+        <span className="flex min-w-0 items-center gap-1">
+          {review}
+          {(review || sourceMarks) ? tap(cx('min-w-0 truncate text-left text-[15px]', titleColor), trackName) :
+            <span className={cx('min-w-0 truncate text-[15px]', titleColor)}>{trackName}</span>}
         </span>
-        <div className="flex items-center gap-1.5 text-[13px] text-muted">
-          {track.explicit && <ExplicitBadge />}
+        <div className={cx('flex items-center gap-1.5 text-[13px]', needsFile ? 'text-dim' : 'text-muted')}>
           <span className="truncate">{sub}</span>
+          {sourceMarks}
           {heard}
+          {spotify}
         </div>
+        {note}
       </div>
       <span className="shrink-0 text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>
     </>
   );
-  const desktop = useDesktop();
   const cols = useTrackColumns();
   const [picking, setPicking] = useState(false);
 
@@ -254,11 +342,14 @@ export function TrackRow({
     library_track_id: track.library_track_id,
     has_file: track.owned,
     unknown: track.unknown,
+    onFindFile: findFile,
     artist_ref: track.artist_ref,
+    hub_artist_id: track.hub_artist_id,
     album_ref: track.album_ref,
+    release_id: track.release_id,
     nd_album_id: track.nd_album_id,
     nd_artist_id: track.nd_artist_id,
-    listen: track.unknown ? undefined : listenTrack(track),
+    listen: needsFile ? undefined : listenTrack(track),
   };
   // picking several rows to act on together (`lib/selection.ts`)
   const selected = useSelected(track.ref);
@@ -286,27 +377,22 @@ export function TrackRow({
     : { icon: 'check', label: 'Выбрать', hint: 'Отметьте несколько треков, чтобы отправить их разом', onClick: () => toggleSelected(asSel(track)) };
   // a browser draws its own rows: a table on a computer, a row that is swiped aside on a phone
   if (STANDALONE || releaseFeed) {
-    // known by its name alone — no file, no record of the catalog: the row is greyed and nothing of it plays; it is
-    // liked, put into playlists and tagged like any other, and its menu offers to choose a file for it
-    const unknown = !!track.unknown;
-    const grey = unknown && '[&_img]:opacity-40 [&_img]:grayscale';
-    const action = unknown ? undefined : !track.owned ? listenHere : play;
-    const toAlbum = link && track.owned && track.album_ref ? `/album/${enc(track.album_ref)}` : null;
-    const downloading = !unknown && (track.downloading || dl === 'queued');
-    const titleColor = current ? 'text-accent' : unknown ? 'text-dim' : 'text-fg';
+    const downloading = !needsFile && (track.downloading || dl === 'queued');
     // over the cover (or in place of the number): the wheel while the file is being got — the one mark of that in
     // the row — else ▶ / ‖ under the mouse; a track that plays is told by its bars and its name, not by a ‖ left on it
     const playMark = waiting ? <Spinner size={18} /> : <Icon name={playing ? 'pause' : 'play'} size={18} filled />;
     const lead = (hover: boolean): ReactNode =>
-      number !== undefined && showCover ? (
+      showCover ? (
         <>
-          <span className="w-5 shrink-0 text-center text-sm tabular-nums text-dim">{number}</span>
-          <span className="relative flex h-10 w-10 shrink-0 items-center justify-center">
-            <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />
-            <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !waiting && !(releaseFeed && current) && 'opacity-0', hover && action && 'group-hover/track:opacity-100', releaseFeed && action && 'group-focus-within/track:opacity-100')}>
-              {playMark}
+          {number !== undefined && <span className="w-5 shrink-0 text-center text-sm tabular-nums text-dim">{number}</span>}
+          {searchOnCover ? missingCover(40) : (
+            <span className="relative flex h-10 w-10 shrink-0 items-center justify-center">
+              <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />
+              <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !waiting && !(releaseFeed && current) && 'opacity-0', hover && action && 'group-hover/track:opacity-100', releaseFeed && action && 'group-focus-within/track:opacity-100')}>
+                {playMark}
+              </span>
             </span>
-          </span>
+          )}
         </>
       ) : number !== undefined ? (
         <span className="relative flex h-10 w-8 shrink-0 items-center justify-center text-sm tabular-nums text-dim">
@@ -315,57 +401,42 @@ export function TrackRow({
             {playMark}
           </span>
         </span>
-      ) : showCover ? (
-        <span className="relative flex h-10 w-10 shrink-0 items-center justify-center">
-          <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />
-          <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !waiting && !(releaseFeed && current) && 'opacity-0', hover && action && 'group-hover/track:opacity-100', releaseFeed && action && 'group-focus-within/track:opacity-100')}>
-            {playMark}
-          </span>
-        </span>
       ) : null;
-    const names = (sub: ReactNode) => (
+    const nameClass = cx('min-w-0 text-[15px]', !releaseFeed && 'truncate', titleColor);
+    const names = (sub: ReactNode, separateAction = false) => (
       <span className="block min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-1.5">
           {/* the track that is playing: on a phone the bars stand before its name (a computer has them in place of
               the row's number, where the row has one) */}
-          {current && (!desktop || releaseFeed || (number ?? index) === undefined) && <PlayingBars on={phase === 'playing'} />}
-          {releaseFeed ? tap('min-w-0 line-clamp-2 wrap-anywhere text-left text-[15px] ' + titleColor, track.title) :
-            <span className={cx('truncate text-[15px]', titleColor)}>{track.title}</span>}
-          {!releaseFeed && (track.versions ?? 0) > 1 && (
-            // the song has other recordings here: the mark opens them
-            <button type="button" title="Другие версии этой песни" onClick={(e) => { e.preventDefault(); e.stopPropagation(); openVersions({ title: track.title, library_track_id: track.library_track_id, ref: track.ref, nd_song_id: track.nd_song_id }); }} className="shrink-0 rounded-full bg-info/20 px-1.5 text-[11px] leading-[1.35] text-info hover:bg-info/30">
-              {track.versions} {plural(track.versions ?? 0, ['версия', 'версии', 'версий'])}
-            </button>
+          {current && !needsFile && (!desktop || releaseFeed || (number ?? index) === undefined) && <PlayingBars on={phase === 'playing'} />}
+          {separateAction ? (
+            <>
+              {review}
+              {tap(cx(nameClass, 'text-left'), trackName)}
+            </>
+          ) : (
+            <span className={nameClass}>{trackName}</span>
           )}
         </span>
-        <span className={cx('flex items-center gap-1.5 text-[13px]', unknown ? 'text-dim' : 'text-muted')}>
+        <span className={cx('flex items-center gap-1.5 text-[13px]', needsFile ? 'text-dim' : 'text-muted')}>
           <KeptMark refId={track.ref} />
-          {!releaseFeed && track.explicit && <ExplicitBadge />}
           <span className={releaseFeed ? 'line-clamp-2 min-w-0 wrap-anywhere' : 'truncate'}>{sub}</span>
+          {sourceMarks}
         </span>
+        {note}
       </span>
     );
-    const tap = (className: string, children: ReactNode, linkToAlbum = true) =>
-      toAlbum && linkToAlbum ? (
-        <Link to={toAlbum} className={className}>{children}</Link>
-      ) : action ? (
-        <button type="button" onClick={action} onPointerDown={track.owned ? undefined : () => touchTrack(track.ref)} className={cx(className, 'cursor-pointer')} aria-label={playLabel}>
-          {children}
-        </button>
-      ) : (
-        <div className={className}>{children}</div>
-      );
     const shown = 'opacity-0 focus-visible:opacity-100 group-hover/track:opacity-100';
     const marked = '!opacity-100'; // shown on every row the drag passes, in the accent colour
     const dragList = () => (queue?.length ? queue : [track]).map(asSel);
-
     // Each credited artist opens its own catalog or library page.
     const artistLinks = () => {
       const credited = track.artists?.length ? track.artists : [track.artist];
       return credited.map((name, i) => {
         const ref = track.artist_refs?.[i] ?? (name === track.artist ? track.artist_ref : null);
         const nd = track.nd_artist_ids?.[i] ?? (credited.length === 1 ? track.nd_artist_id : null);
-        const to = ref ? `/artist/${enc(ref)}` : nd ? `/lib/artist/${enc(nd)}` : null;
+        const id = track.hub_artist_ids?.[i] ?? (name === track.artist ? track.hub_artist_id : null);
+        const to = ref || id ? artistPath({ ref: ref ?? '', hub_artist_id: id }) : nd ? `/lib/artist/${enc(nd)}` : null;
         return (
           <span key={`${name}:${i}`}>
             {i > 0 && ', '}
@@ -375,13 +446,16 @@ export function TrackRow({
       });
     };
 
-    if (desktop && !releaseFeed) {
-      const album = showAlbum && cols.album;
-      const added = showAdded && cols.added;
-      const plays = playsOf !== undefined || (showPlays && cols.plays);
-      const tagCols = showTags ? { lang: cols.tagLang, genre: cols.tagGenre, own: cols.tagOwn } : null;
-      const myTags = showTags && tagKey(track) ? (tagState.map[tagKey(track) as string] ?? []).map((id) => tagState.byId.get(id)).filter((t) => !!t) : [];
-      const tagCell = (group: 'lang' | 'genre' | 'own', max: number) => {
+    if (desktop && !table?.compact && !releaseFeed) {
+      const visible = table?.visible ?? {
+        ...cols, album: showAlbum && cols.album, added: showAdded && cols.added,
+        plays: playsOf !== undefined || (showPlays && cols.plays), spotify: false, lastfm: false,
+        tagLang: showTags && cols.tagLang, tagGenre: showTags && cols.tagGenre, tagOwn: showTags && cols.tagOwn,
+      };
+      const audience = table?.audience.get(audienceKey(track));
+      const trackTagKey = tagKey(track);
+      const myTags = showTags && trackTagKey ? (tagState.map[trackTagKey] ?? []).map((id) => tagState.byId.get(id)).filter((t) => !!t) : [];
+      const tagCell = (group: 'lang' | 'own', max: number) => {
         const list = myTags.filter((t) => t.group === group);
         return (
           <span className="flex min-w-0 items-center gap-1 overflow-hidden" title={list.map((t) => t.name).join(', ') || undefined}>
@@ -393,7 +467,8 @@ export function TrackRow({
         );
       };
       const rowNumber = number ?? index;
-      const albumTo = track.album_ref ? `/album/${enc(track.album_ref)}` : track.nd_album_id ? `/lib/album/${enc(track.nd_album_id)}` : null;
+      const albumTo = track.album_ref || track.release_id ? albumPath({ ref: track.album_ref ?? '', release_id: track.release_id })
+        : track.nd_album_id ? `/lib/album/${enc(track.nd_album_id)}` : null;
       return (
         <div
           ref={rowRef}
@@ -404,13 +479,14 @@ export function TrackRow({
             dragActionOver(asSel(track));
           }}
           data-track-row
+          data-track-audience={table ? audienceKey(track) : undefined}
           aria-selected={selected}
           className={cx('group/track mx-2 grid min-h-14 items-center gap-3 rounded-lg px-2 transition-colors', unreachable && 'opacity-40', grey, selected ? 'bg-accent/15 hover:bg-accent/20' : dragMark ? 'bg-accent/10' : 'hover:bg-fg/5 focus-within:bg-fg/5')}
-          style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, album, cols.duration, added, tagCols, plays, cols.file) }}
+          style={{ gridTemplateColumns: trackGrid(rowNumber !== undefined, visible) }}
         >
           {/* the number is the queue button: «в очередь» on hovering the row, green once the track is queued */}
-          {rowNumber !== undefined && unknown && <span className="flex h-10 w-8 items-center justify-center text-sm tabular-nums text-dim">{rowNumber}</span>}
-          {rowNumber !== undefined && !unknown && (
+          {rowNumber !== undefined && needsFile && <span className="flex h-10 w-8 items-center justify-center text-sm tabular-nums text-dim">{rowNumber}</span>}
+          {rowNumber !== undefined && !needsFile && (
             <span data-row-actions className="contents" onMouseDown={(e) => e.button === 0 && !e.shiftKey && !e.ctrlKey && !e.metaKey && beginDragAction('queue', dragList(), asSel(track))}>
               <QueueButton
                 track={menuTrack.listen as ListenTrack}
@@ -421,23 +497,23 @@ export function TrackRow({
             </span>
           )}
           <div
-            onClick={toAlbum ? () => navigate(toAlbum) : action}
-            onPointerDown={track.owned ? undefined : () => touchTrack(track.ref)}
+            onClick={openTrack}
+            onPointerDown={!action || track.owned ? undefined : () => touchTrack(track.ref)}
             className={cx('flex min-w-0 items-center gap-3 py-1.5 text-left', (toAlbum || action) && 'cursor-pointer')}
           >
             {showCover &&
-              (action ? (
+              (searchOnCover ? missingCover(40) : action ? (
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     action();
                   }}
-                  aria-label={playLabel}
+                aria-label={playLabel}
                   className="relative h-10 w-10 shrink-0 cursor-pointer"
                 >
                   <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />
-                  <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !waiting && 'opacity-0 group-hover/track:opacity-100')}>
+                  <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !waiting && 'opacity-0 group-hover/track:opacity-100 group-focus-within/track:opacity-100')}>
                     {playMark}
                   </span>
                 </button>
@@ -445,42 +521,55 @@ export function TrackRow({
                 <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />
               ))}
             <span className="block min-w-0 flex-1">
-              {tap(cx('block max-w-full truncate text-left text-[15px]', titleColor), track.title)}
+              <span className="flex min-w-0 items-center gap-1">
+                {review}
+                {tap(cx('min-w-0 truncate text-left text-[15px]', titleColor), trackName)}
+              </span>
               <span className="flex items-center gap-1.5 text-[13px] text-muted">
                 <KeptMark refId={track.ref} />
-                {track.explicit && <ExplicitBadge />}
                 <span className="truncate">{artistLinks()}</span>
-                {heard}
+                {sourceMarks}
+                {!table && heard}
+                {!table && spotify}
               </span>
+              {note}
             </span>
           </div>
-          {album &&
+          {visible.album &&
             (albumTo && track.album_title ? (
               <Link to={albumTo} className="truncate text-sm text-muted hover:text-fg hover:underline">{track.album_title}</Link>
             ) : (
               <span className="truncate text-sm text-muted">{track.album_title}</span>
             ))}
-          {tagCols?.lang && tagCell('lang', 2)}
-          {tagCols?.genre && tagCell('genre', 1)}
-          {tagCols?.own && tagCell('own', 2)}
-          {added && <span className="truncate text-sm text-muted" title={track.added_at ? parseTime(track.added_at).toLocaleString('ru-RU') : undefined}>{fmtAdded(track.added_at)}</span>}
-          {plays && <PlaysCell songId={track.nd_song_id} count={playsOf ?? ((track.nd_song_id && playCounts[track.nd_song_id]) || 0)} title={track.title} artist={track.artist} />}
+          {visible.tagLang && tagCell('lang', 2)}
+          {visible.tagGenre && <GenreCell genres={myTags.filter((t) => t.group === 'genre')}
+            sources={tagState.genre_sources[trackTagKey ?? ''] ?? {}} title={track.title} />}
+          {visible.tagOwn && tagCell('own', 2)}
+          {visible.added && <span className="truncate text-sm text-muted" title={track.added_at ? parseTime(track.added_at).toLocaleString('ru-RU') : undefined}>{fmtAdded(track.added_at)}</span>}
+          {visible.plays && <PlaysCell songId={track.nd_song_id} count={playsOf ?? ((track.nd_song_id && playCounts[track.nd_song_id]) || 0)} title={track.title} artist={track.artist} />}
+          {visible.spotify && <AudienceCell value={track.spotify_plays ?? audience?.spotify_plays} label={TRACK_COLUMN_LABELS.spotify} />}
+          {visible.lastfm && <AudienceCell value={track.lastfm_listeners ?? audience?.lastfm_listeners} label={TRACK_COLUMN_LABELS.lastfm} />}
           {/* always a cell, so the columns line up: a track with no file of its own has it empty */}
-          {cols.file && (
+          {visible.file && (
             <span className="truncate text-xs text-muted">
               {track.file &&
                 (track.file.journal && track.library_track_id ? (
                   <Link to={`/file/${track.library_track_id}`} onClick={(e) => e.stopPropagation()} className="hover:text-fg hover:underline" title="Как скачан этот файл">
                     <FileInfo info={track.file} />
                   </Link>
+                ) : track.page_url ? (
+                  <a href={track.page_url} target="_blank" rel="noreferrer" className="hover:text-fg hover:underline">
+                    <FileInfo info={track.file} />
+                  </a>
                 ) : (
                   <FileInfo info={track.file} />
                 ))}
             </span>
           )}
           <div data-row-actions className="flex h-11 items-center justify-end">
-            {track.owned || dl === 'done' || unknown ? null : downloading ? (
-              <span className="flex h-11 w-9 items-center justify-center text-info" title="Скачивается"><Spinner size={14} /></span>
+            {primaryAction ?? <>
+            {track.owned || dl === 'done' || needsFile ? null : downloading ? (
+              <span className="flex h-11 w-9 items-center justify-center text-info" title="Сохраняется в библиотеку"><Spinner size={14} /></span>
             ) : (
               <IconButton icon="download" size={20} label="Скачать трек" onClick={download} busy={busy} className={cx('!w-9 text-muted hover:text-fg', !busy && shown)} />
             )}
@@ -491,7 +580,7 @@ export function TrackRow({
               </span>
             )}
             {/* a list without numbers keeps «в очередь» here */}
-            {rowNumber === undefined && !unknown && (
+            {rowNumber === undefined && !needsFile && (
               <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('queue', dragList(), asSel(track))}>
                 <QueueButton track={menuTrack.listen as ListenTrack} className={cx('!w-9', dragMark === 'queue' ? cx(marked, '!text-accent') : dragMark === 'unqueue' && cx(marked, '!text-muted'))} />
               </span>
@@ -504,8 +593,9 @@ export function TrackRow({
             <span className="contents" onMouseDown={(e) => e.button === 0 && beginDragAction('like', dragList(), asSel(track))}>
               <SaveButton songId={likeTarget.songId} refId={track.ref} listKey={tagKey(track)} title={track.title} data={likeTarget.data} className={cx('!w-9', dragMark === 'like' || dragMark === 'lists' ? cx(marked, '!text-accent') : !kept && shown)} />
             </span>
+            </>}
           </div>
-          {cols.duration && <span className="text-right text-xs tabular-nums text-dim">{unknown ? '' : fmtDuration(track.duration_s)}</span>}
+          {visible.duration && <span className="text-right text-xs tabular-nums text-dim">{needsFile ? '' : fmtDuration(track.duration_s)}</span>}
           {/* ⋯ held and dragged over other rows picks them all; a row that is picked wears a tick in its place */}
           <span
             data-row-actions
@@ -528,32 +618,38 @@ export function TrackRow({
     }
 
     const extras: MenuExtra[] = [
-      ...(!track.owned && dl !== 'done' && !downloading && !unknown ? [{ icon: 'download' as const, label: 'Скачать', onClick: () => void download() }] : []),
+      ...(!primaryAction && !track.owned && dl !== 'done' && !downloading && !needsFile ? [{ icon: 'download' as const, label: 'Скачать', onClick: () => void download() }] : []),
       selectExtra,
       ...(menuExtra ?? []),
     ];
     return (
       <div ref={rowRef} onClickCapture={onPick} aria-selected={selected} data-track-row={releaseFeed || undefined}>
         <SwipeRow
-          right={{ icon: 'queue', onAction: () => { if (unknown) return void toast('У трека нет файла: выберите его в меню', 'info'); addToQueue([menuTrack.listen as ListenTrack]); toast(`В очереди: «${track.title}»`, 'success'); } }}
+          right={{ icon: 'queue', onAction: () => { if (needsFile) return void toast('У трека нет файла: выберите его в меню', 'info'); addToQueue([menuTrack.listen as ListenTrack]); toast(`В очереди: «${displayTitle}»`, 'success'); } }}
           left={{ icon: 'plus', armedIcon: 'check', onAction: () => setPicking(true) }}
         >
           <div className={cx('flex min-h-16 items-center', releaseFeed ? 'group/track min-w-0 gap-2 rounded-lg px-2 py-1 hover:bg-fg/5 focus-within:bg-fg/5' : 'gap-1 pl-4 pr-1', selected && 'bg-accent/15', unreachable && 'opacity-40', grey)}>
             {releaseFeed ? (
               <>
                 {tap('flex min-h-11 shrink-0 items-center gap-2 rounded-md', lead(desktop), false)}
-                {names(artistLinks())}
+                {names(artistLinks(), true)}
               </>
+            ) : review || sourceMarks ? (
+              <div className="flex min-w-0 flex-1 items-center gap-3 py-2 text-left" onClick={review ? undefined : openTrack}>
+                {(showCover || number !== undefined) && tap('flex shrink-0 items-center gap-3', lead(false))}
+                {names(artistLine, true)}
+              </div>
             ) : tap('flex min-w-0 flex-1 items-center gap-3 py-2 text-left', (
               <>
                 {lead(false)}
                 {names(artistLine)}
               </>
             ))}
-            {downloading && <span className="flex w-6 justify-center text-info" title="Скачивается"><Spinner size={14} /></span>}
+            {downloading && <span className="flex w-6 justify-center text-info" title="Сохраняется в библиотеку"><Spinner size={14} /></span>}
             {selected && <Icon name="check" size={18} stroke={3} className="shrink-0 text-accent" />}
-            {releaseFeed && !unknown && track.duration_s != null && <span className="shrink-0 text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>}
+            {releaseFeed && !needsFile && track.duration_s != null && <span className="shrink-0 text-xs tabular-nums text-dim">{fmtDuration(track.duration_s)}</span>}
             <span data-row-actions className="contents">
+              {primaryAction}
               <TrackMenuButton track={menuTrack} extra={extras} className="w-10" />
             </span>
           </div>
@@ -565,13 +661,15 @@ export function TrackRow({
 
   const rowClass = cx('flex min-w-0 flex-1 items-center gap-3 py-2 text-left', rowPlays && 'cursor-pointer');
   return (
-    <div ref={rowRef} className={cx('flex min-h-16 items-center gap-3 pl-4 pr-1', rowPlays && 'group/track transition-colors hover:bg-fg/5 focus-within:bg-fg/5')}>
-      {!track.owned ? (
+    <div ref={rowRef} className={cx('group/track flex min-h-16 items-center gap-3 pl-4 pr-1', grey, rowPlays && 'transition-colors hover:bg-fg/5 focus-within:bg-fg/5')}>
+      {needsFile || searchOnCover || review || sourceMarks ? (
+        <div className={rowClass} onClick={sourceMarks && !review ? openTrack : undefined}>{body}</div>
+      ) : !track.owned ? (
         <button type="button" onClick={listenHere} onPointerDown={() => touchTrack(track.ref)} className={rowClass} aria-label={rowPlays ? playLabel : `Послушать «${track.title}»`}>
           {body}
         </button>
-      ) : link && track.album_ref ? (
-        <Link to={`/album/${enc(track.album_ref)}`} className={rowClass}>
+      ) : link && (track.album_ref || track.release_id) ? (
+        <Link to={albumPath({ ref: track.album_ref ?? '', release_id: track.release_id })} className={rowClass}>
           {body}
         </Link>
       ) : play ? (
@@ -583,15 +681,15 @@ export function TrackRow({
       )}
       <div className="-ml-2 flex shrink-0 items-center">
         <SaveButton songId={track.owned ? track.nd_song_id : null} refId={track.ref} listKey={tagKey(track)} title={track.title} data={{ ...track }} className="!w-10" />
-        {track.owned ? (
+        {primaryAction ?? (track.owned ? (
           // a plain browser: the row itself plays it, a second ▷ would only take the title's room
           STANDALONE && !(link && track.album_ref) && play ? null : <TrackStatus owned downloading={false} onDownload={download} onPlay={play} />
-        ) : (
+        ) : needsFile ? null : (
           <>
             <ListenButton track={track} onListen={listenHere} />
             <TrackStatus owned={dl === 'done'} downloading={track.downloading || dl === 'queued'} onDownload={download} busy={busy} />
           </>
-        )}
+        ))}
         <TrackMenuButton
           track={{
             title: track.title,
@@ -602,7 +700,9 @@ export function TrackRow({
             album_ref: track.album_ref,
             nd_album_id: track.nd_album_id,
             nd_artist_id: track.nd_artist_id,
-            listen: listenTrack(track),
+            unknown,
+            onFindFile: findFile,
+            listen: menuTrack.listen,
           }}
           extra={menuExtra}
           className="-ml-1 w-8"
@@ -614,7 +714,7 @@ export function TrackRow({
 
 export function ArtistBubble({ artist }: { artist: CatalogArtist }) {
   return (
-    <Link to={`/artist/${enc(artist.ref)}`} className="flex w-28 shrink-0 flex-col items-center gap-2 text-center">
+    <Link to={artistPath(artist)} className="flex w-28 shrink-0 flex-col items-center gap-2 text-center">
       <Cover src={artist.picture_small_url || artist.picture_url} size={104} round icon="user" alt={artist.name} />
       <span className="line-clamp-2 text-sm leading-tight">{artist.name}</span>
     </Link>
@@ -622,11 +722,13 @@ export function ArtistBubble({ artist }: { artist: CatalogArtist }) {
 }
 
 /** Release card for grids and horizontal rows; optional download button. */
-export function ReleaseCard({ album, showArtist = false, onDownload, busy }: { album: AlbumOut; showArtist?: boolean; onDownload?: () => void; busy?: boolean }) {
+export function ReleaseCard({ album, showArtist = false, onDownload, busy, showSources = false }: {
+  album: AlbumOut; showArtist?: boolean; onDownload?: () => void; busy?: boolean; showSources?: boolean;
+}) {
   const year = yearOf(album);
   return (
     <div className="relative min-w-0">
-      <Link to={`/album/${enc(album.ref)}`} className="block">
+      <Link to={albumPath(album)} className="block">
         <Cover src={album.cover_small_url || album.cover_url} alt={album.title} className="aspect-square w-full" />
         <div className="mt-2 line-clamp-2 text-sm font-medium leading-tight">
           {album.explicit && (
@@ -640,6 +742,7 @@ export function ReleaseCard({ album, showArtist = false, onDownload, busy }: { a
           {[showArtist ? album.artist : null, year, recordTypeLabel(album.record_type)].filter(Boolean).join(' · ')}
         </div>
       </Link>
+      {showSources && <AlbumSourceMarks album={album} className="mt-1" />}
       <div className="mt-1.5 flex items-center justify-between gap-1">
         <OwnedBadge status={album.owned_status} count={album.owned_count} total={album.nb_tracks} />
         {onDownload && album.owned_status !== 'full' && (
@@ -667,13 +770,31 @@ export interface SortHead {
   onClick: () => void;
 }
 
+function AudienceCell({ value, label }: { value?: number | null; label: string }) {
+  return (
+    <span title={value == null ? undefined : `${label} · ${fmtNum(value)}`} className="text-right text-xs tabular-nums text-muted">
+      {value == null ? '—' : fmtCompactCount(value)}
+    </span>
+  );
+}
+
 export function TrackTableHeader({ numbered = false, album = false, added = false, tags = false, plays = false, playsLabel, sort = null, onSort, heads }: { heads?: Partial<Record<'title' | 'album' | 'file', SortHead>>; numbered?: boolean; album?: boolean; added?: boolean; tags?: boolean; plays?: boolean; playsLabel?: string; sort?: ListSort; onSort?: (next: ListSort) => void }) {
   const desktop = useDesktop();
+  const table = useTrackTable();
   const cols = useTrackColumns();
+  const visible = table?.visible ?? {
+    ...cols, album: album && cols.album, added: added && cols.added, plays: !!playsLabel || (plays && cols.plays),
+    tagLang: tags && cols.tagLang, tagGenre: tags && cols.tagGenre, tagOwn: tags && cols.tagOwn, spotify: false, lastfm: false,
+  };
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const showTable = desktop && !table?.compact;
   useEffect(() => {
     if (!open) return;
+    if (!showTable) {
+      setOpen(false);
+      return;
+    }
     const close = (e: Event) => {
       if (e instanceof KeyboardEvent ? e.key === 'Escape' : !ref.current?.contains(e.target as Node)) setOpen(false);
     };
@@ -685,8 +806,8 @@ export function TrackTableHeader({ numbered = false, album = false, added = fals
       document.removeEventListener('pointerdown', close);
       document.removeEventListener('keydown', close);
     };
-  }, [open]);
-  if (!desktop) return null;
+  }, [open, showTable]);
+  if (!showTable) return null;
   const head = (h: SortHead | undefined, label: string, hint?: string) =>
     h ? (
       <button type="button" onClick={h.onClick} title={h.title} className={cx('flex items-center gap-1.5 text-left transition hover:text-fg', h.mark && 'text-fg')}>
@@ -696,7 +817,16 @@ export function TrackTableHeader({ numbered = false, album = false, added = fals
     ) : (
       <span title={hint}>{label}</span>
     );
-  const offered = (Object.keys(TRACK_COLUMN_LABELS) as (keyof TrackColumns)[]).filter((c) => (c !== 'album' || album) && (c !== 'added' || added) && (c !== 'plays' || (plays && !playsLabel)) && (!c.startsWith('tag') || tags));
+  const offered = (Object.keys(TRACK_COLUMN_LABELS) as (keyof TrackColumns)[]).filter((c) => (c !== 'album' || album)
+    && (c !== 'added' || added) && (c !== 'plays' || (plays && !playsLabel)) && (!c.startsWith('tag') || tags)
+    && ((c !== 'spotify' && c !== 'lastfm') || table));
+  const audienceHeader = (metric: 'spotify' | 'lastfm', name: string) => (
+    <span title={TRACK_COLUMN_LABELS[metric]} className="flex items-center justify-end gap-1 whitespace-nowrap">
+      <ServiceIcon service={metric} size={13} />
+      <span aria-hidden="true">{name}</span>
+      <span className="sr-only">{TRACK_COLUMN_LABELS[metric]}</span>
+    </span>
+  );
   return (
     <div
       ref={ref}
@@ -705,15 +835,15 @@ export function TrackTableHeader({ numbered = false, album = false, added = fals
         setOpen(true);
       }}
       className="group/head relative mx-2 mb-1 grid h-9 items-center gap-3 border-b border-line/60 px-2 text-xs text-dim"
-      style={{ gridTemplateColumns: trackGrid(numbered, album && cols.album, cols.duration, added && cols.added, tags ? { lang: cols.tagLang, genre: cols.tagGenre, own: cols.tagOwn } : null, !!playsLabel || (plays && cols.plays), cols.file) }}
+      style={{ gridTemplateColumns: trackGrid(numbered, visible) }}
     >
       {numbered && <span className="text-center">#</span>}
       {head(heads?.title, 'Название')}
-      {album && cols.album && head(heads?.album, 'Альбом')}
-      {tags && cols.tagLang && <span>Язык</span>}
-      {tags && cols.tagGenre && <span>Жанр</span>}
-      {tags && cols.tagOwn && <span>Теги</span>}
-      {added && cols.added && (
+      {visible.album && head(heads?.album, 'Альбом')}
+      {visible.tagLang && <span>Язык</span>}
+      {visible.tagGenre && <span>Жанр</span>}
+      {visible.tagOwn && <span>Теги</span>}
+      {visible.added && (
         <button
           type="button"
           onClick={() => onSort?.(sort === 'new' ? 'old' : sort === 'old' ? null : 'new')}
@@ -724,25 +854,27 @@ export function TrackTableHeader({ numbered = false, album = false, added = fals
           {(sort === 'new' || sort === 'old') && <span className="text-[10px] text-accent" aria-hidden="true">{sort === 'new' ? '▼' : '▲'}</span>}
         </button>
       )}
-      {playsLabel ? (
+      {visible.plays && (playsLabel ? (
         <span title="Сколько раз вы слушали трек за период этого списка">{playsLabel}</span>
-      ) : plays && cols.plays && (
+      ) : (
         <button
           type="button"
           onClick={() => onSort?.(sort === 'most' ? 'least' : sort === 'least' ? null : 'most')}
           title={sort === 'most' ? 'Сначала самые слушаемые — нажмите: сначала редкие' : sort === 'least' ? 'Сначала редкие — нажмите: обычный порядок' : 'Сколько раз вы слушали трек (от 30 секунд). Нажмите, чтобы отсортировать'}
           className={cx('flex items-center gap-1.5 text-left transition hover:text-fg', (sort === 'most' || sort === 'least') && 'text-fg')}
         >
-          Прослушивания
+          Мои прослушивания
           {(sort === 'most' || sort === 'least') && <span className="text-[10px] text-accent" aria-hidden="true">{sort === 'most' ? '▼' : '▲'}</span>}
         </button>
-      )}
-      {cols.file && head(heads?.file, 'Файл', 'Откуда файл, его формат и битрейт')}
+      ))}
+      {visible.spotify && audienceHeader('spotify', 'Spotify')}
+      {visible.lastfm && audienceHeader('lastfm', 'Last.fm')}
+      {visible.file && head(heads?.file, 'Файл', 'Откуда файл, его формат и битрейт')}
       <span />
-      {cols.duration && <span className="text-right">Время</span>}
+      {visible.duration && <span className="text-right">Время</span>}
       <IconButton icon="more" size={18} label="Колонки таблицы" aria-expanded={open} onClick={() => setOpen((v) => !v)} className={cx('!h-8 !w-8 text-dim hover:text-fg focus-visible:opacity-100', !open && 'opacity-0 group-hover/head:opacity-100')} />
       {open && (
-        <div role="menu" aria-label="Колонки" className="absolute right-0 top-9 z-20 w-56 rounded-xl border border-line bg-raised p-2 shadow-lg">
+        <div role="menu" aria-label="Колонки" className="absolute right-0 top-9 z-20 w-60 rounded-xl border border-line bg-raised p-2 shadow-lg">
           <div className="px-2 pb-1 pt-1 text-xs font-semibold text-muted">Колонки</div>
           {offered.map((c) => (
             <label key={c} className="flex cursor-pointer items-center justify-between rounded-lg pl-2 text-sm text-fg hover:bg-fg/5">

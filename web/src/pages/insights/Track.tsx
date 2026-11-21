@@ -1,6 +1,7 @@
 import { insightsApi, type Contribution, type TasteTrackOut } from '../../api/insights';
 import { facetColor } from '../../components/charts/palette';
 import { ErrorState, Loading, Notice, PageHeader, Segmented, cx } from '../../components/ui';
+import { ServiceText } from '../../components/ServiceBadge';
 import { contributionLabel, fmtDate, fmtDec, fmtStamp, outcomeLabel, plural, sourceLabel } from '../../lib/format';
 import { useAsync } from '../../lib/hooks';
 import { setQuery } from '../../lib/insights';
@@ -20,7 +21,7 @@ export function TrackWeightPage({ userId }: { userId: number }) {
   const t = res.data;
   return (
     <div className="pb-6">
-      <PageHeader title={t ? trackName({ artist: t.artist?.name, title: t.title }) : 'Вес песни'} back={`/admin/user/${userId}?tab=taste`} />
+      <PageHeader title={t ? trackName({ ...t, artist: t.artist?.name }) : 'Вес песни'} back={`/admin/user/${userId}?tab=taste`} />
       <div className="px-4 pb-2">
         <Segmented<TasteModel> label="Модель" value={model} options={MODELS} onChange={(v) => setQuery({ model: v === 'v2' ? null : v })} />
       </div>
@@ -133,7 +134,7 @@ function Body({ t, facets }: { t: TasteTrackOut; facets: Array<{ id: string; art
                       {m.state !== 'active' ? ` (${m.state === 'reserve' ? 'запас' : 'не скачался'})` : ''}
                     </span>
                     <span className="block truncate text-xs text-muted">
-                      {m.generator_title ?? m.generator ?? '—'}
+                      <ServiceText text={m.generator_title ?? m.generator ?? '—'} />
                       {m.score != null ? `, ${fmtDec(m.score)}` : ''}
                     </span>
                   </span>

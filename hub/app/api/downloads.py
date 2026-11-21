@@ -3,23 +3,27 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
+from tempfile import mkdtemp
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import listen
-from app.api.schemas import DownloadBatchOut, DownloadIdsIn, DownloadIn, DownloadItemOut, DownloadTrackIn, RetryIn
+from app.api.schemas import DownloadBatchOut, DownloadIdsIn, DownloadIn, DownloadItemOut, DownloadLinkIn, DownloadTrackIn, RetryIn
 from app.auth import current_user
 from app.catalog.models import split_ref
+from app.config import get_settings
 from app.db import get_session
 from app.events import bus
 from app.jobs.downloads import create_items, item_links, item_out, item_ref
 from app.jobs.queue import enqueue, notify
+from app.library.importer import cleanup_dir
 from app.library.owned import ACTIVE_STATUSES, find_owned, quiet
 from app.library.tracks import current_file
 from app.models import DownloadBatch, DownloadItem, Job, User
-from app.providers.base import Candidate, TrackQuery
+from app.providers.base import Candidate, TrackQuery, file_ref
 from app.services import svc
 
 router = APIRouter(prefix="/api/downloads", tags=["downloads"])
@@ -117,7 +121,7 @@ async def create_batch(
                 meta["deezer_track_id"] = id_
         have = None if body.force else await find_owned(
             s, artist=q.artist, title=q.title, duration_s=q.duration_s, isrc=q.isrc,
-            deezer_track_id=meta.get("deezer_track_id"))
+            catalog_ref=meta.get("track_ref"))
         # a picked file the library has not got is downloaded next to the song's older version (`jobs.downloads`)
         file = await current_file(s, have.id) if have else None
         if have and (it.candidate is None or (file is not None and file.source_url == it.candidate.page_url)):
@@ -172,7 +176,9 @@ async def _own_item(s: AsyncSession, user: User, item_id: int) -> DownloadItem:
 @router.get("/{item_id}", response_model=DownloadItemOut)
 async def get_item(item_id: int, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     item = await _own_item(s, user, item_id)
-    return item_out(item, detail=True, links=(await item_links(s, [item]))[item.id])
+    out = item_out(item, detail=True, links=(await item_links(s, [item]))[item.id])
+    await listen.remember_files([*(out.candidates or []), *([out.chosen] if out.chosen else [])])
+    return out
 
 
 HITMOZ_SONG = re.compile(r"https?://[^/]*hitm[a-z]*\.[a-z]+/song/(\d+)", re.I)
@@ -222,27 +228,102 @@ async def candidate_from_url(url: str, q: TrackQuery) -> Candidate:
     return enriched
 
 
+@router.post("/items/{item_id}/check-link", response_model=Candidate)
+async def check_link(item_id: int, body: DownloadLinkIn, user: User = Depends(current_user),
+                     s: AsyncSession = Depends(get_session, scope="function")):
+    item = await _own_item(s, user, item_id)
+    q = TrackQuery(**item.query_json["query"])
+    candidate = await candidate_from_url(body.url, q)
+    await listen.remember_files([candidate])
+    return candidate
+
+
+async def _selected_candidate(item: DownloadItem, body: RetryIn) -> Candidate | None:
+    if body.candidate_index is not None:
+        cands = item.candidates_json or []
+        if not 0 <= body.candidate_index < len(cands):
+            raise HTTPException(400, "Нет такого варианта")
+        return Candidate(**cands[body.candidate_index])
+    if body.candidate_ref:
+        for data in item.candidates_json or []:
+            if file_ref(data["provider"], data["provider_id"]) == body.candidate_ref:
+                return Candidate(**data)
+        if listen.is_file_ref(body.candidate_ref) and (candidate := await listen.file_candidate(body.candidate_ref)):
+            return candidate
+        raise HTTPException(404, "Файл не найден: повторите поиск или проверку ссылки")
+    if body.url:
+        q = TrackQuery(**item.query_json["query"])
+        return await candidate_from_url(body.url, q)
+    return None
+
+
+@router.get("/items/{item_id}/prepared", response_model=list[str])
+async def prepared(item_id: int, ref: str | None = Query(default=None, max_length=300),
+                   user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    item = await _own_item(s, user, item_id)
+    refs = [file_ref(c["provider"], c["provider_id"]) for c in item.candidates_json or []]
+    if ref and listen.is_file_ref(ref):
+        refs.append(ref)
+    return [key for key in dict.fromkeys(refs) if listen.prepared_file(key)]
+
+
+@router.post("/items/{item_id}/prepare", response_model=str)
+async def prepare(item_id: int, body: RetryIn, user: User = Depends(current_user),
+                  s: AsyncSession = Depends(get_session, scope="function")):
+    item = await _own_item(s, user, item_id)
+    candidate = await _selected_candidate(item, body)
+    if candidate is None:
+        raise HTTPException(400, "Не указан файл")
+    # Release the database transaction while waiting for the source.
+    await s.commit()
+    try:
+        await listen.prepare_file(candidate)
+    except listen.ListenError as e:
+        raise HTTPException(e.status, str(e)) from e
+    return file_ref(candidate.provider, candidate.provider_id)
+
+
 @router.post("/items/{item_id}/retry", response_model=DownloadItemOut)
 async def retry(item_id: int, body: RetryIn, user: User = Depends(current_user),
                 s: AsyncSession = Depends(get_session, scope="function")):
     item = await _own_item(s, user, item_id)
     if item.status in ("searching", "downloading", "tagging", "importing"):
         raise HTTPException(409, "Загрузка ещё идёт")
-    if body.candidate_index is not None:
-        cands = item.candidates_json or []
-        if not 0 <= body.candidate_index < len(cands):
-            raise HTTPException(400, "Нет такого варианта")
-        item.chosen_candidate_json = cands[body.candidate_index]
-    elif body.url:
-        q = TrackQuery(**item.query_json["query"])
-        item.chosen_candidate_json = (await candidate_from_url(body.url, q)).model_dump(mode="json")
-    else:
-        item.chosen_candidate_json = None
-    item.status = "queued"
-    item.error = None
-    item.progress = 0
-    await enqueue(s, "download_item", {"item_id": item.id})
-    await s.commit()
+    status = item.status
+    candidate = await _selected_candidate(item, body)
+    chosen = candidate.model_dump(mode="json") if candidate else None
+    query = dict(item.query_json or {})
+    query.pop("attachment_file", None)
+    payload: dict = {"item_id": item.id}
+    folder: Path | None = None
+    try:
+        if candidate and (query.get("meta") or {}).get("track_id"):
+            if status in ACTIVE_STATUSES or status == "done":
+                raise HTTPException(409, "Привязка файла уже выполняется или завершена")
+            ref = file_ref(candidate.provider, candidate.provider_id)
+            root = get_settings().staging_dir
+            root.mkdir(parents=True, exist_ok=True)
+            folder = Path(mkdtemp(prefix="attach-", dir=root))
+            path = await listen.stage_prepared_file(ref, folder)
+            payload["prepared_file"] = path.relative_to(root).as_posix()
+            query["attachment_file"] = payload["prepared_file"]
+            claim = await s.execute(update(DownloadItem).where(DownloadItem.id == item.id, DownloadItem.status == status)
+                                    .values(status="queued", error=None, progress=0, chosen_candidate_json=chosen,
+                                            query_json=query))
+            if not claim.rowcount:
+                raise HTTPException(409, "Загрузка уже изменилась")
+        else:
+            item.query_json = query
+            item.chosen_candidate_json = chosen
+            item.status, item.error, item.progress = "queued", None, 0
+        await enqueue(s, "download_item", payload)
+        await s.commit()
+    except BaseException as e:
+        if folder is not None:
+            cleanup_dir(folder)
+        if isinstance(e, listen.ListenError):
+            raise HTTPException(e.status, str(e)) from e
+        raise
     notify()
     out = item_out(item)
     bus.publish(user.id, "download", out.model_dump(mode="json"))
@@ -295,6 +376,9 @@ async def retry_many(body: DownloadIdsIn, user: User = Depends(current_user),
     """«Повторить» for several downloads at once: each is looked for again, as with its own ↻."""
     items = [x for x in await _own_items(s, user, body.ids) if x.status in RETRIABLE]
     for item in items:
+        query = dict(item.query_json or {})
+        query.pop("attachment_file", None)
+        item.query_json = query
         item.chosen_candidate_json, item.status, item.error, item.progress = None, "queued", None, 0
         await enqueue(s, "download_item", {"item_id": item.id})
     await s.commit()

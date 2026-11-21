@@ -15,9 +15,10 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.catalog import lookup, registry, release_matches
 from app.catalog.models import CatalogAlbum, CatalogTrack, split_ref
 from app.db import session_scope
 from app.events import bus
@@ -39,25 +40,20 @@ _lock = asyncio.Lock()  # one refresh at a time: the feed's own lookup and the l
 
 async def albums_of(ref: str, name: str) -> list[CatalogAlbum]:
     src, id_ = split_ref(ref)
-    if src != "dz" or svc.deezer is None:
-        return []
-    return await svc.deezer.artist_albums_now(id_, name)
+    if src == "dz" and svc.deezer is not None:
+        return await svc.deezer.artist_albums_now(id_, name)
+    return (await svc.artist_page(ref)).albums
 
 
 async def picture_of(ref: str) -> str | None:
     """The artist's photo in the catalog (a small one: it is shown as a circle in a list)."""
     src, id_ = split_ref(ref)
-    if src != "dz" or svc.deezer is None:
-        return None
-    a = await svc.deezer.get_artist(id_)
+    a = await svc.deezer.get_artist(id_) if src == "dz" and svc.deezer is not None else (await svc.artist_page(ref)).artist
     return a.picture_small_url or a.picture_url
 
 
 async def tracks_of(album_ref: str) -> list[CatalogTrack]:
-    src, id_ = split_ref(album_ref)
-    if src != "dz" or svc.deezer is None:
-        return []
-    return list((await svc.deezer.get_album(id_)).tracks or [])
+    return (await svc.album(album_ref, credited=True)).tracks or []
 
 
 async def _tracks(refs: list[str]) -> dict[str, list[dict[str, Any]]]:
@@ -99,7 +95,14 @@ async def follows(s: AsyncSession, user_id: int) -> list[Follow]:
         if st.target_type != "artist" or not st.liked:
             continue
         name = str((st.data or {}).get("name") or "")
-        ref = st.ref if st.ref and st.ref.startswith("dz:") else None
+        ref = st.ref if st.ref and st.ref.startswith(("dz:", "sp:", "ym:")) else None
+        if ref is None:
+            from app.library import artists
+
+            holder = await artists.by_ref(s, st.ref) if st.ref else None
+            if holder is not None:
+                refs = await artists.profiles(s, holder.id)
+                ref = next(iter(lookup.preferred_refs(refs)), None) or next(iter(refs), None)
         if ref is None and name:
             try:
                 ref = await artist_by_name(name)
@@ -136,16 +139,27 @@ async def refresh(user_id: int, *, only_new: bool = False) -> int:
     async with _lock:
         async with session_scope() as s:
             artists = await followed(s, user_id)
+            from app.library import artists as artist_names
+
+            unlinked = {}
+            for ref in artists:
+                if not ref.startswith("sp:") and (who := await artist_names.by_ref(s, ref)) is not None:
+                    if not any(r.startswith("sp:") for r in await artist_names.profiles(s, who.id)):
+                        unlinked[ref] = who.id
             checks = {c.artist_ref: c.checked_at for c in (await s.execute(
                 select(ArtistReleaseCheck).where(ArtistReleaseCheck.user_id == user_id))).scalars()}
-            known = set((await s.execute(
-                select(ArtistRelease.album_ref).where(ArtistRelease.user_id == user_id))).scalars())
+            known_releases = list((await s.execute(select(ArtistRelease).where(
+                ArtistRelease.user_id == user_id, ArtistRelease.release_date >= date.today() - timedelta(days=WINDOW_DAYS)))).scalars())
         now = utcnow()
         due = [ref for ref in artists
                if ref not in checks or (not only_new and now - checks[ref] >= CHECK_EVERY)]
         found: dict[str, list[CatalogAlbum]] = {}
         pictures: dict[str, str | None] = {}
+        profiles: dict[str, int] = {}
+        found_profiles: set[int] = set()
         for ref in due:  # the network, with no transaction open
+            if not lookup.source_available(ref):
+                continue
             try:
                 found[ref] = await albums_of(ref, artists[ref])
             except Exception as e:
@@ -155,19 +169,52 @@ async def refresh(user_id: int, *, only_new: bool = False) -> int:
                 pictures[ref] = await picture_of(ref)
             except Exception as e:  # the photo it had stays
                 log.info("releases: no photo of %s: %r", ref, e)
+            if ref in unlinked and unlinked[ref] not in found_profiles and svc.spotify is not None:
+                from app.api.catalog import spotify_profile
+
+                try:
+                    page = await svc.artist_page(ref)
+                    if profile := await spotify_profile(page):
+                        found_profiles.add(unlinked[ref])
+                        sp = profile.artist.ref
+                        profiles[sp] = unlinked[ref]
+                        artists[sp] = artists[ref]
+                        found[sp] = profile.albums
+                        pictures[sp] = profile.artist.picture_small_url or profile.artist.picture_url
+                except Exception as error:
+                    log.info("releases: Spotify profile for %s unavailable: %r", ref, error)
         if not found:
             return 0
         today = date.today()
         since = today - timedelta(days=WINDOW_DAYS)
-        fresh: list[tuple[str, CatalogAlbum]] = []
+        candidates: dict[str, tuple[str, CatalogAlbum]] = {}
         for ref, albums in found.items():
             for a in albums:
-                if a.ref in known or a.release_date is None or not (since <= a.release_date <= today):
-                    continue
-                known.add(a.ref)
-                fresh.append((ref, a))
+                if a.release_date is not None and since <= a.release_date <= today:
+                    candidates.setdefault(a.ref, (ref, a))
+
+        async with session_scope() as s:
+            for ref, artist_id in profiles.items():
+                await artist_names.tie_profile(s, artist_id, ref)
+        async with session_scope() as s:
+            groups = await release_matches.discover(s, (a for _, a in candidates.values()), lambda a: svc.album(a.ref))
+        known = {r.album_ref for r in known_releases}
+        fresh: list[tuple[str, CatalogAlbum]] = []
+        for album_ref in lookup.preferred_refs(candidates):
+            ref, album = candidates[album_ref]
+            related = {a.ref for a in groups.get(album_ref, [album])}
+            if not (known & related):
+                fresh.append((ref, album))
+                known.update(related)
         tracks = await _tracks([a.ref for _, a in fresh])
         added = len(fresh)
+        async with registry.write_lock, session_scope() as s:
+            for _, a in fresh:
+                related = groups.get(a.ref, [a])
+                record = release_matches.combined(related) if len(related) > 1 else a
+                if a.ref in tracks and record.ref == a.ref:
+                    record = record.model_copy(update={"tracks": [CatalogTrack.model_validate(t) for t in tracks[a.ref]]})
+                await registry.remember(s, record, [r.ref for r in related])
         async with session_scope() as s:
             for ref, a in fresh:
                 s.add(ArtistRelease(
@@ -196,27 +243,45 @@ async def unseen(s: AsyncSession, user_id: int, artists: dict[str, str] | None =
     artists = await followed(s, user_id) if artists is None else artists
     if not artists:
         return 0
-    return int((await s.execute(select(func.count(ArtistRelease.id)).where(
+    refs = list(await s.scalars(select(ArtistRelease.album_ref).where(
         ArtistRelease.user_id == user_id, ArtistRelease.seen_at.is_(None),
-        ArtistRelease.artist_ref.in_(artists)))).scalar_one())
+        ArtistRelease.artist_ref.in_(artists))))
+    ids, _ = await registry.addresses(s, refs)
+    return len({ids.get(ref, ref) for ref in refs})
 
 
-async def fill_tracks(user_id: int, limit: int | None = None) -> int:
-    """Ask the catalog for the tracks of the releases kept without them (the ones found before releases kept
-    tracks, or while the catalog did not answer), the newest first. Returns how many got theirs."""
+async def fill_tracks(user_id: int, limit: int = FILL_AT_ONCE, *, repair_credits: bool = False) -> int:
+    """Fill missing track lists and, in the background, revisit Deezer releases with incomplete credits."""
     async with _lock:
+        previous: dict[str, list[dict[str, Any]]] = {}
         async with session_scope() as s:
-            q = (select(ArtistRelease.album_ref).where(ArtistRelease.user_id == user_id, ArtistRelease.tracks_json.is_(None))
-                 .order_by(ArtistRelease.release_date.desc(), ArtistRelease.id.desc()))
-            refs = list((await s.execute(q.limit(limit) if limit else q)).scalars())
+            q = select(ArtistRelease.album_ref, ArtistRelease.tracks_json).where(
+                ArtistRelease.user_id == user_id, ArtistRelease.release_date >= date.today() - timedelta(days=WINDOW_DAYS),
+            ).order_by(ArtistRelease.release_date.desc(), ArtistRelease.id.desc())
+            if repair_credits and svc.deezer is not None:
+                rows = await s.execute(q)
+                selected = [(ref, tracks) for ref, tracks in rows if tracks is None or (
+                    ref.startswith("dz:") and any(not t.get("credits_complete") for t in tracks))][:limit]
+                refs = [ref for ref, _ in selected]
+                previous = {ref: tracks for ref, tracks in selected if tracks is not None}
+            else:
+                refs = list((await s.scalars(q.with_only_columns(ArtistRelease.album_ref)
+                             .where(ArtistRelease.tracks_json.is_(None)).limit(limit))).all())
         if not refs:
             return 0
         tracks = await _tracks(refs)  # the network, with no transaction open
+        changed = 0
         async with session_scope() as s:
             for ref, rows in tracks.items():
+                if old := previous.get(ref):
+                    credited = {track["ref"]: track for track in old if track.get("credits_complete")}
+                    rows = [track if track.get("credits_complete") else credited.get(track["ref"], track) for track in rows]
+                    if not rows or rows == old:
+                        continue
                 await s.execute(update(ArtistRelease).where(
                     ArtistRelease.user_id == user_id, ArtistRelease.album_ref == ref).values(tracks_json=rows))
-        return len(tracks)
+                changed += 1
+        return changed
 
 
 async def feed(s: AsyncSession, user_id: int) -> dict[str, Any]:
@@ -229,6 +294,11 @@ async def feed(s: AsyncSession, user_id: int) -> dict[str, Any]:
     rows = list((await s.execute(
         select(ArtistRelease).where(ArtistRelease.user_id == user_id, ArtistRelease.artist_ref.in_(artists))
         .order_by(ArtistRelease.release_date.desc(), ArtistRelease.id.desc()).limit(FEED_LIMIT))).scalars()) if artists else []
+    addresses, _ = await registry.addresses(s, (r.album_ref for r in rows))
+    by_release: dict[int | str, ArtistRelease] = {}
+    for row in rows:
+        by_release.setdefault(addresses.get(row.album_ref, row.album_ref), row)
+    rows = list(by_release.values())
     looked = {c.artist_ref: c for c in (await s.execute(
         select(ArtistReleaseCheck).where(ArtistReleaseCheck.user_id == user_id))).scalars()} if artists else {}
     # what was last seen of an artist: of their records, the one with the latest release (the follow's own first)
@@ -259,7 +329,8 @@ async def feed(s: AsyncSession, user_id: int) -> dict[str, Any]:
             "new": fresh.get(f.ref, 0),
         } for f in whom],
         "items": [{
-            "album_ref": r.album_ref, "title": r.title, "artist": r.artist, "artist_ref": artists[r.artist_ref].ref,
+            "album_ref": str(addresses.get(r.album_ref, r.album_ref)), "title": r.title, "artist": r.artist,
+            "artist_ref": artists[r.artist_ref].ref,
             "record_type": r.record_type, "release_date": r.release_date.isoformat(), "cover_url": r.cover_url,
             "nb_tracks": r.nb_tracks, "new": r.seen_at is None,
             "tracks": [next(told) for _ in ts] if r.tracks_json is not None else None,
@@ -282,7 +353,8 @@ async def loop() -> None:
                 added = await refresh(user_id)
                 if added:
                     log.info("releases: %s new for user %s", added, user_id)
-                await fill_tracks(user_id)
+                if await fill_tracks(user_id, repair_credits=True):
+                    bus.publish(user_id, "library", {"kind": "releases"})
         except Exception:
             log.exception("releases check failed")
         await asyncio.sleep(LOOP_S)

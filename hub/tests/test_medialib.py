@@ -224,6 +224,35 @@ async def test_artist_albums_newest_year_first_then_without_a_year(env):
     assert [a["id"] for a in page["albums"]] == ["a4", "a3", "a2", "a1", "a5"]
 
 
+async def test_library_artist_links_follow_credits_and_existing_hub_artist(env):
+    from sqlalchemy import select
+
+    from app.api.medialib import songs_out
+    from app.db import session_scope
+    from app.library import artists
+    from app.models import Track
+
+    async with session_scope() as s:
+        main = await artists.who(s, "Кино", "dz:12")
+        guest = await artists.who(s, "Гость", "dz:13")
+        await artists.who(s, "Посторонний", "dz:14")
+        track = await s.scalar(select(Track).where(Track.ref == "dz:100"))
+        track.catalog = {"artist": "Посторонний", "artist_ref": "dz:14",
+                         "artists": ["Гость", "Посторонний", "Кино"], "artist_refs": ["dz:13", "dz:14", "dz:12"]}
+        await s.flush()
+        song, = await songs_out(s, [{**SONGS[0], "artists": [
+            {"name": "Кино", "id": "arK"}, {"name": "Гость", "id": "guest"}, {"name": "Новый", "id": "new"}
+        ]}])
+        assert song.artists == ["Кино", "Гость", "Новый"]
+        assert song.artist_refs == ["dz:12", "dz:13", None]
+        assert song.hub_artist_ids == [main.id, guest.id, None]
+        assert song.nd_artist_ids == ["arK", "guest", "new"]
+
+    page = (await env["client"].get("/api/nd/artists/arK")).json()
+    assert page["hub_artist_id"] == main.id
+    assert page["catalog_ref"] is None
+
+
 async def test_navidrome_unreachable_is_502(env):
     env["state"]["down"] = True
     c = env["client"]

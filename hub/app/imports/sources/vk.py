@@ -184,7 +184,8 @@ async def fetch(token: str) -> Snapshot:
         if not me.get("id"):
             raise SourceError("ВК не сказал, чей это вход — войдите заново")
         owner = int(me["id"])
-        snap = Snapshot(account=" ".join(x for x in (me.get("first_name"), me.get("last_name")) if x) or f"id{owner}")
+        snap = Snapshot(account=" ".join(x for x in (me.get("first_name"), me.get("last_name")) if x) or f"id{owner}",
+                        account_subject=str(owner))
         try:
             mine = await _tracks(c, token, owner)
         except PermissionError as e:

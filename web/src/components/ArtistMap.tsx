@@ -8,6 +8,7 @@ import { toggleLike, useLiked, useLikesKnown } from '../lib/stars';
 import { attempt, toast } from '../lib/ui';
 import { playAll } from './catalog';
 import { Icon } from './Icon';
+import { ServiceText } from './ServiceBadge';
 import { Button, Cover, ErrorState, Spinner, cx } from './ui';
 
 /** «Карта похожих»: an artist in the middle and those Last.fm holds to be near them around — the nearer the closer
@@ -284,7 +285,7 @@ export function ArtistMap({
             {tool('target', 'Вернуться к середине', () => setView({ x: 0, y: 0, k: fit }))}
           </div>
           <p className="pointer-events-none absolute bottom-1.5 left-3 right-3 text-center text-[11px] text-dim">
-            {n === 0 ? `Last.fm никого не знает рядом с ${data.center.name}` : filling ? 'Ищем остальных…' : 'Чем ближе к середине, тем больше общих слушателей — по Last.fm'}
+            {n === 0 ? <><ServiceText text="Last.fm никого не знает рядом с" /> {data.center.name}</> : filling ? 'Ищем остальных…' : <ServiceText text="Чем ближе к середине, тем больше общих слушателей — по Last.fm" />}
           </p>
         </>
       )}

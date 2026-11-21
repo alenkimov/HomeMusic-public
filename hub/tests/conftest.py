@@ -42,6 +42,12 @@ def hub_env(db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> I
     Yields the music root. Module caches that outlive a test are cleared before and after it.
     """
     music = tmp_path / "music"
+    from app.catalog.spotify import SpotifyCatalog
+
+    async def offline_spotify(self):
+        raise OSError("Spotify guest requests must be mocked in tests using hub_env")
+
+    monkeypatch.setattr(SpotifyCatalog, "_open", offline_spotify)
     monkeypatch.setenv("MUSIC_ROOT", str(music))
     monkeypatch.setenv("DATA_DIR", str(db_file.parent))
     monkeypatch.setenv("CONFIG_FILE", str(tmp_path / "none.yaml"))

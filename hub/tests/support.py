@@ -118,7 +118,7 @@ class FakeDeezer:
 
     async def get_track(self, id_):
         if id_ != self.track.id:
-            from app.catalog.deezer import CatalogNotFound
+            from app.catalog.models import CatalogNotFound
 
             raise CatalogNotFound(f"track/{id_}")
         return self.track
@@ -173,7 +173,7 @@ class FakeDeezer:
 
     async def get_artist(self, id_):
         if str(id_) != "1":
-            from app.catalog.deezer import CatalogNotFound
+            from app.catalog.models import CatalogNotFound
 
             raise CatalogNotFound(f"artist/{id_}")
         return self.artist("1", "Кино")
@@ -186,6 +186,11 @@ class FakeDeezer:
 
     async def get_artist_top(self, id_, limit=10):
         return [self.track.model_copy(update={"artist_ref": "dz:1"})] if str(id_) == "1" else []
+
+    async def get_artist_page(self, id_):
+        from app.catalog.models import ArtistPage
+
+        return ArtistPage(artist=await self.get_artist(id_), top_tracks=await self.get_artist_top(id_))
 
     async def aclose(self):
         pass
