@@ -45,6 +45,23 @@ async def test_user_work_goes_before_older_background_work(db):
     assert [await _claimed() for _ in range(2)] == ["listen", "download_item"]
 
 
+async def test_a_transfers_likes_go_before_its_queued_downloads(db):
+    from app.imports.core import enqueue_once
+
+    for _ in range(2):
+        await _add("download_item", queue.PRIORITY_IMPORT)
+    async with session_scope() as s:  # a ♥ rewrite queued at the transfer's priority, as before
+        await queue.enqueue(s, "import_likes", {"import_id": 7}, priority=queue.PRIORITY_IMPORT)
+    assert await _claimed() == "download_item"  # older downloads went first
+    async with session_scope() as s:  # the next downloads that finish ask for the rewrite again
+        await enqueue_once(s, "import_likes", 7, priority=queue.PRIORITY_IMPORT + 1)
+        await enqueue_once(s, "import_likes", 7)  # a lower ask leaves it where it is
+    async with session_scope() as s:
+        assert [j.priority for j in (await s.execute(select(Job).where(Job.kind == "import_likes"))).scalars()] == [
+            queue.PRIORITY_IMPORT + 1]
+    assert await _claimed() == "import_likes"
+
+
 async def test_background_work_leaves_a_worker_for_the_user(db):
     for _ in range(3):
         await _add("download_item", queue.PRIORITY_IMPORT)

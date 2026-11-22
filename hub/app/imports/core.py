@@ -51,6 +51,7 @@ log = logging.getLogger(__name__)
 
 RESOLVE_BATCH = 50
 RESOLVE_CONCURRENCY = 4
+PRIORITY_LIKES = PRIORITY_IMPORT + 1  # ahead of the transfer's downloads, still background work
 PLAYLISTS_DELAY_S = 30  # playlists are rewritten at most this often while downloads come in
 FINISH_RECHECK_S = 120
 PLAYLIST_UPDATE_LOCK = 7013425
@@ -197,14 +198,17 @@ async def set_status(import_id: int, status: str, **fields: Any) -> Import | Non
     return imp
 
 
-async def enqueue_once(s: AsyncSession, kind: str, import_id: int, *, delay_s: float = 0) -> None:
+async def enqueue_once(s: AsyncSession, kind: str, import_id: int, *, delay_s: float = 0,
+                       priority: int = PRIORITY_IMPORT) -> None:
     """One queued job of this kind per import (a batch of downloads coming in asks for one rewrite)."""
     pending = (await s.execute(
-        select(Job.id).where(Job.kind == kind, Job.status == "queued",
-                             Job.payload_json["import_id"].as_integer() == import_id).limit(1)
+        select(Job).where(Job.kind == kind, Job.status == "queued",
+                          Job.payload_json["import_id"].as_integer() == import_id).limit(1)
     )).scalar_one_or_none()
     if pending is None:
-        await enqueue(s, kind, {"import_id": import_id}, delay_s=delay_s, priority=PRIORITY_IMPORT)
+        await enqueue(s, kind, {"import_id": import_id}, delay_s=delay_s, priority=priority)
+    elif pending.priority < priority:
+        pending.priority = priority
 
 
 def _active_transfer_jobs(import_id=Import.id):
@@ -639,7 +643,9 @@ async def handle_playlists(job: Job) -> None:
         if await s.scalar(select(ImportCollection.id).where(
                 ImportCollection.import_id == imp.id, ImportCollection.kind == "likes",
                 ImportCollection.selected.is_(True)).limit(1)) is not None:
-            await enqueue_once(s, "import_likes", import_id)
+            # the general queue goes by priority, then by time: at the transfer's own priority the ♥ would wait
+            # for every download queued before it
+            await enqueue_once(s, "import_likes", import_id, priority=PRIORITY_LIKES)
     notify()
     publish(imp)
 
