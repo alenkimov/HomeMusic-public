@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,6 +53,13 @@ def web_build(static_dir: Path) -> str | None:
         m = _BUILD_META.search(index.read_text(encoding="utf-8", errors="replace"))
         _build_cache = (key, m.group(1) if m else None)
     return _build_cache[1]
+
+
+@router.get("/api/ping", include_in_schema=False)
+async def ping():
+    """The Hub answers: what a page asks to know it can reach it (`web/src/lib/reach.ts`). Asks nothing of anyone
+    else, so that a slow Navidrome is not taken for a lost connection."""
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/healthz", response_model=HealthOut)

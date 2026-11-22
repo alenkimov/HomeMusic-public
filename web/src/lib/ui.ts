@@ -1,6 +1,7 @@
 // Global toasts and confirm dialogs (module-level stores, rendered by <Overlays/>).
 import { useSyncExternalStore } from 'react';
 import { errorMessage, isAbort } from '../api/client';
+import { hubFetch } from './reach';
 
 type Listener = () => void;
 
@@ -37,7 +38,7 @@ let toastSeq = 0;
  * не работает» can be looked up, not guessed at. Nothing waits for it, and nothing comes of its failing. */
 function report(text: string) {
   try {
-    void fetch('/api/system/client-error', {
+    void hubFetch('/api/system/client-error', {
       method: 'POST',
       credentials: 'include',
       keepalive: true,

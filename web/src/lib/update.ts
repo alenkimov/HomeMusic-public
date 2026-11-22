@@ -1,5 +1,6 @@
 import { listenBusy } from './listen';
 import { ROUTE_EVENT } from './router';
+import { hubFetch } from './reach';
 
 /** Picks up a new PWA build without the user doing anything. The Android app keeps one WebView with the page for
  * the whole life of its process (days), so a rebuilt Hub would otherwise never reach it.
@@ -33,7 +34,7 @@ async function check(throttled: boolean): Promise<void> {
   if (throttled && Date.now() - lastCheck < CHECK_EVERY_MS) return;
   checking = (async () => {
     try {
-      const res = await fetch('/healthz', { cache: 'no-store' });
+      const res = await hubFetch('/healthz', { cache: 'no-store' });
       if (!res.ok) return;
       const build = ((await res.json()) as { web_build?: string | null }).web_build;
       lastCheck = Date.now();

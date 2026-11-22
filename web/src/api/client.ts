@@ -2,6 +2,7 @@ import type { ListenTrack, ManualQueueEntry } from '../lib/listen';
 import type { LyricsCandidate, LyricsOut, LyricsSettings, LyricsTranslation, LyricsTranslators } from '../lib/lyrics';
 import type { StatsBy, StatsImportOut, StatsOut, StatsPeriod, StatsTrackOut } from '../lib/stats';
 import { timeZone } from '../lib/stats';
+import { hubFetch, noteAnswer, suspect } from '../lib/reach';
 import type { Tag, TagSelection, TagsData } from '../lib/tags';
 import type { TelegramChat, TelegramStatus } from '../lib/telegram';
 import type {
@@ -225,7 +226,7 @@ export async function request<T>(method: string, path: string, opts: RequestOpts
   }
   let res: Response;
   try {
-    res = await fetch(path, { method, headers, body, credentials: 'include', signal });
+    res = await hubFetch(path, { method, headers, body, credentials: 'include', signal });
   } catch (e) {
     signal.throwIfAborted();
     if ((e as Error).name === 'AbortError') throw e;
@@ -277,7 +278,7 @@ async function progressRequest<T>(path: string, signal: AbortSignal, opts: {
 }): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, { credentials: 'include', signal, headers: accountHeaders('application/x-ndjson') });
+    response = await hubFetch(path, { credentials: 'include', signal, headers: accountHeaders('application/x-ndjson') });
   } catch (e) {
     signal.throwIfAborted();
     if (isAbort(e)) throw e;
@@ -390,6 +391,7 @@ export function uploadWithProgress<T>(
     xhr.onloadend = () => lifetime.removeEventListener('abort', abort);
     xhr.onload = () => {
       if (lifetime.aborted) return reject(lifetime.reason);
+      noteAnswer(xhr.status, (name) => xhr.getResponseHeader(name));
       let data: unknown;
       try {
         data = xhr.responseText ? JSON.parse(xhr.responseText) : undefined;
@@ -404,7 +406,10 @@ export function uploadWithProgress<T>(
         reject(new ApiError(xhr.status, detailToMessage(detail, xhr.status)));
       }
     };
-    xhr.onerror = () => reject(lifetime.aborted ? lifetime.reason : new ApiError(0, 'Нет связи с сервером'));
+    xhr.onerror = () => {
+      if (!lifetime.aborted) suspect();
+      reject(lifetime.aborted ? lifetime.reason : new ApiError(0, 'Нет связи с сервером'));
+    };
     xhr.onabort = () => reject(lifetime.reason ?? new DOMException('Aborted', 'AbortError'));
     xhr.send(form);
   });
@@ -483,7 +488,7 @@ export const api = {
   coverImage: async (key: string, signal?: AbortSignal): Promise<{ file: File; info: CoverInfo }> => {
     const lifetime = requestSignal(signal);
     const path = `/api/search/covers/${enc(key)}`;
-    const res = await fetch(path, { credentials: 'include', signal: lifetime, headers: accountHeaders('image/*') });
+    const res = await hubFetch(path, { credentials: 'include', signal: lifetime, headers: accountHeaders('image/*') });
     lifetime.throwIfAborted();
     if (!res.ok) {
       const error = await errorFromResponse(res, lifetime);

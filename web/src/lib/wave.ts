@@ -11,6 +11,7 @@ import { onPlayEvent } from './plays';
 import { navigate } from './router';
 import { tastePath } from './taste';
 import { toast, toastError } from './ui';
+import { hubReachable, onHubBack, onHubReach } from './reach';
 
 /** «Моя волна» (MIXES.md 7): an endless stream the Hub picks for the user, 5 tracks at a time
  * (`POST /api/wave/start`, then `POST /api/wave/{id}/next`).
@@ -96,7 +97,7 @@ export function restorePlayerWave() {
       inFlight: [], busy: false, again: false };
     if (session.personal) {
       notePersonalWave(id);
-      if (!navigator.onLine) playFromReserve(session);
+      if (!hubReachable()) playFromReserve(session);
     }
   }
   emit();
@@ -189,7 +190,7 @@ function playFromReserve(s: Session): boolean {
  * (INSIGHTS.md 6.3: analytics only, the Hub keeps it with the session). */
 export async function startWave(seed: WaveSeedIn | null | undefined, origin: WaveOrigin): Promise<boolean> {
   if (starting !== null) return false;
-  if (!seed && !navigator.onLine && !EMBEDDED) {
+  if (!seed && !hubReachable() && !EMBEDDED) {
     if (startOfflineWave()) return true;
     toast('Нет сохранённых треков для офлайн-волны', 'info');
     return false;
@@ -231,7 +232,7 @@ export async function startWave(seed: WaveSeedIn | null | undefined, origin: Wav
 /** The events since the last call and the refs still ahead go to the Hub; its picks replace them. */
 async function ask() {
   const s = session;
-  if (!s || !navigator.onLine || s.usingReserve) return;
+  if (!s || !hubReachable() || s.usingReserve) return;
   if (s.busy) {
     s.again = true;
     return;
@@ -313,15 +314,15 @@ onPlayEvent((e) => {
   if (e.kind === 'start' || e.kind === 'like' || e.kind === 'dislike') void ask();
 });
 
-window.addEventListener('offline', () => { if (session) playFromReserve(session); });
+onHubReach((reachable) => { if (!reachable && session) playFromReserve(session); });
 const reconnectWave = () => {
   const s = session;
-  if (!s || getListenState().context !== s.context || !navigator.onLine) return;
+  if (!s || getListenState().context !== s.context || !hubReachable()) return;
   if (s.usingReserve) {
     s.usingReserve = false;
     emit();
   }
   void ask();
 };
-window.addEventListener('online', reconnectWave);
+onHubBack(reconnectWave);
 hubEvents.on('reconnect', () => { if (session?.usingReserve) reconnectWave(); });

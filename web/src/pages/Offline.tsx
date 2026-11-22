@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Button, Empty, Notice, PageHeader, Spinner } from '../components/ui';
 import { fmtSize, tracksWord } from '../lib/format';
-import { clearOffline, dropList, offlineSupported, useKeptLists, useOnline } from '../lib/offline';
+import { clearOffline, dropList, offlineSupported, useKeptLists } from '../lib/offline';
+import { useHubReachable } from '../lib/reach';
 import { refreshWaveReserve, setWaveReserveSize, useWaveReserve, waveBudget, WAVE_SIZES } from '../lib/offlineWave';
 import { Link, navigate } from '../lib/router';
 import { confirmDialog } from '../lib/ui';
@@ -14,7 +15,7 @@ import { isDesktop } from '../lib/desktop';
 export function OfflinePage() {
   const kept = useKeptLists();
   const reserve = useWaveReserve();
-  const online = useOnline();
+  const online = useHubReachable();
   const [room, setRoom] = useState<{ usage?: number; quota?: number } | null>(null);
   useEffect(() => {
     void navigator.storage?.estimate?.().then(setRoom).catch(() => undefined);

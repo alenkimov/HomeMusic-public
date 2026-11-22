@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { api, apiSessionSignal, errorMessage, listenStreamUrl } from '../api/client';
 import type { ListenOut, WaveTrackOut } from '../api/types';
 import { offlineSupported } from './offline';
+import { hubFetch, hubReachable, onHubBack } from './reach';
 
 export const OFFLINE_WAVE = 'wave:offline';
 export const WAVE_SIZES = [0, 10, 20, 30] as const;
@@ -185,7 +186,7 @@ export function notePersonalWave(session: string) {
 async function download(active: Scope, track: WaveTrackOut, signal: AbortSignal, limit: number) {
   const ref = track.library_track_id ? `lib:${track.library_track_id}` : track.ref;
   const info = await api.listen(ref, signal);
-  const response = await fetch(listenStreamUrl(ref), { signal, cache: 'no-store', credentials: 'include', headers: {
+  const response = await hubFetch(listenStreamUrl(ref), { signal, cache: 'no-store', credentials: 'include', headers: {
     'X-HomeMusic-Account': String(active.account), 'X-HomeMusic-Prefetch': '1',
   } });
   if (response.status !== 200 || !response.body) throw new Error('Не удалось скачать аудио целиком');
@@ -210,7 +211,7 @@ async function download(active: Scope, track: WaveTrackOut, signal: AbortSignal,
 
 export async function refreshWaveReserve(force = false) {
   const active = scope;
-  if (!active || !saved.size || !navigator.onLine || document.hidden || active.job) return;
+  if (!active || !saved.size || !hubReachable() || document.hidden || active.job) return;
   warmOfflineIdentity(active);
   if (!force && (saved.entries.filter(isUnplayed).length >= saved.size / 2
     || Date.now() - active.attemptedAt < RETRY_MS)) return;
@@ -253,7 +254,7 @@ export async function refreshWaveReserve(force = false) {
           ready = await download(active, track, AbortSignal.any([signal, AbortSignal.timeout(90000)]), max);
         } catch (e) {
           signal.throwIfAborted();
-          if (!navigator.onLine) return;
+          if (!hubReachable()) return;
           console.info('offline wave: track skipped', errorMessage(e));
           continue;
         }
@@ -296,9 +297,9 @@ window.addEventListener('storage', (event) => {
   saved = data;
   emit();
 });
-window.addEventListener('online', () => void refreshWaveReserve());
+onHubBack(() => void refreshWaveReserve());
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void refreshWaveReserve(); });
 navigator.serviceWorker?.addEventListener('controllerchange', () => {
-  if (scope && saved.size && navigator.onLine) warmOfflineIdentity(scope);
+  if (scope && saved.size && hubReachable()) warmOfflineIdentity(scope);
 });
 window.setInterval(() => void refreshWaveReserve(), RETRY_MS);

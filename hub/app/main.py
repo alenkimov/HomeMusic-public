@@ -125,6 +125,27 @@ async def _sync_tags() -> None:
         log.exception("tags: the sync at start failed")
 
 
+class HubMark:
+    """Every answer of the Hub says it is the Hub's (`X-HomeMusic-Hub`). The page tells by it a 502/503/504 of the
+    Hub's own (a catalog or Navidrome behind it did not answer) from one the gateway on the VPS gives for a Hub it
+    cannot reach — and only the latter means the Hub is out of reach (`web/src/lib/reach.ts`). A plain ASGI
+    wrapper: the event stream and the audio pass through it as they are."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        async def marked(message):
+            if message["type"] == "http.response.start":
+                message["headers"] = [*message.get("headers", []), (b"x-homemusic-hub", b"1")]
+            await send(message)
+
+        await self.app(scope, receive, marked)
+
+
 def create_app() -> FastAPI:
     from app.api import (
         admin,
@@ -177,6 +198,8 @@ def create_app() -> FastAPI:
         app.include_router(assistant.router)
     except ImportError:
         pass
+
+    app.add_middleware(HubMark)
 
     @app.exception_handler(Exception)
     async def unhandled(request: Request, exc: Exception):

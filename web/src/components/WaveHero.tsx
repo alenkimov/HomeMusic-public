@@ -1,5 +1,5 @@
 import { toggle, useListen } from '../lib/listen';
-import { useOnline } from '../lib/offline';
+import { useHubReachable } from '../lib/reach';
 import { OFFLINE_WAVE, useWaveReserve } from '../lib/offlineWave';
 import { Link, navigate } from '../lib/router';
 import { tastePath, useNewcomer } from '../lib/taste';
@@ -23,7 +23,7 @@ export function WaveHero() {
   const phase = useListen((s) => s.phase);
   const cover = useListen((s) => s.track?.cover_small_url ?? s.track?.cover_url ?? null);
   const newcomer = useNewcomer();
-  const online = useOnline();
+  const online = useHubReachable();
   const reserve = useWaveReserve();
   if (!canWave()) return null;
   const busy = starting === '';

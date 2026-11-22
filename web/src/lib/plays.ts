@@ -1,6 +1,7 @@
 import { api, ApiError } from '../api/client';
 import type { FavoriteTarget, LaunchOrigin, PlayEventIn, PlayKind } from '../api/types';
 import { canSendPlayEvent, typedFavoritesSupported } from './capabilities';
+import { hubFetch, onHubBack } from './reach';
 
 /** Listening events for mixes and «Моя волна» (MIXES.md 3.2): what the page's own player plays, skips and plays to
  * the end, and ♥ / «Не нравится» set here. They gather for a few seconds and go to the Hub in one batch
@@ -220,7 +221,7 @@ function flushOnLeave() {
   if (!batch.length) return;
   sending = true;
   try {
-    void fetch('/api/plays/events', {
+    void hubFetch('/api/plays/events', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ events: batch.map(({ _account: _, _rejected: _reason, ...e }) => e), expected_user_id: account }),
@@ -246,7 +247,7 @@ function flushOnLeave() {
 
 if (typeof window !== 'undefined') {
   window.addEventListener('pagehide', flushOnLeave);
-  window.addEventListener('online', () => { clearTimeout(timer); timer = setTimeout(() => void flush(), SEND_DELAY_MS); });
+  onHubBack(() => { clearTimeout(timer); timer = setTimeout(() => void flush(), SEND_DELAY_MS); });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flushOnLeave();
   });

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import type { TrackOut } from '../api/types';
-import { dropList, keepList, offlineSupported, syncList, useKept, useKeptList, useOnline } from '../lib/offline';
+import { dropList, keepList, offlineSupported, syncList, useKept, useKeptList } from '../lib/offline';
+import { useHubReachable } from '../lib/reach';
 import { confirmDialog, toast } from '../lib/ui';
 import { Icon } from './Icon';
 import { IconButton, Spinner, cx } from './ui';
@@ -60,7 +61,7 @@ export function KeptMark({ refId, className }: { refId: string; className?: stri
 
 /** A track cannot play now: there is no network and it is not kept on the device. */
 export function useUnreachable(refId: string): boolean {
-  const online = useOnline();
+  const online = useHubReachable();
   const kept = useKept(refId);
   return !online && !kept;
 }

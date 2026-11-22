@@ -1,6 +1,7 @@
 // Single shared EventSource for GET /api/events (named SSE events with JSON data).
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { HubEventMap } from '../api/types';
+import { noteReached, onHubBack, suspect } from './reach';
 
 type EventName = keyof HubEventMap;
 type Handler<K extends EventName> = (data: HubEventMap[K]) => void;
@@ -14,6 +15,7 @@ class HubEvents {
   private everOpened = false;
   private retry = 0;
   private timer: number | undefined;
+  private offBack: (() => void) | null = null;
   private running = false;
   connected = false;
 
@@ -23,7 +25,7 @@ class HubEvents {
     this.everOpened = false;
     this.connect();
     document.addEventListener('visibilitychange', this.onWake);
-    window.addEventListener('online', this.onWake);
+    this.offBack = onHubBack(this.onWake);
   }
 
   stop() {
@@ -33,7 +35,8 @@ class HubEvents {
     this.es = null;
     this.setConnected(false);
     document.removeEventListener('visibilitychange', this.onWake);
-    window.removeEventListener('online', this.onWake);
+    this.offBack?.();
+    this.offBack = null;
   }
 
   on<K extends EventName>(name: K, fn: Handler<K>): () => void {
@@ -94,6 +97,7 @@ class HubEvents {
     es.onopen = () => {
       if (this.es !== es) return;
       this.retry = 0;
+      noteReached();
       this.setConnected(true);
       if (this.everOpened) this.emit('reconnect', {});
       this.everOpened = true;
@@ -116,6 +120,7 @@ class HubEvents {
     es.onerror = () => {
       if (this.es !== es) return;
       this.setConnected(false);
+      suspect(); // the stream dropped: whether the Hub is there at all is asked
       if (es.readyState === EventSource.CLOSED && this.running) {
         // The browser gave up (HTTP error / 401): reconnect ourselves with backoff.
         this.es = null;

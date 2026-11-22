@@ -8,6 +8,7 @@ import {
 import { newEventId } from './plays';
 import { toast, toastError } from './ui';
 import { restorePlayerWave } from './wave';
+import { onHubBack } from './reach';
 
 interface Device {
   id: string;
@@ -138,7 +139,7 @@ function connect() {
   });
   const wake = () => { if (!document.hidden) void refresh(); };
   document.addEventListener('visibilitychange', wake);
-  window.addEventListener('online', wake);
+  const offBack = onHubBack(wake);
   const heartbeat = window.setInterval(refresh, 12000);
   void refresh();
 
@@ -242,7 +243,7 @@ function connect() {
       offListen();
       window.clearInterval(heartbeat);
       document.removeEventListener('visibilitychange', wake);
-      window.removeEventListener('online', wake);
+      offBack();
     },
   };
 }

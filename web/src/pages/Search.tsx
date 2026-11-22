@@ -21,6 +21,7 @@ import { useLiveSearch } from '../lib/search';
 import { spotifyURL } from '../lib/spotify';
 import { FOCUS_SEARCH } from '../components/TabBar';
 import { startChatWith } from './AssistantChat';
+import { onHubBack } from '../lib/reach';
 
 export type SearchTab = 'catalog' | 'playlists' | 'files' | 'reuploads';
 
@@ -206,12 +207,12 @@ function RecentSearches({ onPick }: { onPick: (q: string) => void }) {
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('hm:resume', wake);
     window.addEventListener('focus', wake);
-    window.addEventListener('online', wake);
+    const offBack = onHubBack(wake);
     return () => {
       document.removeEventListener('visibilitychange', wake);
       window.removeEventListener('hm:resume', wake);
       window.removeEventListener('focus', wake);
-      window.removeEventListener('online', wake);
+      offBack();
     };
   }, [res.reload]);
 

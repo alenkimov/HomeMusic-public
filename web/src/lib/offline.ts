@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { api, listenStreamUrl } from '../api/client';
 import type { ListenOut, TrackOut } from '../api/types';
+import { hubFetch, hubReachable, onHubBack } from './reach';
 
 /** «Офлайн»: lists kept on the device — a playlist, «Любимое», a list of «Для вас» — so they play without the network.
  *
@@ -124,11 +125,11 @@ async function fetchOne(ref: string): Promise<void> {
   await tx('tracks', 'readwrite', (s) => s.put(kept));
   tracks.set(ref, kept);
   // its covers go through the service worker, which keeps them
-  for (const url of new Set([track.cover_small_url, track.cover_url])) if (url?.startsWith('/')) void fetch(url, { credentials: 'include' }).catch(() => undefined);
+  for (const url of new Set([track.cover_small_url, track.cover_url])) if (url?.startsWith('/')) void hubFetch(url, { credentials: 'include' }).catch(() => undefined);
 }
 
 function pump() {
-  while (busy.size < PARALLEL && waiting.length && navigator.onLine) {
+  while (busy.size < PARALLEL && waiting.length && hubReachable()) {
     const ref = waiting.shift() as string;
     if (tracks.has(ref) || busy.has(ref) || !needed().has(ref)) continue;
     busy.add(ref);
@@ -188,7 +189,7 @@ export async function keepList(key: string, title: string, to: string, items: re
 export async function syncList(key: string, title: string, items: readonly TrackOut[]) {
   await initOffline();
   const had = lists.get(key);
-  if (!had || !navigator.onLine) return;
+  if (!had || !hubReachable()) return;
   const refs = [...new Set(items.map((t) => t.ref))];
   const same = had.title === title && had.refs.length === refs.length && had.refs.every((r, i) => r === refs[i]);
   if (!same) {
@@ -275,23 +276,8 @@ export function useKeptLists(): { lists: KeptList[]; bytes: number; tracks: numb
   };
 }
 
-// --- the network ----------------------------------------------------------------------------------------------
-
-const netSubs = (cb: () => void) => {
-  window.addEventListener('online', cb);
-  window.addEventListener('offline', cb);
-  return () => {
-    window.removeEventListener('online', cb);
-    window.removeEventListener('offline', cb);
-  };
-};
-/** The device has a network (as the browser tells it). */
-export const useOnline = (): boolean => useSyncExternalStore(netSubs, () => navigator.onLine, () => true);
-
-if (typeof window !== 'undefined') {
-  // the network is back: what was waiting is fetched
-  window.addEventListener('online', () => {
-    for (const ref of needed()) if (!tracks.has(ref) && !waiting.includes(ref) && wanted.has(ref)) waiting.push(ref);
-    pump();
-  });
-}
+// the Hub is reachable again: what was waiting is fetched
+onHubBack(() => {
+  for (const ref of needed()) if (!tracks.has(ref) && !waiting.includes(ref) && wanted.has(ref)) waiting.push(ref);
+  pump();
+});

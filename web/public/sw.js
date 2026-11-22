@@ -19,8 +19,10 @@ const audioKey = (ref) => `${self.location.origin}/api/listen/stream?ref=${encod
    often does not fail but hangs (Wi-Fi without the internet, a weak signal, a VPN): the app stayed a black screen. */
 const SHELL_WAIT_MS = 3000;
 const API_WAIT_MS = 4000;
-/* Caddy on the VPS answers for a Hub it cannot reach (the computer or the tunnel is down): that is no answer. */
+/* Caddy on the VPS answers for a Hub it cannot reach (the computer or the tunnel is down) with 502/503/504 and
+   without the Hub's mark: that is no answer. The Hub's own 502 (a catalog behind it did not answer) is one. */
 const UNREACHABLE = new Set([502, 503, 504]);
+const fromGateway = (res) => UNREACHABLE.has(res.status) && !res.headers.has('x-homemusic-hub');
 const SHELL_URLS = ['/', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/badge-96.png'];
 
 // Same layout as src/lib/shareStore.ts
@@ -137,12 +139,20 @@ async function audio(req, url) {
   });
 }
 
+/* The copy, said to be one (`x-homemusic-kept`): the page learns from it that the Hub did not answer
+   (`src/lib/reach.ts`). */
+function marked(hit) {
+  const headers = new Headers(hit.headers);
+  headers.set('x-homemusic-kept', '1');
+  return new Response(hit.body, { status: hit.status, statusText: hit.statusText, headers });
+}
+
 /* The network's answer, and a copy of it kept under `key`; the copy instead when the network fails, is late
    (`waitMs`: the answer still goes into the copy when it comes) or is a gateway that cannot reach the Hub. Nothing
    kept: whatever the network gives. Used for the app shell and for what a page reads of the library. */
 function networkFirst(event, cacheName, key, keep, waitMs) {
   const cache = caches.open(cacheName);
-  const kept = () => cache.then((c) => c.match(key));
+  const kept = () => cache.then((c) => c.match(key)).then((hit) => hit && marked(hit));
   const net = fetch(event.request);
   // registered first: the copy is cloned before the page reads the body
   const stored = net.then(async (res) => {
@@ -164,7 +174,7 @@ function networkFirst(event, cacheName, key, keep, waitMs) {
         clearTimeout(timer);
       }
       if (res === null) return (await kept()) || net;
-      if (UNREACHABLE.has(res.status)) return (await kept()) || res;
+      if (fromGateway(res)) return (await kept()) || res;
       return res;
     })(),
   );

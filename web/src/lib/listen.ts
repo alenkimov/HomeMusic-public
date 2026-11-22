@@ -11,6 +11,7 @@ import { hubEvents } from './events';
 import { NATIVE_PLAYING_EVENT, canPlayAll, pauseNative, webPlayerShown } from './player';
 import { listeningAccount, newEventId, newLaunch, playEvent, routeContext, type Launch } from './plays';
 import { toast } from './ui';
+import { hubReachable, onHubBack } from './reach';
 
 /** Listening to catalog tracks before downloading them, in the page itself (one `<audio>`): the Hub picks the
  * file a download would take and streams it (GET /api/listen). Works in a plain browser too. Inside the Android
@@ -546,7 +547,7 @@ function refreshInfo() {
 function prefetchNext() {
   // the tracks the queue plays next, the nearest first: the Hub opens their files now (opening a source is what
   // takes seconds) — the next one whole, the ones after it only their start, so skipping through them is instant
-  if (!state.track || !navigator.onLine || state.context === OFFLINE_WAVE) return;
+  if (!state.track || !hubReachable() || state.context === OFFLINE_WAVE) return;
   const ahead = state.manualQueue.filter((entry) => !failedManualEntries.has(entry.id)).slice(0, AHEAD).map((entry) => entry.track);
   for (let k = state.index + 1; ahead.length < AHEAD && k < state.queue.length; k++) ahead.push(state.queue[k]);
   if (!ahead.length && state.repeat === 'all' && !onWave()) {
@@ -648,7 +649,7 @@ export function listen(track: ListenTrack, queue?: readonly ListenTrack[], conte
 /** Without the network only what is on the device plays: a track kept for offline, or one of «Моя волна»'s reserve
  * when played as the wave. Anything else would only go looking for its file and fail. */
 function playableNow(track: ListenTrack, context: string): boolean {
-  return navigator.onLine || !!keptInfo(track.ref) || (context.startsWith('wave:') && !!waveAudio(track.ref));
+  return hubReachable() || !!keptInfo(track.ref) || (context.startsWith('wave:') && !!waveAudio(track.ref));
 }
 
 /** A tap on what cannot play without the network: said, and what plays now goes on. */
@@ -660,7 +661,7 @@ function startList(track: ListenTrack, queue?: readonly ListenTrack[], context?:
   failedManualEntries.clear();
   listContext = context ?? routeContext();
   // offline the list plays through what is on the device, not past tracks that each fail in turn
-  if (queue && !navigator.onLine) queue = queue.filter((t) => t.ref === track.ref || playableNow(t, listContext));
+  if (queue && !hubReachable()) queue = queue.filter((t) => t.ref === track.ref || playableNow(t, listContext));
   listPage = page ?? location.hash.replace(/^#/, '').split('?')[0];
   listLaunch = newLaunch(listContext === OFFLINE_WAVE ? 'other' : listContext, origin);
   const list = queue?.some((t) => t.ref === track.ref) ? queue : [track];
@@ -687,7 +688,7 @@ function startList(track: ListenTrack, queue?: readonly ListenTrack[], context?:
 /** «Слушать» of a whole list: from its first track (with shuffle on, a random one). `shuffle` sets the mode. */
 export function listenAll(list: readonly ListenTrack[], opts: { shuffle?: boolean; context?: string; origin?: LaunchOrigin; page?: string } = {}) {
   if (!list.length) return;
-  if (!navigator.onLine) {
+  if (!hubReachable()) {
     const context = opts.context ?? routeContext();
     list = list.filter((t) => playableNow(t, context));
     if (!list.length) return notOnDevice();
@@ -781,7 +782,7 @@ export function watchManualQueue() {
   const offChanged = hubEvents.on('playback_queue', () => void refreshManualQueue());
   const offReconnect = hubEvents.on('reconnect', fetchQueue);
   const offPing = hubEvents.on('ping', () => void refreshManualQueue());
-  window.addEventListener('online', fetchQueue);
+  const offBack = onHubBack(fetchQueue);
   document.addEventListener('visibilitychange', onVisible);
   const migration = async () => {
     try {
@@ -799,7 +800,7 @@ export function watchManualQueue() {
     offChanged();
     offReconnect();
     offPing();
-    window.removeEventListener('online', fetchQueue);
+    offBack();
     document.removeEventListener('visibilitychange', onVisible);
   };
 }
@@ -1161,7 +1162,7 @@ async function openManualQueue(entries: readonly ManualQueueEntry[], auto: boole
 export function playManualQueueAt(id: number) {
   const entry = state.manualQueue.find((row) => row.id === id);
   if (entry) {
-    if (!navigator.onLine) return notOnDevice(); // the account's queue is opened through the Hub
+    if (!hubReachable()) return notOnDevice(); // the account's queue is opened through the Hub
     failedManualEntries.delete(id);
     void openManualQueue([entry], false);
   }
@@ -1208,7 +1209,7 @@ export function replaceUpcoming(list: readonly ListenTrack[]) {
 }
 
 export const hasNext = (s: ListenState) => s.index + 1 < s.queue.length ||
-  (navigator.onLine && s.context !== OFFLINE_WAVE && s.manualQueue.some((entry) => !failedManualEntries.has(entry.id)));
+  (hubReachable() && s.context !== OFFLINE_WAVE && s.manualQueue.some((entry) => !failedManualEntries.has(entry.id)));
 export const hasPrev = (s: ListenState) => s.index > 0;
 
 /** Plays the next track of the queue; false at its end. */
@@ -1219,7 +1220,7 @@ export function next(): boolean {
 function advance(auto: boolean, wrap = true): boolean {
   if (manualOpening) return true;
   const entries = state.manualQueue.filter((entry) => !failedManualEntries.has(entry.id));
-  if (entries.length && sessionAccount !== null && navigator.onLine && state.context !== OFFLINE_WAVE) {
+  if (entries.length && sessionAccount !== null && hubReachable() && state.context !== OFFLINE_WAVE) {
     void openManualQueue(entries, auto, () => {
       if (!nextAutomatic(auto, wrap) && auto && state.phase !== 'error') set({ phase: 'ended' });
     });

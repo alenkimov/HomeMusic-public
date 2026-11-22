@@ -1,4 +1,5 @@
 import type { HealthOut, PlayEventIn } from '../api/types';
+import { hubFetch } from './reach';
 
 let supported = false;
 let checkpointsSupported = false;
@@ -12,7 +13,7 @@ export async function typedFavoritesSupported(): Promise<boolean | null> {
   checking = (async () => {
     let result: boolean | null = null;
     try {
-      const r = await fetch('/healthz', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+      const r = await hubFetch('/healthz', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
       if (!r.ok) throw new Error('health');
       const caps = ((await r.json()) as HealthOut).capabilities ?? [];
       supported = caps.includes('typed_favorites_v1');

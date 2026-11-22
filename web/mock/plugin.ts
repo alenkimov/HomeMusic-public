@@ -925,6 +925,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
   const p = decodeURIComponent(url.pathname);
   const m = req.method ?? 'GET';
   const authed = (req.headers.cookie ?? '').includes('hm_session=mock');
+  res.setHeader('x-homemusic-hub', '1'); // as the Hub marks its answers (`hub/app/main.py`)
 
   if (p.startsWith('/mock-cover/')) {
     send(res, 200, coverSvg(p.slice(12).replace(/\.svg$/, '')), 'image/svg+xml');
@@ -932,6 +933,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
   }
   if (p === '/healthz') return send(res, 200, { ok: true, navidrome: true, providers: {}, capabilities: favoriteControls.typed ? ['typed_favorites_v1'] : [] }), true;
   if (!p.startsWith('/api/')) return false;
+  if (p === '/api/ping') return res.writeHead(204).end(), true;
 
   await delay(150 + Math.random() * 250);
 
