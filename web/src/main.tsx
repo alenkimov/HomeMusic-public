@@ -5,6 +5,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import '@fontsource-variable/inter';
 import './lib/embedded';
 import './lib/smartShuffle';
+import './lib/netNotice';
 import { startUpdateWatcher } from './lib/update';
 import './index.css';
 

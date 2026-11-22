@@ -53,13 +53,14 @@ const toastTimers = new Map<number, number>();
 
 /** Said again while it is still shown (a button tapped twice), a toast is not shown twice: the one on the screen
  * stays where it is, for its whole time anew — with the new button, whose undo is of the last action. */
-export function toast(text: string, kind: Toast['kind'] = 'info', link?: Toast['link']) {
+export function toast(text: string, kind: Toast['kind'] = 'info', link?: Toast['link']): number {
   if (kind === 'error') report(text);
   const shown = toastStore.get().find((x) => x.text === text && x.kind === kind);
   const t: Toast = { id: shown?.id ?? ++toastSeq, text, kind, link };
   toastStore.set(shown ? toastStore.get().map((x) => (x === shown ? t : x)) : [...toastStore.get().slice(-2), t]);
   window.clearTimeout(toastTimers.get(t.id));
   toastTimers.set(t.id, window.setTimeout(() => dismissToast(t.id), kind === 'error' ? 6000 : 3500));
+  return t.id;
 }
 
 export function dismissToast(id: number) {

@@ -12,7 +12,6 @@ import { BulkPlaylists } from './PlaylistsButton';
 import { FindFile } from './FindFile';
 import { Versions } from './Versions';
 import { ShareSheet } from './ShareSheet';
-import { OfflineBanner } from './Offline';
 import { PlaylistMenu } from './PlaylistMenu';
 import { TagsSheet } from './Tags';
 import { TelegramSetup } from './TelegramSetup';
@@ -76,7 +75,6 @@ export function Overlays() {
       </div>
 
       <DragActionHint />
-      <OfflineBanner />
       <TagsSheet />
       <PlaylistMenu />
       <TrackEdit />

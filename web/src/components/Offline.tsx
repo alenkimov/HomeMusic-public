@@ -64,17 +64,3 @@ export function useUnreachable(refId: string): boolean {
   const kept = useKept(refId);
   return !online && !kept;
 }
-
-/** «Нет сети»: a line at the top of the screen while the device has none — what is kept on it still plays. */
-export function OfflineBanner() {
-  const online = useOnline();
-  if (online) return null;
-  return (
-    <div role="status" className="pt-safe pointer-events-none fixed inset-x-0 top-0 z-[55] flex justify-center">
-      <span className="mt-2 flex items-center gap-1.5 rounded-full bg-raised px-3 py-1 text-xs text-muted shadow-lg">
-        <span className="h-1.5 w-1.5 rounded-full bg-warn" />
-        Нет сети — играет то, что на устройстве
-      </span>
-    </div>
-  );
-}
