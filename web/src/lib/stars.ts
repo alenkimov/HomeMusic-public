@@ -58,10 +58,20 @@ function subjectAliases(s: FavoriteSubject): string[] {
     .map((a) => typedKey(s.target_type, a));
 }
 
+const FORCED_GAP_MS = 3000;
+let answeredAt = 0;
+let forcedLater: number | undefined;
+
 /** Own decisions (including unlike) override delayed Navidrome/import snapshots. */
 export function refreshStars(force = false): Promise<void> {
   if (loading) { if (force) refreshAgain = true; return loading; }
   if (!force && Date.now() - loadedAt < REFRESH_MS) return Promise.resolve();
+  // asked again by every finished download of a transfer: not sooner than a few seconds after the last answer
+  const wait = answeredAt + FORCED_GAP_MS - Date.now();
+  if (force && wait > 0) {
+    forcedLater ??= window.setTimeout(() => { forcedLater = undefined; void refreshStars(true); }, wait);
+    return Promise.resolve();
+  }
   const generation = epoch;
   const acknowledgedBeforeRequest = acknowledged;
   loading = api.starred().then((r) => {
@@ -91,6 +101,7 @@ export function refreshStars(force = false): Promise<void> {
     emit();
   }, () => { /* offline or logged out: keep the last known state */ }).finally(() => {
     loading = null;
+    answeredAt = Date.now();
     if (refreshAgain) { refreshAgain = false; void refreshStars(true); }
   });
   return loading;

@@ -83,7 +83,12 @@ export function useWindowEvent(name: string, fn: () => void) {
  *
  * A quiet `reload(true)` (what the Hub's events ask for) does not abort a run on its way: the Hub would go on with
  * the abandoned one all the same, and a burst of events (a transfer finishing a track a second) piled up dozens of
- * heavy reads of the same list. It is asked once more when that run ends instead — however many came meanwhile. */
+ * heavy reads of the same list. It is asked once more when that run ends instead — however many came meanwhile —
+ * and not sooner than `QUIET_GAP_MS` after it: a transfer's events never stop, and a page of thousands of tracks
+ * asked again the moment its last answer came kept a core of the Hub busy for as long as it was open. */
+/** The least time between the end of a page's answer and its next quiet asking (`useAsync`). */
+const QUIET_GAP_MS = 3000;
+
 export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: DependencyList, enabled = true, keep?: string): AsyncState<T> {
   const [data, setData] = useState<T | undefined>(() => (keep ? lastOf<T>(keep) : undefined));
   const [error, setError] = useState<string | undefined>(undefined);
@@ -92,6 +97,8 @@ export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: Depen
   const silentRef = useRef(data !== undefined); // with a remembered answer on screen the first asking is a quiet one
   const running = useRef(false);
   const again = useRef(false);
+  const ended = useRef(0);
+  const later = useRef<number | undefined>(undefined);
   const fnRef = useRef(fn);
   fnRef.current = fn;
 
@@ -127,10 +134,10 @@ export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: Depen
     }
     const settled = () => {
       running.current = false;
+      ended.current = Date.now();
       if (!again.current) return;
       again.current = false;
-      silentRef.current = true;
-      setNonce((n) => n + 1);
+      askQuietly.current();
     };
     fnRef
       .current(ctl.signal)
@@ -155,12 +162,30 @@ export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: Depen
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, nonce, enabled]);
 
-  const reload = useCallback((silent = false) => {
-    if (silent && running.current) {
+  const askQuietly = useRef(() => {});
+  askQuietly.current = () => {
+    if (running.current) {
       again.current = true;
       return;
     }
-    silentRef.current = silent;
+    const wait = ended.current + QUIET_GAP_MS - Date.now();
+    if (wait > 0) {
+      later.current ??= window.setTimeout(() => {
+        later.current = undefined;
+        askQuietly.current();
+      }, wait);
+      return;
+    }
+    silentRef.current = true;
+    setNonce((n) => n + 1);
+  };
+  useEffect(() => () => window.clearTimeout(later.current), []);
+
+  const reload = useCallback((silent = false) => {
+    if (silent) return askQuietly.current();
+    window.clearTimeout(later.current);
+    later.current = undefined;
+    silentRef.current = false;
     setNonce((n) => n + 1);
   }, []);
 
