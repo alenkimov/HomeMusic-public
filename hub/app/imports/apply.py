@@ -23,7 +23,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.catalog.models import CATALOGS, CatalogTrack, split_ref
@@ -407,6 +407,7 @@ async def sync_likes(s: AsyncSession, imp: Import) -> None:
     if user is None:
         return
     async with _likes_lock:  # one rewrite at a time: two would interleave their stars
+        await s.refresh(imp, ["options_json"])
         items = await _likes(s, imp)
         songs = await _song_ids(s, items)
         opts = dict(imp.options_json or {})
@@ -432,8 +433,10 @@ async def sync_likes(s: AsyncSession, imp: Import) -> None:
             return
         finally:
             await nd.aclose()
-        imp.options_json = {**opts, "liked": want}
-        await s.flush()
+        # Matching can update other options while this job is talking to Navidrome.
+        await s.execute(update(Import).where(Import.id == imp.id)
+                        .values(options_json=Import.options_json.concat({"liked": want})))
+        await s.refresh(imp, ["options_json"])
     if again:
         from app.events import bus
 

@@ -39,10 +39,9 @@ async def _claimed() -> str | None:
 
 
 async def test_user_work_goes_before_older_background_work(db):
-    await _add("import_resolve", queue.PRIORITY_IMPORT)
     await _add("download_item", queue.PRIORITY_IMPORT)
-    await _add("download_item")  # a tap, queued last
-    assert [await _claimed() for _ in range(3)] == ["download_item", "import_resolve", "download_item"]
+    await _add("listen")  # a tap, queued last
+    assert [await _claimed() for _ in range(2)] == ["listen", "download_item"]
 
 
 async def test_background_work_leaves_a_worker_for_the_user(db):
@@ -64,6 +63,23 @@ async def test_parallel_claims_keep_a_slot_for_urgent_work(db):
     ids = [job.id for job in claimed if job is not None]
     assert len(set(ids)) == len(ids) == 3
     assert urgent in ids
+
+
+async def test_matching_and_playlist_updates_run_while_download_slots_are_full(db):
+    for _ in range(3):
+        await _add("download_item", queue.PRIORITY_IMPORT)
+    assert [await _claimed() for _ in range(2)] == ["download_item", "download_item"]
+    resolve = await _add("import_resolve", queue.PRIORITY_IMPORT)
+    place = await _add("import_playlists", queue.PRIORITY_IMPORT)
+    assert await _claimed() is None
+    assert await queue._next_wakeup_in() == 30
+
+    matches = await asyncio.gather(*(queue._claim(f"import-{i}", imports=True) for i in range(2)))
+    assert [job.id for job in matches if job is not None] == [resolve]
+    await _add("listen")
+    assert await _claimed() == "listen"
+    await queue._finish(resolve, ok=True)
+    assert (await queue._claim("import", imports=True)).id == place
 
 
 async def test_background_job_runs_with_background_network_priority(db):

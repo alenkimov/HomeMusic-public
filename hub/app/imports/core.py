@@ -5,7 +5,8 @@ Job kinds (all below the user's work in the queue: `PRIORITY_IMPORT`):
                        user types here (`answer_auth`), only ends a sign-in nobody finished
 - `import_fetch`     — reads the collection from the service into collections and items, checks the library
 - `import_resolve`   — matches a batch of rows (`resolve.py`) and acts on them (`apply.py`), queues the next batch
-- `import_playlists` — settles the Hub's playlists and the ♥ in the service's order (coalesced: one per import)
+- `import_playlists` — settles the Hub's playlists (coalesced: one per import)
+- `import_likes`     — mirrors the transfer's likes to Navidrome on the general queue
 - `import_finish`    — when the downloads are over: the last rewrite, ★ albums and artists, the token goes
 
 Modes: `economy` — playlists and ♥ at once from what the library has, the rest is listened to from the sources
@@ -52,6 +53,7 @@ RESOLVE_BATCH = 50
 RESOLVE_CONCURRENCY = 4
 PLAYLISTS_DELAY_S = 30  # playlists are rewritten at most this often while downloads come in
 FINISH_RECHECK_S = 120
+PLAYLIST_UPDATE_LOCK = 7013425
 BYTES_PER_S = 40_000  # 320 kbps
 DEFAULT_DURATION_S = 240
 # matching and downloading order: playlists, then likes (newest first), albums, artists; dislikes are only kept
@@ -611,13 +613,28 @@ async def handle_resolve(job: Job) -> None:
 async def handle_playlists(job: Job) -> None:
     import_id = int(job.payload_json["import_id"])
     async with session_scope() as s:
+        await s.execute(select(func.pg_advisory_xact_lock(PLAYLIST_UPDATE_LOCK, import_id)))
         imp = await s.get(Import, import_id)
         if imp is None or imp.status in ("failed", "preview"):  # a stopped import keeps what it has done in order
             return
         await apply.refresh_items(s, imp)
         await apply.sync_playlists(s, imp)
-        await apply.sync_likes(s, imp)
         await apply.apply_extras(s, imp)
+        if await s.scalar(select(ImportCollection.id).where(
+                ImportCollection.import_id == imp.id, ImportCollection.kind == "likes",
+                ImportCollection.selected.is_(True)).limit(1)) is not None:
+            await enqueue_once(s, "import_likes", import_id)
+    notify()
+    publish(imp)
+
+
+@handler("import_likes")
+async def handle_likes(job: Job) -> None:
+    async with session_scope() as s:
+        imp = await s.get(Import, int(job.payload_json["import_id"]))
+        if imp is None or imp.status in ("failed", "preview"):
+            return
+        await apply.sync_likes(s, imp)
     publish(imp)
 
 
@@ -625,20 +642,22 @@ async def handle_playlists(job: Job) -> None:
 async def handle_finish(job: Job) -> None:
     import_id = int(job.payload_json["import_id"])
     async with session_scope() as s:
+        await s.execute(select(func.pg_advisory_xact_lock(PLAYLIST_UPDATE_LOCK, import_id)))
         imp = await s.get(Import, import_id)
         if imp is None or imp.status != "running":
             return
         await apply.refresh_items(s, imp)
         active = await apply.active_downloads(s, imp)
+        if not active:
+            await apply.sync_playlists(s, imp)
+            await apply.apply_extras(s, imp)
     if active:
         raise RetryLater(FINISH_RECHECK_S, f"{active} downloads under way")
     async with session_scope() as s:
         imp = await s.get(Import, import_id)
         if imp is None or imp.status != "running":
             return
-        await apply.sync_playlists(s, imp)
         await apply.sync_likes(s, imp)
-        await apply.apply_extras(s, imp)
         await apply.star_albums_artists(s, imp)
         imp.status = "done"
         imp.finished_at = utcnow()

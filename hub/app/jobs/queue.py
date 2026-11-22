@@ -6,6 +6,7 @@
 - Higher `priority` goes first. Background work (imports: `PRIORITY_IMPORT`) is below 0: it never takes the last
   worker (`background_slots`), so a tap or a manual download starts at once, and it runs with the background network
   priority (`app.net.Priority`): its catalog and source requests yield to the user's.
+- Import matching and local playlist updates have one worker of their own.
 """
 
 from __future__ import annotations
@@ -98,14 +99,21 @@ def background_slots() -> int:
     return max(1, get_settings().cfg.jobs.workers - 1)
 
 
-# a queued job a worker may take now: urgent, or background while a background slot is free
-_CLAIMABLE = (
-    "status='queued' AND (priority >= 0 OR "
-    "(SELECT COUNT(*) FROM jobs WHERE status='running' AND priority < 0) < :bg)"
+_IMPORT_KINDS = "('import_resolve', 'import_playlists')"
+
+# Both checks use the same running jobs as the scheduler, including after a restart.
+_GENERAL_CLAIMABLE = (
+    f"status='queued' AND kind NOT IN {_IMPORT_KINDS} AND (priority >= 0 OR "
+    f"(SELECT COUNT(*) FROM jobs WHERE status='running' AND priority < 0 AND kind NOT IN {_IMPORT_KINDS}) < :bg)"
+)
+_IMPORT_CLAIMABLE = (
+    f"status='queued' AND kind IN {_IMPORT_KINDS} AND NOT EXISTS "
+    f"(SELECT 1 FROM jobs WHERE status='running' AND kind IN {_IMPORT_KINDS})"
 )
 
 
-async def _claim(worker_id: str) -> Job | None:
+async def _claim(worker_id: str, *, imports: bool = False) -> Job | None:
+    claimable = _IMPORT_CLAIMABLE if imports else _GENERAL_CLAIMABLE
     async with session_scope() as s:
         # Take the lock in a separate statement so the slot count sees the previous claim.
         await s.execute(text("SELECT pg_advisory_xact_lock(7013422)"))
@@ -114,7 +122,7 @@ async def _claim(worker_id: str) -> Job | None:
             await s.execute(
                 text(
                     "UPDATE jobs SET status='running', locked_by=:w, locked_at=:now, attempts=attempts+1, updated_at=:now "
-                    f"WHERE id = (SELECT id FROM jobs WHERE {_CLAIMABLE} AND run_after <= :now "
+                    f"WHERE id = (SELECT id FROM jobs WHERE {claimable} AND run_after <= :now "
                     "ORDER BY priority DESC, run_after, id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id"
                 ),
                 {"w": worker_id, "now": now, "bg": background_slots()},
@@ -144,10 +152,11 @@ async def _finish(job_id: int, *, ok: bool, error: str | None = None, retry_in: 
             job.last_error = error
 
 
-async def _next_wakeup_in() -> float:
+async def _next_wakeup_in(*, imports: bool = False) -> float:
+    claimable = _IMPORT_CLAIMABLE if imports else _GENERAL_CLAIMABLE
     async with session_scope() as s:
         row = (
-            await s.execute(text(f"SELECT MIN(run_after) FROM jobs WHERE {_CLAIMABLE}"), {"bg": background_slots()})
+            await s.execute(text(f"SELECT MIN(run_after) FROM jobs WHERE {claimable}"), {"bg": background_slots()})
         ).first()
     if not row or row[0] is None:
         return 30.0
@@ -236,6 +245,7 @@ def on_final_failure(kind: str):
 class WorkerPool:
     def __init__(self, n: int):
         self.n = n
+        self._worker_count = n + 1
         self._tasks: list[asyncio.Task] = []
         self._stopping = False
         self._pending_results: dict[int, tuple[Job, _Result]] = {}
@@ -243,9 +253,10 @@ class WorkerPool:
 
     async def _worker(self, idx: int) -> None:
         wid = f"{os.getpid()}-{idx}"
+        imports = idx == self.n
         while not self._stopping:
             try:
-                job = await _claim(wid)
+                job = await _claim(wid, imports=imports)
             except Exception:
                 log.exception("claim failed")
                 await asyncio.sleep(2)
@@ -253,7 +264,7 @@ class WorkerPool:
             if job is None:
                 _wakeup.clear()
                 try:
-                    await asyncio.wait_for(_wakeup.wait(), timeout=await _next_wakeup_in())
+                    await asyncio.wait_for(_wakeup.wait(), timeout=await _next_wakeup_in(imports=imports))
                 except TimeoutError:
                     pass
                 except Exception:
@@ -275,7 +286,7 @@ class WorkerPool:
     async def _recover(self) -> None:
         while not self._stopping:
             await asyncio.sleep(RECOVERY_INTERVAL_S)
-            for idx, task in enumerate(self._tasks[:self.n]):
+            for idx, task in enumerate(self._tasks[:self._worker_count]):
                 if not task.done():
                     continue
                 if not task.cancelled():
@@ -301,7 +312,7 @@ class WorkerPool:
                     del self._pending_results[job.id]
 
     def start(self) -> None:
-        self._tasks = [asyncio.create_task(self._worker(i), name=f"job-worker-{i}") for i in range(self.n)]
+        self._tasks = [asyncio.create_task(self._worker(i), name=f"job-worker-{i}") for i in range(self._worker_count)]
         self._tasks.append(asyncio.create_task(self._recover(), name="job-recovery"))
 
     async def stop(self) -> None:
