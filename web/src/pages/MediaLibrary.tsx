@@ -31,6 +31,7 @@ import { openPlaylistMenu } from '../lib/playlistMenu';
 import { useSmartForPage, useSmartPage, useSmartPossible } from '../lib/smartShuffle';
 import { toggleLike, useLiked } from '../lib/stars';
 import { canWave, seedKey, startWave, useWave } from '../lib/wave';
+import { VirtualRows } from '../components/VirtualRows';
 
 /** The Navidrome library as a player shows it, for the PWA in a plain browser (`STANDALONE`): inside the app these
  * are its native screens. Songs are `NdSongOut` (owned catalog-like tracks), so `TrackRow` plays them. */
@@ -144,6 +145,8 @@ export function useShown(tracks: readonly TrackOut[], found: Found[] | null, fil
 /** The tracks as the page shows them: what ▶ of the page plays. */
 export const inOrder = <T extends TrackOut>(tracks: readonly T[], sort: ListSort): readonly T[] => (sort ? byAdded(tracks.map((t, i) => ({ t, i })), sort).map((r) => r.t) : tracks);
 
+const songRowKey = (row: { t: TrackOut; i: number }) => `${row.t.ref}:${row.i}`;
+
 export function SongList<T extends TrackOut>({ tracks, extra, found, sort, onSort, period }: { period?: { label: string; of: Record<string, number> }; tracks: readonly T[]; extra?: (t: T, i: number) => Parameters<typeof TrackRow>[0]['menuExtra']; found?: Found[] | null; sort: ListSort; onSort: (next: ListSort) => void }) {
   const setSort = onSort;
   const dated = useMemo(() => tracks.some((t) => t.added_at), [tracks]);
@@ -157,10 +160,12 @@ export function SongList<T extends TrackOut>({ tracks, extra, found, sort, onSor
   if (found && !rows.length) return <p className="px-4 py-10 text-center text-sm text-muted">Ничего не подходит — ни под поиск, ни под выбранные теги.</p>;
   return (
     <TrackTable tracks={displayed} numbered album tags plays added={dated} periodPlays={!!period}>
-      <ul>
-        {rows.length > 0 && <li><TrackTableHeader numbered album tags plays playsLabel={period?.label} added={dated} sort={sort} onSort={setSort} /></li>}
-        {rows.map(({ t, i, line }, at) => (
-          <li key={`${t.ref}:${i}`}>
+      {rows.length > 0 && <TrackTableHeader numbered album tags plays playsLabel={period?.label} added={dated} sort={sort} onSort={setSort} />}
+      <VirtualRows
+        items={rows}
+        rowKey={songRowKey}
+        render={({ t, i, line }, at) => (
+          <>
             <TrackRow track={t} queue={queue} link={false} showAlbum showTags showPlays playsOf={period ? (period.of[t.nd_song_id ?? ''] ?? 0) : undefined} showAdded={dated} menuExtra={extra?.(t, i)} index={sort ? at + 1 : i + 1} />
             {line !== undefined && (
               <div className="-mt-1 flex items-center gap-1.5 truncate pb-2 pl-16 pr-4 text-xs text-muted">
@@ -168,9 +173,9 @@ export function SongList<T extends TrackOut>({ tracks, extra, found, sort, onSor
                 <span className="truncate">{line ? `«${line}»` : 'найдено в тексте'}</span>
               </div>
             )}
-          </li>
-        ))}
-      </ul>
+          </>
+        )}
+      />
     </TrackTable>
   );
 }

@@ -12,6 +12,7 @@ import { NATIVE_PLAYING_EVENT, canPlayAll, pauseNative, webPlayerShown } from '.
 import { listeningAccount, newEventId, newLaunch, playEvent, routeContext, type Launch } from './plays';
 import { toast } from './ui';
 import { hubReachable, onHubBack } from './reach';
+import { dropQueue, loadQueue, saveQueue } from './listenStore';
 
 /** Listening to catalog tracks before downloading them, in the page itself (one `<audio>`): the Hub picks the
  * file a download would take and streams it (GET /api/listen). Works in a plain browser too. Inside the Android
@@ -805,9 +806,11 @@ export function watchManualQueue() {
   };
 }
 
+/** What a reload goes on from, small enough to write every second; the queue it plays is kept apart
+ * (`lib/listenStore.ts`) and named by `queueId`. */
 interface SavedSession {
-  version: 1 | 2;
-  queue: ListenTrack[];
+  version: 3;
+  queueId: string;
   index: number;
   context: string;
   page?: string;
@@ -817,13 +820,36 @@ interface SavedSession {
   autoplay: boolean;
   shuffle: boolean;
   repeat: RepeatMode;
-  /** Indices retain object identity, including duplicate tracks, after JSON serialization. */
-  originalOrder: number[] | null;
   smart?: boolean;
 }
 
-export type PlaybackSnapshot = Pick<SavedSession, 'queue' | 'index' | 'context' | 'position' | 'autoplay' | 'shuffle' | 'repeat' | 'originalOrder'> &
-  Required<Pick<SavedSession, 'page' | 'smart'>>;
+/** The queue last given to `saveQueue`, by what it was made of: the same queue is not written again. */
+let savedQueueOf: { queue: readonly ListenTrack[]; unshuffled: readonly ListenTrack[] | null; skip: number | null } | null = null;
+let savedQueueId = '';
+
+/** What playing is handed to another device with (`lib/playbackDevices.ts`). */
+export interface PlaybackSnapshot {
+  queue: ListenTrack[];
+  index: number;
+  context: string;
+  page: string;
+  position: number;
+  autoplay: boolean;
+  shuffle: boolean;
+  smart: boolean;
+  repeat: RepeatMode;
+  /** the order before shuffle, as places in `queue` */
+  originalOrder: number[] | null;
+}
+
+/** The order before shuffle (`before`) as places in `queue` — a track's first place: the same object may stand in
+ * the queue twice. */
+function placesOf(queue: readonly ListenTrack[], before: readonly ListenTrack[] | null): number[] | null {
+  if (!before) return null;
+  const place = new Map<ListenTrack, number>();
+  queue.forEach((t, i) => { if (!place.has(t)) place.set(t, i); });
+  return before.flatMap((t) => place.has(t) ? [place.get(t)!] : []);
+}
 
 export function snapshotForTransfer() {
   const { track, queue, index, context, page, phase, shuffle, smart, repeat } = state;
@@ -834,7 +860,7 @@ export function snapshotForTransfer() {
   const snapshot: PlaybackSnapshot = {
     queue: [...queue], index, context, page, autoplay, shuffle, smart, repeat,
     position: pendingSeek || audio?.currentTime || 0,
-    originalOrder: unshuffled?.map((item) => queue.indexOf(item)).filter((i) => i >= 0) ?? null,
+    originalOrder: placesOf(queue, unshuffled),
   };
   const isCurrent = () => state.queue === queue && state.index === index && state.track === track
     && state.shuffle === shuffle && state.repeat === repeat && state.smart === smart && seekRevision === revision
@@ -861,22 +887,32 @@ export function finishOutgoingPlayback() {
 
 function persistListening(force = false) {
   if (sessionAccount === null || (!force && Date.now() - lastSaved < 1000)) return;
+  const account = sessionAccount;
   try {
-    const key = SESSION_KEY + sessionAccount;
+    const key = SESSION_KEY + account;
     const unplayedManual = activeManual != null && !activeManual.started;
-    const queue = unplayedManual ? state.queue.filter((_, i) => i !== state.index) : [...state.queue];
-    if (!state.track || !queue.length) localStorage.removeItem(key);
-    else {
-      const saved: SavedSession = {
-        version: 2, queue, index: unplayedManual ? Math.max(0, state.index - 1) : state.index,
-        context: state.context, page: state.page, launch: listLaunch,
-        position: unplayedManual ? 0 : state.position, autoplay: !unplayedManual && listenBusy(),
-        shuffle: state.shuffle, smart: state.smart, repeat: state.repeat,
-        originalOrder: unshuffled?.map((t) => queue.indexOf(t)).filter((i) => i >= 0) ?? null,
-      };
-      localStorage.setItem(key, JSON.stringify(saved));
-    }
+    const skip = unplayedManual ? state.index : null;
     lastSaved = Date.now();
+    if (!state.track || state.queue.length - (skip === null ? 0 : 1) <= 0) {
+      localStorage.removeItem(key);
+      savedQueueOf = null;
+      void dropQueue(account).catch(() => undefined);
+      return;
+    }
+    if (!savedQueueOf || savedQueueOf.queue !== state.queue || savedQueueOf.unshuffled !== unshuffled || savedQueueOf.skip !== skip) {
+      const queue = skip === null ? [...state.queue] : state.queue.filter((_, i) => i !== skip);
+      const originalOrder = placesOf(queue, unshuffled);
+      savedQueueOf = { queue: state.queue, unshuffled, skip };
+      savedQueueId = newEventId();
+      void saveQueue(account, { id: savedQueueId, queue, originalOrder }).catch(() => undefined);
+    }
+    const saved: SavedSession = {
+      version: 3, queueId: savedQueueId, index: unplayedManual ? Math.max(0, state.index - 1) : state.index,
+      context: state.context, page: state.page, launch: listLaunch,
+      position: unplayedManual ? 0 : state.position, autoplay: !unplayedManual && listenBusy(),
+      shuffle: state.shuffle, smart: state.smart, repeat: state.repeat,
+    };
+    localStorage.setItem(key, JSON.stringify(saved));
   } catch { /* Playback remains available when storage is full or disabled. */ }
 }
 
@@ -888,29 +924,43 @@ export function restoreListening(account: number | null) {
   failedManualEntries.clear();
   set({ manualQueue: [] });
   sessionAccount = account;
+  savedQueueOf = null;
   if (account === null || canPlayAll()) return;
+  void restoreSaved(account);
+}
+
+const restoredSubs = new Set<() => void>();
+/** Called each time a saved session has been played on from (`restoreListening`): it comes a moment after the
+ * page is up, the queue being read from IndexedDB — what goes with it («Моя волна») is picked up then. */
+export function onListeningRestored(fn: () => void): () => void {
+  restoredSubs.add(fn);
+  return () => restoredSubs.delete(fn);
+}
+
+/** The session saved for `account` and the queue it names, played on from where it was — unless the user started
+ * something meanwhile (the queue is read from IndexedDB, a moment after the page is up). */
+async function restoreSaved(account: number) {
   try {
     const saved = JSON.parse(localStorage.getItem(SESSION_KEY + account) ?? 'null') as SavedSession | null;
+    if (!saved || saved.version !== 3 || typeof saved.queueId !== 'string') return;
+    const kept = await loadQueue(account);
+    if (sessionAccount !== account || state.track || !kept || kept.id !== saved.queueId) return;
+    const queue = kept.queue;
     const validTrack = (t: ListenTrack) => t && typeof t.ref === 'string' && !!t.ref && typeof t.title === 'string' && typeof t.artist === 'string';
-    if (!saved || (saved.version !== 1 && saved.version !== 2) || !Array.isArray(saved.queue) || !saved.queue.length || !saved.queue.every(validTrack)
-      || !Number.isInteger(saved.index) || saved.index < 0 || saved.index >= saved.queue.length
+    if (!Array.isArray(queue) || !queue.length || !queue.every(validTrack)
+      || !Number.isInteger(saved.index) || saved.index < 0 || saved.index >= queue.length
       || typeof saved.context !== 'string' || !Number.isFinite(saved.position) || saved.position < 0) return;
-    if (saved.version === 1) {
-      const pending = saved.queue.slice(saved.index + 1).filter((track) => track.queued);
-      if (pending.length && !localStorage.getItem(QUEUE_MIGRATION_KEY + account)) {
-        localStorage.setItem(QUEUE_MIGRATION_KEY + account, JSON.stringify({ id: newEventId(), tracks: pending }));
-      }
-    }
-    unshuffled = Array.isArray(saved.originalOrder) && saved.originalOrder.every((i) => Number.isInteger(i) && i >= 0 && i < saved.queue.length)
-      ? saved.originalOrder.map((i) => saved.queue[i]) : null;
+    unshuffled = Array.isArray(kept.originalOrder) && kept.originalOrder.every((i) => Number.isInteger(i) && i >= 0 && i < queue.length)
+      ? kept.originalOrder.map((i) => queue[i]) : null;
     listContext = saved.context;
     listPage = typeof saved.page === 'string' ? saved.page : '';
     listLaunch = saved.launch && typeof saved.launch.id === 'string' && saved.launch.id
       ? { id: saved.launch.id, origin: typeof saved.launch.origin === 'string' ? saved.launch.origin : null }
       : newLaunch(saved.context);
     set({ shuffle: saved.shuffle === true, smart: saved.smart === true, repeat: saved.repeat === 'all' || saved.repeat === 'one' ? saved.repeat : 'off' });
-    start(saved.queue, saved.index, false, saved.position, saved.autoplay === true);
+    start(queue, saved.index, false, saved.position, saved.autoplay === true);
     smartHooks?.restored();
+    for (const fn of restoredSubs) fn();
   } catch { /* Ignore an incomplete or obsolete snapshot. */ }
 }
 

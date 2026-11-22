@@ -4,7 +4,7 @@ import type { PlayEventIn, WaveOrigin, WaveOut, WaveSeedIn, WaveTrackOut } from 
 import { ofHiddenArtist } from './dislikes';
 import { EMBEDDED } from './embedded';
 import { hubEvents } from './events';
-import { getListenState, listenAll, next, replaceUpcoming, subscribeListening, type ListenTrack } from './listen';
+import { getListenState, listenAll, next, onListeningRestored, replaceUpcoming, subscribeListening, type ListenTrack } from './listen';
 import { heardWaveTrack, notePersonalWave, OFFLINE_WAVE, offlineWaveTracks, waveAudio, waveReserveEnabled } from './offlineWave';
 import { canPlayAll, canPlayWave, playWave } from './player';
 import { onPlayEvent } from './plays';
@@ -103,6 +103,8 @@ export function restorePlayerWave() {
   emit();
 }
 
+// the player's saved session is played on from a moment after the page is up: its wave is picked up with it
+onListeningRestored(restorePlayerWave);
 window.addEventListener('pagehide', persistWave);
 
 function subscribe(fn: () => void) {

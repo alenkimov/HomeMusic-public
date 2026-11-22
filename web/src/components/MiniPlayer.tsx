@@ -32,9 +32,15 @@ export function MiniPlayer() {
     const el = box.current;
     const root = document.documentElement;
     if (!shown || !el) return;
-    const publish = () => root.style.setProperty('--player-h', `${el.offsetHeight}px`);
-    publish();
-    const ro = new ResizeObserver(publish);
+    // told by the observer (it reports right after layout, before the frame is painted): reading the height here
+    // would lay out the whole page at once, a list of thousands of rows included
+    let last = -1;
+    const ro = new ResizeObserver(([entry]) => {
+      const h = Math.round(entry.borderBoxSize?.[0]?.blockSize ?? el.offsetHeight);
+      if (h === last) return;
+      last = h;
+      root.style.setProperty('--player-h', `${h}px`);
+    });
     ro.observe(el);
     return () => {
       ro.disconnect();
