@@ -62,7 +62,7 @@ catalog:
   musicbrainz_user_agent: "HomeMusic/0.1 (you@example.com)"
 
 jobs:
-  workers: 3
+  workers: 5           # four background slots and one reserved for foreground work
   max_attempts: 5
 
 uploads:

@@ -82,7 +82,7 @@ class CatalogCfg(BaseModel):
 
 
 class JobsCfg(BaseModel):
-    workers: int = 3
+    workers: int = 5
     max_attempts: int = 5
 
 
