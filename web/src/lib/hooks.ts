@@ -107,13 +107,19 @@ export function useWindowEvent(name: string, fn: () => void) {
 
 /** Runs `fn` whenever deps change; aborts the previous run. `keep`: a name to remember the answer under — the next
  * time the page opens it shows that answer at once (no spinner, nothing appearing half a second later) and replaces
- * it with the fresh one when it comes. */
+ * it with the fresh one when it comes.
+ *
+ * A quiet `reload(true)` (what the Hub's events ask for) does not abort a run on its way: the Hub would go on with
+ * the abandoned one all the same, and a burst of events (a transfer finishing a track a second) piled up dozens of
+ * heavy reads of the same list. It is asked once more when that run ends instead — however many came meanwhile. */
 export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: DependencyList, enabled = true, keep?: string): AsyncState<T> {
   const [data, setData] = useState<T | undefined>(() => (keep ? lastOf<T>(keep) : undefined));
   const [error, setError] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState<boolean>(enabled && data === undefined);
   const [nonce, setNonce] = useState(0);
   const silentRef = useRef(data !== undefined); // with a remembered answer on screen the first asking is a quiet one
+  const running = useRef(false);
+  const again = useRef(false);
   const fnRef = useRef(fn);
   fnRef.current = fn;
 
@@ -134,26 +140,43 @@ export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: Depen
     const ctl = new AbortController();
     if (!silentRef.current) setLoading(true);
     silentRef.current = false;
+    again.current = false;
+    running.current = true;
     setError(undefined);
+    const settled = () => {
+      running.current = false;
+      if (!again.current) return;
+      again.current = false;
+      silentRef.current = true;
+      setNonce((n) => n + 1);
+    };
     fnRef
       .current(ctl.signal)
       .then((d) => {
-        if (!ctl.signal.aborted) {
-          setData(d);
-          setLoading(false);
-          if (keep) keepLast(keep, d);
-        }
+        if (ctl.signal.aborted) return;
+        setData(d);
+        setLoading(false);
+        if (keep) keepLast(keep, d);
+        settled();
       })
       .catch((e) => {
         if (ctl.signal.aborted || isAbort(e)) return;
         setError(errorMessage(e));
         setLoading(false);
+        settled();
       });
-    return () => ctl.abort();
+    return () => {
+      running.current = false;
+      ctl.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, nonce, enabled]);
 
   const reload = useCallback((silent = false) => {
+    if (silent && running.current) {
+      again.current = true;
+      return;
+    }
     silentRef.current = silent;
     setNonce((n) => n + 1);
   }, []);

@@ -64,7 +64,7 @@ export function refreshStars(force = false): Promise<void> {
   if (!force && Date.now() - loadedAt < REFRESH_MS) return Promise.resolve();
   const generation = epoch;
   const acknowledgedBeforeRequest = acknowledged;
-  loading = api.starred(AbortSignal.timeout(10_000)).then((r) => {
+  loading = api.starred().then((r) => {
     if (generation !== epoch) return;
     const next = new Map<string, boolean>();
     for (const [type, ids] of [['track', r.song_ids], ['album', r.album_ids], ['artist', r.artist_ids ?? []]] as const) {

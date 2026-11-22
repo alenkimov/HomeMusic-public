@@ -233,9 +233,12 @@ def fold(events: Iterable[PlayEvent], subjects: Iterable[FavoriteSubject] = (),
             st = out[k]
             st.ref, st.nd_id = subject.ref or st.ref, subject.nd_id or st.nd_id
             st.data = {**(subject.data or {}), **(st.data or {})}
+    # every name under its root, in one pass (roots are of their own type: `AliasIndex` keeps types apart)
+    names: dict[tuple[str, str], list[str]] = {}
+    for node in list(index.parent):
+        names.setdefault(index.root(node), []).append(node[1])
     for key, st in out.items():
-        st.aliases = sorted(alias for typ, alias in index.parent if typ == st.target_type and
-                            index.root((typ, alias)) == key)
+        st.aliases = sorted(names.get(key, ()))
     return out
 
 
