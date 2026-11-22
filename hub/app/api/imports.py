@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,8 +28,8 @@ from app.models import DownloadItem, Import, ImportCollection, ImportItem, Integ
 router = APIRouter(prefix="/api/imports", tags=["imports"])
 
 
-async def _own(s: AsyncSession, user: User, import_id: int) -> Import:
-    imp = await s.get(Import, import_id)
+async def _own(s: AsyncSession, user: User, import_id: int, *, lock: bool = False) -> Import:
+    imp = await s.get(Import, import_id, with_for_update={"key_share": True} if lock else None)
     if imp is None or imp.user_id != user.id:
         raise HTTPException(404, "Импорт не найден")
     return imp
@@ -175,7 +175,7 @@ async def start(import_id: int, body: ImportStartIn, user: User = Depends(curren
 async def download_all(import_id: int, user: User = Depends(current_user),
                        s: AsyncSession = Depends(get_session, scope="function")):
     """Economy → full: what waits for a listen is downloaded now, in the background."""
-    imp = await _own(s, user, import_id)
+    imp = await _own(s, user, import_id, lock=True)
     if imp.status not in ("running", "done"):
         raise HTTPException(409, "Импорт ещё не запущен")
     await core.download_all(s, imp)
@@ -190,7 +190,9 @@ async def download_all(import_id: int, user: User = Depends(current_user),
 async def sync(import_id: int, user: User = Depends(current_user),
                s: AsyncSession = Depends(get_session, scope="function")):
     """«Обновить»: read the collection again; only what is new is matched and acted on."""
-    imp = await _own(s, user, import_id)
+    imp = await _own(s, user, import_id, lock=True)
+    if imp.status == "paused":
+        raise HTTPException(409, "Сначала продолжите перенос")
     if imp.status in core.ACTIVE:
         raise HTTPException(409, "Импорт ещё идёт")
     if imp.started_at is None:
@@ -206,30 +208,19 @@ async def sync(import_id: int, user: User = Depends(current_user),
     return out
 
 
-@router.delete("/{import_id}/token", response_model=ImportOut)
-async def forget_token(import_id: int, user: User = Depends(current_user),
-                       s: AsyncSession = Depends(get_session, scope="function")):
-    """Remove the stored sign-in of the service (the import stays)."""
-    imp = await _own(s, user, import_id)
-    await integrations.release_import(s, imp)
-    imp.keep_token = False
-    await s.flush()
-    return await core.import_out(s, imp)
-
-
-@router.post("/{import_id}/cancel", response_model=ImportOut)
-async def cancel(import_id: int, user: User = Depends(current_user),
-                 s: AsyncSession = Depends(get_session, scope="function")):
-    """Stop: no more matching, the import's downloads that have not started are cancelled; done work stays."""
-    imp = await _own(s, user, import_id)
-    if imp.status in ("done", "cancelled", "failed"):
-        raise HTTPException(409, "Импорт уже закончен")
-    await apply.cancel_downloads(s, imp)
-    imp.status = "cancelled"
-    if not imp.keep_token:
-        await integrations.release_import(s, imp)
+@router.put("/{import_id}/pause", response_model=ImportOut)
+async def set_paused(import_id: int, paused: bool = Body(embed=True), user: User = Depends(current_user),
+                     s: AsyncSession = Depends(get_session, scope="function")):
+    """Hold or release queued transfer work. Claimed downloads can finish."""
+    imp = await _own(s, user, import_id, lock=True)
+    try:
+        await core.set_paused(s, imp, paused)
+    except PermanentError as e:
+        raise HTTPException(409, str(e)) from e
     await s.flush()
     out = await core.import_out(s, imp)
+    await s.commit()
+    notify()
     core.publish(imp)
     return out
 
@@ -238,7 +229,7 @@ async def cancel(import_id: int, user: User = Depends(current_user),
 async def remove(import_id: int, user: User = Depends(current_user),
                  s: AsyncSession = Depends(get_session, scope="function")):
     """Forget the import (and its sign-in). The music, the ♥ and the playlists it made stay."""
-    await core.remove(s, await _own(s, user, import_id))
+    await core.remove(s, await _own(s, user, import_id, lock=True))
     await s.commit()
     bus.publish(user.id, "library", {"kind": "import_review"})
     return {"ok": True}

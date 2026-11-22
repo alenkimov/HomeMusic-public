@@ -42,6 +42,72 @@ async def test_preview_can_be_deleted_without_starting_the_transfer(env):
     assert env["state"]["star_log"] == []
 
 
+async def test_pause_holds_matching_and_preserves_the_download_queue(env, monkeypatch):
+    from datetime import timedelta
+
+    from sqlalchemy import update
+
+    from app.db import session_scope
+    from app.imports import core
+    from app.jobs import queue
+    from app.models import DownloadItem, Job, utcnow
+
+    client = env["client"]
+    imp = await prepared(client)
+    url = f"/api/imports/{imp['id']}"
+    pause_url = f"{url}/pause"
+    assert (await client.put(pause_url, json={"paused": True})).status_code == 409
+    [likes] = [col for col in imp["collections"] if col["kind"] == "likes"]
+    response = await client.post(f"{url}/start", json={"collection_ids": [likes["id"]], "mode": "full"})
+    assert response.status_code == 200, response.text
+    claimed = await queue._claim("matching", imports=True)
+    assert claimed is not None and claimed.kind == "import_resolve"
+
+    # Pause while this batch is already being matched against the catalog.
+    async def pause_during_match(*args):
+        result = await resolve_track(*args)
+        response = await client.put(pause_url, json={"paused": True})
+        assert response.status_code == 200 and response.json()["status"] == "paused"
+        return result
+
+    resolve_track = core.resolve_track
+    with monkeypatch.context() as patch:
+        patch.setattr(core, "resolve_track", pause_during_match)
+        await queue.run_job(claimed)
+    assert not await jobs("download_item")
+    assert await queue._claim("matching", imports=True) is None
+    assert await queue._next_wakeup_in(imports=True) == 30.0
+    assert await core.resume_orphaned() == 0
+    assert (await client.get(url)).json()["has_token"]
+    assert (await client.post(f"{url}/sync")).status_code == 409
+
+    response = await client.put(pause_url, json={"paused": False})
+    assert response.status_code == 200 and response.json()["status"] == "running"
+    resumed = await queue._claim("matching", imports=True)
+    assert resumed is not None and resumed.id == claimed.id
+    await queue.run_job(resumed)
+    await run_imports()
+    [download_job] = await jobs("download_item")
+    [finish] = await jobs("import_finish")
+    item_id = download_job.payload_json["item_id"]
+    async with session_scope() as s:
+        # Postpone maintenance and playlist updates unrelated to these two jobs.
+        await s.execute(update(Job).where(Job.status == "queued", Job.id.not_in((download_job.id, finish.id)))
+                        .values(run_after=utcnow() + timedelta(minutes=5)))
+        (await s.get(Job, finish.id)).run_after = utcnow()
+
+    assert (await client.put(pause_url, json={"paused": True})).status_code == 200
+    assert await queue._claim("general") is None
+    assert await queue._next_wakeup_in() == 30.0
+    async with session_scope() as s:
+        assert (await s.get(DownloadItem, item_id)).status == "queued"
+
+    response = await client.put(pause_url, json={"paused": False})
+    assert response.status_code == 200 and response.json()["status"] == "running"
+    assert (await queue._claim("general")).id == download_job.id
+    assert len(env["state"]["fetches"]) == 1
+
+
 async def test_activity_shows_current_downloads_and_indexing_for_this_transfer(env):
     from sqlalchemy import select
 

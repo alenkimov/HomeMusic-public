@@ -601,7 +601,7 @@ def _user_likes(user_id: int):
     return (select(ImportItem).join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
             .join(Import, Import.id == ImportItem.import_id)
             .where(Import.user_id == user_id, ImportCollection.kind == "likes", ImportCollection.selected.is_(True),
-                   Import.status.in_(("running", "done")), ImportItem.ref.is_not(None)))
+                   Import.status.in_(("running", "paused", "done")), ImportItem.ref.is_not(None)))
 
 
 async def unlike_refs(s: AsyncSession, user_id: int, refs: list[str]) -> None:

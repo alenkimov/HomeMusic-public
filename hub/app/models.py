@@ -500,7 +500,7 @@ class Import(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     source: Mapped[str] = mapped_column(String(16))  # yandex
     method: Mapped[str] = mapped_column(String(16))  # device/token/profile
-    # auth/fetching/preview/running/done/failed/cancelled
+    # auth/fetching/preview/running/paused/done/failed/cancelled
     status: Mapped[str] = mapped_column(String(16), default="fetching")
     mode: Mapped[str] = mapped_column(String(16), default="economy")  # economy/full
     account: Mapped[str | None] = mapped_column(String(256))  # login or profile shown to the user

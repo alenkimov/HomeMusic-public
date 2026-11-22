@@ -1191,7 +1191,7 @@ export interface ImportReviewOut {
 }
 export type ImportMethod = 'device' | 'token' | 'profile' | 'password' | 'link' | 'saved';
 export type ImportMode = 'economy' | 'full';
-export type ImportStatus = 'auth' | 'fetching' | 'preview' | 'running' | 'done' | 'failed' | 'cancelled';
+export type ImportStatus = 'auth' | 'fetching' | 'preview' | 'running' | 'paused' | 'done' | 'failed' | 'cancelled';
 export type ImportCollectionKind = 'likes' | 'playlist' | 'albums' | 'artists' | 'dislikes';
 
 export interface ImportIn {

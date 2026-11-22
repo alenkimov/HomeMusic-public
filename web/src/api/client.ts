@@ -876,8 +876,7 @@ export const api = {
   importStart: (id: number, body: ImportStartIn) => request<ImportOut>('POST', `/api/imports/${id}/start`, { json: body }),
   importDownloadAll: (id: number) => request<ImportOut>('POST', `/api/imports/${id}/download_all`),
   importSync: (id: number) => request<ImportOut>('POST', `/api/imports/${id}/sync`),
-  importForgetToken: (id: number) => request<ImportOut>('DELETE', `/api/imports/${id}/token`),
-  importCancel: (id: number) => request<ImportOut>('POST', `/api/imports/${id}/cancel`),
+  importSetPaused: (id: number, paused: boolean) => request<ImportOut>('PUT', `/api/imports/${id}/pause`, { json: { paused } }),
   importDelete: (id: number) => request<OkOut>('DELETE', `/api/imports/${id}`),
   confirmImportMatch: (itemId: number) => request<OkOut>('POST', `/api/imports/items/${itemId}/confirm_match`),
 

@@ -100,16 +100,28 @@ def background_slots() -> int:
 
 
 _IMPORT_KINDS = "('import_resolve', 'import_playlists')"
+_IMPORT_NOT_PAUSED = (
+    "NOT EXISTS (SELECT 1 FROM imports WHERE imports.id = (jobs.payload_json ->> 'import_id')::integer "
+    "AND imports.status='paused')"
+)
+_DOWNLOAD_NOT_PAUSED = (
+    "NOT EXISTS (SELECT 1 FROM download_items JOIN imports "
+    "ON imports.id = (download_items.query_json #>> '{import,id}')::integer "
+    "WHERE download_items.id = (jobs.payload_json ->> 'item_id')::integer AND imports.status='paused')"
+)
 
 # Both checks use the same running jobs as the scheduler, including after a restart.
 _GENERAL_CLAIMABLE = (
     f"status='queued' AND kind NOT IN {_IMPORT_KINDS} "
     "AND (kind <> 'nd_scan' OR NOT EXISTS (SELECT 1 FROM jobs WHERE kind='nd_scan' AND status='running')) "
+    f"AND (kind NOT IN ('import_fetch', 'import_finish') OR {_IMPORT_NOT_PAUSED}) "
+    f"AND (kind <> 'download_item' OR priority >= 0 OR {_DOWNLOAD_NOT_PAUSED}) "
     "AND (priority >= 0 OR "
     f"(SELECT COUNT(*) FROM jobs WHERE status='running' AND priority < 0 AND kind NOT IN {_IMPORT_KINDS}) < :bg)"
 )
 _IMPORT_CLAIMABLE = (
-    f"status='queued' AND kind IN {_IMPORT_KINDS} AND NOT EXISTS "
+    f"status='queued' AND kind IN {_IMPORT_KINDS} "
+    f"AND (kind <> 'import_resolve' OR {_IMPORT_NOT_PAUSED}) AND NOT EXISTS "
     f"(SELECT 1 FROM jobs WHERE status='running' AND kind IN {_IMPORT_KINDS})"
 )
 

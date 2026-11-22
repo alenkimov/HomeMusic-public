@@ -42,6 +42,8 @@ function statusLine(imp: ImportOut): string {
       return `Найдено ${tracksWord(st.tracks)} — выберите, что перенести`;
     case 'running':
       return st.pending ? `Сопоставляем: осталось ${st.pending}` : st.downloading ? `Качается ${st.downloading}, скачано ${st.done}` : 'Переносим…';
+    case 'paused':
+      return 'На паузе';
     case 'done':
       return `Перенесено${imp.finished_at ? ' ' + fmtWhen(imp.finished_at) : ''}`;
     case 'cancelled':
@@ -570,6 +572,8 @@ function Progress({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) 
   const st = imp.stats;
   const [busy, setBusy] = useState<string | null>(null);
   const running = imp.status === 'running';
+  const paused = imp.status === 'paused';
+  const showProgress = running || paused;
   const matched = st.tracks - st.pending;
   const downloadTotal = st.done + st.downloading + st.failed;
   const downloadCount = downloadTotal > 0 ? `${st.done} из ${downloadTotal}`
@@ -585,10 +589,10 @@ function Progress({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) 
     <div className="pb-10">
       <div className="card mx-4 lg:mx-6 space-y-3 p-4">
         <div className="flex items-center gap-2 font-semibold">
-          {running ? <Spinner size={16} className="text-accent" /> : <Icon name={imp.status === 'done' ? 'check' : 'alert'} size={18} className={imp.status === 'done' ? 'text-accent' : 'text-warn'} />}
-          {running ? 'Переносим' : imp.status === 'done' ? 'Перенесено' : 'Остановлено'}
+          {running ? <Spinner size={16} className="text-accent" /> : <Icon name={paused ? 'pause' : imp.status === 'done' ? 'check' : 'alert'} size={18} className={paused ? 'text-muted' : imp.status === 'done' ? 'text-accent' : 'text-warn'} />}
+          {running ? 'Переносим' : paused ? 'На паузе' : imp.status === 'done' ? 'Перенесено' : 'Остановлено'}
         </div>
-        {st.tracks > 0 && (running || st.pending > 0) && (
+        {st.tracks > 0 && (showProgress || st.pending > 0) && (
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-sm text-muted">
               <span>Сопоставление</span>
@@ -597,7 +601,7 @@ function Progress({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) 
             <ProgressBar label="Сопоставление" value={matched / st.tracks} />
           </div>
         )}
-        {running && (
+        {showProgress && (
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-sm text-muted">
               <span>Скачивание</span>
@@ -607,31 +611,31 @@ function Progress({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) 
             {st.failed > 0 && <p className="text-xs text-warn">Не скачалось {st.failed}</p>}
           </div>
         )}
-        {running && <ImportActivity id={imp.id} />}
+        {showProgress && <ImportActivity id={imp.id} />}
         {imp.error && <Notice kind="error"><ServiceText text={imp.error} /></Notice>}
       </div>
 
       {imp.destinations.length > 0 && <Destinations destinations={imp.destinations} />}
 
       <div className="space-y-2 px-4 lg:px-6 pt-4">
-        {imp.mode === 'economy' && st.waiting > 0 && (
+        {imp.mode === 'economy' && st.waiting > 0 && (running || imp.status === 'done') && (
           <Button block icon="download" busy={busy === 'all'} onClick={() => run('all', () => api.importDownloadAll(imp.id), 'Остальное скачается в фоне')}>
             Скачать всё сейчас ({st.waiting})
           </Button>
         )}
-        {imp.has_token && (
-          <Button block variant="ghost" icon="lock" busy={busy === 'token'} onClick={() => run('token', () => api.importForgetToken(imp.id), 'Аккаунт отвязан от переноса')}>
-            Отвязать аккаунт от переноса
-          </Button>
-        )}
-        {imp.status === 'running' ? (
-          <Button block variant="danger" busy={busy === 'stop'} onClick={() => run('stop', () => api.importCancel(imp.id))}>
-            Остановить перенос
+        {running ? (
+          <Button block icon="pause" busy={busy === 'pause'} disabled={!!busy} onClick={() => run('pause', () => api.importSetPaused(imp.id, true))}>
+            Пауза
           </Button>
         ) : (
           <div className="flex justify-center gap-2">
-            {imp.can_sync && (
-              <Button icon="refresh" busy={busy === 'sync'} className="min-w-0 text-balance max-sm:px-3"
+            {paused ? (
+              <Button variant="primary" icon="play" busy={busy === 'resume'} disabled={!!busy} className="min-w-0 text-balance max-sm:px-3"
+                onClick={() => run('resume', () => api.importSetPaused(imp.id, false))}>
+                Продолжить
+              </Button>
+            ) : imp.can_sync && (
+              <Button icon="refresh" busy={busy === 'sync'} disabled={!!busy} className="min-w-0 text-balance max-sm:px-3"
                 onClick={() => run('sync', () => api.importSync(imp.id), 'Повторное сканирование запущено')}>
                 Сканировать повторно
               </Button>

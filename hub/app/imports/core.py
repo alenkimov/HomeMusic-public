@@ -207,10 +207,26 @@ async def enqueue_once(s: AsyncSession, kind: str, import_id: int, *, delay_s: f
         await enqueue(s, kind, {"import_id": import_id}, delay_s=delay_s, priority=PRIORITY_IMPORT)
 
 
-def _active_transfer_jobs():
+def _active_transfer_jobs(import_id=Import.id):
     return select(Job.id).where(Job.kind.in_(("import_fetch", "import_resolve", "import_finish")),
                                 Job.status.in_(("queued", "running")),
-                                Job.payload_json["import_id"].as_integer() == Import.id).exists()
+                                Job.payload_json["import_id"].as_integer() == import_id).exists()
+
+
+async def set_paused(s: AsyncSession, imp: Import, paused: bool) -> None:
+    if imp.status not in ("running", "paused"):
+        raise PermanentError("Пауза доступна только для запущенного переноса")
+    imp.status = "paused" if paused else "running"
+    if not paused and not await s.scalar(select(_active_transfer_jobs(imp.id))):
+        await enqueue(s, "import_resolve", {"import_id": imp.id}, priority=PRIORITY_IMPORT)
+
+
+async def _running_transfer(s: AsyncSession, import_id: int, *, lock: bool = False) -> Import | None:
+    imp = await s.get(Import, import_id, with_for_update={"key_share": True} if lock else None)
+    if imp is not None and imp.status == "paused":
+        # A worker claimed this job before the pause. Put it back for the next resume.
+        raise RetryLater(0, "transfer paused")
+    return imp if imp is not None and imp.status == "running" else None
 
 
 async def resume_orphaned() -> int:
@@ -511,7 +527,7 @@ async def _fetch_failed(job: Job, exc: Exception) -> None:
 @on_final_failure("import_finish")
 async def _transfer_failed(job: Job, exc: Exception) -> None:
     async with session_scope() as s:
-        imp = await s.get(Import, int(job.payload_json["import_id"]))
+        imp = await s.get(Import, int(job.payload_json["import_id"]), with_for_update={"key_share": True})
         if imp is None or imp.status != "running":
             return
         imp.status = "failed"
@@ -559,8 +575,8 @@ async def _next_batch(s: AsyncSession, imp: Import) -> list[tuple[ImportItem, Im
 async def handle_resolve(job: Job) -> None:
     import_id = int(job.payload_json["import_id"])
     async with session_scope() as s:
-        imp = await s.get(Import, import_id)
-        if imp is None or imp.status != "running":
+        imp = await _running_transfer(s, import_id)
+        if imp is None:
             return
         batch = await _next_batch(s, imp)
         ids = [(it.id, c.kind) for it, c in batch]
@@ -592,8 +608,8 @@ async def handle_resolve(job: Job) -> None:
 
     resolved = await asyncio.gather(*(one(i, k) for i, k in ids))
     async with session_scope() as s:
-        imp = await s.get(Import, import_id)
-        if imp is None or imp.status != "running":
+        imp = await _running_transfer(s, import_id, lock=True)
+        if imp is None:
             return
         for (item_id, kind), (ready, resolution) in zip(ids, resolved, strict=True):
             if ready and (item := await s.get(ImportItem, item_id)) is not None and item.status == "pending":
@@ -643,8 +659,8 @@ async def handle_finish(job: Job) -> None:
     import_id = int(job.payload_json["import_id"])
     async with session_scope() as s:
         await s.execute(select(func.pg_advisory_xact_lock(PLAYLIST_UPDATE_LOCK, import_id)))
-        imp = await s.get(Import, import_id)
-        if imp is None or imp.status != "running":
+        imp = await _running_transfer(s, import_id)
+        if imp is None:
             return
         await apply.refresh_items(s, imp)
         active = await apply.active_downloads(s, imp)
@@ -654,15 +670,22 @@ async def handle_finish(job: Job) -> None:
     if active:
         raise RetryLater(FINISH_RECHECK_S, f"{active} downloads under way")
     async with session_scope() as s:
-        imp = await s.get(Import, import_id)
-        if imp is None or imp.status != "running":
+        imp = await _running_transfer(s, import_id)
+        if imp is None:
             return
         await apply.sync_likes(s, imp)
-        await apply.star_albums_artists(s, imp)
-        imp.status = "done"
-        imp.finished_at = utcnow()
-        if not imp.keep_token:
-            await integrations.release_import(s, imp)
+        # sync_likes takes its own lock before updating the import, so check the transfer state after it returns.
+        status = await s.scalar(select(Import.status).where(Import.id == import_id).with_for_update(key_share=True))
+        if status == "running":
+            await apply.star_albums_artists(s, imp)
+            imp.status = "done"
+            imp.finished_at = utcnow()
+            if not imp.keep_token:
+                await integrations.release_import(s, imp)
+    if status == "paused":
+        raise RetryLater(0, "transfer paused")
+    if status != "running":
+        return
     log.info("import %s done", import_id)
     publish(imp)
 

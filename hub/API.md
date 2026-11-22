@@ -488,8 +488,7 @@ Row statuses: `owned` (already in library), `auto` (confident, pre-selected), `c
 | POST | `/api/imports/{id}/start` | `ImportStartIn {collection_ids, mode, download_albums, keep_token}` → `ImportOut` (`409` unless `preview`) |
 | POST | `/api/imports/{id}/download_all` | → `ImportOut`: economy → full, what waits for a listen is downloaded now in the background |
 | POST | `/api/imports/{id}/sync` | → `ImportOut`: «Обновить» — reads the collection again (needs the kept sign-in or a profile); new rows go the way the first ones went, removed ones drop out of the playlists. `409` while it runs |
-| DELETE | `/api/imports/{id}/token` | → `ImportOut`: the stored sign-in is removed |
-| POST | `/api/imports/{id}/cancel` | → `ImportOut`: stops matching; its downloads that have not started are cancelled; done work stays |
+| PUT | `/api/imports/{id}/pause` | `{paused: bool}` → `ImportOut`: holds or resumes matching and queued background downloads; started downloads can finish |
 | DELETE | `/api/imports/{id}` | → `{ok}`: forgets the import and its sign-in; music, ♥ and playlists stay |
 | POST | `/api/imports/items/{id}/pick` | → `ImportPickOut {download_item_id}`: a not found (or wrongly matched) track becomes a visible download by its names without the catalog match; the user picks the file on its page (`/api/downloads/{id}`, `needs_review`) |
 | POST | `/api/imports/items/{id}/skip` | → `{ok}`: the row is left out |
@@ -498,7 +497,8 @@ Row statuses: `owned` (already in library), `auto` (confident, pre-selected), `c
 
 `ImportOut.status`: `auth` (waiting for the code) → `fetching` → `preview` (choose what to move; `stats` counts distinct
 tracks of the likes and playlists: `owned`, `to_download`, `est_bytes` at 320 kbps, `free_bytes` of the music disk) →
-`running` → `done`; `failed` (`error`), `cancelled`. `collections[].kind`: `likes` («Мне нравится»), `playlist`,
+`running` ↔ `paused`; a successful transfer finishes at `done`. Other statuses are `failed` (`error`) and previously
+cancelled transfers. `collections[].kind`: `likes` («Мне нравится»), `playlist`,
 `albums`, `artists`, `dislikes` (only kept). Without a sign-in (`profile`) there are no private playlists and no dislikes.
 
 Matching (`ImportItemOut.match`): `owned` — in the library; `exact` — a confident catalog match; `probable` — weaker
