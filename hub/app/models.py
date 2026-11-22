@@ -1105,6 +1105,8 @@ class Playlist(Base):
     nd_cover: Mapped[str | None] = mapped_column(String(128))  # the picture Navidrome makes of the mirror's albums
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # «Любимое»: what it was last made from (`favorites.project_liked`): the same inputs make the same list
+    projected_from: Mapped[str | None] = mapped_column(String(64))
 
 
 class PlaylistItem(Base):

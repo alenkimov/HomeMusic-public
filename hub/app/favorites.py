@@ -541,6 +541,12 @@ async def project_liked(s: AsyncSession, user_id: int, starred: list[dict] | Non
 
     from app.models import TrackFile
 
+    p = await playlists.liked(s, user_id)
+    inputs = await _liked_inputs(s, user_id, starred)
+    if preserve_import_id is None and p.projected_from == inputs:
+        return False  # made from these very inputs already
+    p.projected_from = inputs
+
     want: dict[int, datetime] = {}
     decided: set[str] = set()  # what the user has decided about themself: an import or a star does not overrule it
     states = [st for st in (await snapshot(s, user_id)).values() if st.target_type == "track"]
@@ -583,7 +589,6 @@ async def project_liked(s: AsyncSession, user_id: int, starred: list[dict] | Non
             await record(s, user_id, FavoriteTarget(track_id=track.id), True, ts=min(at, utcnow()), normalize=False,
                          context="import", operation=f"import:{it.import_id}:liked:{track.id}",
                          mirror_pending=not track.nd_song_id)
-    p = await playlists.liked(s, user_id)
     have = await playlists.items(s, p.id)
     if starred is not None:
         songs = {str(x["id"]): parse_time(x.get("starred")) for x in starred if x.get("id")}
@@ -618,6 +623,34 @@ async def project_liked(s: AsyncSession, user_id: int, starred: list[dict] | Non
     p.updated_at = utcnow()
     await s.flush()
     return True
+
+
+async def _liked_inputs(s: AsyncSession, user_id: int, starred: list[dict] | None) -> str:
+    """What «Любимое» is made of (`project_liked`), told in a few aggregate queries: the journal of likes as it
+    stands now, the liked rows of the imports (they change in place as a transfer matches and fetches them), the
+    library's tracks and files (a liked name comes to be a track, a file to have its Navidrome song), the verified
+    names and Navidrome's stars as given. The same answer: the same list — reading «Любимое» does not make it anew,
+    which took a second and a half of a 4000 tracks' list on every read."""
+    from sqlalchemy import func, literal_column
+    from sqlalchemy.dialects.postgresql import aggregate_order_by
+
+    from app.models import TrackFile
+
+    now = utcnow()
+    likes = (await s.execute(select(func.max(PlayEvent.id), func.count()).where(
+        PlayEvent.user_id == user_id, PlayEvent.kind.in_(("like", "unlike")), PlayEvent.ts <= now))).one()
+    row = func.concat_ws(":", ImportItem.id, ImportItem.track_id, ImportItem.status, ImportItem.ref, ImportItem.match)
+    imported = (await s.execute(
+        select(func.md5(func.string_agg(row, aggregate_order_by(literal_column("','"), ImportItem.id))))
+        .join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
+        .join(Import, Import.id == ImportItem.import_id)
+        .where(Import.user_id == user_id, ImportCollection.kind == "likes", ImportCollection.selected.is_(True)))).scalar()
+    tracks = (await s.execute(select(func.max(Track.id), func.count()))).one()
+    files = (await s.execute(select(func.max(TrackFile.id), func.count(), func.count(TrackFile.nd_song_id)))).one()
+    subjects = (await s.execute(select(func.max(FavoriteSubject.id), func.count()))).one()
+    stars = None if starred is None else sorted((str(x.get("id")), str(x.get("starred"))) for x in starred if x.get("id"))
+    said = repr((tuple(likes), imported, tuple(tracks), tuple(files), tuple(subjects), stars))
+    return hashlib.sha256(said.encode()).hexdigest()
 
 
 def parse_time(value: Any) -> datetime | None:
