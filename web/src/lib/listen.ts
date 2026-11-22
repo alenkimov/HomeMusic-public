@@ -641,12 +641,26 @@ export function touchTrack(ref: string) {
  * pauses/resumes it if it is the current one. `origin` — where the list was launched (by default by `context`). */
 export function listen(track: ListenTrack, queue?: readonly ListenTrack[], context?: string, origin?: LaunchOrigin) {
   if (state.track?.ref === track.ref && state.phase !== 'error') return toggle();
+  if (!playableNow(track, context ?? routeContext())) return notOnDevice();
   startList(track, queue, context, origin);
+}
+
+/** Without the network only what is on the device plays: a track kept for offline, or one of «Моя волна»'s reserve
+ * when played as the wave. Anything else would only go looking for its file and fail. */
+function playableNow(track: ListenTrack, context: string): boolean {
+  return navigator.onLine || !!keptInfo(track.ref) || (context.startsWith('wave:') && !!waveAudio(track.ref));
+}
+
+/** A tap on what cannot play without the network: said, and what plays now goes on. */
+function notOnDevice() {
+  toast('Нет сети — трека нет на устройстве');
 }
 
 function startList(track: ListenTrack, queue?: readonly ListenTrack[], context?: string, origin?: LaunchOrigin, page?: string) {
   failedManualEntries.clear();
   listContext = context ?? routeContext();
+  // offline the list plays through what is on the device, not past tracks that each fail in turn
+  if (queue && !navigator.onLine) queue = queue.filter((t) => t.ref === track.ref || playableNow(t, listContext));
   listPage = page ?? location.hash.replace(/^#/, '').split('?')[0];
   listLaunch = newLaunch(listContext === OFFLINE_WAVE ? 'other' : listContext, origin);
   const list = queue?.some((t) => t.ref === track.ref) ? queue : [track];
@@ -673,6 +687,11 @@ function startList(track: ListenTrack, queue?: readonly ListenTrack[], context?:
 /** «Слушать» of a whole list: from its first track (with shuffle on, a random one). `shuffle` sets the mode. */
 export function listenAll(list: readonly ListenTrack[], opts: { shuffle?: boolean; context?: string; origin?: LaunchOrigin; page?: string } = {}) {
   if (!list.length) return;
+  if (!navigator.onLine) {
+    const context = opts.context ?? routeContext();
+    list = list.filter((t) => playableNow(t, context));
+    if (!list.length) return notOnDevice();
+  }
   if (opts.shuffle !== undefined) setModes({ shuffle: opts.shuffle });
   // starts over even when the first track is the one playing (listen() would pause it)
   startList(state.shuffle ? list[Math.floor(Math.random() * list.length)] : list[0], list, opts.context, opts.origin, opts.page);
@@ -1142,6 +1161,7 @@ async function openManualQueue(entries: readonly ManualQueueEntry[], auto: boole
 export function playManualQueueAt(id: number) {
   const entry = state.manualQueue.find((row) => row.id === id);
   if (entry) {
+    if (!navigator.onLine) return notOnDevice(); // the account's queue is opened through the Hub
     failedManualEntries.delete(id);
     void openManualQueue([entry], false);
   }
@@ -1163,7 +1183,9 @@ export function moveInQueue(from: number, to: number) {
 /** A tap on a track of the queue: it plays now, the queue stays as it is. */
 export function playQueueAt(index: number) {
   if (index === state.index) return toggle();
-  if (index >= 0 && index < state.queue.length) start(state.queue, index);
+  if (index < 0 || index >= state.queue.length) return;
+  if (!playableNow(state.queue[index], state.context)) return notOnDevice();
+  start(state.queue, index);
 }
 
 /** More tracks of a list were loaded (search results): if it is the list playing, it plays on through them too. */
@@ -1210,7 +1232,7 @@ function nextAutomatic(auto: boolean, wrap: boolean): boolean {
   const after = ahead(state.index);
   if (after < state.queue.length) start(state.queue, after, auto);
   else if (wrap && state.repeat === 'all' && state.track && !onWave()) {
-    const first = state.queue.findIndex((track) => !track.queued && !ofHiddenArtist(track));
+    const first = state.queue.findIndex((track) => !track.queued && !passed(track));
     if (first < 0) return false;
     start(state.queue, first, auto);
   }
@@ -1218,12 +1240,16 @@ function nextAutomatic(auto: boolean, wrap: boolean): boolean {
   return true;
 }
 
+/** A track the player goes past by itself: of an artist the user does not listen to, or — without the network — one
+ * that is not on the device. */
+const passed = (track: ListenTrack) => ofHiddenArtist(track) || !playableNow(track, state.context);
+
 /** The place of the queue the player goes to from `from` by itself (`step` 1: on, −1: back): the tracks of an artist
- * the user does not listen to (`lib/dislikes.ts`) are passed. Such a track plays only when it is tapped. Past the
+ * the user does not listen to (`lib/dislikes.ts`) and, offline, those not on the device are passed. Such a track plays only when it is tapped. Past the
  * end of the queue (or before its start) when there is none. */
 function ahead(from: number, step: 1 | -1 = 1): number {
   let i = from + step;
-  while (i >= 0 && i < state.queue.length && ofHiddenArtist(state.queue[i])) i += step;
+  while (i >= 0 && i < state.queue.length && passed(state.queue[i])) i += step;
   return i;
 }
 
