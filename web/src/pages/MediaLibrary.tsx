@@ -479,10 +479,11 @@ export function ArtistsPage() {
   }, [res.data, q]);
   return (
     <div>
-      <PageHeader title="Исполнители" back="/library" sub={res.data ? `${res.data.length}` : undefined} />
-      <div className="px-4 pb-2">
-        <input className="input" type="search" placeholder="Найти исполнителя" aria-label="Найти исполнителя" value={q} onChange={(e) => setQ(e.target.value)} />
-      </div>
+      <PageHeader title="Исполнители" back="/library" sub={res.data ? `${res.data.length}` : undefined} toolbar={
+        <div className="px-4 pb-2">
+          <input className="input" type="search" placeholder="Найти исполнителя" aria-label="Найти исполнителя" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+      } />
       {res.loading ? (
         <SkeletonRows />
       ) : res.error ? (

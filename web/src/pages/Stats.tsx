@@ -58,11 +58,12 @@ export function StatsPage() {
 
   return (
     <div className="pb-8">
-      <PageHeader title="Статистика" back="/more" sub={d?.first_at ? `Данные с ${new Date(d.first_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}` : undefined} />
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 pb-4">
-        <Segmented value={period} options={PERIODS} onChange={setPeriod} label="Период" />
-        <Segmented value={by} options={BY} onChange={setBy} label="Как считать" />
-      </div>
+      <PageHeader title="Статистика" back="/more" sub={d?.first_at ? `Данные с ${new Date(d.first_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}` : undefined} toolbar={
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 pb-4">
+          <Segmented value={period} options={PERIODS} onChange={setPeriod} label="Период" />
+          <Segmented value={by} options={BY} onChange={setBy} label="Как считать" />
+        </div>
+      } />
       {stats.error && !d ? (
         <ErrorState text={stats.error} onRetry={() => stats.reload()} />
       ) : !d ? (

@@ -193,12 +193,8 @@ export function DiscographyPage({ refId }: { refId: string }) {
     );
   };
 
-  return (
-    <div>
-      <ListBar plain title={d.artist.name} back={back} end={sourceMarks} search={{
-        found: null, open: sf.open, alone: sf.alone, show: sf.show, close: sf.close,
-        field: <>{sf.field(needle ? (foundReleases?.length ?? 0) + (foundTracks?.length ?? 0) : undefined)}{sf.alone && sourceMarks}</>,
-      }} />
+  const toolbar = (
+    <>
       {d.spotify_partial && !d.spotify_pending && <p className="px-4 pb-2 text-sm text-muted lg:px-6">
         Часть релизов Spotify пока недоступна.
       </p>}
@@ -239,7 +235,15 @@ export function DiscographyPage({ refId }: { refId: string }) {
           </div>
         )
       )}
+    </>
+  );
 
+  return (
+    <div>
+      <ListBar plain title={d.artist.name} back={back} end={sourceMarks} toolbar={toolbar} search={{
+        found: null, open: sf.open, alone: sf.alone, show: sf.show, close: sf.close,
+        field: <>{sf.field(needle ? (foundReleases?.length ?? 0) + (foundTracks?.length ?? 0) : undefined)}{sf.alone && sourceMarks}</>,
+      }} />
       {needle ? (
         foundReleases?.length || foundTracks?.length ? (
           <div className="pb-4">

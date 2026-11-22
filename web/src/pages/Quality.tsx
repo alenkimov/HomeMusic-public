@@ -126,8 +126,7 @@ export function QualityPage() {
   const weak = res.data?.weak ?? 0;
   return (
     <div className="pb-10">
-      <PageHeader title="Качество звука" back="/files" sub={rows.length ? `Проверено ${done} из ${rows.length}` : undefined} />
-      <Steps at={2} />
+      <PageHeader title="Качество звука" back="/files" sub={rows.length ? `Проверено ${done} из ${rows.length}` : undefined} toolbar={<Steps at={2} />} />
 
       {res.loading ? (
         <SkeletonRows n={6} />

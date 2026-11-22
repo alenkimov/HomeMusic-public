@@ -67,17 +67,20 @@ export function SubscriptionsPage() {
     setOnly((cur) => (cur === ref ? null : ref));
     setList(false);
   };
+  const filters = (
+    <div className="flex min-w-0 flex-wrap items-center gap-2 px-2 pb-1">
+      <Segmented value={kind} options={KINDS} onChange={setKind} label="Тип релиза" />
+      {who && (
+        <button type="button" onClick={() => setOnly(null)} aria-label={`Снять фильтр · ${who.name}`} className="flex min-h-8 max-w-full items-center gap-1.5 rounded-full bg-accent/15 py-1 pl-3 pr-2 text-left text-sm font-medium text-accent">
+          <span className="min-w-0 wrap-anywhere">{who.name}</span>
+          <Icon name="x" size={14} className="shrink-0" />
+        </button>
+      )}
+    </div>
+  );
   const feed = (
     <section aria-label="Лента релизов" className={cx('min-w-0 @min-[46rem]/releases:block', list && 'hidden')}>
-      <div className="flex min-w-0 flex-wrap items-center gap-2 px-2 pb-1">
-        <Segmented value={kind} options={KINDS} onChange={setKind} label="Тип релиза" />
-        {who && (
-          <button type="button" onClick={() => setOnly(null)} aria-label={`Снять фильтр · ${who.name}`} className="flex min-h-8 max-w-full items-center gap-1.5 rounded-full bg-accent/15 py-1 pl-3 pr-2 text-left text-sm font-medium text-accent">
-            <span className="min-w-0 wrap-anywhere">{who.name}</span>
-            <Icon name="x" size={14} className="shrink-0" />
-          </button>
-        )}
-      </div>
+      <div className="hidden @min-[46rem]/releases:block">{filters}</div>
       {!shown.length ? (
         <Empty icon="disc" title="Пока ничего" text={d.items.length ? 'Таких релизов за последние три месяца не было.' : 'За последние три месяца у ваших исполнителей ничего не выходило.'} />
       ) : (
@@ -86,9 +89,8 @@ export function SubscriptionsPage() {
     </section>
   );
 
-  return (
-    <div className="@container/releases">
-      <PageHeader title="Релизы" back={back} sub={[artistsWord(d.artists), d.unseen ? `новых релизов: ${d.unseen}` : null].filter(Boolean).join(' · ')} />
+  const toolbar = (
+    <>
       <div className="no-scrollbar flex items-start gap-1 overflow-x-auto px-3 pt-1 pb-3 @min-[46rem]/releases:hidden" aria-label="Фильтр по исполнителю">
         <button type="button" onClick={() => setList((v) => !v)} aria-pressed={list} className="w-14 shrink-0 text-center">
           <span className={cx('mx-auto flex size-11 items-center justify-center rounded-full border', list ? 'border-accent bg-accent/15 text-accent' : 'border-fg/20 bg-raised text-muted')}>
@@ -105,7 +107,13 @@ export function SubscriptionsPage() {
           </button>
         ))}
       </div>
-      <div className="px-2 pt-1 @min-[46rem]/releases:grid @min-[46rem]/releases:grid-cols-[minmax(0,1fr)_minmax(15rem,28%)] @min-[46rem]/releases:gap-x-5 @min-[46rem]/releases:px-4">
+      {!list && <div className="px-2 pt-1 @min-[46rem]/releases:hidden">{filters}</div>}
+    </>
+  );
+  return (
+    <div className="@container/releases">
+      <PageHeader title="Релизы" back={back} sub={[artistsWord(d.artists), d.unseen ? `новых релизов: ${d.unseen}` : null].filter(Boolean).join(' · ')} toolbar={toolbar} />
+      <div className={cx('px-2 @min-[46rem]/releases:grid @min-[46rem]/releases:grid-cols-[minmax(0,1fr)_minmax(15rem,28%)] @min-[46rem]/releases:gap-x-5 @min-[46rem]/releases:px-4 @min-[46rem]/releases:pt-1', list && 'pt-1')}>
         {feed}
         <section aria-label="Исполнители" className={cx('min-w-0 @min-[46rem]/releases:block @min-[46rem]/releases:border-l @min-[46rem]/releases:border-line @min-[46rem]/releases:pl-3', !list && 'hidden')}>
           <h2 className="px-2 pt-1 pb-2 text-lg font-bold">Исполнители <span className="text-sm font-normal text-muted">· {d.artists}</span></h2>

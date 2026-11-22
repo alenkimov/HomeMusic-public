@@ -833,7 +833,8 @@ export function UploadPage() {
 
   return (
     <div className="pb-10">
-      <PageHeader title="Загрузить файлы" back="/files" sub={uploads.length ? `${uploads.length} ${plural(uploads.length, ['файл', 'файла', 'файлов'])} · ${fmtSize(totalSize)}` : undefined} right={importButton || undefined} />
+      <PageHeader title="Загрузить файлы" back="/files" sub={uploads.length ? `${uploads.length} ${plural(uploads.length, ['файл', 'файла', 'файлов'])} · ${fmtSize(totalSize)}` : undefined}
+        right={importButton || undefined} toolbar={uploads.length > 0 && <Steps at={1} />} />
 
       {dragging && (
         <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" aria-hidden="true">
@@ -843,8 +844,6 @@ export function UploadPage() {
           </div>
         </div>
       )}
-
-      {uploads.length > 0 && <Steps at={1} />}
 
       <div className="px-4 lg:px-6">
         {[fileRef, folderRef].map((ref, i) => (

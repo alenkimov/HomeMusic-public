@@ -183,11 +183,22 @@ export function HeroSkeleton({ round, buttons, center, rows = 8 }: { round?: boo
 
 // --- layout -----------------------------------------------------------------------------------
 
+/** The page's top controls sit before the space stretched by a mobile pull. */
+export function PageBar({ className, children, toolbar }: { className?: string; children: ReactNode; toolbar?: ReactNode }) {
+  return (
+    <>
+      <header className={className}>{children}</header>
+      {toolbar}
+      <div aria-hidden="true" className="hm-page-pull-space" />
+    </>
+  );
+}
+
 /** `hero`: the page has its own big head below (a cover in its own light, the name in large letters): the bar is
  * only «back» and its buttons over that light — the name is not said twice, and the bar leaves with the page. */
-export function PageHeader({ title, back, right, sub, hero }: { title: ReactNode; back?: string; right?: ReactNode; sub?: ReactNode; hero?: boolean }) {
+export function PageHeader({ title, back, right, sub, hero, toolbar }: { title: ReactNode; back?: string; right?: ReactNode; sub?: ReactNode; hero?: boolean; toolbar?: ReactNode }) {
   return (
-    <header data-pull-anchor className={cx('pt-safe z-20', hero ? 'relative' : 'sticky top-(--page-top) bg-bg/90 backdrop-blur')}>
+    <PageBar className={cx('pt-safe z-20', hero ? 'relative' : 'sticky top-(--page-top) bg-bg/90 backdrop-blur')} toolbar={toolbar}>
       <div className="flex min-h-14 items-center gap-1 px-2">
         {back !== undefined ? (
           <IconButton icon="back" label="Назад" onClick={() => goBack(back)} className={hero ? 'ml-1 !h-10 !w-10 bg-bg/40' : undefined} />
@@ -200,7 +211,7 @@ export function PageHeader({ title, back, right, sub, hero }: { title: ReactNode
         </div>
         {right}
       </div>
-    </header>
+    </PageBar>
   );
 }
 

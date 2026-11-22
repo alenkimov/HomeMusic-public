@@ -193,6 +193,29 @@ export function FilesPage({ trash = false }: { trash?: boolean }) {
   ];
   const offerImport = imports.data?.length === 0 && only === 'all' && !search.found;
   const title = me.is_admin ? 'Все файлы' : 'Мои файлы';
+  const filters = (all.length > 0 || deleted.length > 0) && (
+    <div className="flex items-center gap-2 pb-2 pl-4 lg:pl-6">
+      <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pr-4" role="group" aria-label="Какие файлы показывать" style={{ scrollbarWidth: 'none' }}>
+        {chips.filter(([id, , n]) => id === 'all' || id === only || (n ?? 0) > 0).map(([id, label, n]) => (
+          <button key={id} type="button" aria-pressed={only === id} onClick={() => setOnly(only === id ? 'all' : id)} className={cx('shrink-0 rounded-full px-3 py-1.5 text-sm transition', only === id ? 'bg-fg font-semibold text-bg' : 'bg-fg/10 text-muted hover:text-fg')}>
+            {label}
+            {n !== null && <span className={cx('pl-1.5 tabular-nums', only === id ? 'opacity-70' : 'text-dim')}>{n}</span>}
+          </button>
+        ))}
+        {(deleted.length > 0 || inTrash) && (
+          <>
+            <span className="mx-1 my-1.5 w-px shrink-0 self-stretch bg-line" aria-hidden="true" />
+            <button type="button" aria-pressed={inTrash} onClick={() => setOnly(inTrash ? 'all' : 'trash')} title="Удалённые файлы: 30 дней их можно вернуть" className={cx('flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition', inTrash ? 'bg-danger/20 font-semibold text-danger' : 'bg-fg/10 text-muted hover:text-fg')}>
+              <Icon name="trash" size={14} />
+              Корзина
+              <span className={cx('tabular-nums', !inTrash && 'text-dim')}>{deleted.length}</span>
+            </button>
+          </>
+        )}
+      </div>
+      {!inTrash && <span className="hidden shrink-0 pr-4 text-xs tabular-nums text-dim sm:block lg:pr-6">{shown.length === all.length ? tracksWord(all.length) : `${shown.length} из ${all.length}`}</span>}
+    </div>
+  );
 
   return (
     <div>
@@ -201,6 +224,7 @@ export function FilesPage({ trash = false }: { trash?: boolean }) {
         title={title}
         back="/more"
         search={search}
+        toolbar={filters}
         extra={
           <>
             {/* a computer sorts by a click on a column's name; a phone has no columns */}
@@ -211,30 +235,6 @@ export function FilesPage({ trash = false }: { trash?: boolean }) {
           </>
         }
       />
-
-      {(all.length > 0 || deleted.length > 0) && (
-        <div className="flex items-center gap-2 pb-2 pl-4 lg:pl-6">
-          <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pr-4" role="group" aria-label="Какие файлы показывать" style={{ scrollbarWidth: 'none' }}>
-            {chips.filter(([id, , n]) => id === 'all' || id === only || (n ?? 0) > 0).map(([id, label, n]) => (
-              <button key={id} type="button" aria-pressed={only === id} onClick={() => setOnly(only === id ? 'all' : id)} className={cx('shrink-0 rounded-full px-3 py-1.5 text-sm transition', only === id ? 'bg-fg font-semibold text-bg' : 'bg-fg/10 text-muted hover:text-fg')}>
-                {label}
-                {n !== null && <span className={cx('pl-1.5 tabular-nums', only === id ? 'opacity-70' : 'text-dim')}>{n}</span>}
-              </button>
-            ))}
-            {(deleted.length > 0 || inTrash) && (
-              <>
-                <span className="mx-1 my-1.5 w-px shrink-0 self-stretch bg-line" aria-hidden="true" />
-                <button type="button" aria-pressed={inTrash} onClick={() => setOnly(inTrash ? 'all' : 'trash')} title="Удалённые файлы: 30 дней их можно вернуть" className={cx('flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition', inTrash ? 'bg-danger/20 font-semibold text-danger' : 'bg-fg/10 text-muted hover:text-fg')}>
-                  <Icon name="trash" size={14} />
-                  Корзина
-                  <span className={cx('tabular-nums', !inTrash && 'text-dim')}>{deleted.length}</span>
-                </button>
-              </>
-            )}
-          </div>
-          {!inTrash && <span className="hidden shrink-0 pr-4 text-xs tabular-nums text-dim sm:block lg:pr-6">{shown.length === all.length ? tracksWord(all.length) : `${shown.length} из ${all.length}`}</span>}
-        </div>
-      )}
 
       {only === 'all' && !search.found && <SplitAlbumsCard onJoined={() => res.reload(true)} />}
       {offerImport && (

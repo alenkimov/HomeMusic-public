@@ -42,10 +42,11 @@ export function AdminUserPage({ id }: { id: number }) {
 
   return (
     <div className="pb-6">
-      <PageHeader title={u?.username ?? 'Пользователь'} back="/admin" sub={u?.name && u.name !== u.username ? u.name : undefined} />
-      <div className="px-4 pb-3">
-        <Segmented<TabKey> label="Разделы" value={tab} options={[...TABS]} onChange={(v) => setQuery({ tab: v === 'overview' ? null : v })} />
-      </div>
+      <PageHeader title={u?.username ?? 'Пользователь'} back="/admin" sub={u?.name && u.name !== u.username ? u.name : undefined} toolbar={
+        <div className="px-4 pb-3">
+          <Segmented<TabKey> label="Разделы" value={tab} options={[...TABS]} onChange={(v) => setQuery({ tab: v === 'overview' ? null : v })} />
+        </div>
+      } />
       {tab === 'listening' ? (
         <ListeningTab userId={id} />
       ) : tab === 'taste' ? (

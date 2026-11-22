@@ -5,7 +5,7 @@ import { ForYouTiles } from '../components/ForYouTiles';
 import { Icon } from '../components/Icon';
 import { ArtistBubble, TrackRow, TrackTableHeader } from '../components/catalog';
 import { TrackTable } from '../components/TrackTable';
-import { Cover, Empty, ErrorState, IconButton, PageHeader, SectionTitle, SkeletonRows } from '../components/ui';
+import { Cover, Empty, ErrorState, IconButton, PageBar, PageHeader, SectionTitle, SkeletonRows } from '../components/ui';
 import { useHubEvent } from '../lib/events';
 import { plural, tracksWord } from '../lib/format';
 import { useAsync, useDebounced } from '../lib/hooks';
@@ -33,13 +33,13 @@ export function LibraryPage() {
 
   return (
     <div className="px-4 pb-4">
-      <header data-pull-anchor className="pt-safe flex items-center justify-between pb-1 pt-4">
+      <PageBar className="pt-safe flex items-center justify-between pb-1 pt-4">
         <h1 className="text-3xl font-bold tracking-tight">Библиотека</h1>
         <span className="flex items-center">
           <IconButton icon="search" size={24} label="Поиск по библиотеке" onClick={() => navigate('/library/search')} />
           <IconButton icon="plus" size={28} label="Создать плейлист" onClick={() => navigate('/playlists')} />
         </span>
-      </header>
+      </PageBar>
 
       <Title>Плейлисты</Title>
       <ul className="overflow-hidden rounded-2xl bg-surface">
@@ -116,10 +116,11 @@ export function LibrarySearchPage() {
   const tracks = d?.tracks ?? [];
   return (
     <div className="pb-4">
-      <PageHeader title="Поиск по библиотеке" back="/library" />
-      <div className="px-4 pb-2 lg:px-6">
-        <input ref={input} className="input" type="search" placeholder="Трек из плейлистов или исполнитель" aria-label="Поиск по библиотеке" value={q} onChange={(e) => setQ(e.target.value)} />
-      </div>
+      <PageHeader title="Поиск по библиотеке" back="/library" toolbar={
+        <div className="px-4 pb-2 lg:px-6">
+          <input ref={input} className="input" type="search" placeholder="Трек из плейлистов или исполнитель" aria-label="Поиск по библиотеке" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+      } />
       {!dq ? (
         <p className="px-4 py-8 text-center text-sm text-muted lg:px-6">Ищет среди треков ваших плейлистов и «Любимого» и среди исполнителей, на которых вы подписаны.</p>
       ) : res.loading && !d ? (

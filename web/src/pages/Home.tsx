@@ -5,7 +5,7 @@ import { TrackRow } from '../components/catalog';
 import { ForYouTiles } from '../components/ForYouTiles';
 import { Icon, type IconName } from '../components/Icon';
 import { WaveHero } from '../components/WaveHero';
-import { Cover, SectionTitle } from '../components/ui';
+import { Cover, PageBar, SectionTitle } from '../components/ui';
 import { useHubEvent } from '../lib/events';
 import { useAsync } from '../lib/hooks';
 import { useUnseenReleases } from '../lib/releases';
@@ -18,13 +18,15 @@ import { Link } from '../lib/router';
 export function HomePage() {
   const fresh = useUnseenReleases();
   return (
-    <div className="pt-safe relative pb-6">
-      <Link to="/subscriptions" aria-label={fresh ? `Релизы: новых ${fresh}` : 'Релизы'} title="Релизы" className="pt-safe absolute right-2 top-2 z-10 lg:hidden">
-        <span className="relative flex h-11 w-11 items-center justify-center rounded-full text-fg">
-          <Icon name="bell" size={24} />
-          {fresh > 0 && <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-accent ring-2 ring-bg" />}
-        </span>
-      </Link>
+    <div className="pt-safe relative flow-root pb-6">
+      <PageBar className="absolute inset-x-0 top-0 z-10 lg:hidden">
+        <Link to="/subscriptions" aria-label={fresh ? `Релизы: новых ${fresh}` : 'Релизы'} title="Релизы" className="pt-safe absolute right-2 top-2">
+          <span className="relative flex h-11 w-11 items-center justify-center rounded-full text-fg">
+            <Icon name="bell" size={24} />
+            {fresh > 0 && <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-accent ring-2 ring-bg" />}
+          </span>
+        </Link>
+      </PageBar>
       <WaveHero />
       <Continue />
       <NewReleases />

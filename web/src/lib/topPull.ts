@@ -74,7 +74,6 @@ export function usePagePull(ref: RefObject<HTMLElement | null>, enabled: boolean
   useEffect(() => {
     const page = ref.current;
     if (!page || !enabled || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    let anchor: HTMLElement | null = null;
     let offset = 0;
     let frame = 0;
     const place = (distance: number) => {
@@ -82,18 +81,14 @@ export function usePagePull(ref: RefObject<HTMLElement | null>, enabled: boolean
       page.style.setProperty('--hm-page-pull', `${distance}px`);
     };
     const reset = () => {
-      anchor?.removeAttribute('data-pull-active');
-      anchor = null;
+      page.removeAttribute('data-page-pulling');
       page.style.removeProperty('--hm-page-pull');
       offset = 0;
     };
     const stop = listenTopPull(page, {
       ready: () => window.scrollY <= 1 && !frame,
       move: (distance) => {
-        if (!anchor) {
-          anchor = page.querySelector<HTMLElement>('[data-pull-anchor]') ?? page;
-          anchor.setAttribute('data-pull-active', '');
-        }
+        if (offset === 0) page.setAttribute('data-page-pulling', '');
         const limit = Math.min(window.innerHeight * 0.38, 240);
         place((limit * distance) / (limit + distance));
       },

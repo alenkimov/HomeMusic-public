@@ -9,7 +9,7 @@ import { CatalogSourceMarks } from '../components/CatalogSourceMarks';
 import { CandidateRow, fileRef } from '../components/candidate';
 import { ServiceBadge, ServiceText } from '../components/ServiceBadge';
 import { Icon } from '../components/Icon';
-import { Button, Cover, Empty, ErrorState, IconButton, Notice, SectionTitle, Segmented, SkeletonRows, Spinner } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, IconButton, Notice, PageBar, SectionTitle, Segmented, SkeletonRows, Spinner } from '../components/ui';
 import { startDownload } from '../lib/actions';
 import { STANDALONE } from '../lib/embedded';
 import { useHubEvent } from '../lib/events';
@@ -71,7 +71,7 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
 
   return (
     <div>
-      <header data-pull-anchor className="pt-safe sticky top-(--page-top) z-20 bg-bg/95 px-4 pb-3 backdrop-blur">
+      <PageBar className="pt-safe sticky top-(--page-top) z-20 bg-bg/95 px-4 pb-3 backdrop-blur">
         <h1 className="sr-only">Поиск</h1>
         <div className="relative pt-3 max-[359px]:-mx-1.5">
           <div className="flex min-h-12 items-center gap-1 rounded-2xl bg-surface pl-3 pr-0.5 ring-1 ring-inset ring-transparent focus-within:ring-fg/20">
@@ -140,7 +140,7 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
             />
           </div>
         )}
-      </header>
+      </PageBar>
 
       {publicLink ? (
         <div className="p-4"><Button icon="link" onClick={() => navigate(`/open?url=${enc(publicLink)}`)}>Открыть ссылку Spotify</Button></div>

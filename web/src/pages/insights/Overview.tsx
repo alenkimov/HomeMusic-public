@@ -34,8 +34,7 @@ export function InsightsOverviewPage() {
 
   return (
     <div className="pb-6">
-      <PageHeader title="Аналитика пользователей" back="/admin" right={<IconButton icon="refresh" label="Обновить" onClick={() => res.reload()} />} />
-      <PeriodPicker />
+      <PageHeader title="Аналитика пользователей" back="/admin" toolbar={<PeriodPicker />} right={<IconButton icon="refresh" label="Обновить" onClick={() => res.reload()} />} />
       {res.loading ? (
         <Loading />
       ) : res.error || !d ? (

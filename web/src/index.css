@@ -277,12 +277,13 @@
     overscroll-behavior-y: none;
   }
 }
-[data-pull-active] {
-  margin-bottom: var(--hm-page-pull);
+.hm-page-pull-space {
+  display: none;
 }
-main[data-pull-active] {
-  margin-bottom: 0;
-  padding-top: var(--hm-page-pull);
+[data-page-pulling] .hm-page-pull-space {
+  display: block;
+  flex: none;
+  height: var(--hm-page-pull, 0px);
 }
 
 @media (min-width: 1024px) and (hover: hover) and (pointer: fine) {

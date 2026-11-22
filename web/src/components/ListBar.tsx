@@ -9,7 +9,7 @@ import { playAll } from './catalog';
 import { Icon, type IconName } from './Icon';
 import type { ListSearch } from './ListSearch';
 import { TagFilterBody, type ListTags } from './Tags';
-import { Button, IconButton, Sheet, cx } from './ui';
+import { Button, IconButton, PageBar, Sheet, cx } from './ui';
 
 /** The list's head has gone up under the bar: its name (`data-list-title` of `Hero`) is not seen any more. */
 function useHeadGone(): boolean {
@@ -98,7 +98,7 @@ export function BarWindow({ icon, label, children }: { icon: IconName; label: st
  * list's head it is only «back» and, at the right, the tags and the search; once the head has gone up it gets the
  * list's name and ▶. The search opens in the bar itself; the tags — in a window (`TagFilterBody`); the ones chosen
  * are a line above the tracks (`TagFilterChips`, the page's own). */
-export function ListBar({ title, back, tracks, context, search, tags, extra, end, offline, plain }: { /** what stands at the very end of the bar, after ▶ (an artist's ⋯): there whether the page is scrolled or not */ end?: ReactNode; /** a page with no head of its own («История»): the bar is its title, there from the start */ plain?: boolean; title: string; back: string; tracks?: readonly TrackOut[]; context?: string; search?: ListSearch; tags?: ListTags; /** the list can be kept on the device: its key, its page and all of its tracks (`components/Offline.tsx`) */ offline?: { key: string; to: string; tracks: readonly TrackOut[] }; /** a mark of the list's own, before the tags («Режим микса») */ extra?: ReactNode }) {
+export function ListBar({ title, back, tracks, context, search, tags, extra, end, offline, plain, toolbar }: { /** what stands at the very end of the bar, after ▶ (an artist's ⋯): there whether the page is scrolled or not */ end?: ReactNode; /** a page with no head of its own («История»): the bar is its title, there from the start */ plain?: boolean; title: string; back: string; tracks?: readonly TrackOut[]; context?: string; search?: ListSearch; tags?: ListTags; /** the list can be kept on the device: its key, its page and all of its tracks (`components/Offline.tsx`) */ offline?: { key: string; to: string; tracks: readonly TrackOut[] }; /** a mark of the list's own, before the tags («Режим микса») */ extra?: ReactNode; toolbar?: ReactNode }) {
   const desktop = useDesktop();
   const scrolled = useHeadGone();
   const gone = scrolled || !!plain;
@@ -119,7 +119,7 @@ export function ListBar({ title, back, tracks, context, search, tags, extra, end
   // the windows are beside the bar, not in it: the bar is a layer of its own, under the player and the tabs
   return (
     <>
-    <header data-pull-anchor className={cx('pt-safe sticky top-(--page-top) z-20 transition-colors', solid ? 'bg-bg' : 'bg-transparent')}>
+    <PageBar className={cx('pt-safe sticky top-(--page-top) z-20 transition-colors', solid ? 'bg-bg' : 'bg-transparent')} toolbar={toolbar}>
       <div className="relative flex min-h-14 items-center gap-1 px-2">
         {search?.alone ? (
           <>
@@ -157,7 +157,7 @@ export function ListBar({ title, back, tracks, context, search, tags, extra, end
           </>
         )}
       </div>
-    </header>
+    </PageBar>
       {tags && !desktop && (
         <Sheet
           open={tagsOpen}

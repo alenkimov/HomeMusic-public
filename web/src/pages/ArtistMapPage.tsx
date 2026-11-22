@@ -45,9 +45,7 @@ export function ArtistMapPage({ refId }: { refId?: string }) {
         title="Карта похожих"
         back="/home"
         right={refId ? <IconButton icon={searching ? 'x' : 'search'} label={searching ? 'Закрыть поиск' : 'Найти исполнителя'} onClick={() => setSearching(!searching)} /> : undefined}
-      />
-      {choosing ? (
-        <>
+        toolbar={choosing && (
           <div className="relative px-4 pt-1">
             <Icon name="search" size={20} className="pointer-events-none absolute left-7 top-1/2 mt-0.5 -translate-y-1/2 text-dim" />
             <input
@@ -62,6 +60,10 @@ export function ArtistMapPage({ refId }: { refId?: string }) {
               onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
             />
           </div>
+        )}
+      />
+      {choosing ? (
+        <>
           {found.loading && !found.data ? (
             <SkeletonRows n={6} />
           ) : found.error ? (
