@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from app.catalog.models import CATALOGS
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -248,12 +248,13 @@ async def snapshot(s: AsyncSession, user_id: int, now: datetime | None = None, *
     now = now or utcnow()
     q = select(PlayEvent).where(PlayEvent.user_id == user_id, PlayEvent.kind.in_(("like", "unlike")))
     q = q.where(PlayEvent.ts <= now)
-    if only is not None:
-        if only == "track":
-            raise ValueError("a track's like may be told without its kind: read them all")
+    if only == "track":  # a track's like may be told without its kind
+        q = q.where(or_(PlayEvent.target_type == "track", PlayEvent.target_type.is_(None)))
+    elif only is not None:
         q = q.where(PlayEvent.target_type == only)
     events = list((await s.execute(q)).scalars())
-    return fold(events, await subjects_of(s, events), now)
+    # a track's names are the library's: the albums' and the artists' (all of their records) are not read for it
+    return fold(events, await (_track_subjects(s, events) if only == "track" else subjects_of(s, events)), now)
 
 
 async def subjects_of(s: AsyncSession, events: Iterable[Any] = (), *, refs: Iterable[str] = (),
@@ -561,7 +562,7 @@ async def project_liked(s: AsyncSession, user_id: int, starred: list[dict] | Non
 
     want: dict[int, datetime] = {}
     decided: set[str] = set()  # what the user has decided about themself: an import or a star does not overrule it
-    states = [st for st in (await snapshot(s, user_id)).values() if st.target_type == "track"]
+    states = list((await snapshot(s, user_id, only="track")).values())
     for st in states:
         decided.update(st.aliases)
         if not st.liked:
@@ -572,36 +573,48 @@ async def project_liked(s: AsyncSession, user_id: int, starred: list[dict] | Non
             track_id = await _liked_track(s, user_id, st.ref, st.nd_id, st.data)
         if track_id is not None:
             want.setdefault(track_id, st.since or st.event.ts)
+    # the imports' liked rows: what is needed of them, not the whole of each (its service record) — a row whose track
+    # is known is that track; only one that is not is gone through as a row (`track_of`, which may name it)
     rows = (await s.execute(
-        select(ImportItem, Import.created_at).join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
+        select(ImportItem.id, ImportItem.track_id, ImportItem.ref, ImportItem.import_id,
+               ImportItem.raw_json["liked_at"].as_string(), Import.created_at)
+        .join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
         .join(Import, Import.id == ImportItem.import_id)
         .where(Import.user_id == user_id, ImportCollection.kind == "likes", ImportCollection.selected.is_(True),
                ImportItem.status.not_in(("skipped", "pending")))
         .order_by(ImportItem.import_id, ImportItem.position))).all()
-    # the rows' tracks into the session at once: `track_of` finds each there instead of asking for it one by one
-    # (held here: the session keeps what it has loaded only while someone holds it)
-    known = sorted({it.track_id for it, _ in rows if it.track_id})
-    _held = [t for k in range(0, len(known), 500)
-             for t in (await s.execute(select(Track).where(Track.id.in_(known[k:k + 500])))).scalars()]
-    for position, (it, imported_at) in enumerate(rows):
-        if it.ref and f"ref:{it.ref}" in decided:
+    known = sorted({r[1] for r in rows if r[1]})
+    songs_of: dict[int, str | None] = {}
+    for k in range(0, len(known), 500):
+        songs_of.update((await s.execute(select(Track.id, Track.nd_song_id).where(Track.id.in_(known[k:k + 500])))).all())
+    unnamed = [r[0] for r in rows if r[1] not in songs_of]
+    whole = {it.id: it for k in range(0, len(unnamed), 500)
+             for it in (await s.execute(select(ImportItem).where(ImportItem.id.in_(unnamed[k:k + 500])))).scalars()}
+    for position, (item_id, item_track, item_ref, import_id, liked_at, imported_at) in enumerate(rows):
+        if item_ref and f"ref:{item_ref}" in decided:
             continue
-        track = await track_of(s, it, user_id)
-        if track is None:
+        if item_track in songs_of:
+            track_id, song = item_track, songs_of[item_track]
+        else:
+            track = await track_of(s, whole[item_id], user_id)
+            if track is None:
+                continue
+            whole[item_id].track_id = track.id
+            track_id, song = track.id, track.nd_song_id
+        if track_id in want or (song and f"nd:{song}" in decided):
             continue
-        it.track_id = track.id
-        if track.id in want or (track.nd_song_id and f"nd:{track.nd_song_id}" in decided):
-            continue
-        if f"t:{track.id}" in decided:  # a track known by its name alone has no other name to be decided about by
+        if f"t:{track_id}" in decided:  # a track known by its name alone has no other name to be decided about by
             continue
         # the service lists the newest like first: without its dates the order of the list still holds
-        at = naive(parse_time((it.raw_json or {}).get("liked_at"))) or imported_at - timedelta(seconds=position)
-        want[track.id] = at
-        if it.import_id == preserve_import_id:
-            await record(s, user_id, FavoriteTarget(track_id=track.id), True, ts=min(at, utcnow()), normalize=False,
-                         context="import", operation=f"import:{it.import_id}:liked:{track.id}",
-                         mirror_pending=not track.nd_song_id)
-    have = await playlists.items(s, p.id)
+        at = naive(parse_time(liked_at)) or imported_at - timedelta(seconds=position)
+        want[track_id] = at
+        if import_id == preserve_import_id:
+            await record(s, user_id, FavoriteTarget(track_id=track_id), True, ts=min(at, utcnow()), normalize=False,
+                         context="import", operation=f"import:{import_id}:liked:{track_id}",
+                         mirror_pending=not song)
+    # the playlist as it is: its rows, not their tracks
+    have = list((await s.execute(select(PlaylistItem).where(PlaylistItem.playlist_id == p.id)
+                                 .order_by(PlaylistItem.position, PlaylistItem.id))).scalars())
     if starred is not None:
         songs = {str(x["id"]): parse_time(x.get("starred")) for x in starred if x.get("id")}
         ids = list(songs)
@@ -612,18 +625,20 @@ async def project_liked(s: AsyncSession, user_id: int, starred: list[dict] | Non
                     want.setdefault(track_id, songs[song] or utcnow())
     else:
         unliked = {a for st in states if not st.liked for a in st.aliases}
-        for item, track in have:
-            names = {f"ref:{track.ref}" if track.ref else "", f"nd:{track.nd_song_id}" if track.nd_song_id else ""}
-            if not names & unliked:
-                want.setdefault(track.id, item.added_at)
+        names = {t: (r, n) for t, r, n in (await s.execute(select(Track.id, Track.ref, Track.nd_song_id)
+                                                           .where(Track.id.in_({i.track_id for i in have})))).all()}
+        for item in have:
+            ref, song = names.get(item.track_id, (None, None))
+            if not {f"ref:{ref}" if ref else "", f"nd:{song}" if song else ""} & unliked:
+                want.setdefault(item.track_id, item.added_at)
     order = sorted(want, key=lambda t: (want[t], t), reverse=True)
 
-    if [t.id for _, t in have] == order and all(i.added_at == want[t.id] for i, t in have):
+    if [i.track_id for i in have] == order and all(i.added_at == want[i.track_id] for i in have):
         return False
     kept: dict[int, PlaylistItem] = {}
-    for item, track in have:
-        if track.id in want and track.id not in kept:
-            kept[track.id] = item
+    for item in have:
+        if item.track_id in want and item.track_id not in kept:
+            kept[item.track_id] = item
         else:
             await s.delete(item)
     for position, track_id in enumerate(order):

@@ -19,9 +19,19 @@ def _items(user_id: int):
 
 
 async def annotate(s: AsyncSession, user_id: int, tracks: list[TrackOut]) -> None:
-    ids = {t.library_track_id for t in tracks if t.library_track_id is not None}
+    """What the user's transfers say of these tracks (`word`), on each of them."""
+    reviews, failed = await word(s, user_id, {t.library_track_id for t in tracks if t.library_track_id is not None})
+    for track in tracks:
+        if not track.owned and track.library_track_id in failed:
+            track.unavailable = True
+        track.import_review = reviews.get(track.library_track_id)
+
+
+async def word(s: AsyncSession, user_id: int, ids: set[int]) -> tuple[dict[int, ImportReviewOut], set[int]]:
+    """What the user's transfers say of these tracks: a match to look over (by track), and the tracks a transfer of
+    theirs did not find a file of (such a track without a file is not to be had)."""
     if not ids:
-        return
+        return {}, set()
     pending = ((ImportItem.match == "probable") & ImportItem.status.in_(_REVIEWABLE)
                & ImportItem.raw_json["match_reviewed"].as_boolean().is_(None))
     rows = await s.execute(
@@ -38,10 +48,7 @@ async def annotate(s: AsyncSession, user_id: int, tracks: list[TrackOut]) -> Non
             reviews[item.track_id] = ImportReviewOut(
                 id=item.id, source=source, title=raw.get("title") or "", artist=raw.get("artist") or "",
                 duration_s=raw.get("duration_s"), cover_url=raw.get("cover_url"))
-    for track in tracks:
-        if not track.owned and track.library_track_id in failed:
-            track.unavailable = True
-        track.import_review = reviews.get(track.library_track_id)
+    return reviews, failed
 
 
 async def acknowledge(s: AsyncSession, user_id: int, item_id: int, *, track_id: int | None = None) -> bool:

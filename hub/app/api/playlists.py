@@ -208,12 +208,15 @@ async def add(playlist_id: str, body: PlaylistAddIn, user: User = Depends(curren
 @router.get("/{playlist_id}", response_model=PlaylistPageOut)
 async def get_playlist(playlist_id: str, user: User = Depends(current_user),
                        s: AsyncSession = Depends(get_session, scope="function")):
+    """The playlist and its tracks — as the database makes them of their kept cards (`cards.list_json`)."""
+    import json
+
+    from app.library import cards
+
     p = await _own(s, user, playlist_id)
-    rows = await playlists.items(s, p.id)
-    tracks = await tracks_out(s, user, [t for _, t in rows], import_state=True)
-    for (item, _), t in zip(rows, tracks, strict=True):
-        t.added_at = item.added_at
-    return PlaylistPageOut(**(await _out(s, p)).model_dump(), tracks=tracks)
+    head = json.dumps((await _out(s, p)).model_dump(mode="json"))
+    tracks = await cards.list_json(s, p.id, user.id)
+    return Response(f'{head[:-1]},"tracks":{tracks}}}', media_type="application/json")
 
 
 @router.post("/{playlist_id}/remove")

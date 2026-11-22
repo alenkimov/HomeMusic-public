@@ -122,7 +122,7 @@ async def test_a_stale_card_is_read_drawn_anew_and_the_background_draws_the_rest
 
 
 async def test_a_card_marked_while_it_was_drawn_stays_marked(env, monkeypatch):
-    owned, bare = env
+    _, bare = env
     draw = cards.draw
 
     async def meanwhile(s, rows, **kw):
@@ -143,7 +143,7 @@ async def test_a_card_marked_while_it_was_drawn_stays_marked(env, monkeypatch):
 
 
 async def test_a_card_whose_search_runs_out_is_drawn_anew(env):
-    owned, bare = env
+    _, bare = env
     async with db.session_scope() as s:
         s.add(CatalogCache(key="listen:dz:2", payload_json={"v": {"kind": "unavailable"}}, fetched_at=utcnow(), ttl_s=3600))
     async with db.session_scope() as s:

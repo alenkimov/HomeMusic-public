@@ -307,10 +307,16 @@ async def all_songs(user: User = Depends(current_user), s: AsyncSession = Depend
 @router.get("/liked", response_model=NdLikedOut)
 async def liked(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     """«Любимое»: the tracks are the Hub's playlist of them (`favorites.project_liked`) — the newest like on top,
-    one the library has no file of among the rest. The albums and artists are Navidrome's stars."""
+    one the library has no file of among the rest — given as the database makes them of their kept cards
+    (`cards.list_json`). The albums and artists are Navidrome's stars."""
+    import json
+
+    from sqlalchemy import text
+
     from app import playlists
-    from app.api.playlists import tracks_out
-    from app.favorites import project_liked, snapshot
+    from app.favorites import parse_time, project_liked, snapshot
+    from app.library import cards
+    from app.models import naive
 
     try:
         body = await nd_call(user, lambda nd: nd.get_starred2())
@@ -319,34 +325,37 @@ async def liked(user: User = Depends(current_user), s: AsyncSession = Depends(ge
     await project_liked(s, user.id, body.get("song") or [] if body is not None else None)
     await s.commit()
     body = body or {}
-    rows = await playlists.items(s, (await playlists.liked(s, user.id)).id)
-    songs = await tracks_out(s, user, [t for _, t in rows], import_state=True)
-    for (item, _), song in zip(rows, songs, strict=True):
-        song.added_at = item.added_at
-    states = await snapshot(s, user.id)
-    decisions = {(st.target_type, alias): st for st in states.values() for alias in st.aliases}
+    pid = (await playlists.liked(s, user.id)).id
+    # the user's own word on what Navidrome stars, of each kind apart (`snapshot`): the track likes — thousands —
+    # are read only if Navidrome stars a song the playlist has not
+    decisions = {(st.target_type, alias): st for kind in ("album", "artist")
+                 for st in (await snapshot(s, user.id, only=kind)).values() for alias in st.aliases}
     # a song starred in Navidrome that the Hub has no track of (a file put into the library by hand) is no part
     # of the playlist: it is listed as Navidrome gives it
-    have = {x.nd_song_id for x in songs}
-    foreign = [x for x in body.get("song") or [] if x.get("id") and x["id"] not in have
-               and not ((st := decisions.get(("track", f"nd:{x['id']}"))) and not st.liked)]
+    have = set((await s.execute(text(
+        "SELECT DISTINCT f.nd_song_id FROM playlist_items pi JOIN track_files f ON f.track_id = pi.track_id "
+        "WHERE pi.playlist_id = :pid AND f.nd_song_id IS NOT NULL"), {"pid": pid})).scalars())
+    foreign = [x for x in body.get("song") or [] if x.get("id") and x["id"] not in have]
     if foreign:
-        from app.favorites import parse_time
-        from app.models import naive
-
-        for raw, song in zip(foreign, await songs_out(s, foreign), strict=True):
-            song.added_at = naive(parse_time(raw.get("starred"))) or song.added_at
-            songs.append(song)
-        songs.sort(key=lambda x: x.added_at or datetime.min, reverse=True)
+        decisions |= {(st.target_type, alias): st for st in (await snapshot(s, user.id, only="track")).values()
+                      for alias in st.aliases}
+        foreign = [x for x in foreign if not ((st := decisions.get(("track", f"nd:{x['id']}"))) and not st.liked)]
+    extra = []
+    for raw, song in zip(foreign, await songs_out(s, foreign) if foreign else [], strict=True):
+        song.added_at = naive(parse_time(raw.get("starred"))) or song.added_at
+        extra.append(song.model_dump(mode="json"))
+    songs = await cards.list_json(s, pid, user.id, extra=extra)
 
     def visible(typ, obj):
         st = decisions.get((typ, f"nd:{obj.get('id')}"))
         return st is None or st.liked
 
-    return NdLikedOut(songs=songs,
-                      albums=[album_out(a) for a in sorted(body.get("album") or [], key=lambda x: x.get("starred") or "", reverse=True)
-                              if visible("album", a)],
-                      artists=[artist_out(a) for a in body.get("artist") or [] if visible("artist", a)])
+    albums = [album_out(a).model_dump(mode="json")
+              for a in sorted(body.get("album") or [], key=lambda x: x.get("starred") or "", reverse=True) if visible("album", a)]
+    artists = [artist_out(a).model_dump(mode="json") for a in body.get("artist") or [] if visible("artist", a)]
+    return Response(f'{{"songs":{songs},"albums":{json.dumps(albums)},"artists":{json.dumps(artists)}}}',
+                    media_type="application/json")
+
 
 
 @router.get("/cover/{cover_id}")

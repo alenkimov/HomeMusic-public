@@ -185,6 +185,63 @@ async def read(s: AsyncSession, track_ids: list[int]) -> dict[int, dict]:
     return out
 
 
+async def ensure(s: AsyncSession, track_ids: list[int]) -> None:
+    """The cards of these tracks kept and fresh: those missing, marked stale or run out drawn now (the fresh ones
+    are not read — a list that the database draws from them, `list_json`, needs them there, not here)."""
+    from sqlalchemy import or_, select
+
+    from app.models import TrackCard, utcnow
+
+    ids = list(dict.fromkeys(i for i in track_ids if i))
+    fresh: set[int] = set()
+    now = utcnow()
+    for k in range(0, len(ids), 5000):
+        fresh.update((await s.execute(select(TrackCard.track_id).where(
+            TrackCard.track_id.in_(ids[k:k + 5000]), TrackCard.dirty.is_(False),
+            or_(TrackCard.valid_until.is_(None), TrackCard.valid_until >= now)))).scalars())
+    if stale := [i for i in ids if i not in fresh]:
+        await build(stale)
+
+
+async def list_json(s: AsyncSession, playlist_id: int, user_id: int, *, extra: list[dict] | None = None) -> str:
+    """A playlist's tracks as a list gives them — a JSON array, made by the database of the kept cards in the
+    playlist's order: none of thousands of cards is parsed or written out here. Over each card: when it was put in
+    the list, and what the user's transfers say of it (`imports.review.word`). `extra`: tracks the list has beside
+    the playlist (drawn already, each with its `added_at`); with them the list is ordered by when each was added."""
+    import json
+
+    from sqlalchemy import text
+
+    from app import playlists
+    from app.imports.review import word
+
+    ids = await playlists.track_ids(s, playlist_id)
+    await ensure(s, ids)
+    reviews, failed = await word(s, user_id, set(ids))
+    said = json.dumps({str(i): {"import_review": r.model_dump(mode="json")} for i, r in reviews.items()})
+    rows = """
+        SELECT c.card || jsonb_build_object('added_at', to_jsonb(pi.added_at), 'import_review', NULL::jsonb)
+                      || coalesce(CAST(:said AS jsonb) -> pi.track_id::text, '{}'::jsonb)
+                      || CASE WHEN pi.track_id = ANY(:failed) AND NOT (c.card->>'owned')::boolean
+                              THEN '{"unavailable": true}'::jsonb ELSE '{}'::jsonb END AS song,
+               pi.added_at AS at, pi.position AS pos, pi.id AS id
+        FROM playlist_items pi JOIN track_cards c ON c.track_id = pi.track_id
+        WHERE pi.playlist_id = :pid"""
+    if extra:
+        q = f"""
+            WITH rows AS ({rows}
+                UNION ALL
+                SELECT e.value, (e.value->>'added_at')::timestamp, 2147483647, e.ordinality
+                FROM jsonb_array_elements(CAST(:extra AS jsonb)) WITH ORDINALITY e)
+            SELECT coalesce(json_agg(song ORDER BY at DESC NULLS LAST, pos, id), '[]')::text FROM rows"""
+    else:
+        q = f"SELECT coalesce(json_agg(song ORDER BY pos, id), '[]')::text FROM ({rows}) rows"
+    params = {"pid": playlist_id, "said": said, "failed": sorted(failed)}
+    if extra:
+        params["extra"] = json.dumps(extra)
+    return (await s.execute(text(q), params)).scalar_one()
+
+
 # --- in the background ---------------------------------------------------------------------------------------------
 
 # Navidrome's songs as the cards were last compared with them (`songs.loaded_at`): read anew — after a scan the Hub
