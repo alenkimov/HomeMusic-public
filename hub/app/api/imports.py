@@ -22,10 +22,12 @@ from app.db import get_session
 from app.events import bus
 from app.imports import apply, core, review
 from app.imports.sources.base import SourceError
+from app.jobs.downloads import IN_WORK
 from app.jobs.queue import PRIORITY_IMPORT, PermanentError, enqueue, notify
-from app.models import DownloadItem, Import, ImportCollection, ImportItem, IntegrationConnection, Track, User
+from app.models import DownloadItem, Import, ImportCollection, ImportItem, IntegrationConnection, Job, Track, User
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
+ACTIVITY_LIMIT = 30  # running downloads are a few (the workers); saved files wait for one Navidrome scan
 
 
 async def _own(s: AsyncSession, user: User, import_id: int, *, lock: bool = False) -> Import:
@@ -85,10 +87,14 @@ async def get(import_id: int, user: User = Depends(current_user),
 @router.get("/{import_id}/activity", response_model=ImportActivityOut)
 async def activity(import_id: int, user: User = Depends(current_user),
                    s: AsyncSession = Depends(get_session, scope="function")):
-    """A small snapshot for live transfer progress, with active downloads ahead of saved files."""
+    """What the transfer is doing right now, running downloads ahead of saved files: an item is shown while its job
+    runs or its file waits for Navidrome, not while it waits in the queue for a retry."""
     imp = await _own(s, user, import_id)
     item = DownloadItem
     query = item.query_json["query"]
+    running = select(Job.id).where(
+        Job.kind == "download_item", Job.status == "running", Job.payload_json["item_id"].as_integer() == item.id,
+    ).exists()
     rows = (await s.execute(select(
         item.id, query["title"].as_string(), query["artist"].as_string(),
         func.coalesce(item.query_json["meta"]["cover_url"].as_string(),
@@ -97,8 +103,8 @@ async def activity(import_id: int, user: User = Depends(current_user),
         func.count().over(),
     ).where(
         item.user_id == imp.user_id, item.query_json["import"]["id"].as_integer() == imp.id,
-        item.status.in_(("searching", "downloading", "tagging", "importing")),
-    ).order_by(case((item.status == "importing", 1), else_=0), item.id).limit(8))).all()
+        item.status.in_(IN_WORK), running | ((item.status == "importing") & item.track_id.is_not(None)),
+    ).order_by(case((item.status == "importing", 1), else_=0), item.id).limit(ACTIVITY_LIMIT))).all()
     return ImportActivityOut(items=[
         ImportDownloadActivityOut(id=id_, title=title or "", artist=artist or "", cover_url=cover,
                                   status=status, progress=progress or 0, provider=provider, file_saved=saved,

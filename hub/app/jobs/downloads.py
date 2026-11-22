@@ -27,7 +27,7 @@ from app.catalog.yandex import russian_original
 from app.config import get_settings
 from app.db import session_scope
 from app.events import bus
-from app.jobs.queue import PermanentError, enqueue, handler, notify, on_final_failure
+from app.jobs.queue import PermanentError, enqueue, handler, notify, on_final_failure, on_retry
 from app.library import probe
 from app.library.importer import ImportSpec, cleanup_dir, import_file, staging_dir_for
 from app.library.navidrome import admin_client
@@ -49,6 +49,7 @@ from app.services import svc
 log = logging.getLogger(__name__)
 
 TERMINAL = ("done", "failed", "cancelled", "needs_review")
+IN_WORK = ("searching", "downloading", "tagging", "importing")  # a step of a download under way
 FAILED = ("failed", "needs_review")
 USER_FLAGS = ("requested", "playlists")  # what a request that joins a download under way may set on it
 MAX_TRIES_PER_PROVIDER = 3
@@ -353,23 +354,43 @@ async def filed(s: AsyncSession, item: DownloadItem) -> bool:
     return item.status == "importing" and bool(item.track_id) and await has_file(s, item.track_id)
 
 
-async def recover_unfiled() -> int:
-    """Called at startup: downloads left `importing` with no file in the library and no job to bring one (the filing
-    failed, and the attempt after it took the item for filed) go back to the queue."""
+async def interrupted(s: AsyncSession, item: DownloadItem) -> bool:
+    """The item shows a step of a download that no longer runs (a filed one only waits for Navidrome)."""
+    return item.status in IN_WORK and not await filed(s, item)
+
+
+async def recover_interrupted() -> int:
+    """Called at startup, once no job runs: downloads left mid-way go back to the queue — with a job, when none is
+    waiting for them (a failed filing the attempt after it took for filed)."""
     async with session_scope() as s:
         waiting = {int((j.payload_json or {}).get("item_id") or 0) for j in (await s.execute(
             select(Job).where(Job.kind == "download_item", Job.status.in_(("queued", "running"))))).scalars()}
         n = 0
-        for item in (await s.execute(select(DownloadItem).where(DownloadItem.status == "importing"))).scalars():
-            if item.id in waiting or await filed(s, item):
+        for item in (await s.execute(select(DownloadItem).where(DownloadItem.status.in_(IN_WORK)))).scalars():
+            if not await interrupted(s, item):
                 continue
             item.status, item.progress = "queued", 0
+            n += 1
+            if item.id in waiting:
+                continue
             payload = {"item_id": item.id}
             if prepared := (item.query_json or {}).get("attachment_file"):
                 payload["prepared_file"] = prepared
             await enqueue(s, "download_item", payload)
-            n += 1
         return n
+
+
+@on_retry("download_item")
+async def _download_retried(job: Job) -> None:
+    """Until its next attempt the item waits in the queue: the step it failed at is not under way any more."""
+    item_id = int(job.payload_json["item_id"])
+    async with session_scope() as s:
+        item = await s.get(DownloadItem, item_id)
+        if item is None or (item.query_json or {}).get("attachment_file") != job.payload_json.get("prepared_file"):
+            return
+        if not await interrupted(s, item):
+            return
+    await update_item(item_id, status="queued", progress=0)
 
 
 @handler("download_item")

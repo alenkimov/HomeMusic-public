@@ -223,6 +223,12 @@ async def _execute(job: Job) -> _Result:
 
 
 async def _save_result(job: Job, result: _Result) -> None:
+    if result.retry_in is not None and (on_retry := _retry_hooks.get(job.kind)):
+        # while the job is still ours: once queued, another worker may take it and its hook would undo that run
+        try:
+            await on_retry(job)
+        except Exception:
+            log.exception("retry hook for job %s crashed", job.id)
     for attempt in range(3):
         try:
             await _finish(job.id, ok=result.ok, error=result.error, retry_in=result.retry_in)
@@ -244,6 +250,7 @@ async def run_job(job: Job) -> None:
 
 
 _failure_hooks: dict[str, Callable[[Job, Exception], Awaitable[None]]] = {}
+_retry_hooks: dict[str, Callable[[Job], Awaitable[None]]] = {}
 
 
 def on_final_failure(kind: str):
@@ -251,6 +258,16 @@ def on_final_failure(kind: str):
 
     def deco(fn):
         _failure_hooks[kind] = fn
+        return fn
+
+    return deco
+
+
+def on_retry(kind: str):
+    """Register a hook called when a job of this kind goes back to the queue to be tried again later."""
+
+    def deco(fn):
+        _retry_hooks[kind] = fn
         return fn
 
     return deco

@@ -67,10 +67,10 @@ async def lifespan(app: FastAPI):
         n = await recover_stale()
         if n:
             log.info("re-queued %s interrupted jobs", n)
-        from app.jobs.downloads import recover_unfiled
+        from app.jobs.downloads import recover_interrupted
 
-        if n := await recover_unfiled():
-            log.info("re-queued %s downloads whose file was never filed", n)
+        if n := await recover_interrupted():
+            log.info("re-queued %s interrupted downloads", n)
         from app.imports.core import recovery_loop, resume_orphaned
 
         if n := await resume_orphaned():

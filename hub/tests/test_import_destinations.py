@@ -111,8 +111,9 @@ async def test_pause_holds_matching_and_preserves_the_download_queue(env, monkey
 async def test_activity_shows_current_downloads_and_indexing_for_this_transfer(env):
     from sqlalchemy import select
 
+    from app.api.imports import ACTIVITY_LIMIT
     from app.db import session_scope
-    from app.models import DownloadBatch, DownloadItem, Import, Track, User
+    from app.models import DownloadBatch, DownloadItem, Import, Job, Track, User
 
     client = env["client"]
     import_id = (await prepared(client))["id"]
@@ -133,14 +134,19 @@ async def test_activity_shows_current_downloads_and_indexing_for_this_transfer(e
             }, **kwargs)
 
         search = make_item("Search", "searching", search_sources_json={"hitmoz": "empty", "ytdlp": "searching"})
+        download = make_item("Download", "downloading", progress=0.62, provider="hitmoz")
+        other = make_item("Other transfer", "downloading", transfer=private_transfer.id)
+        stale = make_item("Waits for a retry", "tagging", progress=1, provider="hitmoz")
         s.add_all([
             make_item("Saved", "importing", provider="soundcloud", track_id=track_id),
-            search,
-            make_item("Download", "downloading", progress=0.62, provider="hitmoz"),
-            make_item("Other transfer", "downloading", transfer=private_transfer.id),
+            search, download, other, stale,
             make_item("In the queue", "queued"),
             make_item("Finished", "done"),
         ])
+        await s.flush()
+        s.add_all([Job(kind="download_item", payload_json={"item_id": it.id}, status="running")
+                   for it in (search, download, other)])
+        s.add(Job(kind="download_item", payload_json={"item_id": stale.id}, status="queued"))
 
     url = f"/api/imports/{import_id}/activity"
     response = await client.get(url)
@@ -156,8 +162,8 @@ async def test_activity_shows_current_downloads_and_indexing_for_this_transfer(e
     async with session_scope() as s:
         (await s.get(DownloadItem, search.id)).status = "done"
         batch = await s.get(DownloadBatch, batch.id)
-        s.add_all([make_item(f"Saved {i}", "importing", track_id=track_id) for i in range(8)])
+        s.add_all([make_item(f"Saved {i}", "importing", track_id=track_id) for i in range(ACTIVITY_LIMIT)])
     data = (await client.get(url)).json()
     assert data["more"] == 2
-    assert len(data["items"]) == 8
+    assert len(data["items"]) == ACTIVITY_LIMIT
     assert data["items"][0]["title"] == "Download"
