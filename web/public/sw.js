@@ -15,10 +15,12 @@ const KEPT = ['/api/auth/me', '/api/playlists', '/api/nd/', '/api/for-you', '/ap
   '/api/lyrics', '/api/mixes/today', '/api/plays/history', '/api/library/version-labels'];
 const NOT_KEPT = ['/api/lyrics/candidates', '/api/lyrics/search', '/api/lyrics/probe', '/api/lyrics/sources', '/api/lyrics/settings', '/api/lyrics/translators'];
 const audioKey = (ref) => `${self.location.origin}/api/listen/stream?ref=${encodeURIComponent(ref)}`;
-/* How long a page waits for the network before it is given what is kept. Without the network a request on a phone
-   often does not fail but hangs (Wi-Fi without the internet, a weak signal, a VPN): the app stayed a black screen. */
+/* How long the app shell waits for the network before what is kept is opened. Without the network a request on a
+   phone often does not fail but hangs (Wi-Fi without the internet, a weak signal, a VPN): the app stayed a black
+   screen. Only the shell: until it is open no script of the page runs to tell a slow Hub from a lost one. What a
+   page reads waits for the Hub however long it takes — the page gives up on it itself when it finds the Hub gone
+   (`src/lib/reach.ts`, `hubFetch`). */
 const SHELL_WAIT_MS = 3000;
-const API_WAIT_MS = 4000;
 /* Caddy on the VPS answers for a Hub it cannot reach (the computer or the tunnel is down) with 502/503/504 and
    without the Hub's mark: that is no answer. The Hub's own 502 (a catalog behind it did not answer) is one. */
 const UNREACHABLE = new Set([502, 503, 504]);
@@ -76,7 +78,7 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/')) {
     if (/\/cover(\/|$)/.test(url.pathname)) event.respondWith(staleWhileRevalidate(req, IMG));
     else if (KEPT.some((x) => url.pathname.startsWith(x)) && !NOT_KEPT.some((x) => url.pathname.startsWith(x)))
-      networkFirst(event, API, req.url, (res) => (res.headers.get('content-type') || '').includes('json'), API_WAIT_MS);
+      networkFirst(event, API, req.url, (res) => (res.headers.get('content-type') || '').includes('json'));
     return;
   }
   if (url.pathname === '/healthz' || url.pathname.startsWith('/app/')) return;
@@ -147,10 +149,10 @@ function marked(hit) {
   return new Response(hit.body, { status: hit.status, statusText: hit.statusText, headers });
 }
 
-/* The network's answer, and a copy of it kept under `key`; the copy instead when the network fails, is late
-   (`waitMs`: the answer still goes into the copy when it comes) or is a gateway that cannot reach the Hub. Nothing
-   kept: whatever the network gives. Used for the app shell and for what a page reads of the library. */
-function networkFirst(event, cacheName, key, keep, waitMs) {
+/* The network's answer, and a copy of it kept under `key`; the copy instead when the network fails, is a gateway
+   that cannot reach the Hub, or — given `waitMs` — is late (the answer still goes into the copy when it comes).
+   Nothing kept: whatever the network gives. Used for the app shell and for what a page reads of the library. */
+function networkFirst(event, cacheName, key, keep, waitMs = Infinity) {
   const cache = caches.open(cacheName);
   const kept = () => cache.then((c) => c.match(key)).then((hit) => hit && marked(hit));
   const net = fetch(event.request);
@@ -162,7 +164,7 @@ function networkFirst(event, cacheName, key, keep, waitMs) {
   event.respondWith(
     (async () => {
       let timer;
-      const late = new Promise((resolve) => (timer = setTimeout(resolve, waitMs, null)));
+      const late = waitMs === Infinity ? new Promise(() => {}) : new Promise((resolve) => (timer = setTimeout(resolve, waitMs, null)));
       let res;
       try {
         res = await Promise.race([net, late]);

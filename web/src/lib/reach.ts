@@ -79,18 +79,49 @@ export function suspect() {
 /** The Hub answered (the event stream opened). */
 export const noteReached = () => set(true);
 
-/** `fetch` of the Hub, which tells what came of it (see above). */
+/** The service worker's copies of what pages read (`public/sw.js`, `API`), by the request's full URL. */
+const API_CACHE = 'hm-api-v1';
+
+/** The copy of a read kept by the service worker, if it kept one. */
+async function keptCopy(input: string): Promise<Response | undefined> {
+  if (typeof caches === 'undefined') return undefined;
+  try {
+    return await (await caches.open(API_CACHE)).match(new URL(input, location.href).href);
+  } catch {
+    return undefined;
+  }
+}
+
+/** `fetch` of the Hub, which tells what came of it (see above). A read (GET) without the Hub is given the copy the
+ * service worker kept of it: at once while the Hub is known not to answer, and in place of the answer when the Hub
+ * is found gone while the read is on its way (a request that hangs on a network without the internet). However
+ * slow, an answer from a Hub that is there is waited for: a slow answer is not a lost connection. */
 export async function hubFetch(input: string, init?: RequestInit): Promise<Response> {
+  const read = (init?.method ?? 'GET').toUpperCase() === 'GET';
+  if (read && !reachable) {
+    const kept = await keptCopy(input);
+    if (kept) return kept;
+  }
+  const lost = new AbortController();
+  const signal = init?.signal ? AbortSignal.any([init.signal, lost.signal]) : lost.signal;
+  const off = read ? onHubReach((r) => { if (!r) lost.abort(); }) : () => {};
   const slow = window.setTimeout(suspect, SLOW_MS);
   try {
-    const res = await fetch(input, init);
+    const res = await fetch(input, { ...init, signal });
     noteAnswer(res.status, (name) => res.headers.get(name));
     return res;
   } catch (e) {
-    if (!init?.signal?.aborted) suspect();
+    if (init?.signal?.aborted) throw e;
+    if (lost.signal.aborted) {
+      const kept = await keptCopy(input);
+      if (kept) return kept;
+      throw new TypeError('Хаб недоступен');
+    }
+    suspect();
     throw e;
   } finally {
     window.clearTimeout(slow);
+    off();
   }
 }
 
