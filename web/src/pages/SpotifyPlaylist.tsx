@@ -8,6 +8,7 @@ import { tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { navigate } from '../lib/router';
 import { attempt } from '../lib/ui';
+import { VirtualRows } from '../components/VirtualRows';
 
 export function SpotifyPlaylistPage({ id, query }: { id: string; query: string | null }) {
   const res = useAsync((signal) => api.spotifyPlaylist(id, signal), [id]);
@@ -39,9 +40,8 @@ export function SpotifyPlaylistPage({ id, query }: { id: string; query: string |
           {data.skipped > 0 && <p className="px-4 pb-2 text-sm text-muted lg:px-6">Пропущено недоступных записей и подкастов — {data.skipped}</p>}
           <TrackTable tracks={data.tracks} numbered album>
             {!!data.tracks.length && <TrackTableHeader numbered album />}
-            <div className="pb-4">
-              {data.tracks.map((track, i) => <TrackRow key={`${track.ref}:${i}`} track={track} index={i + 1} showAlbum />)}
-            </div>
+            <VirtualRows className="pb-4" items={data.tracks} rowKey={(track, i) => `${track.ref}:${i}`}
+              render={(track, i) => <TrackRow track={track} index={i + 1} showAlbum />} />
           </TrackTable>
         </>
       )}

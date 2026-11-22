@@ -13,6 +13,7 @@ import { plural, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { attempt, toast } from '../lib/ui';
 import { Link, albumPath, artistPath, enc, navigate, useCanonicalPath, useRoute } from '../lib/router';
+import { VirtualRows } from '../components/VirtualRows';
 
 /** «Дискография» (`/artist/<ref>/discography`): everything an artist released, shown one of two ways. «Релизы» —
  * the releases alone, newest first, by kind; a tap opens the release. «Треки» (`?view=tracks`, what «Все треки» of
@@ -188,7 +189,8 @@ export function DiscographyPage({ refId }: { refId: string }) {
     return (
       <TrackTable tracks={displayed} numbered album>
         {displayed.length > 0 && <TrackTableHeader numbered album />}
-        {displayed.map((track, i) => <TrackRow key={`${rows[i].a.ref}:${track.ref}`} track={track} showAlbum queue={queue} index={i + 1} />)}
+        <VirtualRows items={displayed} rowKey={(track, i) => `${rows[i].a.ref}:${track.ref}`}
+          render={(track, i) => <TrackRow track={track} showAlbum queue={queue} index={i + 1} />} />
       </TrackTable>
     );
   };
