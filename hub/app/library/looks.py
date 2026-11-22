@@ -237,7 +237,7 @@ async def choose_banner(s: AsyncSession, user_id: int | None, artist: Artist, ch
 
     spotify_banner = None
     if choice and choice.startswith("profile:"):
-        from app.jobs.downloads import fetch_cover
+        from app.covers import fetch_cover
 
         ref = choice.partition(":")[2]
         a = await profile_card(ref) if ref.startswith("sp:") and ref in await artists.profiles(s, artist.id) else None

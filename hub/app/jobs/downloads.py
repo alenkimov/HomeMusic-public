@@ -16,22 +16,21 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-import httpx
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import DownloadItemOut
 from app.api.progress import SourceState
+from app.api.schemas import DownloadItemOut
 from app.catalog.models import CATALOGS, CatalogAlbum, CatalogNotFound, CatalogTrack, split_ref
 from app.catalog.yandex import russian_original
 from app.config import get_settings
+from app.covers import fetch_cover
 from app.db import session_scope
 from app.events import bus
 from app.jobs.queue import PermanentError, enqueue, handler, notify, on_final_failure, on_retry
-from app.library import probe
+from app.library import probe, upgrade
 from app.library.importer import ImportSpec, cleanup_dir, import_file, staging_dir_for
 from app.library.navidrome import admin_client
-from app.library import upgrade
 from app.library.owned import find_owned, quiet
 from app.library.tracks import current_file, has_file
 from app.matching.select import (
@@ -42,7 +41,7 @@ from app.matching.select import (
     uploaded_in_time,
 )
 from app.models import DownloadBatch, DownloadItem, Job, PlayEvent, PlaylistItem, Track, TrackFile, User, utcnow
-from app.net import in_background, make_client
+from app.net import in_background
 from app.providers.base import Candidate, Provider, ProviderError, TrackQuery, file_ref
 from app.services import svc
 
@@ -263,51 +262,6 @@ async def resolve_catalog_track(q: TrackQuery) -> CatalogTrack | None:
 
 
 # --- candidates ------------------------------------------------------------------------------
-
-
-# The catalog's pictures live under several host names with the same paths, and they refuse this network by spells:
-# the same address gives the picture now and 403 a moment later, and after a run of requests all of them refuse for
-# a while. So a picture is asked of each name in turn, unhurriedly, and one that came is kept on the Hub's disk
-# (`staging/covers`): it is asked for once. One that does not come is owed (`owe_cover`): asked for again later.
-_COVER_HOSTS = ("cdn-images.dzcdn.net", "e-cdns-images.dzcdn.net", "e-cdn-images.dzcdn.net")
-_COVER_PACE_S = 0.25
-_cover_gate = asyncio.Lock()
-
-
-def _cover_kept(url: str) -> Path:
-    import hashlib
-
-    return get_settings().staging_dir / "covers" / f"{hashlib.md5(url.encode()).hexdigest()}.img"
-
-
-async def fetch_cover(url: str | None, *, max_bytes: int | None = None) -> bytes | None:
-    if not url:
-        return None
-    kept = _cover_kept(url)
-    if kept.is_file():
-        return await asyncio.to_thread(kept.read_bytes) if max_bytes is None or kept.stat().st_size <= max_bytes else None
-    named = next((h for h in _COVER_HOSTS if f"//{h}/" in url), None)
-    tries = list(dict.fromkeys(url.replace(named, h) for h in (*_COVER_HOSTS[1:], _COVER_HOSTS[0]))) if named else [url]
-    async with _cover_gate:
-        if kept.is_file():  # it came while this request waited its turn
-            return await asyncio.to_thread(kept.read_bytes) if max_bytes is None or kept.stat().st_size <= max_bytes else None
-        for u in tries:
-            await asyncio.sleep(_COVER_PACE_S)
-            try:
-                async with make_client(timeout=30) as c, c.stream("GET", u) as r:
-                    if r.status_code == 200 and r.headers.get("content-type", "").startswith("image/"):
-                        image = bytearray()
-                        async for chunk in r.aiter_bytes():
-                            if max_bytes is not None and len(image) + len(chunk) > max_bytes:
-                                return None
-                            image.extend(chunk)
-                        kept.parent.mkdir(parents=True, exist_ok=True)
-                        await asyncio.to_thread(kept.write_bytes, image)
-                        return bytes(image)
-            except httpx.HTTPError as e:
-                log.warning("cover download failed %s: %r", u, e)
-    log.info("cover not given just now: %s", url)
-    return None
 
 
 async def owe_cover(s: AsyncSession, album_id: int, url: str) -> None:
@@ -1092,8 +1046,9 @@ def query_from_track(t: CatalogTrack) -> TrackQuery:
 
 
 async def get_catalog_album(ref: str) -> CatalogAlbum:
-    from app.api.catalog import _release_record
     from fastapi import HTTPException
+
+    from app.api.catalog import _release_record
 
     try:
         async with session_scope() as s:

@@ -64,7 +64,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return; // covers from Deezer etc.: browser cache
+  if (url.origin !== self.location.origin) return; // the catalogs' pictures come through the Hub (`/api/covers`)
 
   if (req.method === 'POST' && url.pathname === '/share-target') {
     event.respondWith(handleShare(req));
@@ -76,7 +76,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (url.pathname.startsWith('/api/')) {
-    if (/\/cover(\/|$)/.test(url.pathname)) event.respondWith(staleWhileRevalidate(req, IMG));
+    // a catalog's picture kept by the Hub (`/api/covers`), a cover whose address names its version: the same
+    // picture for good — from the device once it is there, without asking. Other covers: shown, then checked.
+    if (url.pathname === '/api/covers' || (/\/cover(\/|$)/.test(url.pathname) && url.searchParams.has('v'))) event.respondWith(cacheFirst(req, IMG));
+    else if (/\/cover(\/|$)/.test(url.pathname)) event.respondWith(staleWhileRevalidate(req, IMG));
     else if (KEPT.some((x) => url.pathname.startsWith(x)) && !NOT_KEPT.some((x) => url.pathname.startsWith(x)))
       networkFirst(event, API, req.url, (res) => (res.headers.get('content-type') || '').includes('json'));
     return;

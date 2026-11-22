@@ -22,12 +22,13 @@ from starlette.background import BackgroundTask
 from app import listen
 from app.api.quality import _cover
 from app.auth import current_user
-from app.config import get_settings
 from app.catalog.models import CatalogNotFound
+from app.config import get_settings
+from app.covers import fetch_cover
 from app.db import get_session
 from app.events import bus
 from app.imports import review
-from app.jobs.downloads import enqueue_scan, fetch_cover
+from app.jobs.downloads import enqueue_scan
 from app.jobs.queue import notify
 from app.library import acoustic, probe, tagger, upgrade
 from app.library.importer import TrackAlreadyFiled, cleanup_dir, copy_limited, library_abs, staging_dir_for

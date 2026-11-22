@@ -5,7 +5,6 @@ The files are looked after by who brought them and by the admins (`app/library/a
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 import uuid
 from typing import Annotated
@@ -16,6 +15,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import covers
 from app.api.schemas import (
     AlbumCreateIn,
     AlbumEditOut,
@@ -348,32 +348,35 @@ async def save_album_cover(s: AsyncSession, user: User, a: Album, data: bytes) -
 
 
 @router.get("/api/library/albums/{album_id}/cover")
-async def get_cover(album_id: int, size: int | None = Query(None, ge=32, le=1000), user: User = Depends(current_user),
-                    s: AsyncSession = Depends(get_session, scope="function")):
+async def get_cover(album_id: int, size: int | None = Query(None, ge=32, le=1000), v: str | None = None,
+                    user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    """The album's picture (`size`: a copy for a list, made once and kept). Its address names its version (`v`, the
+    album's last change): such an address is the same picture for good, and a browser keeps it so."""
     a = await s.get(Album, album_id)  # a picture is shown wherever the album is, to anybody
     if a is None:
         raise HTTPException(404, "Альбом не найден")
     p = library_abs(album_reldir(a)) / "cover.jpg"
-    data: bytes | None = await asyncio.to_thread(p.read_bytes) if p.is_file() else None
-    if data is None:
+    if p.is_file():
+        key = f"{p}:{p.stat().st_mtime_ns}"
+
+        async def load() -> bytes | None:
+            return await asyncio.to_thread(p.read_bytes)
+    else:
         t = (await s.execute(select(Track).where(Track.album_id == a.id, Track.path.is_not(None)).limit(1))).scalar_one_or_none()
-        if t is not None and library_abs(t.path).is_file():
-            data = await asyncio.to_thread(tagger.read_cover, library_abs(t.path))
+        f = library_abs(t.path) if t is not None else None
+        if f is None or not f.is_file():
+            raise HTTPException(404, "Нет обложки")
+        key = f"{f}:{f.stat().st_mtime_ns}"
+
+        async def load() -> bytes | None:
+            return await asyncio.to_thread(tagger.read_cover, f)
+    data = await (covers.sized(key, size, load) if size else load())
     if data is None:
         raise HTTPException(404, "Нет обложки")
-    if size:
-        data = await asyncio.to_thread(_resize, data, size)
-    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": _FOR_GOOD if v else "private, max-age=3600"})
 
 
-def _resize(data: bytes, size: int) -> bytes:
-    from PIL import Image
-
-    im = Image.open(io.BytesIO(data)).convert("RGB")
-    im.thumbnail((size, size))
-    buf = io.BytesIO()
-    im.save(buf, "JPEG", quality=85)
-    return buf.getvalue()
+_FOR_GOOD = "private, max-age=31536000, immutable"
 
 
 @router.post("/api/library/albums/merge", response_model=LibAlbumOut)
@@ -451,12 +454,16 @@ async def delete_track_cover(track_id: int, user: User = Depends(current_user),
 @router.get("/api/library/tracks/{track_id}/cover")
 async def get_track_cover(track_id: int, size: int | None = Query(None, ge=32, le=1000), user: User = Depends(current_user),
                           s: AsyncSession = Depends(get_session, scope="function")):
-    data = await edits.track_cover(s, track_id)
+    key = (await s.execute(select(Track.cover_key).where(Track.id == track_id))).scalar_one_or_none()
+    if not key:
+        raise HTTPException(404, "Нет обложки")
+
+    async def load() -> bytes | None:
+        return await edits.track_cover(s, track_id)
+    data = await (covers.sized(f"track:{track_id}:{key}", size, load) if size else load())
     if data is None:
         raise HTTPException(404, "Нет обложки")
-    if size:
-        data = await asyncio.to_thread(_resize, data, size)
-    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"})
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": _FOR_GOOD})
 
 
 @router.get("/api/library/tracks/{track_id}/edits")
@@ -596,8 +603,8 @@ async def delete_track(track_id: int, user: User = Depends(current_user), s: Asy
 
 @router.get("/api/starred", response_model=StarredOut)
 async def starred(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    from app.api.schemas import FavoriteTarget
     from app import playlists
+    from app.api.schemas import FavoriteTarget
     from app.favorites import ND_FIELDS, AliasIndex, imported_targets, project_liked, snapshot, subjects_of
 
     # what the buttons of tracks go by is the Hub's own list; Navidrome is asked only about albums and artists
@@ -800,7 +807,6 @@ async def add_version(track_id: int, body: VersionIn, user: User = Depends(curre
                       s: AsyncSession = Depends(get_session, scope="function")):
     """Another track is a recording of the same song."""
     from app.library import versions
-
     from app.lyrics.service import track_for
 
     t = await _version_track(s, track_id)
@@ -841,3 +847,15 @@ async def drop_version(track_id: int, of: int | None = None, user: User = Depend
     await versions.unlink(s, user.id, t)
     return await _versions(s, user, await _version_track(s, of) if of else t)
 
+
+
+@router.get("/api/covers")
+async def cover(url: str, user: User = Depends(current_user)):
+    """A picture of a catalog or a service, by its address there: got once and kept on the Hub's disk (`app.covers`).
+    Only the image CDNs it knows: the Hub is no way out to whatever a page names."""
+    if not covers.allowed(url):
+        raise HTTPException(400, "Не картинка каталога")
+    data = await covers.fetch_cover(url)
+    if data is None:
+        raise HTTPException(404, "Каталог не отдал картинку", headers={"Cache-Control": "no-store"})
+    return Response(data, media_type=covers.image_type(data), headers={"Cache-Control": _FOR_GOOD})

@@ -37,13 +37,13 @@ from app.api.schemas import (
 from app.auth import current_user
 from app.catalog import lookup, release_matches
 from app.catalog.cache import cache_get, cache_set_many
+from app.catalog.identity import same_recording
 from app.catalog.models import CATALOG_SERVICES, CatalogAlbum, CatalogArtist, CatalogTrack, SearchResults
 from app.catalog.spotify import ID as SPOTIFY_ID
-from app.catalog.identity import same_recording
 from app.config import get_settings
+from app.covers import fetch_cover
 from app.db import get_session, session_scope
 from app.events import bus
-from app.jobs.downloads import fetch_cover
 from app.library import artists as artist_names
 from app.library import edits, tagger
 from app.library.artwork import cover_info

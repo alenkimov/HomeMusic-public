@@ -354,7 +354,7 @@ function BannerPicture({ src, blurred }: { src: string; /** not a wide picture b
   return (
     <div aria-hidden="true" className="pointer-events-none sticky top-(--page-top) z-0 h-0">
       <div ref={box} className={cx('absolute inset-x-0 top-0 overflow-hidden', BANNER_H)}>
-        <img src={src} alt="" className={cx('h-full w-full object-cover', blurred ? 'scale-150 blur-3xl brightness-[0.55] saturate-150' : 'object-[center_25%]')} />
+        <img src={imageUrl(src)} alt="" className={cx('h-full w-full object-cover', blurred ? 'scale-150 blur-3xl brightness-[0.55] saturate-150' : 'object-[center_25%]')} />
         <div style={{ opacity: 'var(--shade, 0)' }} className="absolute inset-0 bg-bg" />
       </div>
     </div>
@@ -407,7 +407,7 @@ function Banner({ name, photo }: { name: string; photo?: string | null }) {
       <div className={cx('flex w-full gap-4 px-4 pb-4 lg:gap-6 lg:px-6 lg:pb-5', wide ? 'items-end' : 'items-center')}>
         {!wide &&
           (photo ? (
-            <img src={photo} alt="" className={cx(round, 'object-cover')} />
+            <img src={imageUrl(photo)} alt="" className={cx(round, 'object-cover')} />
           ) : (
             <span className={cx(round, 'flex items-center justify-center bg-fg/10 text-muted')}>
               <Icon name="user" size={40} />

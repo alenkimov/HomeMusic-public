@@ -83,7 +83,7 @@ export function ArtistLooksWindow({ artistId, onChanged, onClose }: { artistId: 
                 <button key={b.choice} type="button" aria-pressed={d.banner === b.choice} onClick={() => void run(b.choice, () => api.artistBanner(artistId, b.choice))} className="min-w-0 text-left">
                   <span className={cx('relative block aspect-[12/5] overflow-hidden rounded-lg bg-fg/10 transition', ring(d.banner === b.choice))}>
                     <img
-                      src={b.url}
+                      src={imageUrl(b.url)}
                       alt=""
                       loading="lazy"
                       className="h-full w-full object-cover"

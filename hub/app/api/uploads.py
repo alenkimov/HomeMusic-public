@@ -17,17 +17,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import UploadCommitIn, UploadCommitOut, UploadMatch, UploadMatchIn, UploadOut, UploadTwin
 from app.auth import current_user
 from app.config import get_settings
+from app.covers import kept_path
 from app.db import get_session
 from app.events import bus
-from app.jobs.downloads import _cover_kept, enqueue_scan, owe_cover
-from app.library import artists
+from app.jobs.downloads import enqueue_scan, owe_cover
 from app.jobs.queue import notify
-from app.library import acoustic, probe, quality, recognize, tagger
+from app.library import acoustic, artists, probe, quality, recognize, tagger
 from app.library.artwork import cover_info
 from app.library.credits import main_artist, split_artists
+from app.library.importer import ImportSpec, copy_limited, import_file
 from app.library.owned import find_owned
 from app.library.tracks import current_file
-from app.library.importer import ImportSpec, copy_limited, import_file
 from app.models import Track, Upload, User
 
 log = logging.getLogger(__name__)
@@ -247,7 +247,7 @@ async def preview(upload_id: int, user: User = Depends(current_user), s: AsyncSe
 @router.get("/{upload_id}/catalog-cover")
 async def catalog_cover(upload_id: int, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")) -> dict:
     """Measure the picture from the catalog once."""
-    from app.jobs.downloads import fetch_cover
+    from app.covers import fetch_cover
 
     u = await _own(s, user, upload_id)
     url = ((((u.probed_tags_json or {}).get("_match") or {}).get("meta") or {}).get("cover_url"))
@@ -305,7 +305,8 @@ def _own_spec(u: Upload, tr, tags: dict) -> ImportSpec:
 
 async def _catalog_spec(meta: dict, *, with_cover: bool = True) -> ImportSpec:
     """The file as the song of the catalog it is: what a download of that song would be filed as."""
-    from app.jobs.downloads import _parse_date, fetch_cover
+    from app.covers import fetch_cover
+    from app.jobs.downloads import _parse_date
 
     released = _parse_date(meta.get("release_date"))
     single = not meta.get("album")
@@ -329,7 +330,7 @@ async def _album_cover(s: AsyncSession, user: User, a) -> bytes | None:
     """The picture chosen for an album: the catalog's of an upload's record, or the one inside an uploaded file.
     None: none was chosen, or its file is in the library already (an earlier part of the same import wrote the
     album's cover from it) — the album keeps the cover it has."""
-    from app.jobs.downloads import fetch_cover
+    from app.covers import fetch_cover
 
     if a.cover_of_match:
         u = await _own(s, user, a.cover_of_match)
@@ -437,7 +438,7 @@ async def commit(body: UploadCommitIn, user: User = Depends(current_user),
         track_ids.append(track.id)
         if track.album_id and track.album_id not in album_ids:
             album_ids.append(track.album_id)
-        if wanted and track.album_id and track.album_id not in owed and not _cover_kept(wanted).is_file():
+        if wanted and track.album_id and track.album_id not in owed and not kept_path(wanted).is_file():
             owed[track.album_id] = wanted  # the catalog did not give the picture: it is put on the album when it does
         record = str((matched.get("meta") or {}).get("track_ref") or "")
         if tr.version_of_match and not tr.catalog and record:

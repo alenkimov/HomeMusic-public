@@ -9,7 +9,6 @@ import re
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable
 from itertools import combinations
-from urllib.parse import urlsplit
 
 from PIL import Image, ImageOps
 from sqlalchemy import or_, select
@@ -30,12 +29,6 @@ _EDITIONS = re.compile(
     r"|デラックス|リマスター|限定盤|通常盤|初回盤|делюкс|ремастер\w*",
     re.IGNORECASE,
 )
-_COVER_HOSTS = {
-    "cdn-images.dzcdn.net", "e-cdns-images.dzcdn.net", "e-cdn-images.dzcdn.net",
-    "i.scdn.co", "image-cdn-ak.spotifycdn.com", "image-cdn-fa.spotifycdn.com",
-    "avatars.yandex.net", "avatars.mds.yandex.net",
-}
-
 
 def _order(a: CatalogAlbum) -> tuple[int, str]:
     return _ORDER.get(a.source, len(_ORDER)), a.ref
@@ -147,11 +140,10 @@ def _pixels(data: bytes) -> bytes:
 
 
 async def _cover(album: CatalogAlbum) -> bytes | None:
-    from app.jobs.downloads import fetch_cover
+    from app.covers import allowed, fetch_cover
 
     url = album.cover_small_url or album.cover_url or ""
-    parts = urlsplit(url)
-    if parts.scheme != "https" or parts.hostname not in _COVER_HOSTS:
+    if not allowed(url):
         return None
     data = await fetch_cover(url, max_bytes=2_000_000)
     return await asyncio.to_thread(_pixels, data) if data else None

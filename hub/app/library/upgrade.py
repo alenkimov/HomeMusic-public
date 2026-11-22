@@ -252,7 +252,8 @@ async def _settle(s: AsyncSession, meta: dict[str, Any], track_id: int, path: Pa
 async def adopt(s: AsyncSession, track: Track, meta: dict[str, Any]) -> None:
     """The track is the catalog's record `meta` after all: it takes the record's names, its number, its release and
     the release's cover — as a file found in the catalog is filed in the first step."""
-    from app.jobs.downloads import _parse_date, fetch_cover
+    from app.covers import fetch_cover
+    from app.jobs.downloads import _parse_date
     from app.library import editor
     from app.library.importer import _write_cover_file, album_reldir, get_or_create_album
     from app.library.tracks import by_ref
