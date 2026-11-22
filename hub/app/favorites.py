@@ -242,10 +242,16 @@ def fold(events: Iterable[PlayEvent], subjects: Iterable[FavoriteSubject] = (),
     return out
 
 
-async def snapshot(s: AsyncSession, user_id: int, now: datetime | None = None):
+async def snapshot(s: AsyncSession, user_id: int, now: datetime | None = None, *, only: str | None = None):
+    """The state of every like (`fold`). `only`: of one kind of thing ("artist", "album") — the kinds never share
+    a name (`AliasIndex`), so theirs is the same state without reading the thousands of track likes."""
     now = now or utcnow()
     q = select(PlayEvent).where(PlayEvent.user_id == user_id, PlayEvent.kind.in_(("like", "unlike")))
     q = q.where(PlayEvent.ts <= now)
+    if only is not None:
+        if only == "track":
+            raise ValueError("a track's like may be told without its kind: read them all")
+        q = q.where(PlayEvent.target_type == only)
     events = list((await s.execute(q)).scalars())
     return fold(events, await subjects_of(s, events), now)
 

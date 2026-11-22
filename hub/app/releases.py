@@ -91,7 +91,7 @@ async def follows(s: AsyncSession, user_id: int) -> list[Follow]:
     from app.mixes.build import artist_by_name
 
     out: dict[str, Follow] = {}
-    for st in (await snapshot(s, user_id)).values():
+    for st in (await snapshot(s, user_id, only="artist")).values():
         if st.target_type != "artist" or not st.liked:
             continue
         name = str((st.data or {}).get("name") or "")
