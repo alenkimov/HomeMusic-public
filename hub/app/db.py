@@ -2,20 +2,33 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
+import traceback
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import greenlet
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import URL, create_engine, make_url, text
+from sqlalchemy import URL, create_engine, event, make_url, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, QueuePool
 
 from app.config import get_settings
 
+log = logging.getLogger(__name__)
+
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
+
+_APP = Path(__file__).resolve().parent
+POOL_REPORT_FREE = 2  # at this few free connections the holders are logged
+POOL_REPORT_EVERY_S = 60
+_holders: dict[int, tuple[float, str]] = {}
+_reported_at = 0.0
 
 
 def get_database_url(url: str | URL | None = None) -> URL:
@@ -36,8 +49,49 @@ def get_database_url(url: str | URL | None = None) -> URL:
 def init_engine(url: str | URL | None = None) -> AsyncEngine:
     global _engine, _sessionmaker
     _engine = create_async_engine(get_database_url(url), pool_pre_ping=True)
+    _watch_pool(_engine)
     _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
     return _engine
+
+
+def _holder() -> str:
+    """The task and the Hub's own frames that took a connection. Under the async engine the checkout runs in a
+    greenlet of its own: the caller's frames are those of the greenlet it switched from."""
+    g = greenlet.getcurrent()
+    frame = g.parent.gr_frame if g.parent is not None and g.parent.gr_frame is not None else None
+    frames = [f"{Path(f.f_code.co_filename).stem}:{line} {f.f_code.co_name}"
+              for f, line in traceback.walk_stack(frame)
+              if f.f_code.co_filename.startswith(str(_APP)) and f.f_code.co_filename != __file__] if frame else []
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    return f"[{task.get_name() if task else '-'}] {' < '.join(frames[:6]) or '?'}"
+
+
+def _watch_pool(eng: AsyncEngine) -> None:
+    """When the pool is nearly used up, log who holds its connections and for how long: a pool that runs out makes
+    every query wait and then fail with a timeout, far from the code that holds them."""
+    pool = eng.sync_engine.pool
+    if not isinstance(pool, QueuePool):
+        return
+
+    @event.listens_for(pool, "checkout")
+    def _out(_dbapi, record, _proxy):
+        global _reported_at
+        now = time.monotonic()
+        _holders[id(record)] = (now, _holder())
+        limit = pool.size() + max(0, getattr(pool, "_max_overflow", 0))
+        if pool.checkedout() < limit - POOL_REPORT_FREE or now - _reported_at < POOL_REPORT_EVERY_S:
+            return
+        _reported_at = now
+        held = sorted(_holders.values())
+        log.warning("database pool nearly used up: %s of %s connections held\n%s", pool.checkedout(), limit,
+                    "\n".join(f"  {now - since:7.1f}s {where}" for since, where in held))
+
+    @event.listens_for(pool, "checkin")
+    def _in(_dbapi, record):
+        _holders.pop(id(record), None)
 
 
 def engine() -> AsyncEngine:
