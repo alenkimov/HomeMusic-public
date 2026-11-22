@@ -98,10 +98,12 @@ async def _changed(s: AsyncSession, *rows: Playlist) -> None:
 
 
 async def tracks_out(s: AsyncSession, user: User, rows: list[Track], *, import_state: bool = False) -> list[NdSongOut]:
-    """Tracks as a list shows them (`cards.draw`), with what is the user's of them: their transfers' word on each."""
-    from app.library.cards import draw
+    """Tracks as a list shows them — their kept cards (`app.library.cards`) — with what is the user's of them: their
+    transfers' word on each."""
+    from app.library import cards
 
-    out = await draw(s, rows)
+    kept = await cards.read(s, [t.id for t in rows])
+    out = [NdSongOut.model_validate(kept[t.id]) for t in rows]
     if import_state:
         from app.imports.review import annotate
 
