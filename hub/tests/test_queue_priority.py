@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -102,6 +103,52 @@ async def test_background_job_runs_with_background_network_priority(db):
         queue._handlers.pop("test_probe", None)
     assert seen == [(0, False), (queue.PRIORITY_IMPORT, True)]
     assert not in_background()  # the worker itself is back to the foreground
+
+
+async def test_background_scans_share_a_deadline_and_manual_changes_expedite_them(db):
+    from app.jobs.downloads import BACKGROUND_SCAN_DELAY_S, BACKGROUND_SCAN_PRIORITY, enqueue_scan
+    from app.models import utcnow
+    from app.net import Priority, priority_context
+
+    async def request():
+        async with session_scope() as s:
+            await enqueue_scan(s)
+
+    started_at = utcnow()
+    await asyncio.gather(*(
+        asyncio.create_task(request(), context=priority_context(Priority(background=True))) for _ in range(6)
+    ))
+    async with session_scope() as s:
+        [pending] = list(await s.scalars(select(Job).where(Job.kind == "nd_scan")))
+        assert pending.priority == BACKGROUND_SCAN_PRIORITY
+        assert started_at + timedelta(seconds=BACKGROUND_SCAN_DELAY_S) <= pending.run_after
+        assert pending.run_after <= utcnow() + timedelta(seconds=BACKGROUND_SCAN_DELAY_S)
+    await asyncio.create_task(request(), context=priority_context(Priority(background=True)))
+    async with session_scope() as s:
+        assert (await s.get(Job, pending.id)).run_after == pending.run_after
+
+    await request()
+    async with session_scope() as s:
+        [expedited] = list(await s.scalars(select(Job).where(Job.kind == "nd_scan")))
+        assert expedited.id == pending.id
+        assert expedited.priority == 0
+        assert expedited.run_after < pending.run_after
+        expedited.run_after = utcnow() - timedelta(seconds=1)
+    assert await _claimed() == "nd_scan"
+
+    await asyncio.create_task(request(), context=priority_context(Priority(background=True)))
+    async with session_scope() as s:
+        await enqueue_scan(s, retry_pass=1)
+        [followup] = list(await s.scalars(select(Job).where(Job.kind == "nd_scan", Job.status == "queued")))
+        assert followup.payload_json["pass"] == 0
+        assert followup.priority == 0
+        followup.run_after = utcnow() - timedelta(seconds=1)
+    assert await _claimed() is None
+    assert await queue._next_wakeup_in() == 30.0
+    await _add("listen")
+    assert await _claimed() == "listen"
+    await queue._finish(pending.id, ok=True)
+    assert await _claimed() == "nd_scan"
 
 
 async def test_worker_keeps_going_when_it_cannot_save_a_result(db, monkeypatch):

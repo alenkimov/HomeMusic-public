@@ -1280,6 +1280,21 @@ export interface ImportCollectionOut {
   playlist_id?: string | null;
 }
 
+export interface ImportActivityOut {
+  items: {
+    id: number;
+    title: string;
+    artist: string;
+    cover_url?: string | null;
+    status: 'searching' | 'downloading' | 'tagging' | 'importing';
+    progress: number;
+    provider?: string | null;
+    searching: string[];
+    file_saved: boolean;
+  }[];
+  more: number;
+}
+
 export interface ImportOut {
   id: number;
   source: ImportSource;

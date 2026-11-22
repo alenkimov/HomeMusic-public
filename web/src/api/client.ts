@@ -33,6 +33,7 @@ import type {
   RecentPlaceOut,
   ReleasesOut,
   DownloadItemOut,
+  ImportActivityOut,
   ImportIn,
   ImportSource,
   ImportOut,
@@ -871,6 +872,7 @@ export const api = {
   /** What VK asked for at the sign-in: the code it sent, or what its captcha page answered with. */
   importAuth: (id: number, body: { code?: string; captcha?: string }) => request<ImportOut>('POST', `/api/imports/${id}/auth`, { json: body }),
   importGet: (id: number, signal?: AbortSignal) => request<ImportOut>('GET', `/api/imports/${id}`, { signal }),
+  importActivity: (id: number, signal?: AbortSignal) => request<ImportActivityOut>('GET', `/api/imports/${id}/activity`, { signal }),
   importStart: (id: number, body: ImportStartIn) => request<ImportOut>('POST', `/api/imports/${id}/start`, { json: body }),
   importDownloadAll: (id: number) => request<ImportOut>('POST', `/api/imports/${id}/download_all`),
   importSync: (id: number) => request<ImportOut>('POST', `/api/imports/${id}/sync`),

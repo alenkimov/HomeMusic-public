@@ -12,7 +12,7 @@ import asyncio
 import logging
 import shutil
 import unicodedata
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +42,7 @@ from app.matching.select import (
     uploaded_in_time,
 )
 from app.models import DownloadBatch, DownloadItem, Job, PlayEvent, PlaylistItem, Track, TrackFile, User, utcnow
-from app.net import make_client
+from app.net import in_background, make_client
 from app.providers.base import Candidate, Provider, ProviderError, TrackQuery, file_ref
 from app.services import svc
 
@@ -55,6 +55,9 @@ MAX_TRIES_PER_PROVIDER = 3
 MAX_SHOWN = 15  # candidates kept on the item for the user to pick from
 MAX_SHOWN_REUPLOADS = 5
 SCAN_PASSES = 3  # more Navidrome scans after one that left tracks unlinked
+BACKGROUND_SCAN_DELAY_S = 30
+BACKGROUND_SCAN_PRIORITY = -5
+SCAN_SCHEDULE_LOCK = 7013426
 MAYBE_CENSORED = "Возможна цензура: копий без цензуры не нашлось"
 
 
@@ -811,26 +814,34 @@ async def _download_failed(job: Job, exc: Exception) -> None:
 # --- scan + link + playlists ---------------------------------------------------------------------
 
 
-async def enqueue_scan(s: AsyncSession) -> None:
-    pending = (
-        await s.execute(select(Job.id).where(Job.kind == "nd_scan", Job.status == "queued").limit(1))
-    ).scalar_one_or_none()
+async def enqueue_scan(s: AsyncSession, *, retry_pass: int = 0, retry_priority: int = 0) -> None:
+    """Batch background files from the first arrival and bring the pending scan forward for manual changes."""
+    background = in_background()
+    priority = retry_priority if retry_pass else BACKGROUND_SCAN_PRIORITY if background else 0
+    delay = 10 if retry_pass else BACKGROUND_SCAN_DELAY_S if background else 1
+
+    # Concurrent writers share one pending scan. The worker skips this row while its schedule is being updated.
+    await s.execute(select(func.pg_advisory_xact_lock(SCAN_SCHEDULE_LOCK)))
+    pending = await s.scalar(select(Job).where(Job.kind == "nd_scan", Job.status == "queued")
+                             .order_by(Job.run_after, Job.id).limit(1).with_for_update())
     if pending is None:
-        await enqueue(s, "nd_scan", {}, delay_s=1)
+        await enqueue(s, "nd_scan", {"pass": retry_pass}, delay_s=delay, priority=priority)
+        return
 
-
-_scan_lock = asyncio.Lock()
+    pending.run_after = min(pending.run_after, utcnow() + timedelta(seconds=delay))
+    pending.priority = max(pending.priority, priority)
+    if not retry_pass and (pending.payload_json or {}).get("pass"):
+        pending.payload_json = {"pass": 0}
 
 
 @handler("nd_scan")
 async def handle_scan(job: Job) -> None:
-    async with _scan_lock:
-        nd = admin_client()
-        try:
-            await nd.scan_and_wait(poll_s=get_settings().nd_scan_poll_s)
-            linked = await link_unlinked(nd)
-        finally:
-            await nd.aclose()
+    nd = admin_client()
+    try:
+        await nd.scan_and_wait(poll_s=get_settings().nd_scan_poll_s)
+        linked = await link_unlinked(nd)
+    finally:
+        await nd.aclose()
     log.info("navidrome scan done, linked %s tracks", linked)
     from app.library import songs as library_songs
     from app.playlists_mirror import enqueue_stale
@@ -858,8 +869,6 @@ async def handle_scan(job: Job) -> None:
                 done_items.append(item)
         await s.flush()
         links = await item_links(s, done_items)
-        for item in done_items:
-            bus.publish(item.user_id, "download", item_out(item, links=links[item.id]).model_dump(mode="json"))
         from app.favorites import deliver_pending
         from app.plays import attach_tracks
 
@@ -871,6 +880,8 @@ async def handle_scan(job: Job) -> None:
         still = (
             await s.execute(select(func.count()).select_from(TrackFile).where(TrackFile.nd_song_id.is_(None)))
         ).scalar_one()
+    for item in done_items:
+        bus.publish(item.user_id, "download", item_out(item, links=links[item.id]).model_dump(mode="json"))
     if not still:
         return
     # Navidrome may need another pass (file just landed while the scan was running) — a few, not forever: each pass is
@@ -879,7 +890,7 @@ async def handle_scan(job: Job) -> None:
     passes = int((job.payload_json or {}).get("pass") or 0)
     if passes < SCAN_PASSES:
         async with session_scope() as s:
-            await enqueue(s, "nd_scan", {"pass": passes + 1}, delay_s=10)
+            await enqueue_scan(s, retry_pass=passes + 1, retry_priority=job.priority)
         notify()
     else:
         log.warning("navidrome scan: %s tracks still not found in Navidrome", still)

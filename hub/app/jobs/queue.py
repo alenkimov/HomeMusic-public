@@ -103,7 +103,9 @@ _IMPORT_KINDS = "('import_resolve', 'import_playlists')"
 
 # Both checks use the same running jobs as the scheduler, including after a restart.
 _GENERAL_CLAIMABLE = (
-    f"status='queued' AND kind NOT IN {_IMPORT_KINDS} AND (priority >= 0 OR "
+    f"status='queued' AND kind NOT IN {_IMPORT_KINDS} "
+    "AND (kind <> 'nd_scan' OR NOT EXISTS (SELECT 1 FROM jobs WHERE kind='nd_scan' AND status='running')) "
+    "AND (priority >= 0 OR "
     f"(SELECT COUNT(*) FROM jobs WHERE status='running' AND priority < 0 AND kind NOT IN {_IMPORT_KINDS}) < :bg)"
 )
 _IMPORT_CLAIMABLE = (

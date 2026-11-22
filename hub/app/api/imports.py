@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import integrations
-from app.api.schemas import ImportAuthIn, ImportIn, ImportItemsOut, ImportOut, ImportPickOut, ImportStartIn
+from app.api.schemas import (
+    ImportActivityOut,
+    ImportAuthIn,
+    ImportDownloadActivityOut,
+    ImportIn,
+    ImportItemsOut,
+    ImportOut,
+    ImportPickOut,
+    ImportStartIn,
+)
 from app.auth import current_user
 from app.db import get_session
 from app.events import bus
@@ -71,6 +80,31 @@ async def create(body: ImportIn, user: User = Depends(current_user),
 async def get(import_id: int, user: User = Depends(current_user),
               s: AsyncSession = Depends(get_session, scope="function")):
     return await core.import_out(s, await _own(s, user, import_id))
+
+
+@router.get("/{import_id}/activity", response_model=ImportActivityOut)
+async def activity(import_id: int, user: User = Depends(current_user),
+                   s: AsyncSession = Depends(get_session, scope="function")):
+    """A small snapshot for live transfer progress, with active downloads ahead of saved files."""
+    imp = await _own(s, user, import_id)
+    item = DownloadItem
+    query = item.query_json["query"]
+    rows = (await s.execute(select(
+        item.id, query["title"].as_string(), query["artist"].as_string(),
+        func.coalesce(item.query_json["meta"]["cover_url"].as_string(),
+                      item.chosen_candidate_json["cover_url"].as_string()),
+        item.status, item.progress, item.provider, item.search_sources_json, item.track_id.is_not(None),
+        func.count().over(),
+    ).where(
+        item.user_id == imp.user_id, item.query_json["import"]["id"].as_integer() == imp.id,
+        item.status.in_(("searching", "downloading", "tagging", "importing")),
+    ).order_by(case((item.status == "importing", 1), else_=0), item.id).limit(8))).all()
+    return ImportActivityOut(items=[
+        ImportDownloadActivityOut(id=id_, title=title or "", artist=artist or "", cover_url=cover,
+                                  status=status, progress=progress or 0, provider=provider, file_saved=saved,
+                                  searching=[source for source, state in (sources or {}).items() if state == "searching"])
+        for id_, title, artist, cover, status, progress, provider, sources, saved, _ in rows
+    ], more=(rows[0][-1] - len(rows)) if rows else 0)
 
 
 @router.post("/{import_id}/auth", response_model=ImportOut)

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
-import type { ImportCollectionOut, ImportMode, ImportOut, ImportSource } from '../api/types';
+import type { ImportActivityOut, ImportCollectionOut, ImportMode, ImportOut, ImportSource } from '../api/types';
 import { ServiceBadge, ServiceIcon, ServiceText } from '../components/ServiceBadge';
 import { PlaylistsPick } from '../components/PlaylistsButton';
 import { AfterImport } from './Upload';
@@ -607,6 +607,7 @@ function Progress({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) 
             {st.failed > 0 && <p className="text-xs text-warn">Не скачалось {st.failed}</p>}
           </div>
         )}
+        {running && <ImportActivity id={imp.id} />}
         {imp.error && <Notice kind="error"><ServiceText text={imp.error} /></Notice>}
       </div>
 
@@ -642,6 +643,60 @@ function Progress({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) 
         )}
       </div>
     </div>
+  );
+}
+
+function ImportActivity({ id }: { id: number }) {
+  const activity = useAsync((signal) => api.importActivity(id, signal), [id]);
+  const dirty = useRef(false);
+  useHubEvent('download', (item) => { if (item.import_id === id) dirty.current = true; });
+  useHubEvent('reconnect', () => { dirty.current = true; });
+  useInterval(() => {
+    if (!dirty.current || activity.loading || document.visibilityState === 'hidden') return;
+    dirty.current = false;
+    activity.reload();
+  }, 1000);
+
+  const data = activity.data;
+  if (!data?.items.length) return null;
+  return (
+    <section aria-label="Сейчас">
+      <h3 className="mb-1 text-sm font-semibold">Сейчас</h3>
+      <ul className="divide-y divide-line/60">
+        {data.items.map((item) => <ActivityTrack key={item.id} item={item} />)}
+      </ul>
+      {data.more > 0 && <p className="pt-2 text-xs text-muted">Ещё {tracksWord(data.more)} в обработке</p>}
+    </section>
+  );
+}
+
+function ActivityTrack({ item }: { item: ImportActivityOut['items'][number] }) {
+  const downloading = item.status === 'downloading';
+  const waitingForIndex = item.status === 'importing' && item.file_saved;
+  const phase = {
+    searching: 'Поиск файла',
+    downloading: 'Скачивается',
+    tagging: 'Проверка файла',
+    importing: waitingForIndex ? 'Ожидает индексации' : 'Сохраняется',
+  }[item.status];
+  const sources = item.status === 'searching' ? item.searching : [item.provider].filter((s): s is string => !!s);
+  const title = item.title || 'Без названия';
+  return (
+    <li className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 py-2 sm:grid-cols-[auto_minmax(0,1fr)_minmax(9.5rem,auto)]">
+      <Cover src={item.cover_url} size={36} />
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium" title={title}>{title}</p>
+        {item.artist && <p className="truncate text-xs text-muted" title={item.artist}>{item.artist}</p>}
+        {downloading && <ProgressBar label={`Скачивание ${title}`} value={item.progress} className="mt-1.5 max-w-56" />}
+      </div>
+      <div className="col-start-2 min-w-0 text-xs sm:col-start-3">
+        <p className="font-medium">{phase}{downloading && <span className="tabular-nums"> · {Math.round(item.progress * 100)}%</span>}</p>
+        <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-muted">
+          {sources.map((service) => <ServiceBadge key={service} service={service} />)}
+          {waitingForIndex && <ServiceBadge service="navidrome" />}
+        </div>
+      </div>
+    </li>
   );
 }
 

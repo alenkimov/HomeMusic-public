@@ -1133,6 +1133,23 @@ class ImportDestinationOut(BaseModel):
     name: str
 
 
+class ImportDownloadActivityOut(BaseModel):
+    id: int
+    title: str
+    artist: str
+    cover_url: str | None = None
+    status: Literal["searching", "downloading", "tagging", "importing"]
+    progress: float
+    provider: str | None = None
+    searching: list[str]
+    file_saved: bool
+
+
+class ImportActivityOut(BaseModel):
+    items: list[ImportDownloadActivityOut]
+    more: int = 0
+
+
 class ImportOut(BaseModel):
     id: int
     source: ImportSource
