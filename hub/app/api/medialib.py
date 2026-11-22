@@ -258,7 +258,7 @@ async def artist(artist_id: str, user: User = Depends(current_user),
         if out.catalog_ref and (known := await artist_names.by_ref(s, out.catalog_ref)) is not None:
             out.hub_artist_id = known.id
     if out.catalog_ref is None:  # the page is the library's own: their tracks, as the Hub has them
-        from app.api.playlists import track_with_file
+        from app.library.cards import track_with_file
 
         shown = theirs[:LIB_ARTIST_TRACKS]
         out.tracks = [track_with_file(t) for t in shown]

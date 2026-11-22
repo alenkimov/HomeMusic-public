@@ -12,9 +12,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import playlists
-from app.catalog.models import CATALOGS
-from app.library.owned import with_cover_fallbacks, with_files, with_recording_availability
-from app.api.medialib import songs_out, with_artist_links
 from app.api.schemas import (
     NdSongOut,
     PlaylistAddIn,
@@ -33,7 +30,6 @@ from app.auth import current_user
 from app.db import get_session
 from app.events import bus
 from app.jobs.queue import notify
-from app.library import songs as library_songs
 from app.models import Playlist, PlaylistCover, Track, User
 from app.playlists_mirror import MIX, drop_mirror, enqueue_mirror
 from app.tags import known_tracks
@@ -101,61 +97,15 @@ async def _changed(s: AsyncSession, *rows: Playlist) -> None:
         _say(user_id, playlist_id)
 
 
-def track_without_file(t: Track, *, downloading: bool = False) -> NdSongOut:
-    """A track the library has no file of, drawn from what the catalog said of it."""
-    c = t.catalog or {}
-    ref = t.ref or f"lib:{t.id}"
-    src, _, ident = ref.partition(":")
-    return NdSongOut(
-        ref=ref, source=src if src in CATALOGS else "nd", id=ident, title=t.title, artist=t.artist,
-        artists=c.get("artists") or [t.artist], artist_refs=c.get("artist_refs") or [], artist_ref=c.get("artist_ref"),
-        album_ref=c.get("album_ref"), album_title=t.album, album_artist=t.album_artist, duration_s=t.duration_s,
-        track_no=t.track_no, disc_no=t.disc_no, isrc=t.isrc, explicit=t.explicit, cover_url=c.get("cover_url"),
-        cover_small_url=c.get("cover_small_url") or c.get("cover_url"), owned=False, library_track_id=t.id,
-        spotify_id=c.get("spotify_id"), spotify_plays=c.get("spotify_plays"),
-        downloading=downloading, unknown=not t.ref)
-
-
-def track_with_file(t: Track) -> NdSongOut:
-    """A track of the library drawn from the Hub's own record: for when Navidrome has not been asked about its
-    song yet, or does not answer."""
-    out = track_without_file(t)
-    out.owned, out.nd_song_id, out.unknown = True, t.nd_song_id, False
-    if not t.ref and t.nd_song_id:  # the catalog does not know it: it is named by its song, as everywhere
-        out.ref, out.source, out.id = f"nd:{t.nd_song_id}", "nd", t.nd_song_id
-    return out
-
-
 async def tracks_out(s: AsyncSession, user: User, rows: list[Track], *, import_state: bool = False) -> list[NdSongOut]:
-    """Tracks as a list shows them: one with a file as Navidrome's song of it, one without as the catalog's."""
-    index: dict[str, dict] = {}
-    if any(t.nd_song_id for t in rows):
-        try:
-            index = await library_songs.index(user)
-        except Exception as e:  # Navidrome is away: the list is drawn from the Hub's own records
-            log.info("playlists: songs not read from Navidrome: %r", e)
-    known = [index[t.nd_song_id] for t in rows if t.nd_song_id in index]
-    drawn = {x.nd_song_id: x for x in await songs_out(s, known)}
-    out = [drawn.get(t.nd_song_id) or (track_with_file(t) if t.path else track_without_file(t)) for t in rows]
-    fallback = [(o, t) for o, t in zip(out, rows, strict=True) if t.nd_song_id not in drawn]
-    await with_artist_links(s, fallback)
-    await with_files(s, out)
-    await with_cover_fallbacks(s, fallback)
-    await with_recording_availability(s, out)
+    """Tracks as a list shows them (`cards.draw`), with what is the user's of them: their transfers' word on each."""
+    from app.library.cards import draw
+
+    out = await draw(s, rows)
     if import_state:
         from app.imports.review import annotate
 
         await annotate(s, user.id, out)
-    # A transfer's image is still useful after a previously missing track has been given a file.
-    without_cover = [x.library_track_id for x in out if not x.cover_url]
-    if without_cover:
-        from app.models import ImportItem
-
-        covers = {track_id: (raw or {}).get("cover_url") for track_id, raw in (await s.execute(
-            select(ImportItem.track_id, ImportItem.raw_json).where(ImportItem.track_id.in_(without_cover)))).all()}
-        for x in out:
-            if not x.cover_url and covers.get(x.library_track_id):
-                x.cover_url = x.cover_small_url = covers[x.library_track_id]
     return out
 
 

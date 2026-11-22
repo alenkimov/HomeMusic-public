@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from app import db, playlists
-from app.api.playlists import track_without_file
+from app.library.cards import track_without_file
 from app.favorites import project_liked
 from app.imports import apply
 from app.library import tracks as registry

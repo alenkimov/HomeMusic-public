@@ -79,6 +79,9 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(recovery_loop(), name="import-recovery"))
         tasks.append(asyncio.create_task(scheduler_loop(), name="scheduler"))
         tasks.append(asyncio.create_task(scrobbles_loop(), name="scrobbles"))
+        from app.library.cards import keep_fresh
+
+        tasks.append(asyncio.create_task(keep_fresh(), name="track-cards"))
         tasks.append(asyncio.create_task(schedule_loop(), name="mixes"))
         from app.releases import loop as releases_loop
 

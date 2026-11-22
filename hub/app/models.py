@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     Date,
@@ -23,7 +24,7 @@ from sqlalchemy import (
     select,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, column_property, mapped_column, relationship
 
 
@@ -247,6 +248,21 @@ class Track(Base):
     cover_key: Mapped[str | None] = mapped_column(String(16))
     # its files: given with a new track they are saved with it. Never read through here (a query names them)
     files: Mapped[list[TrackFile]] = relationship(lazy="raise", passive_deletes=True, cascade="save-update, merge")
+
+
+class TrackCard(Base):
+    """A track as every list shows it, kept (`app.library.cards`; migration 30a000000004 says how it is kept fresh)."""
+
+    __tablename__ = "track_cards"
+
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
+    card: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    deps: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, server_default="{}")
+    nd_digest: Mapped[str | None] = mapped_column(String(32))  # Navidrome's song as the card was drawn from it
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime)  # a search it tells of runs out then
+    dirty: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    gen: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    built_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class TrackFile(Base):

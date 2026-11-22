@@ -6,8 +6,6 @@ from __future__ import annotations
 import asyncio
 import time
 
-from app.models import User
-
 PAGE = 500
 MAX = 50_000
 TTL_S = 600
@@ -28,23 +26,28 @@ async def load(nd) -> list[dict]:
     return out
 
 
-async def index(user: User) -> dict[str, dict]:
-    """Navidrome song id -> the song as Navidrome gives it."""
+async def index() -> dict[str, dict]:
+    """Navidrome song id -> the song as Navidrome gives it. The library is one for all: it is asked as the admin."""
     global _songs, _at
     if _songs is not None and time.monotonic() - _at < TTL_S:
         return _songs
     async with _lock:
         if _songs is not None and time.monotonic() - _at < TTL_S:
             return _songs
-        from app.auth import user_navidrome
+        from app.library.navidrome import admin_client
 
-        nd = user_navidrome(user)
+        nd = admin_client()
         try:
             songs = await load(nd)
         finally:
             await nd.aclose()
         _songs, _at = {x["id"]: x for x in songs if x.get("id")}, time.monotonic()
         return _songs
+
+
+def loaded_at() -> float:
+    """When the index was read from Navidrome last (0: not yet): a new value — Navidrome's songs read anew."""
+    return _at if _songs is not None else 0.0
 
 
 def forget() -> None:

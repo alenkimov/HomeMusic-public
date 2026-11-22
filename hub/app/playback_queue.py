@@ -51,7 +51,7 @@ class QueueEntry(BaseModel):
 
 
 def from_track(track: Track) -> QueueTrack:
-    from app.api.playlists import track_with_file
+    from app.library.cards import track_with_file
 
     drawn = track_with_file(track)
     data = drawn.model_dump()
