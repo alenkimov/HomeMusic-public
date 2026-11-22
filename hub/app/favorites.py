@@ -560,6 +560,11 @@ async def project_liked(s: AsyncSession, user_id: int, starred: list[dict] | Non
         .where(Import.user_id == user_id, ImportCollection.kind == "likes", ImportCollection.selected.is_(True),
                ImportItem.status.not_in(("skipped", "pending")))
         .order_by(ImportItem.import_id, ImportItem.position))).all()
+    # the rows' tracks into the session at once: `track_of` finds each there instead of asking for it one by one
+    # (held here: the session keeps what it has loaded only while someone holds it)
+    known = sorted({it.track_id for it, _ in rows if it.track_id})
+    _held = [t for k in range(0, len(known), 500)
+             for t in (await s.execute(select(Track).where(Track.id.in_(known[k:k + 500])))).scalars()]
     for position, (it, imported_at) in enumerate(rows):
         if it.ref and f"ref:{it.ref}" in decided:
             continue
