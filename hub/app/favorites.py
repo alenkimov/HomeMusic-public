@@ -267,14 +267,21 @@ async def subjects_of(s: AsyncSession, events: Iterable[Any] = (), *, refs: Iter
     the Navidrome song of every file it has — so its names are read from the library, for the tracks these
     events, `refs` and `songs` speak of. An event that knows its track (`PlayEvent.track_id`) ties whatever
     else it called it (a provider's file, say) to that track by itself."""
-    from app.models import TrackFile
-
     from app.library import artists
 
     out = list((await s.execute(select(FavoriteSubject).where(FavoriteSubject.target_type != "track"))).scalars())
     # after the kept ones: the address of an artist is what their state is told by (`fold`)
     out += [FavoriteSubject(target_type="artist", canonical_key=f"ref:{refs[0]}", ref=refs[0],
                             aliases=sorted(f"ref:{r}" for r in refs), data={}) for refs in await artists.records(s)]
+    return out + await _track_subjects(s, events, refs=refs, songs=songs)
+
+
+async def _track_subjects(s: AsyncSession, events: Iterable[Any] = (), *, refs: Iterable[str] = (),
+                          songs: Iterable[str] = ()) -> list[FavoriteSubject]:
+    """The names of the tracks these events, `refs` and `songs` speak of (`subjects_of`), read from the library."""
+    from app.models import TrackFile
+
+    out: list[FavoriteSubject] = []
     ids: set[int] = set()
     refs, songs = {x for x in refs if x}, {x for x in songs if x}
     for e in events:
@@ -335,8 +342,7 @@ async def remember(s: AsyncSession, target: FavoriteTarget, *, extra_aliases: It
     is known of it is told, nothing is written."""
     typ = target.target_type
     if typ == "track":
-        known = [x for x in await subjects_of(s, refs=[target.ref or ""], songs=[target.nd_song_id or ""])
-                 if x.target_type == "track"]
+        known = await _track_subjects(s, refs=[target.ref or ""], songs=[target.nd_song_id or ""])
         return known[0] if known else FavoriteSubject(
             target_type=typ, canonical_key=min(aliases(target)), ref=target.ref, nd_id=target.nd_song_id,
             aliases=sorted(aliases(target)), data=subject_data(target.target_data))
@@ -697,7 +703,8 @@ async def reconcile(s: AsyncSession, user: User, body: dict, *, now: datetime | 
                                     target_data={k: obj[k] for k in ("name", "artist", "title", "duration") if k in obj})
             key = index.key(target)
             have[key], dates[key] = target, parse_time(obj.get("starred"))
-            await remember(s, target)
+            if typ != "track":  # a track's names are the library's: nothing of it is kept (`remember`)
+                await remember(s, target)
     changed = 0
     for key in sorted(before.keys() | have.keys()):
         state, target = before.get(key), have.get(key)
