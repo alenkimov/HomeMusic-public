@@ -15,6 +15,12 @@ const KEPT = ['/api/auth/me', '/api/playlists', '/api/nd/', '/api/for-you', '/ap
   '/api/lyrics', '/api/mixes/today', '/api/plays/history', '/api/library/version-labels'];
 const NOT_KEPT = ['/api/lyrics/candidates', '/api/lyrics/search', '/api/lyrics/probe', '/api/lyrics/sources', '/api/lyrics/settings', '/api/lyrics/translators'];
 const audioKey = (ref) => `${self.location.origin}/api/listen/stream?ref=${encodeURIComponent(ref)}`;
+/* How long a page waits for the network before it is given what is kept. Without the network a request on a phone
+   often does not fail but hangs (Wi-Fi without the internet, a weak signal, a VPN): the app stayed a black screen. */
+const SHELL_WAIT_MS = 3000;
+const API_WAIT_MS = 4000;
+/* Caddy on the VPS answers for a Hub it cannot reach (the computer or the tunnel is down): that is no answer. */
+const UNREACHABLE = new Set([502, 503, 504]);
 const SHELL_URLS = ['/', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/badge-96.png'];
 
 // Same layout as src/lib/shareStore.ts
@@ -67,7 +73,8 @@ self.addEventListener('fetch', (event) => {
   }
   if (url.pathname.startsWith('/api/')) {
     if (/\/cover(\/|$)/.test(url.pathname)) event.respondWith(staleWhileRevalidate(req, IMG));
-    else if (KEPT.some((x) => url.pathname.startsWith(x)) && !NOT_KEPT.some((x) => url.pathname.startsWith(x))) event.respondWith(networkFirstApi(req));
+    else if (KEPT.some((x) => url.pathname.startsWith(x)) && !NOT_KEPT.some((x) => url.pathname.startsWith(x)))
+      networkFirst(event, API, req.url, (res) => (res.headers.get('content-type') || '').includes('json'), API_WAIT_MS);
     return;
   }
   if (url.pathname === '/healthz' || url.pathname.startsWith('/app/')) return;
@@ -77,7 +84,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (req.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html') {
-    event.respondWith(networkFirstShell(req));
+    // every page of the app is the same index.html: kept as '/'
+    networkFirst(event, SHELL, '/', (res) => (res.headers.get('content-type') || '').includes('text/html'), SHELL_WAIT_MS);
     return;
   }
   if (SHELL_URLS.includes(url.pathname) || url.pathname.startsWith('/icons/')) {
@@ -92,19 +100,6 @@ async function cacheFirst(req, cacheName) {
   const res = await fetch(req);
   if (res.ok) cache.put(req, res.clone());
   return res;
-}
-
-async function networkFirstShell(req) {
-  const cache = await caches.open(SHELL);
-  try {
-    const res = await fetch(req);
-    if (res.ok && res.headers.get('content-type')?.includes('text/html')) cache.put('/', res.clone());
-    return res;
-  } catch (e) {
-    const hit = (await cache.match('/')) || (await cache.match(req));
-    if (hit) return hit;
-    throw e;
-  }
 }
 
 async function staleWhileRevalidate(req, cacheName) {
@@ -142,19 +137,37 @@ async function audio(req, url) {
   });
 }
 
-/* What a page reads of the library: the Hub's answer, and a copy of it kept; when the Hub cannot be reached — the
-   copy, so the lists read before open without the network. */
-async function networkFirstApi(req) {
-  const cache = await caches.open(API);
-  try {
-    const res = await fetch(req);
-    if (res.ok && (res.headers.get('content-type') || '').includes('json')) cache.put(req.url, res.clone());
-    return res;
-  } catch (e) {
-    const hit = await cache.match(req.url);
-    if (hit) return hit;
-    throw e;
-  }
+/* The network's answer, and a copy of it kept under `key`; the copy instead when the network fails, is late
+   (`waitMs`: the answer still goes into the copy when it comes) or is a gateway that cannot reach the Hub. Nothing
+   kept: whatever the network gives. Used for the app shell and for what a page reads of the library. */
+function networkFirst(event, cacheName, key, keep, waitMs) {
+  const cache = caches.open(cacheName);
+  const kept = () => cache.then((c) => c.match(key));
+  const net = fetch(event.request);
+  // registered first: the copy is cloned before the page reads the body
+  const stored = net.then(async (res) => {
+    if (res.ok && keep(res)) await (await cache).put(key, res.clone());
+  });
+  event.waitUntil(stored.catch(() => {}));
+  event.respondWith(
+    (async () => {
+      let timer;
+      const late = new Promise((resolve) => (timer = setTimeout(resolve, waitMs, null)));
+      let res;
+      try {
+        res = await Promise.race([net, late]);
+      } catch (e) {
+        const hit = await kept();
+        if (hit) return hit;
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+      if (res === null) return (await kept()) || net;
+      if (UNREACHABLE.has(res.status)) return (await kept()) || res;
+      return res;
+    })(),
+  );
 }
 
 // The page says when the account leaves: what was read for it is not shown to the next one.

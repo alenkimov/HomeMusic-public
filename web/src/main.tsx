@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import '@fontsource-variable/inter';
 import './lib/embedded';
 import './lib/smartShuffle';
@@ -14,7 +15,9 @@ if (!window.history.state || typeof (window.history.state as { idx?: unknown }).
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );
 
