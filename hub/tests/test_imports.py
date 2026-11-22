@@ -187,8 +187,7 @@ async def test_concurrent_import_matches_share_the_source_mapping(env, monkeypat
     monkeypatch.setattr(svc.deezer, "search_tracks", together)
 
     async def match():
-        async with session_scope() as s:
-            return await resolve_track(s, "yandex", "same-track", KROVI)
+        return await resolve_track("yandex", "same-track", KROVI)
 
     results = await asyncio.wait_for(asyncio.gather(match(), match()), timeout=1)
     assert [(r.match, r.ref) for r in results] == [("exact", "dz:100"), ("exact", "dz:100")]
@@ -578,9 +577,25 @@ async def test_profile_link(env):
     assert env["state"]["fetches"] == [(None, "ivan")]
 
 
+async def test_matching_holds_no_connection_while_the_catalog_answers(env, monkeypatch):
+    from app import db
+    from app.imports.resolve import resolve_track
+    from app.services import svc
+
+    held = []
+    search = svc.deezer.search_tracks
+
+    async def watched(*args, **kwargs):
+        held.append([where for _, where in db._holders.values()])  # other catalogs' cache reads may run beside
+        return await search(*args, **kwargs)
+
+    monkeypatch.setattr(svc.deezer, "search_tracks", watched)
+    assert (await resolve_track("yandex", "krovi", KROVI)).ref == "dz:100"
+    assert held and not any("resolve_track" in where for now in held for where in now)
+
+
 async def test_matching_verdicts(env):
     from app.catalog.models import CatalogTrack
-    from app.db import session_scope
     from app.catalog.lookup import CatalogUnavailable
     from app.imports.resolve import resolve_track
     from app.services import svc
@@ -595,8 +610,7 @@ async def test_matching_verdicts(env):
         "hitmoz": track("Кино", "Последний герой", 245),  # Cyrillic, Deezer lacks it
         "nothing": track("Кто-то", "Ничего общего", 100),
     }
-    async with session_scope() as s:
-        got = {k: await resolve_track(s, "yandex", k, raw) for k, raw in cases.items()}
+    got = {k: await resolve_track("yandex", k, raw) for k, raw in cases.items()}
     assert (got["exact"].match, got["exact"].ref) == ("exact", "dz:100")
     assert (got["probable"].match, got["probable"].ref) == ("probable", "dz:300")
     assert got["owned"].match == "owned" and got["owned"].track is not None
@@ -604,10 +618,9 @@ async def test_matching_verdicts(env):
     assert got["nothing"].match == "not_found"
 
     svc.deezer.down = True
-    async with session_scope() as s:
-        assert (await resolve_track(s, "yandex", "exact", cases["exact"])).ref == "dz:100"  # remembered
-        with pytest.raises(CatalogUnavailable):
-            await resolve_track(s, "yandex", "new", track("Кино", "Кукушка"))
+    assert (await resolve_track("yandex", "exact", cases["exact"])).ref == "dz:100"  # remembered
+    with pytest.raises(CatalogUnavailable):
+        await resolve_track("yandex", "new", track("Кино", "Кукушка"))
 
 
 @pytest.mark.parametrize(("starred", "want", "again"), [

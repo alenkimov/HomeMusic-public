@@ -590,21 +590,21 @@ async def handle_resolve(job: Job) -> None:
                 it = await s.get(ImportItem, item_id)
                 if it is None or it.status != "pending":
                     return False, None
-                raw = it.raw_json or {}
-                try:
-                    if kind == "albums":
-                        r = await resolve_album(s, imp.source, it.external_id, raw)
-                    elif kind == "artists":
-                        r = await resolve_artist(s, imp.source, it.external_id, raw)
-                    elif it.match == "owned" and it.track_id:
-                        return True, None
-                    else:
-                        r = await resolve_track(s, imp.source, it.external_id, raw)
-                except CatalogUnavailable as e:
-                    log.warning("import %s: catalog down: %s", import_id, e)
-                    down = True
-                    return False, None
-                return True, r
+                raw, external_id, owned = it.raw_json or {}, it.external_id, it.match == "owned" and bool(it.track_id)
+            try:
+                if kind == "albums":
+                    r = await resolve_album(imp.source, external_id, raw)
+                elif kind == "artists":
+                    r = await resolve_artist(imp.source, external_id, raw)
+                elif owned:
+                    return True, None
+                else:
+                    r = await resolve_track(imp.source, external_id, raw)
+            except CatalogUnavailable as e:
+                log.warning("import %s: catalog down: %s", import_id, e)
+                down = True
+                return False, None
+            return True, r
 
     resolved = await asyncio.gather(*(one(i, k) for i, k in ids))
     async with session_scope() as s:

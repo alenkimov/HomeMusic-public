@@ -4,7 +4,8 @@ duration ±3 s, the album as a hint), but quietly and in batches.
 Verdicts: `owned` — in the library already; `exact` — a confident catalog match (goes to work without asking);
 `probable` — a weaker one (goes to work too, but the report lists it); `not_found` — waits for the user.
 What a service id turned out to be is kept in `source_map` for every user: a second import of the same
-songs barely searches. The library is checked every time (it changes), the catalog once.
+songs barely searches. The library is checked every time (it changes), the catalog once. No database connection
+is held while the catalog or a source is asked: their caches take connections of their own.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.catalog import lookup
 from app.catalog.models import CatalogTrack, make_ref
 from app.config import get_settings
+from app.db import session_scope
 from app.library.owned import find_owned
 from app.matching.normalize import has_cyrillic
 from app.matching.score import score
@@ -86,9 +88,10 @@ async def catalog_track(raw: dict[str, Any]) -> Resolution:
     return Resolution("not_found", None, round(best.score, 3) if best else None)
 
 
-async def resolve_track(s: AsyncSession, source: str, external_id: str, raw: dict[str, Any]) -> Resolution:
-    lib = await _owned(s, raw)
-    known = await _remembered(s, source, "track", external_id)
+async def resolve_track(source: str, external_id: str, raw: dict[str, Any]) -> Resolution:
+    async with session_scope() as s:
+        lib = await _owned(s, raw)
+        known = await _remembered(s, source, "track", external_id)
     if lib is not None:
         return Resolution("owned", known.ref if known else None, 1.0, lib)
     if known is not None:
@@ -99,19 +102,25 @@ async def resolve_track(s: AsyncSession, source: str, external_id: str, raw: dic
             r = Resolution("exact", c.ref, 1.0, catalog=c)
         else:
             r = await catalog_track(raw)
-        await _remember(s, source, "track", external_id, r)
-        if r.catalog is not None:
-            # the catalog's own record is kept: the track the Hub makes of the row is named by it, not by the service
-            from app.mixes.resolve import remember_track
+        async with session_scope() as s:
+            await _remember(s, source, "track", external_id, r)
+            if r.catalog is not None:
+                # the catalog's own record is kept: the track the Hub makes of the row is named by it, not by the
+                # service
+                from app.mixes.resolve import remember_track
 
-            await remember_track(r.catalog, s)
-    if r.ref and (lib := await _owned(s, raw, r.ref)) is not None:
-        return Resolution("owned", r.ref, 1.0, lib)
+                await remember_track(r.catalog, s)
+    if r.ref:
+        async with session_scope() as s:
+            lib = await _owned(s, raw, r.ref)
+        if lib is not None:
+            return Resolution("owned", r.ref, 1.0, lib)
     return r
 
 
-async def resolve_album(s: AsyncSession, source: str, external_id: str, raw: dict[str, Any]) -> Resolution:
-    known = await _remembered(s, source, "album", external_id)
+async def resolve_album(source: str, external_id: str, raw: dict[str, Any]) -> Resolution:
+    async with session_scope() as s:
+        known = await _remembered(s, source, "album", external_id)
     if known is not None:
         return Resolution(known.match, known.ref, known.score)
     cfg = get_settings().cfg.matching
@@ -124,12 +133,14 @@ async def resolve_album(s: AsyncSession, source: str, external_id: str, raw: dic
         verdict = VERDICT[classify_scores([value for value, a in scored if a.source == album.source], cfg)]
         if verdict != "not_found":
             r = Resolution(verdict, album.ref, round(best, 3))
-    await _remember(s, source, "album", external_id, r)
+    async with session_scope() as s:
+        await _remember(s, source, "album", external_id, r)
     return r
 
 
-async def resolve_artist(s: AsyncSession, source: str, external_id: str, raw: dict[str, Any]) -> Resolution:
-    known = await _remembered(s, source, "artist", external_id)
+async def resolve_artist(source: str, external_id: str, raw: dict[str, Any]) -> Resolution:
+    async with session_scope() as s:
+        known = await _remembered(s, source, "artist", external_id)
     if known is not None:
         return Resolution(known.match, known.ref, known.score)
     r = Resolution("not_found")
@@ -138,5 +149,6 @@ async def resolve_artist(s: AsyncSession, source: str, external_id: str, raw: di
         results = await lookup.search(name, kinds=("artist",), limit=5)
         if artist := lookup.named_artist(name, results.artists):
             r = Resolution("exact", artist.ref, 1.0)
-    await _remember(s, source, "artist", external_id, r)
+    async with session_scope() as s:
+        await _remember(s, source, "artist", external_id, r)
     return r

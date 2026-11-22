@@ -25,7 +25,11 @@ _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 _APP = Path(__file__).resolve().parent
-POOL_REPORT_FREE = 2  # at this few free connections the holders are logged
+# Many paths hold a connection while a call inside them takes another (the catalog cache, `update_item`): a pool
+# sized to the workers alone runs out once requests and jobs pile up, each waiting for its second connection.
+POOL_SIZE = 10
+POOL_OVERFLOW = 30
+POOL_REPORT_AT = 15  # at this many connections held the holders are logged
 POOL_REPORT_EVERY_S = 60
 _holders: dict[int, tuple[float, str]] = {}
 _reported_at = 0.0
@@ -48,7 +52,8 @@ def get_database_url(url: str | URL | None = None) -> URL:
 
 def init_engine(url: str | URL | None = None) -> AsyncEngine:
     global _engine, _sessionmaker
-    _engine = create_async_engine(get_database_url(url), pool_pre_ping=True)
+    _engine = create_async_engine(get_database_url(url), pool_pre_ping=True, pool_size=POOL_SIZE,
+                                  max_overflow=POOL_OVERFLOW)
     _watch_pool(_engine)
     _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
     return _engine
@@ -70,7 +75,7 @@ def _holder() -> str:
 
 
 def _watch_pool(eng: AsyncEngine) -> None:
-    """When the pool is nearly used up, log who holds its connections and for how long: a pool that runs out makes
+    """When unusually many connections are held, log who holds them and for how long: a pool that runs out makes
     every query wait and then fail with a timeout, far from the code that holds them."""
     pool = eng.sync_engine.pool
     if not isinstance(pool, QueuePool):
@@ -81,12 +86,12 @@ def _watch_pool(eng: AsyncEngine) -> None:
         global _reported_at
         now = time.monotonic()
         _holders[id(record)] = (now, _holder())
-        limit = pool.size() + max(0, getattr(pool, "_max_overflow", 0))
-        if pool.checkedout() < limit - POOL_REPORT_FREE or now - _reported_at < POOL_REPORT_EVERY_S:
+        if pool.checkedout() < POOL_REPORT_AT or now - _reported_at < POOL_REPORT_EVERY_S:
             return
         _reported_at = now
         held = sorted(_holders.values())
-        log.warning("database pool nearly used up: %s of %s connections held\n%s", pool.checkedout(), limit,
+        limit = pool.size() + max(0, getattr(pool, "_max_overflow", 0))
+        log.warning("database pool running low: %s of %s connections held\n%s", pool.checkedout(), limit,
                     "\n".join(f"  {now - since:7.1f}s {where}" for since, where in held))
 
     @event.listens_for(pool, "checkin")
