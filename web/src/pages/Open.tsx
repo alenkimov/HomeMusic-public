@@ -1,17 +1,18 @@
 import { TrackTitle } from '../components/TrackTitle';
-import { useEffect } from 'react';
+import { useContext, useEffect } from 'react';
 import { api } from '../api/client';
 import { playAll } from '../components/catalog';
 import { Button, Cover, Empty, ErrorState, Loading, PageHeader } from '../components/ui';
 import { STANDALONE } from '../lib/embedded';
 import { useAsync } from '../lib/hooks';
-import { enc, navigate } from '../lib/router';
+import { RouteBackground, enc, navigate } from '../lib/router';
 
 /** A «HomeMusic» link someone shared, opened in this library (`/open?dz=…&isrc=…&sp=…&a=…&t=…`; the page that
  * belongs to no server sends its visitor here — docs/index.html). The track the library has is shown with ▶; one it
  * has not got opens in the catalog, on its album's page, to be downloaded; one the catalog does not know either
  * becomes a search by its names. */
 export function OpenPage({ query }: { query: URLSearchParams }) {
+  const background = useContext(RouteBackground);
   const q = { dz: query.get('dz'), isrc: query.get('isrc'), sp: query.get('sp'), a: query.get('a'), t: query.get('t'), url: query.get('url') };
   const res = useAsync(async (s) => {
     const found = await api.openLink(q, s);
@@ -22,12 +23,12 @@ export function OpenPage({ query }: { query: URLSearchParams }) {
   const song = res.data?.song;
 
   useEffect(() => {
-    if (!found || song) return;
+    if (background || !found || song) return;
     if (found.artist_ref) navigate(`/artist/${enc(found.artist_ref)}`, { replace: true });
     else if (found.playlist_id) navigate(`/spotify/playlist/${enc(found.playlist_id)}`, { replace: true });
     else if (found.album_ref) navigate(`/album/${enc(found.album_ref)}`, { replace: true });
     else if (found.query) navigate(`/search?q=${enc(found.query)}`, { replace: true });
-  }, [found, song]);
+  }, [background, found, song]);
 
   return (
     <div>

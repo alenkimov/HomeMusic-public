@@ -45,7 +45,7 @@ export function MiniPlayer() {
   const bar = 'fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-40 mx-auto max-w-(--app-w) px-2 pb-1';
   if (!track) return manualCount > 0 ? (
     <div ref={box} className={bar}>
-      <Link to="/player" className="flex min-h-12 items-center gap-3 rounded-xl bg-raised px-3 shadow-2xl">
+      <Link to="/player" overlay className="flex min-h-12 items-center gap-3 rounded-xl bg-raised px-3 shadow-2xl">
         <Icon name="queue" size={20} />
         <span>Ручная очередь · {tracksWord(manualCount)}</span>
       </Link>
@@ -97,7 +97,7 @@ export function MiniPlayer() {
       <div {...swipe} className="anim-up relative overflow-hidden rounded-xl bg-raised shadow-2xl">
         <div className="flex items-center gap-1 py-1.5 pl-2 pr-1">
           {STANDALONE ? (
-            <Link to="/player" className="flex min-w-0 flex-1 items-center gap-3" title="Открыть плеер">
+            <Link to="/player" overlay className="flex min-w-0 flex-1 items-center gap-3" title="Открыть плеер">
               {head}
             </Link>
           ) : track.album_ref || track.release_id ? (

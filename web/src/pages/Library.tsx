@@ -33,7 +33,7 @@ export function LibraryPage() {
 
   return (
     <div className="px-4 pb-4">
-      <header className="pt-safe flex items-center justify-between pb-1 pt-4">
+      <header data-pull-anchor className="pt-safe flex items-center justify-between pb-1 pt-4">
         <h1 className="text-3xl font-bold tracking-tight">Библиотека</h1>
         <span className="flex items-center">
           <IconButton icon="search" size={24} label="Поиск по библиотеке" onClick={() => navigate('/library/search')} />

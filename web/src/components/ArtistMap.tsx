@@ -259,6 +259,7 @@ export function ArtistMap({
           dragged.current = false;
         }
       }}
+      data-pull-ignore
       className={cx('relative w-full touch-none select-none overflow-hidden', data && 'cursor-grab active:cursor-grabbing', className ?? 'h-[min(62dvh,36rem)]')}
     >
       {error ? (

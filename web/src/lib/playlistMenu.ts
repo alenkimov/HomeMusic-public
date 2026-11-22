@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type MouseEvent as RMouse, type PointerEvent as RPointer } from 'react';
+import { useSyncExternalStore, type MouseEvent as RMouse, type PointerEvent as RPointer, type TouchEvent as RTouch } from 'react';
 
 /** The menu of a playlist one keeps — «Переименовать», «Сменить обложку», «Удалить» (`components/PlaylistMenu.tsx`).
  * It is asked for where the playlists are listed — a long press on a phone, the right button of the mouse on a
@@ -46,6 +46,9 @@ export function playlistMenuProps(playlist: MenuPlaylist) {
     window.clearTimeout(timer);
     from = null;
   };
+  const moved = (x: number, y: number) => {
+    if (from && Math.hypot(x - from.x, y - from.y) > 10) drop();
+  };
   return {
     onContextMenu: (e: RMouse) => {
       e.preventDefault();
@@ -65,9 +68,13 @@ export function playlistMenuProps(playlist: MenuPlaylist) {
         openPlaylistMenu(playlist);
       }, HOLD_MS);
     },
-    onPointerMove: (e: RPointer) => {
-      if (from && Math.hypot(e.clientX - from.x, e.clientY - from.y) > 10) drop();
+    onPointerMove: (e: RPointer) => moved(e.clientX, e.clientY),
+    onTouchMove: (e: RTouch) => {
+      if (e.touches.length !== 1) drop();
+      else moved(e.touches[0].clientX, e.touches[0].clientY);
     },
+    onTouchEnd: drop,
+    onTouchCancel: drop,
     onPointerUp: drop,
     onPointerCancel: drop,
     onClickCapture: (e: RMouse) => {

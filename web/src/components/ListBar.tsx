@@ -119,7 +119,7 @@ export function ListBar({ title, back, tracks, context, search, tags, extra, end
   // the windows are beside the bar, not in it: the bar is a layer of its own, under the player and the tabs
   return (
     <>
-    <header className={cx('pt-safe sticky top-(--page-top) z-20 transition-colors', solid ? 'bg-bg' : 'bg-transparent')}>
+    <header data-pull-anchor className={cx('pt-safe sticky top-(--page-top) z-20 transition-colors', solid ? 'bg-bg' : 'bg-transparent')}>
       <div className="relative flex min-h-14 items-center gap-1 px-2">
         {search?.alone ? (
           <>

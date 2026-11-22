@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { AlbumOut, ArtistPageOut, TrackOut } from '../api/types';
 import { ArtistBubble, ReleaseCard, TrackRow, TrackTableHeader } from '../components/catalog';
@@ -16,7 +16,7 @@ import { setDisliked, useDisliked } from '../lib/dislikes';
 import { plural, tracksWord } from '../lib/format';
 import { useAsync, useRememberScrollX, useSourceRequest } from '../lib/hooks';
 import { imageUrl } from '../lib/img';
-import { Link, artistPath, enc, navigate, useCanonicalPath } from '../lib/router';
+import { Link, RouteBackground, artistPath, enc, navigate, useCanonicalPath } from '../lib/router';
 import { copyText } from '../lib/share';
 import { useSession } from '../lib/session';
 import { toggleLike, useLiked, useLikesKnown } from '../lib/stars';
@@ -77,10 +77,11 @@ function useLikedBy(name: string | undefined, ref: string | undefined): number {
 /** An artist known by the name alone (`/artist-named/<name>`, from a player): the catalog's artist of that name
  * takes the place of this page; when it has none, the search for the name does. */
 export function ArtistNamedPage({ name }: { name: string }) {
+  const background = useContext(RouteBackground);
   const res = useAsync((s) => api.artistNamed(name, s), [name]);
   useEffect(() => {
-    if (res.data) navigate(res.data.ref ? `/artist/${enc(res.data.ref)}` : `/search?q=${enc(name)}`, { replace: true });
-  }, [res.data, name]);
+    if (!background && res.data) navigate(res.data.ref ? `/artist/${enc(res.data.ref)}` : `/search?q=${enc(name)}`, { replace: true });
+  }, [background, res.data, name]);
   if (res.error) return (<><PageHeader hero title={name} back="/search" /><ErrorState text={res.error} onRetry={() => res.reload()} /></>);
   return (<><PageHeader hero title={name} back="/search" /><HeroSkeleton round buttons rows={10} /></>);
 }

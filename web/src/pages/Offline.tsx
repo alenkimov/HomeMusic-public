@@ -7,6 +7,7 @@ import { refreshWaveReserve, setWaveReserveSize, useWaveReserve, waveBudget, WAV
 import { Link, navigate } from '../lib/router';
 import { confirmDialog } from '../lib/ui';
 import { startOfflineWave } from '../lib/wave';
+import { isDesktop } from '../lib/desktop';
 
 /** «Офлайн» (from «Меню»): the lists kept on this device and the room they take; a list is let go here, or all of
  * them at once. A list is kept from its own page — the mark in its bar. */
@@ -55,7 +56,7 @@ export function OfflinePage() {
                 {reserve.problem && <p className="text-sm text-muted">{reserve.problem}</p>}
                 <div className="flex flex-wrap gap-2">
                   {reserve.ready > 0 && <Button small variant="primary" icon="play" onClick={() => {
-                    if (startOfflineWave()) navigate('/player');
+                    if (startOfflineWave()) navigate('/player', { overlay: !isDesktop() });
                   }}>Слушать офлайн</Button>}
                   {online && reserve.ready < reserve.size && <Button small icon="download" busy={reserve.busy}
                     onClick={() => void refreshWaveReserve(true)}>Пополнить запас</Button>}

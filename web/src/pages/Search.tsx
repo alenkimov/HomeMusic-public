@@ -1,5 +1,5 @@
 import { TrackTitle } from '../components/TrackTitle';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, errorMessage, isAbort, peekCache, withQuery } from '../api/client';
 import type { Candidate, SearchOut, SearchRecent, SearchTrackOut, SearchTracksOut } from '../api/types';
 import { ArtistBubble, ReleaseCard, TrackRow, TrackTableHeader, listenTrack } from '../components/catalog';
@@ -16,7 +16,7 @@ import { useHubEvent } from '../lib/events';
 import { useAsync, useDebounced, useRememberScrollX } from '../lib/hooks';
 import { extendQueue, markQueued, useListen } from '../lib/listen';
 import { canPlayAll } from '../lib/player';
-import { Link, albumPath, artistPath, enc, navigate } from '../lib/router';
+import { Link, RouteBackground, albumPath, artistPath, enc, navigate } from '../lib/router';
 import { useLiveSearch } from '../lib/search';
 import { spotifyURL } from '../lib/spotify';
 import { FOCUS_SEARCH } from '../components/TabBar';
@@ -27,6 +27,7 @@ export type SearchTab = 'catalog' | 'playlists' | 'files' | 'reuploads';
 export const searchTab = (v: string | null): SearchTab => (v === 'files' || v === 'reuploads' || v === 'playlists' ? v : 'catalog');
 
 export function SearchPage({ initialQuery, initialTab }: { initialQuery: string; initialTab: SearchTab }) {
+  const background = useContext(RouteBackground);
   const [q, setQ] = useState(initialQuery);
   const [tab, setTab] = useState<SearchTab>(initialTab);
   const dq = useDebounced(q.trim(), 400);
@@ -41,9 +42,10 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
 
   // Keep the query in the URL so "back" from an artist/album restores the results.
   useEffect(() => {
+    if (background) return;
     const target = withQuery('/search', { q: dq, tab: tab === 'catalog' ? undefined : tab });
     if (window.location.hash !== '#' + target) navigate(target, { replace: true });
-  }, [dq, tab]);
+  }, [background, dq, tab]);
 
   // External navigation to /search?q=… (links, tab bar) replaces the query.
   useEffect(() => {
@@ -69,7 +71,7 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
 
   return (
     <div>
-      <header className="pt-safe sticky top-(--page-top) z-20 bg-bg/95 px-4 pb-3 backdrop-blur">
+      <header data-pull-anchor className="pt-safe sticky top-(--page-top) z-20 bg-bg/95 px-4 pb-3 backdrop-blur">
         <h1 className="sr-only">Поиск</h1>
         <div className="relative pt-3 max-[359px]:-mx-1.5">
           <div className="flex min-h-12 items-center gap-1 rounded-2xl bg-surface pl-3 pr-0.5 ring-1 ring-inset ring-transparent focus-within:ring-fg/20">

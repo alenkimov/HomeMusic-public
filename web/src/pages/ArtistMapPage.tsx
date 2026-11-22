@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { ArtistFollowButton, ArtistMap, ArtistMapPanel, useArtistMap } from '../components/ArtistMap';
 import { Icon } from '../components/Icon';
 import { ServiceText } from '../components/ServiceBadge';
 import { Cover, Empty, ErrorState, IconButton, PageHeader, SkeletonRows } from '../components/ui';
 import { useAsync, useDebounced } from '../lib/hooks';
-import { enc, navigate } from '../lib/router';
+import { RouteBackground, enc, navigate } from '../lib/router';
 import { useSession } from '../lib/session';
 
 /** «Карта похожих» (`/map/<artist>`): a way to look for artists one does not know — from one to those near them, and
@@ -13,6 +13,7 @@ import { useSession } from '../lib/session';
  * page of the one in the middle, plays their popular tracks, follows them. The search at the top starts from anybody;
  * without an artist (`/map`) the page offers whom to start from — those this server listens to. */
 export function ArtistMapPage({ refId }: { refId?: string }) {
+  const background = useContext(RouteBackground);
   const can = !!useSession().me.artist_map;
   const [searching, setSearching] = useState(false);
   const [q, setQ] = useState('');
@@ -23,8 +24,8 @@ export function ArtistMapPage({ refId }: { refId?: string }) {
   // an artist has one address, whichever of the catalog's records of them the link named
   const own = map.data?.center.ref;
   useEffect(() => {
-    if (refId && own && own !== refId) navigate(`/map/${enc(own)}`, { replace: true });
-  }, [own, refId]);
+    if (!background && refId && own && own !== refId) navigate(`/map/${enc(own)}`, { replace: true });
+  }, [background, own, refId]);
   const go = (ref: string) => {
     setSearching(false);
     setQ('');

@@ -1,7 +1,7 @@
 import { useVersionLabelsSync } from './lib/versionLabels';
 import { setListeningAccount } from './lib/plays';
 import { forgetLast } from './lib/hooks';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiError, UNAUTHORIZED_EVENT, api, errorMessage, isAbort, setApiAccount } from './api/client';
 import { clearAccountMessages, toastError } from './lib/ui';
 import type { MeOut } from './api/types';
@@ -28,7 +28,8 @@ import { clearSelection } from './lib/selection';
 import { cancelDragAction } from './lib/dragAction';
 import { startNotificationWatcher, stopNotificationWatcher } from './lib/notify';
 import { SessionContext } from './lib/session';
-import { matchPath, navigate, useRoute, type Route } from './lib/router';
+import { RouteBackground, backgroundRoute, matchPath, navigate, parseHash, useRoute, type Route } from './lib/router';
+import { usePagePull } from './lib/topPull';
 import { AdminPage } from './pages/Admin';
 import { AdminUserPage } from './pages/AdminUser';
 import { TasteMatrixPage } from './pages/insights/Matrix';
@@ -65,7 +66,7 @@ import { ForYouPage } from './pages/ForYou';
 import { TastePage } from './pages/Mix';
 import { MorePage } from './pages/More';
 import { OpenPage } from './pages/Open';
-import { PlayerPage } from './pages/Player';
+import { MobilePlayerSheet, PlayerPage } from './pages/Player';
 import { PlaylistsPage } from './pages/Playlists';
 import { SearchPage, searchTab } from './pages/Search';
 import { SpotifyPlaylistPage } from './pages/SpotifyPlaylist';
@@ -269,10 +270,15 @@ export function App() {
     };
   }, [me]);
 
-  // Unknown or empty route → the start screen.
-  const resolved = resolve(route);
+  const fullPlayer = route.path === '/player';
+  const mobilePlayer = STANDALONE && !desktop && fullPlayer;
+  const page = useRef<HTMLElement>(null);
+  usePagePull(page, me != null && STANDALONE && !desktop && !fullPlayer, route.full);
+  const background = useMemo(() => mobilePlayer ? backgroundRoute() ?? parseHash(START) : null, [mobilePlayer, route]);
+  // Keep the previous screen mounted so it shows through as the mobile player slides away.
+  const resolved = background ? resolve(background) ?? resolve(parseHash(START)) : resolve(route);
   // Each tab remembers where you were (Spotify-like); tapping the active tab goes to its root.
-  if (resolved?.tab) lastByTab[resolved.tab] = route.full;
+  if (!background && resolved?.tab) lastByTab[resolved.tab] = route.full;
   useEffect(() => {
     if (me && !resolved) navigate(START, { replace: true });
   }, [me, resolved]);
@@ -331,37 +337,39 @@ export function App() {
     );
   }
 
-  // the full player covers the screen: no mini player and tab bar under it, so no room kept for them
-  const fullPlayer = route.path === '/player';
-  const panel = desktop && !fullPlayer;
+  const playerPage = fullPlayer && !mobilePlayer;
+  const panel = desktop && !playerPage;
   // a computer's page fills the panel unless its route says otherwise (`Width`); a phone's is a phone's column
   const width = !panel ? 'max-w-(--app-w)' : resolved?.width === 'text' ? 'max-w-(--app-w)' : resolved?.width === 'wide' ? 'max-w-6xl' : '';
   return (
     <SessionContext.Provider key={me.id} value={{ me, logout, refresh }}>
-      {/* a computer's page is a panel beside the side panel, and fills it unless its route makes it a column
-          (`Width`); the frame over it keeps its corners round while the window scrolls under them */}
-      <div className={cx(panel && 'pl-[calc(var(--side-w)+8px)] pr-2 pt-(--page-top)')}>
-        <div className={cx('min-h-dvh', panel && 'hm-page')}>
-          <main className={cx('mx-auto', width, !fullPlayer && 'pb-[calc(var(--tabbar-h)+16px+env(safe-area-inset-bottom))]')}>
-            {resolved?.node}
-            {!fullPlayer && <PlayerSpacer />}
-          </main>
+      <RouteBackground.Provider value={background}>
+        <div inert={mobilePlayer}>
+          {/* The frame over the desktop page keeps its corners round while the window scrolls beneath it. */}
+          <div className={cx(panel && 'pl-[calc(var(--side-w)+8px)] pr-2 pt-(--page-top)')}>
+            <div className={cx('min-h-dvh', panel && 'hm-page')}>
+              <main ref={page} className={cx('mx-auto', width, !playerPage && 'pb-[calc(var(--tabbar-h)+16px+env(safe-area-inset-bottom))]')}>
+                {resolved?.node}
+                {!playerPage && <PlayerSpacer />}
+              </main>
+            </div>
+          </div>
+          {panel && <div aria-hidden="true" className="pointer-events-none fixed bottom-(--tabbar-h) left-[calc(var(--side-w)+8px)] right-2 top-(--page-top) z-[25] rounded-2xl shadow-[0_0_0_100vmax_var(--color-bg)]" />}
+          {!playerPage && (desktop ? (
+            <>
+              <Sidebar active={resolved?.tab ?? null} last={lastByTab} />
+              <DesktopPlayer />
+            </>
+          ) : (
+            <>
+              <MiniPlayer />
+              <TabBar active={resolved?.tab ?? null} last={lastByTab} />
+            </>
+          ))}
+          {!fullPlayer && <SelectionBar />}
         </div>
-      </div>
-      {panel && <div aria-hidden="true" className="pointer-events-none fixed bottom-(--tabbar-h) left-[calc(var(--side-w)+8px)] right-2 top-(--page-top) z-[25] rounded-2xl shadow-[0_0_0_100vmax_var(--color-bg)]" />}
-      {!fullPlayer &&
-        (desktop ? (
-          <>
-            <Sidebar active={resolved?.tab ?? null} last={lastByTab} />
-            <DesktopPlayer />
-          </>
-        ) : (
-          <>
-            <MiniPlayer />
-            <TabBar active={resolved?.tab ?? null} last={lastByTab} />
-          </>
-        ))}
-      {!fullPlayer && <SelectionBar />}
+      </RouteBackground.Provider>
+      {mobilePlayer && <MobilePlayerSheet />}
       <PlaybackTransferOffer />
       <Overlays />
     </SessionContext.Provider>

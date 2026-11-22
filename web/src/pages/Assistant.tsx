@@ -1,20 +1,21 @@
-import { useEffect } from 'react';
+import { useContext, useEffect } from 'react';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
 import { Empty, ErrorState, IconButton, Loading, PageHeader, cx } from '../components/ui';
 import { AssistantChat, currentChatId, forgetChat, newChat } from './AssistantChat';
 import { assistantStatusLabel, fmtWhen } from '../lib/format';
 import { useAsync } from '../lib/hooks';
-import { Link, navigate } from '../lib/router';
+import { Link, RouteBackground, navigate } from '../lib/router';
 import { attempt, confirmDialog } from '../lib/ui';
 
 /** The assistant is a chat; `/assistant` without `?chat=` reopens the chat open last in this tab. */
 export function AssistantPage({ chatId }: { chatId: number | null }) {
+  const background = useContext(RouteBackground);
   const reopen = chatId ? null : currentChatId();
 
   useEffect(() => {
-    if (reopen) navigate(`/assistant?chat=${reopen}`, { replace: true });
-  }, [reopen]);
+    if (!background && reopen) navigate(`/assistant?chat=${reopen}`, { replace: true });
+  }, [background, reopen]);
 
   return (
     <div>

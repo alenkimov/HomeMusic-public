@@ -19,6 +19,7 @@ import { useAsync } from '../lib/hooks';
 import { queueAsked } from '../lib/playerQueue';
 import { useSeek } from '../lib/seek';
 import { SeekLine } from '../components/SeekLine';
+import { listenTopPull } from '../lib/topPull';
 import { isUpload,
   cycleRepeat,
   cycleShuffle,
@@ -51,6 +52,56 @@ const watchWide = (cb: () => void) => {
 };
 /** A window wide enough for two columns (Tailwind's `lg`). */
 const useWide = () => useSyncExternalStore(watchWide, () => !!WIDE?.matches, () => false);
+
+export function MobilePlayerSheet() {
+  const sheet = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const layer = sheet.current!;
+    const scroll = scroller.current!;
+    let animation: Animation | null = null;
+    let closing = false;
+    const stop = listenTopPull(scroll, {
+      ready: () => !closing && !animation && scroll.scrollTop <= 1,
+      move: (distance) => {
+        if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          layer.style.transform = `translateY(${distance}px)`;
+        }
+      },
+      end: (distance) => {
+        closing = distance >= 85;
+        const finish = () => {
+          animation = null;
+          if (closing) goBack('/home');
+        };
+        const from = layer.style.transform;
+        const to = closing ? 'translateY(100%)' : '';
+        layer.style.transform = to;
+        if (!from) {
+          finish();
+          return;
+        }
+        animation = layer.animate([{ transform: from }, { transform: to || 'none' }], {
+          duration: 190, easing: 'ease-out',
+        });
+        void animation.finished.then(finish, () => {});
+      },
+    });
+    return () => {
+      stop();
+      animation?.cancel();
+    };
+  }, []);
+
+  return (
+    <div ref={sheet} role="dialog" aria-modal="true" aria-label="Плеер" className="fixed inset-0 z-[45] bg-bg">
+      <div ref={scroller} className="no-scrollbar h-full overflow-y-auto overscroll-y-none">
+        <PlayerPage />
+      </div>
+    </div>
+  );
+}
 
 /** The full player of the PWA in a plain browser (`/player`, from a tap on the mini player): the big cover (or the
  * text in its place), ♥, seek, the controls; under them ⋯ on the left, «Поделиться» and the queue's button on the
@@ -197,7 +248,7 @@ export function PlayerPage() {
             ) : text}
           </div>
         ) : (
-          lyrics && <div className="h-[58dvh] min-h-72 px-3 pt-2">{text}</div>
+          lyrics && <div data-pull-ignore className="h-[58dvh] min-h-72 px-3 pt-2">{text}</div>
         )}
         <div className="min-w-0">
       <div className={cx('px-6 pt-2', lyrics && !wide && 'hidden')}>

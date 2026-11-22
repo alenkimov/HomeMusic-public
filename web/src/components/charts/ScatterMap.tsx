@@ -150,6 +150,7 @@ export function ScatterMap({
     <div className="relative overflow-hidden rounded-xl bg-raised">
       <svg
         ref={svgRef}
+        data-pull-ignore
         viewBox={`0 0 ${W} ${H}`}
         className="block h-auto w-full cursor-grab select-none active:cursor-grabbing"
         style={{ touchAction: 'none' }}

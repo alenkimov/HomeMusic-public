@@ -271,6 +271,20 @@
   --side-w: 0px; /* the left panel of a computer (`Sidebar`); a phone has none */
   --page-top: 0px; /* where the page starts, and its bars stick: a computer's page is a panel with room around it */
 }
+@media (pointer: coarse) {
+  html:not(.hm-embedded),
+  html:not(.hm-embedded) body {
+    overscroll-behavior-y: none;
+  }
+}
+[data-pull-active] {
+  margin-bottom: var(--hm-page-pull);
+}
+main[data-pull-active] {
+  margin-bottom: 0;
+  padding-top: var(--hm-page-pull);
+}
+
 @media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
   html:not(.hm-embedded) {
     --app-w: 72rem;

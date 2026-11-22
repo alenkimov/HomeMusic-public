@@ -1,5 +1,5 @@
 // A tiny hash router: FastAPI only has to serve index.html, everything after "#" is client side.
-import { useEffect, useMemo, useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from 'react';
+import { createContext, useContext, useEffect, useMemo, useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from 'react';
 
 /** Fired by `navigate()` (pushState does not fire `hashchange`). */
 export const ROUTE_EVENT = 'hm:route';
@@ -32,27 +32,39 @@ export function parseHash(hash: string): Route {
 }
 
 export function useRoute(): Route {
+  const background = useContext(RouteBackground);
   const hash = useSyncExternalStore(subscribe, getHash, getHash);
-  return useMemo(() => parseHash(hash), [hash]);
+  return useMemo(() => background ?? parseHash(hash), [background, hash]);
 }
 
+export const RouteBackground = createContext<Route | null>(null);
+
 // history.state.idx counts in-app entries so "back" never leaves the app.
+type HistoryEntry = { idx?: number; background?: string };
 const idx = (): number => {
-  const st = window.history.state as { idx?: number } | null;
+  const st = window.history.state as HistoryEntry | null;
   return typeof st?.idx === 'number' ? st.idx : 0;
 };
 
-export function navigate(to: string, opts: { replace?: boolean } = {}) {
+export function backgroundRoute(): Route | null {
+  const background = (window.history.state as HistoryEntry | null)?.background;
+  return background ? parseHash(background) : null;
+}
+
+type NavigationOptions = { replace?: boolean; overlay?: boolean };
+export function navigate(to: string, opts: NavigationOptions = {}) {
   const target = '#' + to;
   if (opts.replace) {
     window.history.replaceState({ idx: idx() }, '', target);
   } else if (window.location.hash !== target) {
-    window.history.pushState({ idx: idx() + 1 }, '', target);
+    const state: HistoryEntry = { idx: idx() + 1 };
+    if (opts.overlay) state.background = getHash();
+    window.history.pushState(state, '', target);
   } else {
     return;
   }
   window.dispatchEvent(new Event(ROUTE_EVENT));
-  window.scrollTo(0, 0);
+  if (!opts.overlay) window.scrollTo(0, 0);
 }
 
 /** Go back if we have in-app history, otherwise to `fallback`. */
@@ -82,14 +94,14 @@ export function matchPath(pattern: string, path: string): Record<string, string>
   return params;
 }
 
-type LinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> & { to: string; replace?: boolean };
+type LinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> & NavigationOptions & { to: string };
 
-export function Link({ to, replace, onClick, ...rest }: LinkProps) {
+export function Link({ to, replace, overlay, onClick, ...rest }: LinkProps) {
   const handle = (e: MouseEvent<HTMLAnchorElement>) => {
     onClick?.(e);
     if (e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
     e.preventDefault();
-    navigate(to, { replace });
+    navigate(to, { replace, overlay });
   };
   return <a href={'#' + to} onClick={handle} {...rest} />;
 }
@@ -103,7 +115,9 @@ export const albumPath = (album: { release_id?: number | null; ref: string }) =>
   `/album/${enc(album.release_id ?? album.ref)}`;
 
 export function useCanonicalPath(from: string, path?: string) {
+  const background = useContext(RouteBackground);
   useEffect(() => {
+    if (background) return;
     const current = parseHash(window.location.hash);
     if (!path || current.path === path) return;
     try {
@@ -114,5 +128,5 @@ export function useCanonicalPath(from: string, path?: string) {
     }
     const query = current.query.toString();
     navigate(query ? `${path}?${query}` : path, { replace: true });
-  }, [from, path]);
+  }, [background, from, path]);
 }
