@@ -4,7 +4,7 @@ import { dismissToast, toast } from './ui';
  * start, if it opens without one) — what is kept on it still plays — and one when it comes back. The toasts live in
  * a store of their own: said before the page has drawn, the first one is shown as soon as it does. */
 
-const OFFLINE = 'Нет сети — играет то, что на устройстве';
+const OFFLINE = 'Нет сети';
 const ONLINE = 'Соединение восстановлено';
 
 let offlineToast: number | null = null;
