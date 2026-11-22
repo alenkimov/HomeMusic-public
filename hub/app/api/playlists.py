@@ -7,7 +7,7 @@ import logging
 import uuid
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -206,17 +206,22 @@ async def add(playlist_id: str, body: PlaylistAddIn, user: User = Depends(curren
 
 
 @router.get("/{playlist_id}", response_model=PlaylistPageOut)
-async def get_playlist(playlist_id: str, user: User = Depends(current_user),
+async def get_playlist(playlist_id: str, request: Request, user: User = Depends(current_user),
                        s: AsyncSession = Depends(get_session, scope="function")):
-    """The playlist and its tracks — as the database makes them of their kept cards (`cards.list_json`)."""
+    """The playlist and its tracks — as the database makes them of their kept cards (`cards.list_json`). Asked
+    again unchanged (`If-None-Match`): 304, the list not made at all."""
     import json
 
     from app.library import cards
 
     p = await _own(s, user, playlist_id)
     head = json.dumps((await _out(s, p)).model_dump(mode="json"))
+    tag = await cards.list_tag(s, p.id, user.id, head)
+    kept = {"ETag": tag, "Cache-Control": "private, no-cache"}
+    if request.headers.get("if-none-match") == tag:
+        return Response(status_code=304, headers=kept)
     tracks = await cards.list_json(s, p.id, user.id)
-    return Response(f'{head[:-1]},"tracks":{tracks}}}', media_type="application/json")
+    return Response(f'{head[:-1]},"tracks":{tracks}}}', media_type="application/json", headers=kept)
 
 
 @router.post("/{playlist_id}/remove")

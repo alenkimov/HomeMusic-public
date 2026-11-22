@@ -113,6 +113,18 @@ async def test_liked_lists_the_newest_like_first(env):
     assert [a["id"] for a in d["albums"]] == ["alK"] and [a["name"] for a in d["artists"]] == ["Кино"]
 
 
+async def test_liked_asked_again_unchanged_is_not_sent_again_until_a_like_changes_it(env):
+    c = env["client"]
+    first = await c.get("/api/nd/liked")
+    tag = first.headers["etag"]
+    same = await c.get("/api/nd/liked", headers={"If-None-Match": tag})
+    assert (same.status_code, same.content, same.headers["etag"]) == (304, b"", tag)
+    target = {"ref": "dz:999", "target_data": {"title": "WHAT TO DO?", "artist": "Jackboys", "duration_s": 250}}
+    assert (await c.post("/api/star", json={"targets": [target], "event_id": "like-for-etag"})).status_code == 200
+    r = await c.get("/api/nd/liked", headers={"If-None-Match": tag})
+    assert r.status_code == 200 and r.json()["songs"][0]["ref"] == "dz:999" and r.headers["etag"] != tag
+
+
 async def test_catalog_like_is_listed_before_download_and_unlike_removes_it(env):
     from sqlalchemy import select
 

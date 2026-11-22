@@ -315,3 +315,38 @@ async def test_a_like_an_event_and_a_dislike_name_the_track_by_the_hubs_id(env):
     assert [x["track_id"] for x in (await c.get("/api/dislikes")).json()] == [owned]
     assert (await c.delete("/api/dislikes", params={"track_id": owned})).json() == {"removed": 1}
     assert (await c.get("/api/dislikes")).json() == []
+
+
+async def test_a_playlist_asked_again_unchanged_is_not_sent_again(env):
+    from sqlalchemy import update
+
+    from app.db import session_scope
+    from app.models import Track
+
+    c = env["client"]
+    pid = await new_playlist(c, "Дорога")
+    await c.post(f"/api/playlists/{pid}/add", json={"track_ids": await tids("ndK")})
+    first = await c.get(f"/api/playlists/{pid}")
+    tag = first.headers["etag"]
+    assert first.status_code == 200 and first.headers["cache-control"] == "private, no-cache"
+
+    async def again(tag):
+        return await c.get(f"/api/playlists/{pid}", headers={"If-None-Match": tag})
+
+    same = await again(tag)
+    assert (same.status_code, same.content, same.headers["etag"]) == (304, b"", tag)
+    # what the list shows changed: a track put in it, its name, a track of it
+    await c.post(f"/api/playlists/{pid}/add", json={"track_ids": await tids("ndX")})
+    r = await again(tag)
+    assert r.status_code == 200 and len(r.json()["tracks"]) == 2
+    tag = r.headers["etag"]
+    await c.put(f"/api/playlists/{pid}", json={"name": "Трасса"})
+    r = await again(tag)
+    assert r.status_code == 200 and r.json()["name"] == "Трасса"
+    tag = r.headers["etag"]
+    (k,) = await tids("ndK")
+    async with session_scope() as s:
+        await s.execute(update(Track).where(Track.id == k).values(title="Группа крови (live)"))
+    r = await again(tag)
+    assert r.status_code == 200 and r.json()["tracks"][0]["title"] == "Группа крови (live)"
+    assert (await again(r.headers["etag"])).status_code == 304

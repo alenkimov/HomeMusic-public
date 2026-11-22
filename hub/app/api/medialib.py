@@ -12,7 +12,7 @@ from datetime import datetime
 from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -305,7 +305,8 @@ async def all_songs(user: User = Depends(current_user), s: AsyncSession = Depend
 
 
 @router.get("/liked", response_model=NdLikedOut)
-async def liked(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+async def liked(request: Request, user: User = Depends(current_user),
+                s: AsyncSession = Depends(get_session, scope="function")):
     """«Любимое»: the tracks are the Hub's playlist of them (`favorites.project_liked`) — the newest like on top,
     one the library has no file of among the rest — given as the database makes them of their kept cards
     (`cards.list_json`). The albums and artists are Navidrome's stars."""
@@ -344,17 +345,21 @@ async def liked(user: User = Depends(current_user), s: AsyncSession = Depends(ge
     for raw, song in zip(foreign, await songs_out(s, foreign) if foreign else [], strict=True):
         song.added_at = naive(parse_time(raw.get("starred"))) or song.added_at
         extra.append(song.model_dump(mode="json"))
-    songs = await cards.list_json(s, pid, user.id, extra=extra)
-
     def visible(typ, obj):
         st = decisions.get((typ, f"nd:{obj.get('id')}"))
         return st is None or st.liked
 
-    albums = [album_out(a).model_dump(mode="json")
-              for a in sorted(body.get("album") or [], key=lambda x: x.get("starred") or "", reverse=True) if visible("album", a)]
-    artists = [artist_out(a).model_dump(mode="json") for a in body.get("artist") or [] if visible("artist", a)]
-    return Response(f'{{"songs":{songs},"albums":{json.dumps(albums)},"artists":{json.dumps(artists)}}}',
-                    media_type="application/json")
+    albums = json.dumps([album_out(a).model_dump(mode="json") for a in sorted(
+        body.get("album") or [], key=lambda x: x.get("starred") or "", reverse=True) if visible("album", a)])
+    artists = json.dumps([artist_out(a).model_dump(mode="json") for a in body.get("artist") or [] if visible("artist", a)])
+    # asked again unchanged (`If-None-Match`): 304, the list not made at all
+    tag = await cards.list_tag(s, pid, user.id, json.dumps(extra), albums, artists)
+    kept = {"ETag": tag, "Cache-Control": "private, no-cache"}
+    if request.headers.get("if-none-match") == tag:
+        return Response(status_code=304, headers=kept)
+    songs = await cards.list_json(s, pid, user.id, extra=extra)
+    return Response(f'{{"songs":{songs},"albums":{albums},"artists":{artists}}}',
+                    media_type="application/json", headers=kept)
 
 
 
