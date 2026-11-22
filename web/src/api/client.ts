@@ -521,8 +521,10 @@ export const api = {
 
   // downloads
   download: (body: DownloadIn, signal?: AbortSignal) => request<DownloadBatchOut>('POST', '/api/downloads', { json: body, signal }),
-  downloads: (status?: string, limit = 100, signal?: AbortSignal) =>
-    request<DownloadItemOut[]>('GET', withQuery('/api/downloads', { status, limit }), { signal }),
+  /** The user's downloads, the newest first; `asked`: only the ones somebody asked for (what «Загрузки» shows —
+   * not a transfer's thousands). */
+  downloads: (status?: string, limit = 100, signal?: AbortSignal, asked = false) =>
+    request<DownloadItemOut[]>('GET', withQuery('/api/downloads', { status, limit, quiet: asked ? false : undefined }), { signal }),
   downloadItem: (id: number, signal?: AbortSignal) =>
     request<DownloadItemOut>('GET', `/api/downloads/${id}`, { signal }),
   checkDownloadLink: (id: number, url: string) =>

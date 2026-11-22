@@ -38,7 +38,7 @@ function reason(item: DownloadItemOut): string {
  * is cancelled by that; several at once through the ticks. */
 export function DownloadsPage() {
   const desktop = useDesktop();
-  const res = useAsync((s) => api.downloads(undefined, 5000, s), []);
+  const res = useAsync((s) => api.downloads(undefined, 5000, s, true), []);
   const connected = useHubConnected();
   const [tab, setTab] = useState<Tab | null>(null);
   const [picked, setPicked] = useState<Set<number>>(new Set());

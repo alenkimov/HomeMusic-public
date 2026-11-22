@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import mkdtemp
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, update
+from sqlalchemy import not_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import listen
@@ -156,9 +156,15 @@ async def create(body: DownloadIn, user: User = Depends(current_user), s: AsyncS
 
 
 @router.get("", response_model=list[DownloadItemOut])
-async def list_items(status: str | None = None, limit: int = Query(100, le=5000), user: User = Depends(current_user),
-                     s: AsyncSession = Depends(get_session, scope="function")):
+async def list_items(status: str | None = None, limit: int = Query(100, le=5000), quiet: bool = True,
+                     user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    """The user's downloads, the newest first. `quiet` false: without the ones nobody asked for (`owned.quiet`: a
+    transfer's, a mix's, the wave's, a better file's) — what «Загрузки» shows; a transfer alone has thousands."""
     stmt = select(DownloadItem).where(DownloadItem.user_id == user.id, DownloadItem.hidden.is_(False))
+    if not quiet:
+        qj = DownloadItem.query_json
+        unasked = or_(DownloadItem.import_id.is_not(None), qj.has_key("mix"), qj.has_key("wave"), qj.has_key("upgrade"))
+        stmt = stmt.where(or_(not_(unasked), qj["requested"].as_boolean().is_(True)))
     if status:
         stmt = stmt.where(DownloadItem.status.in_([x.strip() for x in status.split(",") if x.strip()]))
     rows = (await s.execute(stmt.order_by(DownloadItem.id.desc()).limit(limit))).scalars().all()
