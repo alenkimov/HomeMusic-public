@@ -153,3 +153,11 @@ async def test_a_card_whose_search_runs_out_is_drawn_anew(env):
         await s.execute(text("UPDATE track_cards SET dirty = false"))
     async with db.session_scope() as s:
         assert (await cards.read(s, [bare]))[bare]["unavailable"] is False
+
+
+def test_a_version_is_known_as_a_compressing_proxy_gives_it_back():
+    tag = '"abc123"'
+    for said in ('"abc123"', 'W/"abc123"', '"abc123-gzip"', 'W/"abc123-zstd"', '"other", W/"abc123"', "*"):
+        assert cards.unchanged(said, tag), said
+    for said in (None, "", '"abc12"', '"other"', 'W/"abc1234-gzip"'):
+        assert not cards.unchanged(said, tag), said

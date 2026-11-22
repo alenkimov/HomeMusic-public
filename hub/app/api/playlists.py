@@ -218,7 +218,7 @@ async def get_playlist(playlist_id: str, request: Request, user: User = Depends(
     head = json.dumps((await _out(s, p)).model_dump(mode="json"))
     tag = await cards.list_tag(s, p.id, user.id, head)
     kept = {"ETag": tag, "Cache-Control": "private, no-cache"}
-    if request.headers.get("if-none-match") == tag:
+    if cards.unchanged(request.headers.get("if-none-match"), tag):
         return Response(status_code=304, headers=kept)
     tracks = await cards.list_json(s, p.id, user.id)
     return Response(f'{head[:-1]},"tracks":{tracks}}}', media_type="application/json", headers=kept)

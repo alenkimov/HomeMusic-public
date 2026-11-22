@@ -355,7 +355,7 @@ async def liked(request: Request, user: User = Depends(current_user),
     # asked again unchanged (`If-None-Match`): 304, the list not made at all
     tag = await cards.list_tag(s, pid, user.id, json.dumps(extra), albums, artists)
     kept = {"ETag": tag, "Cache-Control": "private, no-cache"}
-    if request.headers.get("if-none-match") == tag:
+    if cards.unchanged(request.headers.get("if-none-match"), tag):
         return Response(status_code=304, headers=kept)
     songs = await cards.list_json(s, pid, user.id, extra=extra)
     return Response(f'{{"songs":{songs},"albums":{albums},"artists":{artists}}}',

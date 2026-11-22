@@ -266,6 +266,20 @@ async def list_tag(s: AsyncSession, playlist_id: int, user_id: int, *more: str) 
     return '"' + hashlib.md5(f"{rows}|{said}".encode()).hexdigest() + '"'
 
 
+def unchanged(if_none_match: str | None, tag: str) -> bool:
+    """Whether a request's `If-None-Match` names this version. What the browser sends back is the tag as it got it,
+    and a compressing proxy (Caddy's `encode`) gives it changed: weak (`W/"…"`) or with the encoding added
+    (`"…-gzip"`)."""
+    if not if_none_match:
+        return False
+    core = tag.strip('"')
+    for part in if_none_match.split(","):
+        part = part.strip().removeprefix("W/").strip('"')
+        if part == "*" or part == core or part.rsplit("-", 1)[0] == core:
+            return True
+    return False
+
+
 # --- in the background ---------------------------------------------------------------------------------------------
 
 # Navidrome's songs as the cards were last compared with them (`songs.loaded_at`): read anew — after a scan the Hub
