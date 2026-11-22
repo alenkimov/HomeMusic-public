@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type DependencyList } from 'react';
-import { errorMessage, isAbort } from '../api/client';
+import { currentApiAccount, errorMessage, isAbort } from '../api/client';
 import type { SourceStatus } from '../api/types';
+import { clearLast, dropLast, readLast, writeLast } from './lastStore';
 
 export function useSourceRequest<T>(key: string,
   load: (signal: AbortSignal, onSources: (sources: SourceStatus[]) => void) => Promise<T>, revision = 0) {
@@ -30,67 +31,38 @@ export interface AsyncState<T> {
 }
 
 // What a page showed the last time, by the name it keeps it under: shown at once the next time the page opens, while
-// the fresh answer is on its way. In memory, and in the browser's storage within a budget: the answers asked for
-// longest ago leave it first, and one too large for it stays in memory alone.
-const LAST = 'hm-last:';
-const LAST_INDEX = 'hm-last-index'; // [name, characters][], the latest kept last
-const LAST_MAX = 1_500_000; // characters of JSON the storage is given for one answer
-const LAST_BUDGET = 3_000_000; // …and for all of them
+// the fresh answer is on its way. In memory, and on the device (`lib/lastStore.ts`) for the next start of the app —
+// under the account's name, so that another account's pages are never shown from it.
 const last = new Map<string, unknown>();
+const stored = (key: string) => `${currentApiAccount() ?? '-'}:${key}`;
 
 function lastOf<T>(key: string): T | undefined {
-  if (last.has(key)) return last.get(key) as T;
-  try {
-    const raw = localStorage.getItem(LAST + key);
-    if (raw) last.set(key, JSON.parse(raw));
-  } catch {
-    /* no storage, or not JSON: nothing is remembered */
-  }
   return last.get(key) as T | undefined;
 }
 
 function keepLast(key: string, value: unknown) {
   last.set(key, value);
-  try {
-    const raw = JSON.stringify(value);
-    let index = (JSON.parse(localStorage.getItem(LAST_INDEX) ?? '[]') as [string, number][]).filter(([k]) => k !== key);
-    localStorage.removeItem(LAST + key);
-    if (raw.length <= LAST_MAX) {
-      index.push([key, raw.length]);
-      let total = index.reduce((n, [, size]) => n + size, 0);
-      while (total > LAST_BUDGET && index.length > 1) {
-        const [gone, size] = index[0];
-        index = index.slice(1);
-        total -= size;
-        localStorage.removeItem(LAST + gone);
-      }
-      localStorage.setItem(LAST + key, raw);
-    }
-    localStorage.setItem(LAST_INDEX, JSON.stringify(index));
-  } catch {
-    /* a full or closed storage: it stays in memory */
-  }
+  void writeLast(stored(key), value);
+}
+
+// what was kept in localStorage before (`hm-last:*`, its index): its few megabytes are the player's room now
+try {
+  for (const k of Object.keys(localStorage)) if (k.startsWith('hm-last')) localStorage.removeItem(k);
+} catch {
+  /* no storage */
 }
 
 /** The account is left: what its pages showed goes with it. */
 export function forgetLast() {
   last.clear();
-  try {
-    for (const k of Object.keys(localStorage)) if (k.startsWith(LAST)) localStorage.removeItem(k); // the index too
-  } catch {
-    /* nothing to clear */
-  }
+  void clearLast();
 }
 
 export function forgetSavedPages(keys: string[]) {
   const clear = new Set(keys);
-  for (const key of clear) last.delete(key);
-  try {
-    for (const key of clear) localStorage.removeItem(LAST + key);
-    const index = JSON.parse(localStorage.getItem(LAST_INDEX) ?? '[]') as [string, number][];
-    localStorage.setItem(LAST_INDEX, JSON.stringify(index.filter(([key]) => !clear.has(key))));
-  } catch {
-    /* Storage may be unavailable. */
+  for (const key of clear) {
+    last.delete(key);
+    void dropLast(stored(key));
   }
 }
 
@@ -143,6 +115,16 @@ export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: Depen
     again.current = false;
     running.current = true;
     setError(undefined);
+    // nothing in memory yet (the app was just opened): what the device kept is shown until the Hub answers
+    let fresh = false;
+    if (keep && lastOf(keep) === undefined) {
+      void readLast(stored(keep)).then((kept) => {
+        if (fresh || ctl.signal.aborted || kept === undefined || lastOf(keep) !== undefined) return;
+        last.set(keep, kept);
+        setData(kept as T);
+        setLoading(false);
+      });
+    }
     const settled = () => {
       running.current = false;
       if (!again.current) return;
@@ -154,6 +136,7 @@ export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: Depen
       .current(ctl.signal)
       .then((d) => {
         if (ctl.signal.aborted) return;
+        fresh = true;
         setData(d);
         setLoading(false);
         if (keep) keepLast(keep, d);

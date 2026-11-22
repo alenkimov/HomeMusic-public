@@ -146,6 +146,9 @@ let apiSession = new AbortController();
 /** The lifetime of work started by the current account, including multi-request actions. */
 export const apiSessionSignal = (): AbortSignal => apiSession.signal;
 
+/** The account the requests are made for (null: signed out). */
+export const currentApiAccount = (): number | null => apiAccount;
+
 export function setApiAccount(account: number | null) {
   if (account === apiAccount) return;
   apiAccount = account;
