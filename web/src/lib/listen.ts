@@ -654,7 +654,7 @@ function playableNow(track: ListenTrack, context: string): boolean {
 
 /** A tap on what cannot play without the network: said, and what plays now goes on. */
 function notOnDevice() {
-  toast('Нет сети — трека нет на устройстве');
+  toast('Нет связи с сервером — трека нет на устройстве');
 }
 
 function startList(track: ListenTrack, queue?: readonly ListenTrack[], context?: string, origin?: LaunchOrigin, page?: string) {
