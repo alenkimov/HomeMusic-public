@@ -102,7 +102,7 @@ async def activity(import_id: int, user: User = Depends(current_user),
         item.status, item.progress, item.provider, item.search_sources_json, item.track_id.is_not(None),
         func.count().over(),
     ).where(
-        item.user_id == imp.user_id, item.query_json["import"]["id"].as_integer() == imp.id,
+        item.user_id == imp.user_id, item.import_id == imp.id,
         item.status.in_(IN_WORK), running | ((item.status == "importing") & item.track_id.is_not(None)),
     ).order_by(case((item.status == "importing", 1), else_=0), item.id).limit(ACTIVITY_LIMIT))).all()
     return ImportActivityOut(items=[

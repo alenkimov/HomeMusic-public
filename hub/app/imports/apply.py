@@ -11,7 +11,7 @@
   the liked songs itself, in that order (`sync_likes`): one by one from the oldest like, and a song downloaded later
   gets its place by starring the likes newer than it again. Likes are downloaded oldest first, so a new song mostly
   lands on top and costs one star.
-- Downloads are the Hub's own business (`DownloadItem.query_json["import"]`): low priority, not shown as downloads;
+- Downloads are the Hub's own business (`DownloadItem.import_id`): low priority, not shown as downloads;
   each is of the catalog's track the row was matched with (`queue_track`), as a download asked for from the search.
 - «После переноса» (`apply_extras`): what the user asked for every transferred track — tags, other playlists, a ♥.
 """
@@ -142,7 +142,7 @@ async def pick(s: AsyncSession, imp: Import, it: ImportItem) -> DownloadItem:
 
 async def new_download(s: AsyncSession, imp: Import, query_json: dict[str, Any], priority: int) -> DownloadItem:
     batch = await _batch(s, imp)
-    item = DownloadItem(batch_id=batch.id, user_id=imp.user_id, query_json=query_json)
+    item = DownloadItem(batch_id=batch.id, user_id=imp.user_id, query_json=query_json, import_id=imp.id)
     s.add(item)
     await s.flush()
     await enqueue(s, "download_item", {"item_id": item.id}, priority=priority)
@@ -215,7 +215,7 @@ async def queue_album(s: AsyncSession, imp: Import, it: ImportItem) -> int:
 
 
 def _import_downloads(imp: Import):
-    return select(DownloadItem).where(DownloadItem.query_json["import"]["id"].as_integer() == imp.id)
+    return select(DownloadItem).where(DownloadItem.import_id == imp.id)
 
 
 async def active_downloads(s: AsyncSession, imp: Import) -> int:

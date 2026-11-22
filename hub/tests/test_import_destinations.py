@@ -129,7 +129,7 @@ async def test_activity_shows_current_downloads_and_indexing_for_this_transfer(e
         track_id = await s.scalar(select(Track.id).order_by(Track.id).limit(1))
 
         def make_item(title, status, transfer=import_id, **kwargs):
-            return DownloadItem(batch_id=batch.id, user_id=batch.user_id, status=status, query_json={
+            return DownloadItem(batch_id=batch.id, user_id=batch.user_id, status=status, import_id=transfer, query_json={
                 "query": {"title": title, "artist": "Artist"}, "import": {"id": transfer},
             }, **kwargs)
 

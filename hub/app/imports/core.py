@@ -75,26 +75,27 @@ def _free_bytes() -> int | None:
 
 async def stats(s: AsyncSession, imp: Import, colls: list[ImportCollection]) -> ImportStatsOut:
     selected = {c.id for c in colls if c.selected and c.kind in TRACK_KINDS}
+    # of what the service said of a track only its length is needed here: not the whole of it, row by row
     rows = (await s.execute(
         select(ImportItem.collection_id, ImportItem.external_id, ImportItem.match, ImportItem.status,
-               ImportItem.raw_json)
+               ImportItem.raw_json["duration_s"].as_float())
         .where(ImportItem.import_id == imp.id))).all()
     out = ImportStatsOut(free_bytes=_free_bytes())
-    tracks: dict[str, tuple[str | None, str, dict]] = {}
-    for cid, ext, match, status, raw in rows:
+    tracks: dict[str, tuple[str | None, str, float | None]] = {}
+    for cid, ext, match, status, duration in rows:
         if cid in selected and status != "skipped":
             prev = tracks.get(ext)
             if prev is None or match == "owned":
-                tracks[ext] = (match, status, raw or {})
+                tracks[ext] = (match, status, duration)
     out.tracks = len(tracks)
-    for match, status, raw in tracks.values():
+    for match, status, duration in tracks.values():
         if match == "owned":
             out.owned += 1
             continue
         if status in ("done",):
             continue
         out.to_download += 1
-        out.est_bytes += (raw.get("duration_s") or DEFAULT_DURATION_S) * BYTES_PER_S
+        out.est_bytes += int((duration or DEFAULT_DURATION_S) * BYTES_PER_S)
         if status == "pending":
             out.pending += 1
         elif status == "waiting":
@@ -107,7 +108,7 @@ async def stats(s: AsyncSession, imp: Import, colls: list[ImportCollection]) -> 
             out.not_found += 1
     for status, n in (await s.execute(
         select(DownloadItem.status, func.count(DownloadItem.id))
-        .where(DownloadItem.query_json["import"]["id"].as_integer() == imp.id)
+        .where(DownloadItem.import_id == imp.id)
         .group_by(DownloadItem.status))).all():
         if status == "done":
             out.done += n

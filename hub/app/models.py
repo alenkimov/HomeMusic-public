@@ -326,6 +326,8 @@ class DownloadItem(Base):
     error: Mapped[str | None] = mapped_column(Text)
     warnings: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id", ondelete="SET NULL"))
+    # the transfer it was made for (the Hub's own download, not shown among the user's): its counts are read by it
+    import_id: Mapped[int | None] = mapped_column(ForeignKey("imports.id", ondelete="SET NULL"), index=True)
     force: Mapped[bool] = mapped_column(Boolean, default=False)  # explicit re-download (new file next to locked one)
     # taken off the «Загрузки» list by the user; the row stays: a playlist's order, an import and a mix lean on it
     hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
