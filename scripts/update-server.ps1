@@ -25,7 +25,10 @@ param(
     [int]$Minutes = 15
 )
 
-$ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 turns every line a program writes to stderr into an error, and docker and git write their
+# progress there: with 'Stop' the first line of a build ended the script. Programs are judged by their exit code
+# alone; the script's own failures are thrown
+$ErrorActionPreference = 'Continue'
 $Root = Split-Path -Parent $PSScriptRoot
 $Log = Join-Path $Root 'update.log'
 $TaskName = 'HomeMusic update'
@@ -43,11 +46,13 @@ function Write-Log([string]$Text) {
 }
 
 function Invoke-Native([string]$What, [scriptblock]$Command) {
-    # внешняя команда: её вывод — в журнал, ненулевой код — ошибка
-    $out = & $Command 2>&1 | ForEach-Object { "$_" }
-    foreach ($l in $out) { if ($l.Trim()) { Write-Log "    $l" } }
-    if ($LASTEXITCODE -ne 0) { throw "$What завершилось с кодом $LASTEXITCODE" }
-    return $out
+    # внешняя команда: ненулевой код — ошибка, и тогда последние 40 строк её вывода — в журнал (вывод сборки
+    # огромный, при удаче он не нужен)
+    $out = @(& $Command 2>&1 | ForEach-Object { "$_" })
+    if ($LASTEXITCODE -ne 0) {
+        foreach ($l in ($out | Select-Object -Last 40)) { if ($l.Trim()) { Write-Log "    $l" } }
+        throw "$What завершилось с кодом $LASTEXITCODE"
+    }
 }
 
 if ($Install) {
@@ -61,7 +66,7 @@ if ($Install) {
     $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable `
         -ExecutionTimeLimit (New-TimeSpan -Hours 2) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($every, $logon) -Settings $settings `
-        -Description "git pull + docker compose для HomeMusic ($Root)" -Force | Out-Null
+        -Description "git pull + docker compose для HomeMusic ($Root)" -Force -ErrorAction Stop | Out-Null
     Write-Host "Задача «$TaskName» установлена: каждые $Minutes мин и при входе в Windows. Журнал: $Log"
     exit 0
 }
@@ -155,7 +160,7 @@ try {
     if (-not $ok) {
         throw "Хаб не ответил за 3 минуты: docker logs --tail 100 homemusic_hub. Вернуть прежнюю версию: git reset --hard $head; docker compose up -d --build"
     }
-    Set-Content $deployedPath (git rev-parse HEAD).Trim()
+    Set-Content $deployedPath (git rev-parse HEAD).Trim() -ErrorAction Stop
     & docker image prune -f *> $null  # прежние образы, оставшиеся без имени после сборки
     if (Test-Path $pendingPath) { Remove-Item $pendingPath }
     Write-Log ('Готово: работает {0}.' -f (git rev-parse --short HEAD).Trim())
