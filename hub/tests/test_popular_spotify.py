@@ -5,12 +5,11 @@ from app.catalog.models import CatalogArtist, CatalogTrack, SearchResults
 
 
 async def test_lastfm_popular_uses_spotify_and_checks_the_linked_artist(hub_env, monkeypatch):
+    from app import integrations
     from app.catalog import namesakes, popular
-    from app.config import get_settings
+    from app.db import session_scope
     from app.main import create_app
 
-    monkeypatch.setenv("LASTFM_API_KEY", "test-key")
-    get_settings.cache_clear()
     artist = CatalogArtist(ref="dz:7", source="dz", id="7", name="TAK")
 
     def track(source, id_, title, artist_id, *, album="release"):
@@ -37,6 +36,8 @@ async def test_lastfm_popular_uses_spotify_and_checks_the_linked_artist(hub_env,
 
     app = create_app()
     async with app.router.lifespan_context(app):
+        async with session_scope() as s:
+            await integrations.save(s, provider="lastfm", owner_id=None, secret="test-key")
         monkeypatch.setitem(namesakes._by_artist, "sp:7", {"sp:excluded"})
         monkeypatch.setattr(popular, "svc", SimpleNamespace(spotify=SimpleNamespace(search=spotify),
                                                            deezer=SimpleNamespace(search_tracks=deezer),

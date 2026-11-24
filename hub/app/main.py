@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(db.run_migrations)
     db.init_engine()
 
-    from app import integrations, listen, telegram_chats
+    from app import listen, telegram_chats
     from app.for_you import loop as for_you_loop
     from app.housekeeping import scheduler_loop
     from app.jobs.queue import WorkerPool, recover_stale
@@ -50,7 +50,6 @@ async def lifespan(app: FastAPI):
     from app.plays import scrobbles_loop
     from app.services import svc
 
-    await integrations.move_lastfm_from_env(s.lastfm_api_key)
     svc.start()
     from app.catalog import namesakes
 

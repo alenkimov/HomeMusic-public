@@ -5,7 +5,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import session_scope
-from app.models import AppSetting, Import, IntegrationConnection, IntegrationCredential, utcnow
+from app.models import Import, IntegrationConnection, IntegrationCredential, utcnow
 from app.security import decrypt, encrypt
 
 SHAREABLE = frozenset({"yandex", "spotify"})
@@ -104,18 +104,6 @@ async def lastfm_key() -> str | None:
     async with session_scope() as s:
         row = await lastfm_connection(s)
         return await credential(s, row.id) if row else None
-
-
-async def move_lastfm_from_env(key: str) -> None:
-    """One-time transfer. Disconnecting Last.fm must not resurrect an old environment key."""
-    async with session_scope() as s:
-        marker = await s.scalar(insert(AppSetting).values(key="lastfm_key_moved")
-                                .on_conflict_do_nothing().returning(AppSetting.key))
-        if marker is None:
-            return
-        if key.strip() and await lastfm_connection(s) is None:
-            row = await save(s, provider="lastfm", owner_id=None, secret=key.strip())
-            row.connected_at = row.checked_at = None
 
 
 async def remove(s: AsyncSession, connection: IntegrationConnection) -> None:

@@ -188,8 +188,6 @@ class Settings(BaseSettings):
     llm_price_out: float = 0.50
     llm_timeout_s: float = 90
 
-    # Last.fm API (similar tracks/artists, tags for mix names): https://www.last.fm/api/account/create
-    lastfm_api_key: str = ""
     deezer_catalog: bool = True
     # Yandex Music as one more catalog (app/catalog/yandex_catalog.py): read without signing in, no key
     yandex_catalog: bool = True

@@ -1,6 +1,6 @@
 # HomeMusic: Navidrome (library + streaming) + Hub (search, downloads, uploads, AI) + reverse SSH tunnel to the VPS.
 # Start / update:  docker compose up -d --build        Stop: docker compose down
-# Settings come from .env (copy .env.example). MUSIC_ROOT is a Windows folder, e.g. B:\Music.
+# Settings come from .env (copy .env.example).
 name: homemusic
 
 x-logging: &logging
@@ -171,7 +171,7 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     environment:
-      VPS_HOST: ${VPS_HOST:?set VPS_HOST in .env}
+      VPS_HOST: ${VPS_HOST:-}  # required by the tunnel itself (entrypoint.sh)
       VPS_PORT: "22"
       VPS_USER: homemusic-tunnel
       FORWARDS: "127.0.0.1:4533:navidrome:4533 127.0.0.1:8080:hub:8080"
