@@ -87,6 +87,22 @@
 
 ## Обновление
 
+**Автоматически** — `scripts/update-server.ps1` (PowerShell на сервере, из корня проекта):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\update-server.ps1 -Install   # проверять каждые 15 минут
+powershell -ExecutionPolicy Bypass -File .\scripts\update-server.ps1           # обновить сейчас
+```
+
+`-Install` ставит задачу «HomeMusic update» в Планировщик Windows (каждые 15 минут и при входе в Windows;
+`-Minutes 30` — реже, `-Uninstall` — убрать). Нет новых коммитов — скрипт ничего не делает. Есть — `git pull`
+(только fast-forward), пересборка того, что затронуто (`hub` при правках в `hub/` и `web/`, `embedder` — в
+`embedder/`), `docker compose up -d`, ожидание `/healthz` Хаба и `docker image prune -f`. Пока идут загрузки,
+обновление откладывается, но не дольше часа. Изменённые на сервере отслеживаемые файлы останавливают его: их
+нужно закоммитить или убрать (`git checkout -- <файл>`). Журнал — `update.log` в корне проекта.
+
+**Вручную:**
+
 ```
 git pull
 docker compose up -d --build          # пересобрать Хаб (yt-dlp внутри образа обновляется пересборкой)
