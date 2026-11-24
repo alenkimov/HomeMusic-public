@@ -116,6 +116,7 @@ async def build(track_ids: list[int]) -> dict[int, dict]:
     from app.models import CatalogCache, TrackCard, utcnow
 
     out: dict[int, dict] = {}
+    changed: list[int] = []
     ids = sorted(set(track_ids))
     try:
         index: dict[str, dict] | None = await library_songs.index()
@@ -125,8 +126,9 @@ async def build(track_ids: list[int]) -> dict[int, dict]:
     for k in range(0, len(ids), BATCH):
         part = ids[k:k + BATCH]
         async with session_scope() as s:
-            gens = dict((await s.execute(
-                select(TrackCard.track_id, TrackCard.gen).where(TrackCard.track_id.in_(part)))).all())
+            before = {i: (gen, card) for i, gen, card in (await s.execute(
+                select(TrackCard.track_id, TrackCard.gen, TrackCard.card).where(TrackCard.track_id.in_(part)))).all()}
+            gens = {i: gen for i, (gen, _) in before.items()}
             rows = list((await s.execute(select(Track).where(Track.id.in_(part)))).scalars())
             drawn = await draw(s, rows, songs=index or {})
             pending = [o for o in drawn if not o.owned and not o.unknown]
@@ -149,6 +151,8 @@ async def build(track_ids: list[int]) -> dict[int, dict]:
                 live = [ends[c] for c in checks.get(t.id, ()) if c in ends and ends[c] >= now]
                 card = o.model_dump(mode="json", exclude=NOT_CARD)
                 out[t.id] = card
+                if t.id in before and before[t.id][1] != card:
+                    changed.append(t.id)
                 values.append({"track_id": t.id, "card": card, "deps": sorted(deps),
                                "nd_digest": _digest(index.get(t.nd_song_id)) if index and t.nd_song_id else None,
                                "valid_until": min(live) if live else None,
@@ -163,6 +167,12 @@ async def build(track_ids: list[int]) -> dict[int, dict]:
                     "dirty": TrackCard.gen != q.excluded.gen,
                     "gen": TrackCard.gen,
                 }))
+        # kept now (the session is over): whoever shows these tracks takes their new cards (`POST /api/tracks/cards`)
+        if changed:
+            from app.events import bus
+
+            bus.broadcast("cards", {"ids": changed})
+            changed = []
     return out
 
 

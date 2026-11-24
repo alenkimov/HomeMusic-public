@@ -161,3 +161,26 @@ def test_a_version_is_known_as_a_compressing_proxy_gives_it_back():
         assert cards.unchanged(said, tag), said
     for said in (None, "", '"abc12"', '"other"', 'W/"abc1234-gzip"'):
         assert not cards.unchanged(said, tag), said
+
+
+async def test_a_card_that_changed_is_told_to_everybody_and_one_that_did_not_is_not(env):
+    import json
+
+    from app.events import bus
+
+    owned, bare = env
+    async with db.session_scope() as s:
+        await cards.read(s, [owned, bare])
+    one, other = bus.subscribe(1), bus.subscribe(2)
+    try:
+        async with db.session_scope() as s:
+            await s.execute(update(Track).where(Track.id == bare).values(title="Renamed"))
+            await s.execute(text("UPDATE track_cards SET dirty = true WHERE track_id = :i"), {"i": owned})
+        await cards.build([owned, bare])
+        for q in (one, other):
+            said = json.loads(q.get_nowait())
+            assert said == {"event": "cards", "data": {"ids": [bare]}}  # drawn again the same: not told
+            assert q.empty()
+    finally:
+        bus.unsubscribe(1, one)
+        bus.unsubscribe(2, other)

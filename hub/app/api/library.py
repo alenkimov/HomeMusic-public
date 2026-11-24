@@ -859,3 +859,31 @@ async def cover(url: str, user: User = Depends(current_user)):
     if data is None:
         raise HTTPException(404, "Каталог не отдал картинку", headers={"Cache-Control": "no-store"})
     return Response(data, media_type=covers.image_type(data), headers={"Cache-Control": _FOR_GOOD})
+
+
+class CardsIn(BaseModel):
+    ids: list[int] = Field(max_length=2000)
+
+
+@router.post("/api/tracks/cards")
+async def track_cards(body: CardsIn, user: User = Depends(current_user),
+                      s: AsyncSession = Depends(get_session, scope="function")):
+    """The cards of these tracks as a list shows them (`app.library.cards`), with what the user's transfers say of
+    each — what a page takes in place of the rows it shows when the Hub says their cards changed (event `cards`),
+    instead of reading its whole list again. A track the Hub has no more is left out."""
+    import json
+
+    from app.imports.review import word
+    from app.library import cards
+
+    ids = list(dict.fromkeys(body.ids))
+    kept = await cards.read(s, ids)
+    reviews, failed = await word(s, user.id, set(kept))
+    out = []
+    for i in ids:
+        if (card := kept.get(i)) is None:
+            continue
+        review = reviews.get(i)
+        out.append({**card, "import_review": review.model_dump(mode="json") if review else None,
+                    **({"unavailable": True} if i in failed and not card.get("owned") else {})})
+    return Response(json.dumps(out, ensure_ascii=False), media_type="application/json")

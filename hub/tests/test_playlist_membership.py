@@ -350,3 +350,22 @@ async def test_a_playlist_asked_again_unchanged_is_not_sent_again(env):
     r = await again(tag)
     assert r.status_code == 200 and r.json()["tracks"][0]["title"] == "Группа крови (live)"
     assert (await again(r.headers["etag"])).status_code == 304
+
+
+async def test_the_cards_of_some_tracks_are_given_by_their_ids(env):
+    c = env["client"]
+    k, x = await tids("ndK", "ndX")
+    waiting = await catalog_track(556, "Ещё не скачан")
+    r = await c.post("/api/tracks/cards", json={"ids": [x, waiting, 999999, k, x]})
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert [t["library_track_id"] for t in got] == [x, waiting, k]  # in the order asked, once, the unknown left out
+    assert [(t["title"], t["owned"], t["import_review"]) for t in got] == [
+        ("Своё", True, None), ("Ещё не скачан", False, None), ("Группа крови", True, None)]
+    playlist = (await c.get(f"/api/playlists/{await new_playlist(c, 'Тот же вид')}")).json()
+    assert playlist["tracks"] == []
+    pid = await new_playlist(c, "Сверка")
+    await c.post(f"/api/playlists/{pid}/add", json={"track_ids": [k]})
+    listed = (await c.get(f"/api/playlists/{pid}")).json()["tracks"][0]
+    assert {key: v for key, v in listed.items() if key != "added_at"} == {key: v for key, v in got[2].items() if key != "added_at"}
+    assert (await c.post("/api/tracks/cards", json={"ids": list(range(2001))})).status_code == 422
