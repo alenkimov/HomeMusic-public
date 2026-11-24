@@ -1,0 +1,55 @@
+# Local development: only what the Hub needs around it. The Hub and the web run on the host (scripts/dev.sh),
+# with reload. A project of its own (homemusic-dev): its containers and volumes never touch a real installation.
+#   scripts/dev.sh up     — start this;  scripts/dev.sh down — stop it
+name: homemusic-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: homemusic
+      POSTGRES_USER: homemusic
+      POSTGRES_PASSWORD: homemusic
+    ports:
+      - "127.0.0.1:${DEV_POSTGRES_PORT:-54320}:5432"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "homemusic", "-d", "homemusic"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  navidrome:
+    image: deluan/navidrome:0.64.2
+    environment:
+      ND_CONFIGFILE: /config/navidrome.toml
+      ND_MUSICFOLDER: /music
+      ND_DATAFOLDER: /data
+      ND_DEFAULTLANGUAGE: ru
+      ND_SCANSCHEDULE: "0"
+      ND_SCANNER_WATCHERENABLED: "false"
+      ND_AUTOIMPORTPLAYLISTS: "false"
+      ND_ENABLEINSIGHTSCOLLECTOR: "false"
+      ND_ENABLESHARING: "true"
+      ND_SUBSONIC_DEFAULTREPORTREALPATH: "true"
+      ND_PASSWORDENCRYPTIONKEY: homemusic-dev
+      # the admin is made on the first start: admin / this password (the same as in .env.dev)
+      ND_DEVAUTOCREATEADMINPASSWORD: admin
+    ports:
+      - "127.0.0.1:${DEV_NAVIDROME_PORT:-4533}:4533"
+    volumes:
+      - navidrome:/data
+      - ./navidrome/navidrome.toml:/config/navidrome.toml:ro
+      - ./data/music/library:/music:ro
+
+  # PO tokens for yt-dlp; the version matches bgutil-ytdlp-pot-provider in hub/pyproject.toml
+  youtube-pot:
+    image: brainicism/bgutil-ytdlp-pot-provider:2.0.2
+    init: true
+    ports:
+      - "127.0.0.1:${DEV_POT_PORT:-4416}:4416"
+
+volumes:
+  postgres:
+  navidrome:

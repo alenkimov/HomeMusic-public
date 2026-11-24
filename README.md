@@ -211,32 +211,28 @@ curl http://localhost:8080/healthz
 
 ## Разработка
 
-Тестам Хаба нужна отдельная PostgreSQL с правом создавать базы. Тесты создают и удаляют свои временные базы.
-Например, из PowerShell:
-
-```powershell
-docker run --rm -d --name homemusic-test-postgres -p 127.0.0.1:54329:5432 -e POSTGRES_PASSWORD=dev-test postgres:17-alpine
-$env:TEST_DATABASE_URL = 'postgresql://postgres:dev-test@localhost:54329/postgres'
-```
+Postgres, Navidrome и youtube-pot работают в Docker (`docker-compose.dev.yml`, отдельный проект `homemusic-dev`
+со своими томами: настоящую установку не задевает), Хаб и PWA — на хосте с перезагрузкой при правках.
+Нужны Docker, [uv](https://docs.astral.sh/uv/), Node 22, `ffmpeg`, `fpcalc` (`libchromaprint-tools`) и `deno`
+(он нужен yt-dlp для YouTube). Python — 3.12 или новее, uv ставит его сам.
 
 ```
-cd hub
-uv sync
-uv run pytest -q                    # тесты; тестам с ffmpeg нужен Docker (см. ниже)
-uv run uvicorn app.main:app --reload --port 8080
-cd ..\web
-npm install
-npm run dev                         # PWA на :5173 с прокси на :8080
+scripts/dev.sh up       # контейнеры; в первый раз ещё .env.dev, config.dev.yaml и папки data/music
+scripts/dev.sh hub      # Хаб на :8080 (uvicorn --reload)
+scripts/dev.sh web      # PWA на http://localhost:5173, /api проксируется на :8080
+scripts/dev.sh test     # тесты Хаба (аргументы уходят в pytest: scripts/dev.sh test -k tags)
+scripts/dev.sh scan     # пересканировать data/music/library в Navidrome
+scripts/dev.sh down     # остановить контейнеры (down -v — ещё и стереть их данные)
 ```
 
-Тесты с ffmpeg можно запустить в образе Хаба, подключив его к тестовому PostgreSQL в отдельной Docker-сети
-и передав адрес через `TEST_DATABASE_URL`. Из cmd:
-```
-docker network create homemusic-tests
-docker network connect homemusic-tests homemusic-test-postgres
-docker run --rm --network homemusic-tests -e TEST_DATABASE_URL=postgresql://postgres:dev-test@homemusic-test-postgres:5432/postgres -v "%cd%\hub:/src" -w /src -e UV_PROJECT_ENVIRONMENT=/tmp/test-venv homemusic-hub:local bash -c "uv sync -q --frozen && uv run --no-sync pytest -q -n 6"
-```
+Вход — `admin` / `admin` (этого админа Navidrome создаёт при первом старте). Музыку для опытов кладут в
+`data/music/library` или загружают через Хаб. Настройки Хаба — `.env.dev` (любое поле `Settings` из
+`hub/app/config.py`), источники и пороги — `config.dev.yaml`; оба файла вне git. Embedder локально не поднимается:
+миксы и волна строятся без звука.
 
+Тесты создают и удаляют свои временные базы на том же Postgres (`TEST_DATABASE_URL` в `.env.dev`).
+Только фронт, без бэкенда: `cd web && npm run dev:mock` — Vite сам отвечает фейковым API.
+Тесты embedder (модель в них — фейк): `cd embedder && uv run pytest -q -n auto`.
 
 ## Откат шлюза на VPS
 
