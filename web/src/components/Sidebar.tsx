@@ -95,7 +95,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
         {/* the page of playlists: all of them, and a new one is made there */}
         <Link to="/playlists" className="flex h-7 flex-1 items-center font-semibold uppercase tracking-wide hover:text-fg">Плейлисты</Link>
       </div>
-      <div className="no-scrollbar min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2 pt-0">
+      <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2 pt-0">
         <div className="group relative">
           <Link to="/liked" aria-current={at('/liked') ? 'page' : undefined} className={cx(item, 'py-1.5', at('/liked') ? 'bg-fg/10 text-fg' : 'text-muted hover:bg-fg/5 hover:text-fg')}>
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/20 text-accent">

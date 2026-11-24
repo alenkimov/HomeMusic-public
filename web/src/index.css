@@ -98,6 +98,47 @@
   }
 }
 
+/* Scrollbars as Spotify's (a computer, a mouse): no track, a thin translucent pill at the edge of the box that
+ * scrolls. The window's own bar is hidden: the page is a panel inside the
+ * window, and its pill is drawn at the panel's edge (`components/PageScrollbar.tsx`). A phone keeps its own thin
+ * bars that hide by themselves; `.no-scrollbar` boxes have none at all. */
+@media (hover: hover) and (pointer: fine) {
+  html:not(.hm-embedded) {
+    scrollbar-width: none;
+  }
+  html:not(.hm-embedded)::-webkit-scrollbar {
+    display: none;
+  }
+  *::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+    background: transparent;
+  }
+  *::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  /* always there, faint (Chrome does not repaint a bar when the mouse comes over its box: a pill shown only then
+   * never showed); brighter under the mouse */
+  *::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+    background-color: color-mix(in srgb, var(--color-fg) 22%, transparent);
+  }
+  *::-webkit-scrollbar-thumb:hover,
+  *::-webkit-scrollbar-thumb:active {
+    background-color: color-mix(in srgb, var(--color-fg) 45%, transparent);
+  }
+  /* Firefox has no such pseudo-elements: its thin bar in the same colours */
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: color-mix(in srgb, var(--color-fg) 28%, transparent) transparent;
+    }
+  }
+}
+
 @layer components {
   .input {
     @apply w-full rounded-xl border border-line bg-raised px-3 py-2.5 text-fg placeholder:text-dim outline-none transition-colors focus:border-accent;

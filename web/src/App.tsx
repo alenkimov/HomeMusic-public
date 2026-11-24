@@ -1,3 +1,4 @@
+import { PageScrollbar } from './components/PageScrollbar';
 import { useVersionLabelsSync } from './lib/versionLabels';
 import { setListeningAccount } from './lib/plays';
 import { forgetLast } from './lib/hooks';
@@ -355,6 +356,8 @@ export function App() {
             </div>
           </div>
           {panel && <div aria-hidden="true" className="pointer-events-none fixed bottom-(--tabbar-h) left-[calc(var(--side-w)+8px)] right-2 top-(--page-top) z-[25] rounded-2xl shadow-[0_0_0_100vmax_var(--color-bg)]" />}
+          {/* the page's scrollbar at its own edge, not the browser's at the window's (a mouse only) */}
+          <PageScrollbar panel={panel} />
           {!playerPage && (desktop ? (
             <>
               <Sidebar active={resolved?.tab ?? null} last={lastByTab} />
