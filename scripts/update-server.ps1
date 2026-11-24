@@ -3,7 +3,7 @@
 что они затронули. Ничего нового — ничего не делает, так что его можно запускать по расписанию.
 
   pwsh -File .\scripts\update-server.ps1              # обновить сейчас (если есть что)
-  pwsh -File .\scripts\update-server.ps1 -Force       # пересобрать и перезапустить, даже если коммитов нет
+  pwsh -File .\scripts\update-server.ps1 -Force       # пересобрать Хаб и перезапустить, даже если коммитов нет
   pwsh -File .\scripts\update-server.ps1 -Install     # проверять каждые 15 минут (задача Планировщика Windows)
   pwsh -File .\scripts\update-server.ps1 -Install -Minutes 30
   pwsh -File .\scripts\update-server.ps1 -Uninstall   # убрать задачу
@@ -12,8 +12,9 @@
 
 Порядок: Docker жив → git fetch → в рабочей папке нет изменённых отслеживаемых файлов → master догоняет
 origin/master без слияния → идут загрузки? тогда обновление откладывается (до часа, потом всё равно) →
-git merge --ff-only → docker compose build того, что изменилось (hub — при правках в hub/ и web/, embedder —
-в embedder/, tunnel — в gateway/tunnel/) → docker compose up -d → ждёт /healthz Хаба → docker image prune -f.
+git merge --ff-only → docker compose build того, что изменилось с последнего удачного обновления (hub — при
+правках в hub/ и web/, embedder — в embedder/, tunnel — в gateway/tunnel/; -Force — ещё и hub) →
+docker compose up -d → ждёт /healthz Хаба → запоминает развёрнутый коммит → docker image prune -f.
 Журнал — update.log в корне проекта (в git не попадает). Код выхода 0 — обновлено или нечего обновлять,
 1 — ошибка (подробности в журнале).
 #>
@@ -73,6 +74,8 @@ if ($Uninstall) {
 Set-Location $Root
 $lockPath = Join-Path $Root '.git\homemusic-update.lock'
 $pendingPath = Join-Path $Root '.git\homemusic-update-pending'
+# последний коммит, с которым сервер поднялся и ответил: что пересобирать, считается от него
+$deployedPath = Join-Path $Root '.git\homemusic-deployed'
 $lock = $null
 try {
     # второй запуск, пока идёт первый (сборка долгая), сразу выходит
@@ -93,7 +96,12 @@ try {
 
     $head = (git rev-parse HEAD).Trim()
     $remote = (git rev-parse "origin/$Branch").Trim()
-    if ($head -eq $remote -and -not $Force) {
+    # от последнего удачного обновления считается, что собирать: запуск, упавший после pull, не теряет этого.
+    # Отметки ещё нет (первый запуск) — развёрнутым считается то, что сейчас в папке
+    $deployed = if (Test-Path $deployedPath) { (Get-Content $deployedPath -Raw).Trim() } else { $head }
+    & git cat-file -e "$deployed^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0) { $deployed = $head }
+    if ($head -eq $remote -and $deployed -eq $head -and -not $Force) {
         if (Test-Path $pendingPath) { Remove-Item $pendingPath }
         exit 0  # нечего обновлять: в журнал не пишется, чтобы он не рос от запусков по расписанию
     }
@@ -116,20 +124,21 @@ try {
         Write-Log "Загрузки идут дольше часа ($active) — обновляю всё равно, Хаб продолжит их после перезапуска."
     }
 
-    $changed = @()
+    $changed = @(git diff --name-only $deployed $remote)
     if ($head -ne $remote) {
-        $changed = @(git diff --name-only $head $remote)
         Write-Log ("Обновление {0} → {1}:" -f $head.Substring(0, 7), $remote.Substring(0, 7))
         foreach ($c in @(git log --oneline "$head..$remote")) { Write-Log "    $c" }
         Invoke-Native 'git merge' { git merge --ff-only --quiet "origin/$Branch" } | Out-Null
+    } elseif ($deployed -ne $head) {
+        Write-Log ("Прошлое обновление до {0} не закончилось — довожу." -f $head.Substring(0, 7))
     } else {
         Write-Log 'Пересборка без новых коммитов (-Force).'
     }
 
-    # что пересобрать: по путям изменённых файлов; -Force — всё, что собирается здесь
+    # что пересобрать: по путям изменённых файлов; -Force — ещё и Хаб (embedder долгий — только когда он менялся)
     $build = @()
     if ($Force -or ($changed | Where-Object { $_ -match '^(hub|web)/' })) { $build += 'hub' }
-    if ($Force -or ($changed | Where-Object { $_ -match '^embedder/' })) { $build += 'embedder' }
+    if ($changed | Where-Object { $_ -match '^embedder/' }) { $build += 'embedder' }
     if ($changed | Where-Object { $_ -match '^gateway/tunnel/' }) { $build += 'tunnel' }
     if ($build.Count) {
         Write-Log ('Сборка: ' + ($build -join ', '))
@@ -146,6 +155,7 @@ try {
     if (-not $ok) {
         throw "Хаб не ответил за 3 минуты: docker logs --tail 100 homemusic_hub. Вернуть прежнюю версию: git reset --hard $head; docker compose up -d --build"
     }
+    Set-Content $deployedPath (git rev-parse HEAD).Trim()
     & docker image prune -f *> $null  # прежние образы, оставшиеся без имени после сборки
     if (Test-Path $pendingPath) { Remove-Item $pendingPath }
     Write-Log ('Готово: работает {0}.' -f (git rev-parse --short HEAD).Trim())
