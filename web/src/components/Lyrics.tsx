@@ -15,9 +15,9 @@ const HOLD_MS = 4000; // after the user scrolls the text themselves it stays whe
 /** The lyrics of the playing track in the full player: the line that is sung is lit and kept in the middle, a
  * click on a line seeks to it; where the source times the words they light up one by one. The text comes from the
  * Hub's database (found on the first open, then at once). Under it: where it is from, a shift of the timings for
- * a text that runs early or late, and «Другой вариант» — another source's text or, there too, «this track has no
- * lyrics» (out of the way: it is not «hide»; the mic button of the player hides). A text switched off comes back
- * with «Вернуть текст». */
+ * a text that runs early or late; a click on where it is from opens «Другой вариант» — another source's text or,
+ * there too, «this track has no lyrics» (out of the way: it is not «hide»; the mic button of the player hides). A
+ * text switched off comes back with «Вернуть текст». */
 export function Lyrics({ refId, songId }: { refId: string; songId?: string | null }) {
   const [data, setShown] = useState<LyricsOut | null>(() => knownLyrics(refId, songId) ?? null);
   // the text as it is now is the one every other place shows too (the line over the seek bar)
@@ -171,7 +171,12 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
 
   const footer = (
     <div className="flex shrink-0 flex-wrap items-center justify-center gap-x-1 gap-y-1 pt-2 text-xs text-muted">
-      {data.kind !== 'none' && <span className="px-2"><ServiceBadge service={data.source} label={data.source_title} /> · {KIND_LABEL[data.kind]}</span>}
+      {/* where the text is from: a click looks for another variant */}
+      {data.kind !== 'none' && (
+        <button type="button" onClick={() => setPicking(true)} title="Другой вариант текста" className="rounded-full px-3 py-1.5 hover:bg-fg/10 hover:text-fg">
+          <ServiceBadge service={data.source} label={data.source_title} /> · {KIND_LABEL[data.kind]}
+        </button>
+      )}
       {timed && (
         <span className="flex items-center" title="Если текст спешит или отстаёт">
           <IconButton icon="minus" size={16} label="Текст раньше на четверть секунды" onClick={() => shift(-STEP_MS)} className="!h-8 !w-8 text-muted" />
@@ -194,11 +199,6 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
       )}
       {data.kind !== 'none' && (
         <IconButton icon="sliders" size={16} label="Вид текста" onClick={() => setLookOpen(true)} className="!h-8 !w-8 text-muted hover:text-fg" />
-      )}
-      {data.kind !== 'none' && (
-        <button type="button" onClick={() => setPicking(true)} className="rounded-full px-3 py-1.5 hover:bg-fg/10 hover:text-fg">
-          Другой вариант
-        </button>
       )}
     </div>
   );
