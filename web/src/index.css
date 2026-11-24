@@ -99,15 +99,33 @@
 }
 
 /* Scrollbars as Spotify's (a computer, a mouse): no track, a thin translucent pill at the edge of the box that
- * scrolls. The window's own bar is hidden: the page is a panel inside the
- * window, and its pill is drawn at the panel's edge (`components/PageScrollbar.tsx`). A phone keeps its own thin
- * bars that hide by themselves; `.no-scrollbar` boxes have none at all. */
+ * scrolls, there while the mouse is over the box and fading a moment after it leaves. The window's own bar is
+ * hidden: the page is a panel inside the window, and its pill is drawn at the panel's edge
+ * (`components/PageScrollbar.tsx`). A phone keeps its own thin bars that hide by themselves; `.no-scrollbar` boxes
+ * have none at all.
+ *
+ * Chrome does not repaint a bar when only a `:hover` rule changes it (a pill shown that way never showed), but it
+ * does while a transition runs: the pill's colour is a registered property that the scrolling box itself
+ * transitions. It is not inherited, so a box under the mouse does not light the bars of the boxes inside it; the
+ * transition is set on the boxes that scroll alone, since it would take the place of any other on that element. */
+@property --hm-pill {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: transparent;
+}
 @media (hover: hover) and (pointer: fine) {
   html:not(.hm-embedded) {
     scrollbar-width: none;
   }
   html:not(.hm-embedded)::-webkit-scrollbar {
     display: none;
+  }
+  :where([class*='overflow-auto'], [class*='overflow-y-auto'], [class*='overflow-x-auto'], [class*='overflow-scroll'], [class*='overflow-y-scroll']) {
+    transition: --hm-pill 300ms ease 500ms;
+  }
+  :where([class*='overflow-auto'], [class*='overflow-y-auto'], [class*='overflow-x-auto'], [class*='overflow-scroll'], [class*='overflow-y-scroll']):hover {
+    --hm-pill: color-mix(in srgb, var(--color-fg) 30%, transparent);
+    transition: --hm-pill 150ms ease;
   }
   *::-webkit-scrollbar {
     width: 12px;
@@ -118,23 +136,22 @@
   *::-webkit-scrollbar-corner {
     background: transparent;
   }
-  /* always there, faint (Chrome does not repaint a bar when the mouse comes over its box: a pill shown only then
-   * never showed); brighter under the mouse */
   *::-webkit-scrollbar-thumb {
+    --hm-pill: inherit;
     border: 3px solid transparent;
     border-radius: 999px;
     background-clip: padding-box;
-    background-color: color-mix(in srgb, var(--color-fg) 22%, transparent);
+    background-color: var(--hm-pill);
   }
   *::-webkit-scrollbar-thumb:hover,
   *::-webkit-scrollbar-thumb:active {
-    background-color: color-mix(in srgb, var(--color-fg) 45%, transparent);
+    background-color: color-mix(in srgb, var(--color-fg) 50%, transparent);
   }
   /* Firefox has no such pseudo-elements: its thin bar in the same colours */
   @supports not selector(::-webkit-scrollbar) {
     * {
       scrollbar-width: thin;
-      scrollbar-color: color-mix(in srgb, var(--color-fg) 28%, transparent) transparent;
+      scrollbar-color: var(--hm-pill) transparent;
     }
   }
 }

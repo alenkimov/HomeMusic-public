@@ -16,12 +16,48 @@ const MIN_THUMB = 32;
 /** The scrollbar of the page, as Spotify's: a translucent pill at the right edge of the page — of the panel on a
  * computer (`panel`), of the window otherwise — not the browser's bar at the edge of the window. The window still
  * scrolls (sticky bars and long lists go by it); this only shows where it is and can be dragged. It is there while
- * the page is longer than the window, faint as the bars of the other boxes (index.css), brighter under the mouse. */
+ * the page is longer than the window and the mouse is over the page (or it has just scrolled), and fades a moment
+ * after, as the bars of the other boxes do (index.css); brighter under the mouse. */
 export function PageScrollbar({ panel }: { panel: boolean }) {
   const mouse = useMouse();
   const track = useRef<HTMLDivElement>(null);
   const [m, setM] = useState({ top: 0, size: 0, long: false });
   const [dragging, setDragging] = useState(false);
+  const thumb = useRef<HTMLDivElement>(null);
+  const [over, setOver] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  // the mouse is over the page: over the panel on a computer (not the sidebar or the player), the window otherwise
+  useEffect(() => {
+    if (!mouse) return;
+    const at = (e: PointerEvent) => {
+      const t = e.target instanceof Element ? e.target : null;
+      setOver(!panel || !!t?.closest('.hm-page') || t === thumb.current);
+    };
+    const gone = () => setOver(false);
+    document.addEventListener('pointerover', at, { passive: true });
+    document.documentElement.addEventListener('pointerleave', gone);
+    return () => {
+      document.removeEventListener('pointerover', at);
+      document.documentElement.removeEventListener('pointerleave', gone);
+    };
+  }, [mouse, panel]);
+
+  // and for a moment after the page scrolls, whatever scrolled it
+  useEffect(() => {
+    if (!mouse) return;
+    let timer = 0;
+    const onScroll = () => {
+      setScrolled(true);
+      clearTimeout(timer);
+      timer = window.setTimeout(() => setScrolled(false), 800);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('scroll', onScroll);
+    };
+  }, [mouse]);
 
   useEffect(() => {
     if (!mouse) return;
@@ -60,8 +96,8 @@ export function PageScrollbar({ panel }: { panel: boolean }) {
   const drag = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
     e.preventDefault();
-    const thumb = e.currentTarget;
-    thumb.setPointerCapture(e.pointerId);
+    const pill = e.currentTarget;
+    pill.setPointerCapture(e.pointerId);
     setDragging(true);
     const from = e.clientY;
     const start = window.scrollY;
@@ -70,13 +106,13 @@ export function PageScrollbar({ panel }: { panel: boolean }) {
     const move = (ev: PointerEvent) => window.scrollTo(0, start + ((ev.clientY - from) * span) / Math.max(1, room));
     const end = () => {
       setDragging(false);
-      thumb.removeEventListener('pointermove', move);
-      thumb.removeEventListener('pointerup', end);
-      thumb.removeEventListener('pointercancel', end);
+      pill.removeEventListener('pointermove', move);
+      pill.removeEventListener('pointerup', end);
+      pill.removeEventListener('pointercancel', end);
     };
-    thumb.addEventListener('pointermove', move);
-    thumb.addEventListener('pointerup', end);
-    thumb.addEventListener('pointercancel', end);
+    pill.addEventListener('pointermove', move);
+    pill.addEventListener('pointerup', end);
+    pill.addEventListener('pointercancel', end);
   };
 
   return (
@@ -90,10 +126,13 @@ export function PageScrollbar({ panel }: { panel: boolean }) {
       )}
     >
       <div
+        ref={thumb}
         onPointerDown={drag}
         className={cx(
-          'pointer-events-auto absolute inset-x-[2px] rounded-full transition-colors',
-          dragging ? 'bg-fg/45' : 'bg-fg/22 hover:bg-fg/45',
+          'pointer-events-auto absolute inset-x-[2px] rounded-full transition-[opacity,background-color]',
+          dragging ? 'bg-fg/50' : 'bg-fg/30 hover:bg-fg/50',
+          // in quickly, out slowly after a moment, as the other boxes' bars
+          over || scrolled || dragging ? 'opacity-100 duration-150' : 'opacity-0 delay-500 duration-300',
           !m.long && 'hidden',
         )}
         style={{ top: m.top, height: m.size }}
