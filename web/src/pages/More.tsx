@@ -34,6 +34,9 @@ export function MorePage() {
   const downloads = useActiveDownloads();
   // what stands now behind the lines: asked once the menu opens, kept between visits — a line waits for none of it
   const quality = useAsync((s) => (STANDALONE ? api.quality(s) : Promise.resolve(null)), [], true, 'menu:quality');
+  // albums in pieces waiting for a decision: a green count draws the eye to «Объединение альбомов»
+  const split = useAsync((s) => (STANDALONE ? api.splitAlbums(s) : Promise.resolve([])), [], true, 'menu:split');
+  const splitWaiting = (split.data ?? []).filter((g) => !g.dismissed).length;
   const telegram = useAsync(api.telegram, []);
   useWindowEvent(TELEGRAM_LINK_EVENT, () => telegram.reload(true));
   const kept = useKeptLists().tracks;
@@ -103,6 +106,7 @@ export function MorePage() {
               <Item icon="sparkle" tint="bg-[#8b6cf6]" to="/assistant" title="Ассистент" />
               <Item icon="download" tint="bg-[#3d8ef0]" to="/downloads" title="Загрузки" value={downloads > 0 ? (downloads > 99 ? '99+' : String(downloads)) : undefined} />
               <Item icon="folder" tint="bg-[#ef8b3a]" to="/files" title={me.is_admin ? 'Все файлы' : 'Мои файлы'} />
+              <Item icon="merge" tint="bg-[#1f9d55]" to="/albums/merge" title="Объединение альбомов" badge={splitWaiting ? (splitWaiting > 99 ? '99+' : String(splitWaiting)) : undefined} />
               <Item icon="sliders" tint="bg-[#30b85c]" to="/quality" title="Качество звука" value={waiting ? `ждут решения: ${waiting}` : weak ? `слабых: ${weak}` : undefined} />
             </Group>
           )}
@@ -166,6 +170,7 @@ function Item({
   tint,
   title,
   value,
+  badge,
   to,
   href,
   onClick,
@@ -178,6 +183,8 @@ function Item({
   icon: IconName;
   title: string;
   value?: string;
+  /** a count that asks to be looked at: a green pill */
+  badge?: string;
   to?: string;
   href?: string;
   onClick?: () => void;
@@ -190,6 +197,7 @@ function Item({
       <span className="flex min-h-12 min-w-0 flex-1 items-center gap-2 border-b border-fg/[0.07] pr-3.5 group-last/item:border-0">
         <span className="min-w-0 flex-1 truncate">{title}</span>
         {value && <span className="max-w-[55%] shrink-0 truncate text-sm text-muted">{value}</span>}
+        {badge && <span className="flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full bg-accent px-2 text-[13px] font-bold text-on-accent">{badge}</span>}
         <Icon name={href ? 'external' : 'chevron'} size={16} className="shrink-0 text-dim" />
       </span>
     </>

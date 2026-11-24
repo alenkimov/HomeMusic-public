@@ -1,7 +1,7 @@
 import { TrackTitle } from '../components/TrackTitle';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSession } from '../lib/session';
-import { api, libraryCoverUrl } from '../api/client';
+import { api } from '../api/client';
 import type { FileRowOut, ReleaseType, TrashedOut } from '../api/types';
 import { TrackRow, TrackTableHeader } from '../components/catalog';
 import { TrackTable } from '../components/TrackTable';
@@ -9,7 +9,7 @@ import { Icon, type IconName } from '../components/Icon';
 import { ServiceIcon } from '../components/ServiceBadge';
 import { ListBar } from '../components/ListBar';
 import { useListSearch } from '../components/ListSearch';
-import { Button, Cover, Empty, ErrorState, IconButton, SkeletonRows, cx } from '../components/ui';
+import { Button, Empty, ErrorState, IconButton, SkeletonRows, cx } from '../components/ui';
 import { useDesktop } from '../lib/desktop';
 import { useHubEvent } from '../lib/events';
 import { fmtAdded, parseTime, plural, tracksWord } from '../lib/format';
@@ -236,7 +236,6 @@ export function FilesPage({ trash = false }: { trash?: boolean }) {
         }
       />
 
-      {only === 'all' && !search.found && <SplitAlbumsCard onJoined={() => res.reload(true)} />}
       {offerImport && (
         <Link to="/import" className="card mx-4 mb-4 flex items-center gap-3 p-3 hover:bg-hover lg:mx-6">
           <ServiceIcon service="yandex" size={22} />
@@ -414,43 +413,5 @@ export function ReleaseTypeSelect({ value, onChange }: { value: ReleaseType; onC
       <option value="ep">EP</option>
       <option value="compilation">Сборник</option>
     </select>
-  );
-}
-
-/** Albums that are one album in pieces: the same name, artists that differ only by a guest («Три дня дождя» and
- * «Три дня дождя, Роки») — files that name no artist of their album were filed by their own. Each group is joined
- * by a tap, into the one with the most tracks; not by itself: two releases of one name do happen. */
-function SplitAlbumsCard({ onJoined }: { onJoined: () => void }) {
-  const res = useAsync((s) => api.splitAlbums(s), []);
-  const [busy, setBusy] = useState<number | null>(null);
-  const groups = res.data ?? [];
-  if (!groups.length) return null;
-  const join = async (g: (typeof groups)[number]) => {
-    setBusy(g.target_id);
-    const ok = await attempt(() => api.mergeAlbums({ target_id: g.target_id, source_ids: g.albums.filter((a) => a.id !== g.target_id).map((a) => a.id) }), `«${g.title}» — один альбом`);
-    setBusy(null);
-    if (!ok) return;
-    res.reload(true);
-    onJoined();
-  };
-  return (
-    <section aria-label="Расколотые альбомы" className="card mx-4 mb-4 p-3">
-      <h2 className="text-sm font-semibold">Один альбом в нескольких частях · {groups.length}</h2>
-      <p className="pb-2 pt-0.5 text-xs text-muted">Название одно, а исполнители отличаются только гостями. Объедините, если это один релиз.</p>
-      <ul className="space-y-2">
-        {groups.map((g) => (
-          <li key={g.target_id} className="flex items-center gap-3">
-            <Cover src={g.albums.find((a) => a.has_cover) ? libraryCoverUrl((g.albums.find((a) => a.has_cover) as { id: number }).id, 96) : null} size={40} icon="disc" alt="" />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium">{g.title}</span>
-              <span className="block truncate text-xs text-muted">{g.albums.map((a) => `${a.album_artist} (${a.track_count})`).join(' + ')}</span>
-            </span>
-            <Button small busy={busy === g.target_id} onClick={() => void join(g)}>
-              Объединить
-            </Button>
-          </li>
-        ))}
-      </ul>
-    </section>
   );
 }

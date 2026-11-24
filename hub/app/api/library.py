@@ -166,30 +166,78 @@ async def file_doubles(user: User = Depends(current_user), s: AsyncSession = Dep
     return [g for g in groups if any(t in own for t in g)]
 
 
+def _split_key(ids) -> str:
+    return ",".join(str(i) for i in sorted(set(ids)))
+
+
 @router.get("/api/library/albums/split")
 async def split_albums(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")) -> list[dict]:
     """Albums that are one album in pieces: the same name, and artists that differ only by who is a guest («Три дня
     дождя» and «Три дня дождя, Роки») — a file that names no artist of its album is filed by its own artists. Each
-    group with the one to join the rest into (the one with the most tracks). Among the files the asker looks after."""
+    group with the one to join the rest into (the one with the most tracks), each album with its tracks in order
+    (their cards: `POST /api/tracks/cards`). Among the files the asker looks after. A group someone called separate
+    releases («Это разные альбомы») is `dismissed`: «Объединение альбомов» shows it apart and does not count it."""
     from app.library.credits import main_artist
+    from app.models import AlbumSplitDismissal
 
     rows = (await s.execute(select(Album).where(access.albums_of(user)))).scalars().all()
-    counts = dict((await s.execute(select(Track.album_id, func.count(Track.id)).where(Track.album_id.is_not(None))
-                                   .group_by(Track.album_id))).all())
     groups: dict[tuple[str, str], list[Album]] = {}
     for a in rows:
         key = (normalize_title(a.title).text, main_artist(a.album_artist).casefold())
         if key[0] and key[1]:
             groups.setdefault(key, []).append(a)
+    split = [albums for albums in groups.values() if len(albums) >= 2]
+    ids = [a.id for albums in split for a in albums]
+    tracks: dict[int, list[int]] = {}
+    if ids:
+        for album_id, track_id in (await s.execute(
+                select(Track.album_id, Track.id).where(Track.album_id.in_(ids))
+                .order_by(Track.album_id, Track.disc_no.nulls_last(), Track.track_no.nulls_last(), Track.id))).all():
+            tracks.setdefault(album_id, []).append(track_id)
+    dismissed = set((await s.execute(select(AlbumSplitDismissal.key))).scalars().all())
     out = []
-    for albums in groups.values():
-        if len(albums) < 2:
-            continue
-        albums.sort(key=lambda a: (-counts.get(a.id, 0), a.id))
-        out.append({"title": albums[0].title, "target_id": albums[0].id,
+    for albums in split:
+        albums.sort(key=lambda a: (-len(tracks.get(a.id, [])), a.id))
+        out.append({"title": albums[0].title, "target_id": albums[0].id, "key": _split_key(a.id for a in albums),
+                    "dismissed": _split_key(a.id for a in albums) in dismissed,
                     "albums": [{"id": a.id, "title": a.title, "album_artist": a.album_artist, "year": a.year,
-                                "track_count": counts.get(a.id, 0), "has_cover": _has_cover(a)} for a in albums]})
+                                "track_count": len(tracks.get(a.id, [])), "track_ids": tracks.get(a.id, []),
+                                "has_cover": _has_cover(a)} for a in albums]})
     return sorted(out, key=lambda g: g["title"].casefold())
+
+
+class SplitIn(BaseModel):
+    album_ids: list[int] = Field(min_length=2, max_length=100)
+
+
+@router.post("/api/library/albums/split/dismiss")
+async def dismiss_split(body: SplitIn, user: User = Depends(current_user),
+                        s: AsyncSession = Depends(get_session, scope="function")) -> dict:
+    """«Это разные альбомы»: this group is not offered for joining again (until it gains or loses an album)."""
+    from app.models import AlbumSplitDismissal
+
+    for album_id in body.album_ids:
+        await access.need_album(s, user, album_id)
+    key = _split_key(body.album_ids)
+    if (await s.execute(select(AlbumSplitDismissal.id).where(AlbumSplitDismissal.key == key))).first() is None:
+        s.add(AlbumSplitDismissal(key=key, album_ids=sorted(set(body.album_ids)), user_id=user.id))
+    await s.commit()
+    return {"ok": True}
+
+
+@router.post("/api/library/albums/split/restore")
+async def restore_split(body: SplitIn, user: User = Depends(current_user),
+                        s: AsyncSession = Depends(get_session, scope="function")) -> dict:
+    """The group called separate releases is offered for joining again."""
+    from sqlalchemy import delete
+
+    from app.models import AlbumSplitDismissal
+
+    for album_id in body.album_ids:
+        await access.need_album(s, user, album_id)
+    await s.execute(delete(AlbumSplitDismissal).where(AlbumSplitDismissal.key == _split_key(body.album_ids)))
+    await s.commit()
+    return {"ok": True}
 
 
 @router.post("/api/library/albums", response_model=LibAlbumOut)

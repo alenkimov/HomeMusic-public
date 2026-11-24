@@ -250,6 +250,19 @@ class Track(Base):
     files: Mapped[list[TrackFile]] = relationship(lazy="raise", passive_deletes=True, cascade="save-update, merge")
 
 
+class AlbumSplitDismissal(Base):
+    """«Это разные альбомы»: albums of one name a listener said are separate releases. `key` — their ids, sorted,
+    joined by commas: a group that gains or loses an album is a new question."""
+
+    __tablename__ = "album_split_dismissals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(1024), unique=True)
+    album_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class TrackCard(Base):
     """A track as every list shows it, kept (`app.library.cards`; migration 30a000000004 says how it is kept fresh)."""
 

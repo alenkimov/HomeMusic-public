@@ -800,11 +800,15 @@ export interface UploadMatch {
   track_no?: number | null;
 }
 
-/** Albums that are one album in pieces («Мои файлы»): `target_id` — the one the rest are joined into. */
+/** Albums that are one album in pieces («Объединение альбомов»): `target_id` — the one the rest are joined into by
+ * default; `dismissed` — someone said they are separate releases. Each album's tracks in order (`track_ids`: their
+ * cards are `api.trackCards`). */
 export interface SplitAlbums {
   title: string;
   target_id: number;
-  albums: { id: number; title: string; album_artist: string; year?: number | null; track_count: number; has_cover: boolean }[];
+  key: string;
+  dismissed: boolean;
+  albums: { id: number; title: string; album_artist: string; year?: number | null; track_count: number; track_ids: number[]; has_cover: boolean }[];
 }
 
 export interface UploadCommitIn {

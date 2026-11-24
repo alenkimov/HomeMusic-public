@@ -48,6 +48,7 @@ import { ArtistMapPage } from './pages/ArtistMapPage';
 import { HomePage } from './pages/Home';
 import { ImportPage, ImportsPage } from './pages/Import';
 import { FilesPage } from './pages/Files';
+import { AlbumMergePage } from './pages/AlbumMerge';
 import { QualityPage } from './pages/Quality';
 import { LibraryPage, LibrarySearchPage } from './pages/Library';
 import { LibraryAlbumPage } from './pages/LibraryAlbum';
@@ -133,6 +134,7 @@ const ROUTES: RouteDef[] = [
   ['/library/search', 'library', () => <LibrarySearchPage />],
   ['/library', 'library', () => <LibraryPage />, 'text'],
   ['/files', 'more', () => <FilesPage key="files" />],
+  ['/albums/merge', 'more', () => <AlbumMergePage />],
   ['/quality', 'more', () => <QualityPage />],
   ['/library/album/:id', 'more', (p) => <LibraryAlbumPage key={p.id} id={Number(p.id)} />, 'text'],
   ['/assistant', 'assistant', (_, r) => <AssistantPage chatId={Number(r.query.get('chat')) || null} />, 'text'],

@@ -572,6 +572,9 @@ export const api = {
   fileDoubles: (signal?: AbortSignal) => request<number[][]>('GET', '/api/library/files/doubles', { signal }),
   /** Albums that are one album in pieces (the same name, artists that differ by a guest). */
   splitAlbums: (signal?: AbortSignal) => request<SplitAlbums[]>('GET', '/api/library/albums/split', { signal }),
+  /** «Это разные альбомы» / and back: the group is (not) offered for joining. */
+  splitDismiss: (album_ids: number[]) => request<{ ok: boolean }>('POST', '/api/library/albums/split/dismiss', { json: { album_ids } }),
+  splitRestore: (album_ids: number[]) => request<{ ok: boolean }>('POST', '/api/library/albums/split/restore', { json: { album_ids } }),
   moveTracks: (body: TracksMoveIn) => request<LibAlbumOut>('POST', '/api/library/tracks/move', { json: body }),
   patchTrack: (id: number, body: TrackPatchIn) =>
     request<LibTrackOut>('PATCH', `/api/library/tracks/${id}`, { json: body }),

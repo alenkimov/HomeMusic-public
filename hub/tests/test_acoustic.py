@@ -103,6 +103,15 @@ async def test_albums_in_pieces_are_listed(env):
     got = (await c.get("/api/library/albums/split")).json()
     assert len(got) == 1 and got[0]["target_id"] == ids[0]  # the one with the most tracks takes the rest
     assert [(a["id"], a["track_count"]) for a in got[0]["albums"]] == [(ids[0], 2), (ids[1], 1)]
+    assert got[0]["dismissed"] is False and all(len(a["track_ids"]) == a["track_count"] for a in got[0]["albums"])
+
+    # «Это разные альбомы»: kept apart, offered again only when asked to
+    group = {"album_ids": list(ids)}
+    assert (await c.post("/api/library/albums/split/dismiss", json=group)).status_code == 200
+    assert (await c.post("/api/library/albums/split/dismiss", json=group)).status_code == 200  # twice: one answer
+    assert [g["dismissed"] for g in (await c.get("/api/library/albums/split")).json()] == [True]
+    assert (await c.post("/api/library/albums/split/restore", json=group)).status_code == 200
+    assert [g["dismissed"] for g in (await c.get("/api/library/albums/split")).json()] == [False]
 
 
 async def test_the_files_as_a_list_and_the_doubles(env):
