@@ -6,7 +6,7 @@ import { noteReached, onHubBack, suspect } from './reach';
 type EventName = keyof HubEventMap;
 type Handler<K extends EventName> = (data: HubEventMap[K]) => void;
 
-const NAMED: EventName[] = ['download', 'assistant', 'library', 'recording', 'batch', 'import', 'search_history', 'genres', 'playback_queue', 'playback_devices', 'ping'];
+const NAMED: EventName[] = ['download', 'assistant', 'library', 'recording', 'cards', 'batch', 'import', 'search_history', 'genres', 'playback_queue', 'playback_devices', 'ping'];
 
 class HubEvents {
   private es: EventSource | null = null;

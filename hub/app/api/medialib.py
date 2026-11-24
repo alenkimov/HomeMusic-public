@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Iterable
-from datetime import datetime
 from urllib.parse import quote
 
 import httpx
@@ -22,13 +21,13 @@ from app.auth import current_user, user_navidrome
 from app.catalog import registry as releases
 from app.db import get_session
 from app.library import artists as artist_names
+from app.library import cards
 from app.library import tracks as registry
 from app.library.artwork import album_cover_url
 from app.library.credits import split_artists
 from app.library.navidrome import NavidromeClient, SubsonicError
 from app.library.owned import HAS_FILE, put_right, with_cover_fallbacks, with_files
-from app.mixes.resolve import library_track
-from app.models import Album, Track, TrackFile, User
+from app.models import Album, Track, User
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/nd", tags=["medialib"])
@@ -75,52 +74,6 @@ async def with_artist_links(s: AsyncSession, pairs: Iterable[tuple[NdSongOut, Tr
         links = [address(name) for name in out.artists]
         out.hub_artist_ids = [ident for ident, _ in links]
         out.artist_refs = [ref for _, ref in links]
-
-
-async def songs_out(s: AsyncSession, songs: list[dict]) -> list[NdSongOut]:
-    """Navidrome songs as tracks: the Hub's own record of the file gives the Deezer ref (mixes, «Моя волна» and
-    listening data know the song by it), the rest are `nd:<song>`."""
-    ids = [x["id"] for x in songs if x.get("id")]
-    rows: dict[str, Track] = {}
-    acquired: dict[str, datetime] = {}
-    for i in range(0, len(ids), 500):
-        q = (select(Track, TrackFile.nd_song_id, TrackFile.acquired_at).join(TrackFile, TrackFile.track_id == Track.id)
-             .where(TrackFile.nd_song_id.in_(ids[i:i + 500])))
-        for t, song, at in (await s.execute(q)).all():
-            rows[song], acquired[song] = t, at
-    out = []
-    for x in songs:
-        sid = x.get("id")
-        if not sid:
-            continue
-        t = rows.get(sid)
-        ref = library_track(t).ref if t is not None else f"nd:{sid}"
-        artist = x.get("artist") or ""
-        credited = [a for a in x.get("artists") or [] if a.get("name")]
-        names = [a["name"] for a in credited] or ([artist] if artist else [])
-        artist_ids = [a.get("id") for a in credited] or ([x.get("artistId")] if artist else [])
-        cat = (t.catalog or {}) if t is not None else {}
-        out.append(NdSongOut(
-            ref=ref, source=ref.split(":", 1)[0], id=ref.split(":", 1)[1], title=x.get("title") or "",
-            artist=artist, artists=names, album_title=x.get("album"), album_artist=x.get("displayAlbumArtist"),
-            duration_s=x.get("duration"), track_no=x.get("track"), disc_no=x.get("discNumber"),
-            isrc=(x.get("isrc") or [None])[0] if isinstance(x.get("isrc"), list) else x.get("isrc"),
-            explicit=t.explicit if t is not None else None,
-            spotify_id=cat.get("spotify_id"), spotify_plays=cat.get("spotify_plays"),
-            cover_url=cover_url(x.get("coverArt"), BIG_COVER), cover_small_url=cover_url(x.get("coverArt")),
-            owned=True, library_track_id=t.id if t is not None else None, nd_song_id=sid,
-            added_at=acquired.get(sid),
-            nd_album_id=x.get("albumId"), nd_artist_id=x.get("artistId"), nd_artist_ids=artist_ids,
-        ))
-        if t is not None:
-            put_right(out[-1], t)  # Navidrome learns a new name at its next scan; the Hub knows it now
-    await with_artist_links(s, [(song, rows.get(song.nd_song_id)) for song in out])
-    await with_files(s, out)
-    await with_cover_fallbacks(s, [(o, rows[o.nd_song_id]) for o in out if o.nd_song_id in rows])
-    from app.library import versions
-
-    await versions.mark(s, out)  # how many recordings the song of each has
-    return out
 
 
 async def nd_call(user: User, fn, not_found: str = "Не найдено в библиотеке"):
@@ -173,7 +126,7 @@ async def album(album_id: str, user: User = Depends(current_user), s: AsyncSessi
     if not a.get("id"):
         raise HTTPException(404, "Альбом не найден")
     out = album_out(a)
-    out.tracks = await songs_out(s, a.get("song") or [])
+    out.tracks = await cards.of_songs(s, a.get("song") or [])
     ids = [t.library_track_id for t in out.tracks if t.library_track_id is not None]
     library_albums: set[int] = set()
     for i in range(0, len(ids), 500):
@@ -301,7 +254,7 @@ async def all_songs(user: User = Depends(current_user), s: AsyncSession = Depend
     """Every song of the library (a selection by tags looks through all of it)."""
     from app.library import songs as library_songs
 
-    return await songs_out(s, await nd_call(user, library_songs.load))
+    return await cards.of_songs(s, await nd_call(user, library_songs.load))
 
 
 @router.get("/liked", response_model=NdLikedOut)
@@ -342,7 +295,7 @@ async def liked(request: Request, user: User = Depends(current_user),
                       for alias in st.aliases}
         foreign = [x for x in foreign if not ((st := decisions.get(("track", f"nd:{x['id']}"))) and not st.liked)]
     extra = []
-    for raw, song in zip(foreign, await songs_out(s, foreign) if foreign else [], strict=True):
+    for raw, song in zip(foreign, await cards.of_songs(s, foreign) if foreign else [], strict=True):
         song.added_at = naive(parse_time(raw.get("starred"))) or song.added_at
         extra.append(song.model_dump(mode="json"))
     def visible(typ, obj):

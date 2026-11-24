@@ -1543,7 +1543,8 @@ export interface ReleasesOut {
 }
 
 export interface LibraryEvent {
-  kind: 'imported' | 'changed' | 'starred' | 'unstarred' | 'import_review';
+  kind: 'imported' | 'changed' | 'starred' | 'unstarred' | 'import_review' | 'playlist' | 'releases' | 'discoveries';
+  playlist_id?: string | null;
   album_id?: number | null;
   track_id?: number | null;
   /** starred / unstarred: songs the Hub (an import, a download queued with ♥, the assistant) starred or unstarred */
@@ -1560,6 +1561,9 @@ export interface HubEventMap {
   assistant: AssistantEvent;
   library: LibraryEvent;
   recording: { ref: string; unavailable: boolean };
+  /** the cards of these tracks changed (a file came, a name, a cover…): a list showing them takes them anew
+   * (`lib/cards.ts`) — sent to everybody, the cards are the same for all */
+  cards: { ids: number[] };
   batch: BatchEvent;
   import: ImportEvent;
   search_history: Record<string, never>;

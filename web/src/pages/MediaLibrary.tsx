@@ -13,6 +13,7 @@ import { useListSearch, type Found } from '../components/ListSearch';
 import { CoverView, ownCover } from '../components/PlaylistMenu';
 import { ContextMenu, menuAtButton, menuPressProps, useContextMenu, type MenuAt } from '../components/ContextMenu';
 import { NdAlbumMenu, NdArtistMenu } from '../components/EntityMenus';
+import { listChanged, patch, useCardUpdates } from '../lib/cards';
 import { SaveSelection, TagFilterChips } from '../components/Tags';
 import { ArtistLooksWindow } from '../components/ArtistLooks';
 import { ArtistProjects, ArtistWindow, artistHint, useArtistCard } from '../components/ArtistNames';
@@ -254,16 +255,19 @@ const plays = <T extends TrackOut>(tracks: readonly T[]): T[] => tracks.filter((
 export function LikedPage() {
   const res = useAsync((s) => api.ndLiked(s), [], true, 'liked');
   useSmartPage('liked', null);
-  useHubEvent('library', () => res.reload(true));
+  // what only changes cards comes as their own event (`lib/cards.ts`): the list is not read again for it
+  useHubEvent('library', (e) => listChanged(e) && res.reload(true));
   useHubEvent('import', () => res.reload(true));
+  useCardUpdates(res.data?.songs, (cards) => res.setData((prev) => {
+    if (!prev) return prev;
+    const songs = patch(prev.songs, cards);
+    return songs === prev.songs ? prev : { ...prev, songs: [...songs] };
+  }));
   useHubEvent('recording', (event) => res.setData((prev) => {
     if (!prev) return prev;
     const songs = withRecordingAvailability(prev.songs, event);
     return songs === prev.songs ? prev : { ...prev, songs };
   }));
-  useHubEvent('download', (d) => {
-    if (['done', 'failed', 'cancelled', 'needs_review'].includes(d.status)) res.reload(true);
-  });
   useHubEvent('reconnect', () => res.reload(true));
   useEffect(() => {
     const wake = () => { if (document.visibilityState === 'visible') res.reload(true); };
@@ -440,8 +444,14 @@ export function PlaylistPage({ id }: { id: string }) {
   const shown = useShown(all, search.found, filter);
   const songIds = useMemo(() => all.map(tagKey), [all]);
   const closeCover = useCallback(() => setViewing(false), []);
-  // its name or its picture changed (the playlist's menu, the picture's window), or it is gone: the Hub says so
-  useHubEvent('library', () => res.reload(true));
+  // its name or its picture changed (the playlist's menu, the picture's window), or it is gone: the Hub says so;
+  // what only changes the cards of its tracks comes as their own event (`lib/cards.ts`)
+  useHubEvent('library', (e) => listChanged(e) && res.reload(true));
+  useCardUpdates(res.data?.tracks, (cards) => res.setData((prev) => {
+    if (!prev) return prev;
+    const tracks = patch(prev.tracks, cards);
+    return tracks === prev.tracks ? prev : { ...prev, tracks: [...tracks] };
+  }));
   useHubEvent('import', () => res.reload(true)); // a transfer settled its playlists
   useHubEvent('recording', (event) => res.setData((prev) => {
     if (!prev) return prev;

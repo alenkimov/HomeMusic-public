@@ -673,9 +673,9 @@ async def test_file_picker_keeps_cover_from_the_selected_recording(env, monkeypa
 
     from app import listen
     from app.api import file_picker
-    from app.api.medialib import songs_out
     from app.db import session_scope
     from app.library import tagger
+    from app.library.cards import draw_songs as songs_out
     from app.library.probe import ProbeInfo
     from app.library.tracks import current_file
 

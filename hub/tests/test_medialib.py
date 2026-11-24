@@ -239,9 +239,9 @@ async def test_artist_albums_newest_year_first_then_without_a_year(env):
 async def test_library_artist_links_follow_credits_and_existing_hub_artist(env):
     from sqlalchemy import select
 
-    from app.api.medialib import songs_out
     from app.db import session_scope
     from app.library import artists
+    from app.library.cards import draw_songs as songs_out
     from app.models import Track
 
     async with session_scope() as s:

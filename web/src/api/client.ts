@@ -780,6 +780,7 @@ export const api = {
 
   // the Navidrome library (a browser shows it; the app has it natively)
   ndLiked: (signal?: AbortSignal) => request<NdLikedOut>('GET', '/api/nd/liked', { signal }),
+  trackCards: (ids: number[]) => request<NdSongOut[]>('POST', '/api/tracks/cards', { json: { ids } }),
   ndArtists: (signal?: AbortSignal) => cachedGet<NdArtistOut[]>('/api/nd/artists', signal),
   ndArtist: (id: string, signal?: AbortSignal) => request<NdArtistPageOut>('GET', `/api/nd/artists/${enc(id)}`, { signal }),
   ndAlbum: (id: string, signal?: AbortSignal) => request<NdAlbumOut>('GET', `/api/nd/albums/${enc(id)}`, { signal }),

@@ -50,12 +50,90 @@ def track_with_file(t: Track) -> NdSongOut:
     return out
 
 
+async def draw_songs(s: AsyncSession, songs: list[dict]) -> list[NdSongOut]:
+    """Navidrome songs as tracks: the Hub's own record of the file gives the Deezer ref (mixes, «Моя волна» and
+    listening data know the song by it), the rest are `nd:<song>`. The second way to draw a track, beside `draw`
+    (which takes it for the tracks with a file): a list of Navidrome's songs reads kept cards (`of_songs`)."""
+    from datetime import datetime
+
+    from sqlalchemy import select
+
+    from app.api.medialib import BIG_COVER, cover_url, with_artist_links
+    from app.api.schemas import NdSongOut
+    from app.library.owned import put_right, with_cover_fallbacks, with_files
+    from app.mixes.resolve import library_track
+    from app.models import Track, TrackFile
+
+    ids = [x["id"] for x in songs if x.get("id")]
+    rows: dict[str, Track] = {}
+    acquired: dict[str, datetime] = {}
+    for i in range(0, len(ids), 500):
+        q = (select(Track, TrackFile.nd_song_id, TrackFile.acquired_at).join(TrackFile, TrackFile.track_id == Track.id)
+             .where(TrackFile.nd_song_id.in_(ids[i:i + 500])))
+        for t, song, at in (await s.execute(q)).all():
+            rows[song], acquired[song] = t, at
+    out = []
+    for x in songs:
+        sid = x.get("id")
+        if not sid:
+            continue
+        t = rows.get(sid)
+        ref = library_track(t).ref if t is not None else f"nd:{sid}"
+        artist = x.get("artist") or ""
+        credited = [a for a in x.get("artists") or [] if a.get("name")]
+        names = [a["name"] for a in credited] or ([artist] if artist else [])
+        artist_ids = [a.get("id") for a in credited] or ([x.get("artistId")] if artist else [])
+        cat = (t.catalog or {}) if t is not None else {}
+        out.append(NdSongOut(
+            ref=ref, source=ref.split(":", 1)[0], id=ref.split(":", 1)[1], title=x.get("title") or "",
+            artist=artist, artists=names, album_title=x.get("album"), album_artist=x.get("displayAlbumArtist"),
+            duration_s=x.get("duration"), track_no=x.get("track"), disc_no=x.get("discNumber"),
+            isrc=(x.get("isrc") or [None])[0] if isinstance(x.get("isrc"), list) else x.get("isrc"),
+            explicit=t.explicit if t is not None else None,
+            spotify_id=cat.get("spotify_id"), spotify_plays=cat.get("spotify_plays"),
+            cover_url=cover_url(x.get("coverArt"), BIG_COVER), cover_small_url=cover_url(x.get("coverArt")),
+            owned=True, library_track_id=t.id if t is not None else None, nd_song_id=sid,
+            added_at=acquired.get(sid),
+            nd_album_id=x.get("albumId"), nd_artist_id=x.get("artistId"), nd_artist_ids=artist_ids,
+        ))
+        if t is not None:
+            put_right(out[-1], t)  # Navidrome learns a new name at its next scan; the Hub knows it now
+    await with_artist_links(s, [(song, rows.get(song.nd_song_id)) for song in out])
+    await with_files(s, out)
+    await with_cover_fallbacks(s, [(o, rows[o.nd_song_id]) for o in out if o.nd_song_id in rows])
+    from app.library import versions
+
+    await versions.mark(s, out)  # how many recordings the song of each has
+    return out
+
+
+async def of_songs(s: AsyncSession, songs: list[dict]) -> list[NdSongOut]:
+    """Navidrome's songs (an album of the library, all its songs, a star of a song) as a list shows them, in their
+    order: the kept card of the Hub's track of each, drawn here only where the Hub has no track of the song (a file
+    put into the library by hand) or its card is of another file of the track."""
+    from sqlalchemy import select
+
+    from app.api.schemas import NdSongOut
+    from app.models import TrackFile
+
+    ids = [x["id"] for x in songs if x.get("id")]
+    owner: dict[str, int] = {}
+    for i in range(0, len(ids), 500):
+        owner.update((await s.execute(select(TrackFile.nd_song_id, TrackFile.track_id)
+                                      .where(TrackFile.nd_song_id.in_(ids[i:i + 500])))).all())
+    kept = await read(s, sorted(set(owner.values())))
+    carded = {sid: kept[tid] for sid, tid in owner.items() if tid in kept and kept[tid].get("nd_song_id") == sid}
+    drawn = {o.nd_song_id: o for o in await draw_songs(s, [x for x in songs if x.get("id") and x["id"] not in carded])}
+    return [NdSongOut.model_validate(carded[x["id"]]) if x["id"] in carded else drawn[x["id"]]
+            for x in songs if x.get("id")]
+
+
 async def draw(s: AsyncSession, rows: list[Track], *, songs: dict[str, dict] | None = None) -> list[NdSongOut]:
     """Tracks as a list shows them, in their order: one with a file as Navidrome's song of it (`songs`: Navidrome's
     songs by id, else its kept index), one without as the catalog's."""
     from sqlalchemy import select
 
-    from app.api.medialib import songs_out, with_artist_links
+    from app.api.medialib import with_artist_links
     from app.library import songs as library_songs
     from app.library.owned import with_cover_fallbacks, with_files, with_recording_availability
     from app.models import ImportItem
@@ -67,7 +145,7 @@ async def draw(s: AsyncSession, rows: list[Track], *, songs: dict[str, dict] | N
         except Exception as e:  # Navidrome is away: the list is drawn from the Hub's own records
             log.info("cards: songs not read from Navidrome: %r", e)
     known = [index[t.nd_song_id] for t in rows if t.nd_song_id in index]
-    drawn = {x.nd_song_id: x for x in await songs_out(s, known)}
+    drawn = {x.nd_song_id: x for x in await draw_songs(s, known)}
     out = [drawn.get(t.nd_song_id) or (track_with_file(t) if t.path else track_without_file(t)) for t in rows]
     fallback = [(o, t) for o, t in zip(out, rows, strict=True) if t.nd_song_id not in drawn]
     await with_artist_links(s, fallback)
