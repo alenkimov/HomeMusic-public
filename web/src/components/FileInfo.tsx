@@ -84,7 +84,7 @@ export function FileCard({ info }: { info: ListenOut | null | undefined }) {
           <span className="block truncate text-[15px]">{words || providerLabel(info.source)}</span>
           <span className="block text-[13px] text-muted">
             {words && providerLabel(info.source)}
-            {info.kind === 'full' && <>{words && ' · '}играет из источника, ещё не скачан</>}
+            {info.kind === 'full' && <>{words && ' · '}играет из источника, на сервер ещё не скачан</>}
           </span>
         </span>
         {info.page_url && (

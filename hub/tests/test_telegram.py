@@ -192,6 +192,13 @@ async def test_link_send_and_disconnect(env):
     assert (await c.post("/api/telegram/send", json={"nd_song_id": "nd1", "with_lyrics": False})).json()["lyrics"] is False
 
     assert (await c.post("/api/telegram/send", json={"ref": "dz:404"})).status_code == 404  # not in the library
+    # a track the Hub knows, its file not downloaded yet (a transfer made it): not a server error
+    from app.matching.normalize import fingerprint
+
+    async with session_scope() as s:
+        s.add(Track(ref="dz:405", artist="Кино", title="Звезда", fingerprint=fingerprint("Кино", "Звезда")))
+    r = await c.post("/api/telegram/send", json={"ref": "dz:405"})
+    assert r.status_code == 404 and "не скачан" in r.json()["detail"]
 
     state["blocked"] = True
     r = await c.post("/api/telegram/send", json={"nd_song_id": "nd1"})

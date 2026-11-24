@@ -188,8 +188,9 @@ async def send(body: TelegramSendIn, user: User = Depends(current_user),
     bot = await _required_bot()
     await _linked_id(s, user, bot)
     track = await lyrics_service.track_of(s, nd_song_id=body.nd_song_id, ref=body.ref)
-    if track is None:
-        raise HTTPException(404, "Этого трека нет в библиотеке — сначала скачайте его")
+    # a track the Hub knows without a file (a transfer's, a ♥ whose download has not finished) is not sent yet
+    if track is None or not track.path:
+        raise HTTPException(404, "Трек ещё не скачан на сервер — отправить его можно, когда загрузка закончится")
     src = get_settings().library_dir / track.path
     if not src.is_file():
         raise HTTPException(404, "Файл трека не найден в библиотеке")

@@ -1398,8 +1398,24 @@ window.addEventListener(HUB_DOWNLOAD_EVENT, (e) => {
   if (d?.ref && !d.star) markQueued(d.ref);
 });
 
+/** The playing track has just been downloaded to the server (a ♥, a transfer, «Скачать»): what the player says of
+ * its file is asked anew — «играет из источника» is not true of it any more. The sound goes on as it is. */
+function reloadInfoOnceDownloaded(ref: string) {
+  const track = state.track;
+  if (!track || track.ref !== ref || state.info?.kind !== 'full') return;
+  api.listen(track.ref).then(
+    (info) => {
+      if (state.track !== track || info.kind !== 'library') return;
+      set({ info });
+      updateMediaTitle();
+    },
+    () => {},
+  );
+}
+
 hubEvents.on('download', (d) => {
   const ref = d.track_ref;
+  if (ref && d.status === 'done') reloadInfoOnceDownloaded(ref);
   // a quiet download is never «качается», but once imported the track is in the library
   if (ref && d.quiet && d.status === 'done' && state.downloads.get(ref) !== 'done') {
     set({ downloads: new Map(state.downloads).set(ref, 'done') });
