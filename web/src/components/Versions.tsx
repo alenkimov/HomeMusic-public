@@ -186,7 +186,7 @@ function Window({ of }: { of: VersionsOf }) {
                 v,
                 many ? (
                   <>
-                    <button type="button" aria-pressed={v.preferred} aria-label={v.preferred ? 'Предпочитаемая версия' : `Сделать предпочитаемой: ${v.title}`} title={v.preferred ? 'Предпочитаемая версия: её показывают списки и берут миксы' : 'Сделать предпочитаемой — для всех'} onClick={() => !v.preferred && void run(() => api.versionPatch(v.track_id, { preferred: true }).then(() => api.versions({ track_id: id })), 'Предпочитаемая версия изменена у всех')} className={cx(small, v.preferred ? 'text-accent' : 'text-dim hover:text-fg')}>
+                    <button type="button" aria-pressed={v.preferred} aria-label={v.preferred ? 'Предпочитаемая версия' : `Сделать предпочитаемой: ${v.title}`} title={v.preferred ? 'Предпочитаемая версия: её показывают списки и берут миксы' : 'Сделать предпочитаемой — для всех'} onClick={() => !v.preferred && void run(() => api.versionPatch(v.track_id, { preferred: true }).then(() => api.versions({ track_id: id })), 'Предпочитаемая версия изменена у всех')} className={cx(small, v.preferred ? 'text-warn' : 'text-dim hover:text-fg')}>
                       <Icon name="star" size={18} filled={v.preferred} />
                     </button>
                     <button type="button" aria-label={`Это другая песня: ${v.title}`} title="Это другая песня — отвязать" onClick={() => void run(() => api.versionDrop(v.track_id, v.track_id === id ? undefined : id))} className={cx(small, 'text-dim hover:text-fg')}>
