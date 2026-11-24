@@ -2,7 +2,7 @@
 name = "homemusic-embedder"
 version = "0.1.0"
 description = "HomeMusic embedder: audio/text vectors (MuQ-MuLan) on the GPU for mixes and the wave"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi==0.145.0",
     "uvicorn==0.54.0",

@@ -2,7 +2,7 @@
 name = "homemusic-hub"
 version = "0.1.0"
 description = "HomeMusic Hub: catalog, downloaders, uploads, tagging and AI assistant on top of Navidrome"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi==0.145.0",
     "uvicorn[standard]==0.54.0",
