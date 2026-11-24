@@ -11,10 +11,12 @@ import { Icon } from '../components/Icon';
 import { ListBar } from '../components/ListBar';
 import { useListSearch, type Found } from '../components/ListSearch';
 import { CoverView, ownCover } from '../components/PlaylistMenu';
+import { ContextMenu, menuAtButton, menuPressProps, useContextMenu, type MenuAt } from '../components/ContextMenu';
+import { NdAlbumMenu, NdArtistMenu } from '../components/EntityMenus';
 import { SaveSelection, TagFilterChips } from '../components/Tags';
 import { ArtistLooksWindow } from '../components/ArtistLooks';
 import { ArtistProjects, ArtistWindow, artistHint, useArtistCard } from '../components/ArtistNames';
-import { Button, Cover, Empty, ErrorState, HeroSkeleton, IconButton, PageHeader, Sheet, SkeletonRows, Spinner, cx } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, HeroSkeleton, IconButton, PageHeader, SkeletonRows, Spinner, cx } from '../components/ui';
 import { fmtLength, tracksWord } from '../lib/format';
 import { playCount, usePlayCounts } from '../lib/stats';
 import { useDesktop } from '../lib/desktop';
@@ -39,18 +41,23 @@ import { VirtualRows } from '../components/VirtualRows';
 // --- pieces ------------------------------------------------------------------------------------------------
 
 export function NdAlbumCard({ album, showArtist = true }: { album: NdAlbumOut; showArtist?: boolean }) {
+  const menu = useContextMenu();
   return (
-    <Link to={`/lib/album/${enc(album.id)}`} className="block min-w-0">
-      <Cover src={album.cover_url} alt={album.title} icon="disc" className="aspect-square w-full" />
-      <div className="mt-2 line-clamp-2 text-sm font-medium leading-tight">{album.title}</div>
-      <div className="mt-0.5 truncate text-xs text-muted">{[showArtist ? album.artist : null, album.year].filter(Boolean).join(' · ')}</div>
-    </Link>
+    <>
+      <Link to={`/lib/album/${enc(album.id)}`} {...menuPressProps(menu.openAt)} className="block min-w-0 select-none [-webkit-touch-callout:none]">
+        <Cover src={album.cover_url} alt={album.title} icon="disc" className="aspect-square w-full" />
+        <div className="mt-2 line-clamp-2 text-sm font-medium leading-tight">{album.title}</div>
+        <div className="mt-0.5 truncate text-xs text-muted">{[showArtist ? album.artist : null, album.year].filter(Boolean).join(' · ')}</div>
+      </Link>
+      {menu.shown && <NdAlbumMenu album={album} at={menu.at} onClose={menu.close} />}
+    </>
   );
 }
 
 /** An artist of the library: a tap opens it; `radio` — a tap starts the wave by the artist («Радиостанции»). */
 export function NdArtistBubble({ artist, radio = false }: { artist: NdArtistOut; radio?: boolean }) {
   const { starting } = useWave();
+  const menu = useContextMenu();
   const body = (
     <>
       <span className="relative">
@@ -64,17 +71,25 @@ export function NdArtistBubble({ artist, radio = false }: { artist: NdArtistOut;
       <span className="line-clamp-2 text-sm leading-tight">{artist.name}</span>
     </>
   );
-  const cls = 'flex w-28 shrink-0 flex-col items-center gap-2 text-center';
+  const cls = 'flex w-28 shrink-0 select-none flex-col items-center gap-2 text-center [-webkit-touch-callout:none]';
+  const press = menuPressProps(menu.openAt);
+  const drawn = menu.shown && <NdArtistMenu artist={artist} at={menu.at} onClose={menu.close} />;
   if (radio && canWave())
     return (
-      <button type="button" className={cls} aria-label={`Радио: ${artist.name}`} onClick={() => void startWave({ nd_artist_id: artist.id }, 'radio')}>
-        {body}
-      </button>
+      <>
+        <button type="button" {...press} className={cls} aria-label={`Радио: ${artist.name}`} onClick={() => void startWave({ nd_artist_id: artist.id }, 'radio')}>
+          {body}
+        </button>
+        {drawn}
+      </>
     );
   return (
-    <Link to={`/lib/artist/${enc(artist.id)}`} className={cls}>
-      {body}
-    </Link>
+    <>
+      <Link to={`/lib/artist/${enc(artist.id)}`} {...press} className={cls}>
+        {body}
+      </Link>
+      {drawn}
+    </>
   );
 }
 
@@ -415,7 +430,6 @@ export function PlaylistPage({ id }: { id: string }) {
   const res = useAsync((s) => api.playlist(id, s), [id], true, `playlist:${id}`);
   const p = res.data;
   useSmartPage(`playlist:${id}`, p?.name ?? null);
-  const desktop = useDesktop();
   // the playlist is the Hub's: every track stands in its place, whether the library has its file yet or not
   const all = useMemo(() => p?.tracks ?? [], [p]);
   const search = useListSearch(all);
@@ -450,7 +464,7 @@ export function PlaylistPage({ id }: { id: string }) {
       <ListBar title={p.name} back="/library" tracks={playing} context="playlist"
         // the playlist's own menu — its name, its picture, deleting it — here as where the playlists are listed; a
         // list the Hub makes («Микс дня») has nothing to edit, and no menu
-        extra={p.editable !== false && <IconButton icon="more" label="Плейлист: переименовать, обложка, удалить" onClick={(e) => openPlaylistMenu({ id, name: p.name, cover_url: p.cover_url }, desktop ? { x: e.clientX, y: e.clientY } : undefined)} />}
+        extra={p.editable !== false && <IconButton icon="more" label="Ещё" onClick={(e) => openPlaylistMenu({ id, name: p.name, cover_url: p.cover_url }, menuAtButton(e.currentTarget))} />}
         offline={{ key: `playlist:${id}`, to: `/playlist/${id}`, tracks: plays(all) }} search={all.length ? search : undefined} tags={all.length ? { songIds, filter, onChange: setFilter, onSave: () => setSaving(true), count: shown ? shown.length : all.length } : undefined} />
       {viewing && <CoverView src={cover} title={p.name} playlistId={id} own={ownCover(p.cover_url)} onClose={closeCover} />}
       {!search.alone && <Hero
@@ -466,7 +480,7 @@ export function PlaylistPage({ id }: { id: string }) {
         <>
           {saving && <SaveSelection scope={`playlist:${id}`} filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`)} />}
           <TagFilterChips filter={filter} onChange={setFilter} count={shown ? shown.length : all.length} />
-          <SongList tracks={all} found={shown} sort={sort} onSort={setSort} extra={(t, i) => [{ icon: 'x', label: 'Убрать из плейлиста', onClick: () => void remove(i, t) }]} />
+          <SongList tracks={all} found={shown} sort={sort} onSort={setSort} extra={(t, i) => [{ icon: 'x', label: 'Убрать из плейлиста', shortcut: 'Del', onClick: () => void remove(i, t) }]} />
         </>
       ) : (
         <Empty icon="playlist" title="Плейлист пуст" text="Добавляйте треки через ⋯ → «Добавить в плейлист»." />
@@ -536,6 +550,7 @@ export function NdArtistPage({ id }: { id: string }) {
   const row = useRememberScrollX(`nd-artist:${id}`);
   const names = useArtistCard(d && !d.catalog_ref ? d.artist.name : null);
   const [naming, setNaming] = useState<'names' | 'projects' | 'looks' | 'menu' | null>(null);
+  const [namingAt, setNamingAt] = useState<MenuAt | null>(null);
   if (res.loading && !d) return (<><PageHeader hero title="Исполнитель" back="/artists" /><HeroSkeleton round buttons /></>);
   if (!d) return (<><PageHeader hero title="Исполнитель" back="/artists" /><ErrorState text={res.error ?? 'Исполнитель не найден'} onRetry={() => res.reload()} /></>);
   if (d.hub_artist_id || d.catalog_ref) {
@@ -590,22 +605,27 @@ export function NdArtistPage({ id }: { id: string }) {
         <ArtistProjects card={names.card} />
         </div>
         {names.card && (
-          <button type="button" onClick={() => setNaming('menu')} aria-label="Ещё" title="Ещё" className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-muted hover:text-fg">
+          <button type="button" onClick={(e) => {
+            setNamingAt(menuAtButton(e.currentTarget));
+            setNaming('menu');
+          }} aria-label="Ещё" title="Ещё" className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-muted hover:text-fg">
             <Icon name="more" size={24} />
             {artistHint(names.card) && <span aria-hidden="true" className="absolute right-2 top-2 h-2 w-2 rounded-full bg-info" />}
           </button>
         )}
       </div>
-      <Sheet open={naming === 'menu'} onClose={() => setNaming(null)} title={artist.name}>
-        <div className="-mx-1">
-          {([['names', 'edit', <span className="flex items-center gap-2">Имя и написания{artistHint(names.card) && <><span aria-hidden="true" className="h-2 w-2 rounded-full bg-info" /><span className="text-[13px] text-info">есть похожий исполнитель</span></>}</span>], ['projects', 'user', 'Другие проекты…'], ['looks', 'image', 'Фото и обложка']] as const).map(([which, icon, label]) => (
-            <button key={which} type="button" onClick={() => setNaming(which)} className="flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-left text-[15px] hover:bg-fg/5">
-              <Icon name={icon} size={21} className="text-muted" />
-              {label}
-            </button>
-          ))}
-        </div>
-      </Sheet>
+      {naming === 'menu' && (
+        <ContextMenu
+          at={namingAt}
+          head={{ title: artist.name, sub: 'Исполнитель' }}
+          onClose={() => setNaming(null)}
+          entries={[
+            { icon: 'edit', label: 'Имя и написания', shortcut: 'F2', dot: !!artistHint(names.card), onSelect: () => setNaming('names') },
+            { icon: 'user', label: 'Другие проекты', onSelect: () => setNaming('projects') },
+            { icon: 'image', label: 'Фото и обложка', onSelect: () => setNaming('looks') },
+          ]}
+        />
+      )}
       <ArtistWindow which={naming === 'names' || naming === 'projects' ? naming : null} card={names.card} onChange={names.set} onClose={() => setNaming(null)} />
       {naming === 'looks' && names.card && <ArtistLooksWindow artistId={names.card.id} onChanged={() => res.reload()} onClose={() => setNaming(null)} />}
 

@@ -13,7 +13,8 @@ import { ChoosePlaybackFile } from './FindFile';
 import { Icon } from './Icon';
 import { SaveButton } from './PlaylistsButton';
 import { SeekLine } from './SeekLine';
-import { TrackMenuButton } from './TrackMenu';
+import { TrackMenuButton, menuTrackOf, type MenuTrack } from './TrackMenu';
+import { trackMenuAt } from '../lib/trackMenu';
 import { Cover, IconButton, Marquee, Spinner, cx } from './ui';
 
 /** The player of a computer: a bar along the bottom of the window (where a phone has its tab bar), always there —
@@ -54,12 +55,14 @@ export function DesktopPlayer() {
   const waiting = phase === 'resolving' || phase === 'loading';
   const playing = phase === 'playing' || waiting;
 
+  // what the menu of the track gets: the same whether it is opened here or from a row (`components/TrackMenu.tsx`)
+  const menuTrack: MenuTrack | null = track && !isUpload(track) ? menuTrackOf(track, info) : null;
   const trackTags = track ? tagKey({ library_track_id: info?.track_id ?? track.library_track_id }) : null;
   return (
     <div className="pb-safe fixed inset-x-0 bottom-0 z-40 bg-bg" role="region" aria-label="Плеер">
       <SeekLine aim={aim} refId={track?.ref} songId={info?.nd_song_id ?? track?.nd_song_id} className="absolute bottom-full left-1/2 mb-3 w-[min(90vw,40rem)] -translate-x-1/2" />
       <div className="grid h-(--tabbar-h) grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] items-center gap-4 px-4">
-        <div className="flex min-w-0 items-center gap-1">
+        <div className="flex min-w-0 items-center gap-1" onContextMenu={menuTrack ? trackMenuAt(menuTrack, undefined, true) : undefined}>
           {track ? (
             <>
               <Link to="/player" title="Открыть плеер и очередь" className="shrink-0">
@@ -154,7 +157,7 @@ export function DesktopPlayer() {
         </div>
 
         <div className="flex min-w-0 items-center justify-end gap-1">
-          {track && !isUpload(track) && <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id, library_track_id: info?.track_id ?? track.library_track_id }} className="!h-9 !w-9" inPlayer lean noTags />}
+          {track && !isUpload(track) && <TrackMenuButton track={menuTrack!} className="!h-9 !w-9" inPlayer />}
           {track && !isUpload(track) && <IconButton icon="share" size={18} label="Поделиться" onClick={() => openShare({ title: track.title, artist: track.artist, ref: track.ref, nd_song_id: info?.nd_song_id })} className="!h-9 !w-9 text-muted hover:text-fg" />}
           {/* the tags of the track: its own mark here, not a line of ⋯ (a track the library has not got has none) */}
           {track && !isUpload(track) && (

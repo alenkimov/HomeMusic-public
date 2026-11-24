@@ -1,16 +1,17 @@
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { AlbumOut, ArtistPageOut, TrackOut } from '../api/types';
 import { ArtistBubble, ReleaseCard, TrackRow, TrackTableHeader } from '../components/catalog';
 import { TrackTable, useTrackTable } from '../components/TrackTable';
-import { Icon, type IconName } from '../components/Icon';
+import { Icon } from '../components/Icon';
 import { CatalogSourceMarks } from '../components/CatalogSourceMarks';
 import { ListBar } from '../components/ListBar';
 import { ArtistLooksWindow } from '../components/ArtistLooks';
 import { ArtistServiceButtons } from '../components/ArtistSources';
 import { SourceStatuses } from '../components/SourceStatuses';
 import { ArtistProjects, ArtistWindow, artistHint, useArtistCard } from '../components/ArtistNames';
-import { Button, Empty, ErrorState, HeroSkeleton, PageHeader, Sheet, Spinner, cx } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, HeroSkeleton, PageHeader, Spinner, cx } from '../components/ui';
+import { ContextMenu, useContextMenu } from '../components/ContextMenu';
 import { startDownload } from '../lib/actions';
 import { setDisliked, useDisliked } from '../lib/dislikes';
 import { plural, tracksWord } from '../lib/format';
@@ -90,7 +91,7 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
   const { res, sources } = useSourceRequest(`artist:${refId}`, (s, update) => api.artist(refId, s, false, update));
   const status = sources.length > 0 && <SourceStatuses sources={sources} label="Статусы источников исполнителя" />;
   const canMap = !!useSession().me.artist_map; // «Карта похожих» is there
-  const [menu, setMenu] = useState(false);
+  const menu = useContextMenu();
   const [naming, setNaming] = useState<'names' | 'projects' | 'looks' | null>(null); // a window of the artist's ⋯
   const [busy, setBusy] = useState<string | null>(null);
   const d: ArtistPageOut | undefined = res.data;
@@ -132,12 +133,10 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
     toast(`Вы подписаны: ${shownName}. Новые релизы появятся в «Релизах»`, 'success', { label: 'Отменить', run: () => void toggleLike(target, true) });
   };
   const unfollow = async () => {
-    setMenu(false);
     await toggleLike(target, true);
     toast(`Вы отписались: ${shownName}`, 'info', { label: 'Вернуть', run: () => void toggleLike(target, true) });
   };
   const downloadAll = async () => {
-    setMenu(false);
     const missing = (xs: AlbumOut[]) => xs.filter((a) => a.owned_status !== 'full');
     const base = [...missing(d.albums), ...missing(d.singles)];
     const tracks = base.reduce((n, a) => n + Math.max(0, (a.nb_tracks ?? 0) - (a.owned_count ?? 0)), 0);
@@ -152,22 +151,14 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
     res.reload(true);
   };
   const share = async () => {
-    setMenu(false);
     const url = `${window.location.origin}/#${artistPath(artist)}`;
     toast((await copyText(url)) ? 'Ссылка на исполнителя скопирована' : url, 'success');
   };
   const hide = async () => {
-    setMenu(false);
     if (hidden) return void setDisliked({ artist_ref: identityRef, artist: artist.name }, false);
     if (!(await confirmDialog({ title: `Не включать ${artist.name}?`, body: 'Треки этого исполнителя, и те, где он участвует, не будут попадать в волну, миксы и открытия, а в плейлистах будут пропускаться. Нажатый вручную трек сыграет. Вернуть можно здесь же или в «Меню → Скрытое».', okLabel: 'Не включать', danger: true }))) return;
     await setDisliked({ artist_ref: identityRef, artist: artist.name }, true);
   };
-  const item = (icon: IconName, label: ReactNode, run: () => void, danger = false) => (
-    <button type="button" onClick={run} className={cx('flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-left text-[15px] hover:bg-fg/5', danger && 'text-danger')}>
-      <Icon name={icon} size={21} className={danger ? undefined : 'text-muted'} />
-      {label}
-    </button>
-  );
 
   const shownName = names.card?.name ?? artist.name;
   const photo = imageUrl(artist.picture_url);
@@ -190,7 +181,7 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
             <Icon name="search" size={20} />
           </button>
           {/* the ⋯ of the artist: at the top right, and there still when the page is scrolled */}
-          <button type="button" onClick={() => setMenu(true)} aria-label="Ещё" title="Ещё" className="relative mr-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-bg/40 text-fg hover:bg-bg/70">
+          <button type="button" onClick={menu.fromButton} aria-label="Ещё" title="Ещё" className="relative mr-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-bg/40 text-fg hover:bg-bg/70">
             <Icon name="more" size={22} />
             {/* somebody looks like the same artist under another spelling: «Имя и написания» says who */}
             {artistHint(names.card) && <span aria-hidden="true" className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-info" />}
@@ -280,34 +271,28 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
 
       </div>
 
-      <Sheet open={menu} onClose={() => setMenu(false)} title={artist.name}>
-        <div className="-mx-1">
-          {canWave() && item('wave', 'Волна по исполнителю', () => {
-            setMenu(false);
-            void startWave({ artist_ref: identityRef }, 'artist_page');
-          })}
-          {canMap && item('nodes', 'Карта похожих', () => {
-            setMenu(false);
-            navigate(`/map/${enc(artist.ref)}`);
-          })}
-          {item('download', 'Скачать всё', () => void downloadAll())}
-          {followed && item('x', 'Отписаться', () => void unfollow())}
-          {names.card && item('edit', <span className="flex items-center gap-2">Имя и написания{artistHint(names.card) && <><span aria-hidden="true" className="h-2 w-2 rounded-full bg-info" /><span className="text-[13px] text-info">есть похожий исполнитель</span></>}</span>, () => {
-            setMenu(false);
-            setNaming('names');
-          })}
-          {names.card && item('user', 'Другие проекты…', () => {
-            setMenu(false);
-            setNaming('projects');
-          })}
-          {names.card && item('image', 'Фото и обложка', () => {
-            setMenu(false);
-            setNaming('looks');
-          })}
-          {item('link', 'Скопировать ссылку', () => void share())}
-          {item('ban', 'Не включать этого исполнителя', () => void hide(), true)}
-        </div>
-      </Sheet>
+      {menu.shown && (
+        <ContextMenu
+          at={menu.at}
+          head={{ title: shownName, sub: 'Исполнитель', cover: <Cover src={photo} size={44} round icon="user" /> }}
+          onClose={menu.close}
+          entries={[
+            canWave() && { icon: 'wave', label: 'Волна по исполнителю', shortcut: 'R', onSelect: () => void startWave({ artist_ref: identityRef }, 'artist_page') },
+            canMap && { icon: 'nodes', label: 'Карта похожих', onSelect: () => navigate(`/map/${enc(artist.ref)}`) },
+            'sep',
+            { icon: 'download', label: 'Скачать всё', shortcut: 'D', onSelect: () => void downloadAll() },
+            followed && { icon: 'x', label: 'Отписаться', onSelect: () => void unfollow() },
+            'sep',
+            names.card && { icon: 'edit', label: 'Имя и написания', shortcut: 'F2', dot: !!artistHint(names.card), onSelect: () => setNaming('names') },
+            names.card && { icon: 'user', label: 'Другие проекты', onSelect: () => setNaming('projects') },
+            names.card && { icon: 'image', label: 'Фото и обложка', onSelect: () => setNaming('looks') },
+            'sep',
+            { icon: 'link', label: 'Скопировать ссылку', shortcut: 'C', onSelect: () => void share() },
+            'sep',
+            { icon: 'ban', label: hidden ? 'Снова включать исполнителя' : 'Не включать исполнителя', active: hidden, done: hidden, danger: !hidden, onSelect: () => void hide() },
+          ]}
+        />
+      )}
       <ArtistWindow
         which={naming === 'looks' ? null : naming}
         card={names.card}

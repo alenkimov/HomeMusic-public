@@ -3,7 +3,8 @@ import { api } from '../api/client';
 import { closePlaylistMenu, usePlaylistMenu, type MenuPlaylist } from '../lib/playlistMenu';
 import { navigate } from '../lib/router';
 import { attempt, confirmDialog } from '../lib/ui';
-import { Icon, type IconName } from './Icon';
+import { ContextMenu } from './ContextMenu';
+import { Icon } from './Icon';
 import { Button, Cover, Field, Sheet } from './ui';
 
 /** The picture of a playlist is the user's own, not the one made of its albums' covers. */
@@ -17,45 +18,12 @@ export function PlaylistMenu() {
   const file = useRef<HTMLInputElement>(null);
   const target = useRef<MenuPlaylist | null>(null);
 
-  useEffect(() => {
-    if (!open?.at) return;
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && closePlaylistMenu();
-    window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
-  }, [open]);
-
   const p = open?.playlist;
   const drop = async (x: MenuPlaylist) => {
-    closePlaylistMenu();
     if (!(await confirmDialog({ title: `Удалить плейлист «${x.name}»?`, body: 'Песни останутся в библиотеке.', okLabel: 'Удалить', danger: true }))) return;
     if (!(await attempt(() => api.deletePlaylist(x.id), 'Плейлист удалён'))) return;
     if (decodeURIComponent(window.location.hash).includes(`/playlist/${x.id}`)) navigate('/library', { replace: true });
   };
-  const item = (icon: IconName, label: string, run: () => void, danger = false) => (
-    <button type="button" role="menuitem" onClick={run} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-fg/10 ${danger ? 'text-danger' : ''}`}>
-      <Icon name={icon} size={19} />
-      {label}
-    </button>
-  );
-  const items = p && (
-    <>
-      {item('edit', 'Переименовать', () => {
-        setRenaming(p);
-        closePlaylistMenu();
-      })}
-      {item('image', 'Сменить обложку', () => {
-        target.current = p;
-        closePlaylistMenu();
-        file.current?.click();
-      })}
-      {ownCover(p.cover_url) &&
-        item('refresh', 'Вернуть коллаж', () => {
-          closePlaylistMenu();
-          void attempt(() => api.dropPlaylistCover(p.id), 'Своя обложка убрана');
-        })}
-      {item('trash', 'Удалить плейлист', () => void drop(p), true)}
-    </>
-  );
   return (
     <>
       <input
@@ -70,31 +38,22 @@ export function PlaylistMenu() {
           if (f && x) void attempt(() => api.setPlaylistCover(x.id, f), 'Обложка обновлена');
         }}
       />
-      {p && open.at && (
-        <>
-          <button
-            type="button"
-            aria-label="Закрыть меню"
-            className="fixed inset-0 z-50 cursor-default"
-            onClick={closePlaylistMenu}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              closePlaylistMenu();
-            }}
-          />
-          <div role="menu" aria-label={p.name} className="anim-up fixed z-50 w-60 rounded-xl bg-raised p-1.5 text-sm shadow-2xl" style={{ left: Math.min(open.at.x, window.innerWidth - 252), top: Math.min(open.at.y, window.innerHeight - 200) }}>
-            {items}
-          </div>
-        </>
-      )}
-      {p && !open.at && (
-        <Sheet open onClose={closePlaylistMenu} title={p.name}>
-          <div className="flex items-center gap-3 px-2 pb-3">
-            <Cover src={p.cover_url ? `${p.cover_url}&size=160` : null} size={48} icon="playlist" />
-            <span className="min-w-0 truncate font-semibold">{p.name}</span>
-          </div>
-          <div className="-mx-1">{items}</div>
-        </Sheet>
+      {p && (
+        <ContextMenu
+          at={open.at}
+          head={{ title: p.name, sub: 'Плейлист', cover: <Cover src={p.cover_url ? `${p.cover_url}&size=160` : null} size={44} icon="playlist" /> }}
+          onClose={closePlaylistMenu}
+          entries={[
+            { icon: 'edit', label: 'Переименовать', shortcut: 'F2', onSelect: () => setRenaming(p) },
+            { icon: 'image', label: 'Сменить обложку', onSelect: () => {
+              target.current = p;
+              file.current?.click();
+            } },
+            ownCover(p.cover_url) && { icon: 'refresh', label: 'Вернуть коллаж', onSelect: () => void attempt(() => api.dropPlaylistCover(p.id), 'Своя обложка убрана') },
+            'sep',
+            { icon: 'trash', label: 'Удалить плейлист', shortcut: 'Del', danger: true, onSelect: () => void drop(p) },
+          ]}
+        />
       )}
       {renaming && <Rename key={renaming.id} playlist={renaming} onClose={() => setRenaming(null)} />}
     </>

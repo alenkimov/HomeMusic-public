@@ -10,7 +10,8 @@ import { LikeButton } from '../components/LikeButton';
 import { PlaybackDevicesButton } from '../components/PlaybackDevices';
 import { Lyrics } from '../components/Lyrics';
 import { SaveButton } from '../components/PlaylistsButton';
-import { TrackMenuButton } from '../components/TrackMenu';
+import { TrackMenuButton, menuTrackOf } from '../components/TrackMenu';
+import { trackMenuAt } from '../lib/trackMenu';
 import { OtherVersions } from '../components/Versions';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { Cover, Empty, IconButton, Sheet, Spinner, cx } from '../components/ui';
@@ -360,7 +361,7 @@ export function PlayerPage() {
       </div>
 
       <div className="flex items-center justify-between px-4 pt-2">
-        {isUpload(track) ? <span /> : <TrackMenuButton track={{ ...track, nd_song_id: info?.nd_song_id, library_track_id: info?.track_id ?? track.library_track_id }} inPlayer lean />}
+        {isUpload(track) ? <span /> : <TrackMenuButton track={menuTrackOf(track, info)} inPlayer />}
         <ChoosePlaybackFile />
         <div className="flex items-center">
           {!isUpload(track) && <IconButton icon="share" label="Поделиться" onClick={() => openShare({ title: track.title, artist: track.artist, ref: track.ref, nd_song_id: info?.nd_song_id })} className="text-muted" />}
@@ -531,8 +532,12 @@ function QueueList({ queue, index, onWave, shuffle }: { queue: readonly ListenTr
   const row = (t: ListenTrack, i?: number, manualId?: number) => {
     const key = manualId == null ? keyOf(t) : `manual:${manualId}`;
     const current = i === index;
+    const unqueue = () => (manualId != null ? void removeManualQueue([manualId]) : i != null && removeFromQueue(i));
+    // the menu of a queued track is the track's own, with «Убрать из очереди» among its lines
+    const menu = isUpload(t) ? null : menuTrackOf(t);
+    const extra = current ? undefined : [{ icon: 'x' as const, label: 'Убрать из очереди', shortcut: 'Del', onClick: unqueue }];
     return (
-      <li key={key} data-i={i} data-manual={manualId} data-k={key} className={cx('flex min-h-14 items-center gap-1 rounded-lg', dragged === key && 'bg-fg/10')}>
+      <li key={key} data-i={i} data-manual={manualId} data-k={key} onContextMenu={menu ? trackMenuAt(menu, extra, true) : undefined} className={cx('flex min-h-14 items-center gap-1 rounded-lg', dragged === key && 'bg-fg/10')}>
         <button type="button" onClick={() => manualId != null ? playManualQueueAt(manualId) : i != null && playQueueAt(i)} className="flex min-w-0 flex-1 items-center gap-3 py-1.5 text-left" aria-label={`Слушать «${t.title}»`}>
           <Cover src={t.cover_small_url || t.cover_url} size={40} alt="" />
           <span className="min-w-0 flex-1">
@@ -547,9 +552,10 @@ function QueueList({ queue, index, onWave, shuffle }: { queue: readonly ListenTr
             </span>
           </span>
         </button>
+        {menu && <TrackMenuButton track={menu} extra={extra} inPlayer className="w-9" />}
         {!current && (
           <>
-            <IconButton icon="x" label="Убрать из очереди" onClick={() => manualId != null ? void removeManualQueue([manualId]) : i != null && removeFromQueue(i)} size={18} className="w-9 text-muted" />
+            <IconButton icon="x" label="Убрать из очереди" onClick={unqueue} size={18} className="w-9 text-muted" />
             <span
               role="button"
               aria-label={`Перетащить «${t.title}»`}

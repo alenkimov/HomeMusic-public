@@ -2,12 +2,13 @@ import { useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { TrackOut } from '../api/types';
 import { AlbumEdit } from '../components/AlbumEdit';
-import { TrackRow, TrackTableHeader } from '../components/catalog';
+import { TrackRow, TrackTableHeader, listenTrack } from '../components/catalog';
+import { ContextMenu, useContextMenu } from '../components/ContextMenu';
+import { addToQueue } from '../lib/listen';
 import { TrackTable } from '../components/TrackTable';
-import { Icon, type IconName } from '../components/Icon';
 import { ListBar } from '../components/ListBar';
 import { BrandIcon } from '../components/BrandIcon';
-import { ErrorState, ExplicitBadge, HeroSkeleton, IconButton, OwnedBadge, PageHeader, Sheet } from '../components/ui';
+import { Cover, ErrorState, ExplicitBadge, HeroSkeleton, IconButton, OwnedBadge, PageHeader } from '../components/ui';
 import { startDownload } from '../lib/actions';
 import { openAlbumArtwork } from '../lib/coverPicker';
 import { useHubEvent } from '../lib/events';
@@ -16,7 +17,7 @@ import { fmtLength, recordTypeLabel, tracksWord, yearOf } from '../lib/format';
 import { SourceStatuses } from '../components/SourceStatuses';
 import { useSourceRequest } from '../lib/hooks';
 import { canPlay, canPlayAll, playList } from '../lib/player';
-import { Link, albumPath, artistPath, enc, useCanonicalPath } from '../lib/router';
+import { Link, albumPath, artistPath, enc, navigate, useCanonicalPath } from '../lib/router';
 import { copyText } from '../lib/share';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 import { Hero } from './MediaLibrary';
@@ -28,7 +29,7 @@ import { Hero } from './MediaLibrary';
  * under them, the day it came out. */
 
 export function AlbumPage({ refId }: { refId: string }) {
-  const [menu, setMenu] = useState(false);
+  const menu = useContextMenu();
   const [rename, setRename] = useState(false);
   const [rev, setRev] = useState(0);
   const { res, sources } = useSourceRequest(`album:${refId}`, (s, update) => api.album(refId, s, rev > 0, update), rev);
@@ -98,13 +99,11 @@ export function AlbumPage({ refId }: { refId: string }) {
   /** The album into the chosen playlists: the tracks the library has at once, the rest as they are downloaded. */
 
   const share = async () => {
-    setMenu(false);
     const url = `${window.location.origin}/#${albumPath(album)}`;
     toast((await copyText(url)) ? 'Ссылка на релиз скопирована' : url, 'success');
   };
   /** The catalog keeps namesakes under one artist: this release is not of the one whose page led here. */
   const namesake = async () => {
-    setMenu(false);
     const artistRef = album.artist_ref;
     if (!artistRef) return;
     const ok = await confirmDialog({
@@ -116,12 +115,6 @@ export function AlbumPage({ refId }: { refId: string }) {
     if (!ok) return;
     if (await attempt(() => api.namesakesExclude(artistRef, [album.ref]))) toast('Релиз убран у исполнителя', 'success', { label: 'Скрытое', to: '/hidden' });
   };
-  const item = (icon: IconName, label: string, run: () => void) => (
-    <button type="button" onClick={run} className="flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-left text-[15px] hover:bg-fg/5">
-      <Icon name={icon} size={21} className="text-muted" />
-      {label}
-    </button>
-  );
   const allHere = tracks.length > 0 && missing.length === 0;
   const facts = [year, tracks.length ? tracksWord(tracks.length) : null, total ? fmtLength(total) : null].filter(Boolean);
   const artwork = { albumId: album.library_album_id, catalogRef: album.ref, title: album.title, artist: album.artist, src: album.cover_url, tracks };
@@ -137,7 +130,7 @@ export function AlbumPage({ refId }: { refId: string }) {
         extra={
           <>
             {(res.loading || sources.some((s) => s.state === 'searching')) && status}
-            <IconButton icon="more" label="Ещё" onClick={() => setMenu(true)} />
+            <IconButton icon="more" label="Ещё" onClick={menu.fromButton} />
             <IconButton
               icon={allHere ? 'check' : 'download'}
               label={allHere ? 'Всё скачано' : owned.length ? `Скачать недостающие ${missing.length} из ${tracks.length}` : 'Скачать альбом'}
@@ -200,32 +193,34 @@ export function AlbumPage({ refId }: { refId: string }) {
 
       {album.release_date && <p className="px-4 pb-4 pt-4 text-xs text-dim lg:px-6">{new Date(album.release_date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}</p>}
 
-      <Sheet open={menu} onClose={() => setMenu(false)} title={album.title}>
-        <div className="-mx-1">
-          {item('edit', 'Переименовать', () => { setMenu(false); setRename(true); })}
-          {item('image', 'Сменить обложку', () => { setMenu(false); openAlbumArtwork(artwork, 'edit'); })}
-          {item('link', 'Скопировать ссылку', () => void share())}
-          {/* every service that has the release: the catalog its record is of, and the other one where it is too */}
-          {(album.links ?? []).map((x) => (
-            <a key={x.service} href={x.url} target="_blank" rel="noopener noreferrer" onClick={() => setMenu(false)} className="flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-[15px] hover:bg-fg/5">
-              <BrandIcon service={x.service} size={21} />
-              {x.service === 'yandex' ? 'Открыть в Яндекс Музыке' : x.service === 'spotify' ? 'Открыть в Spotify' : 'Открыть в Deezer'}
-            </a>
-          ))}
-          {(album.artist_ref || album.hub_artist_id) && (
-            <Link to={artistPath({ ref: album.artist_ref ?? '', hub_artist_id: album.hub_artist_id })} onClick={() => setMenu(false)} className="flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-[15px] hover:bg-fg/5">
-              <Icon name="user" size={21} className="text-muted" />
-              Перейти к исполнителю
-            </Link>
-          )}
-          {album.artist_ref?.startsWith('dz:') && (
-            <button type="button" onClick={() => void namesake()} className="flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-left text-[15px] text-danger hover:bg-fg/5">
-              <Icon name="ban" size={21} />
-              Это другой {album.artist}
-            </button>
-          )}
-        </div>
-      </Sheet>
+      {menu.shown && (
+        <ContextMenu
+          at={menu.at}
+          head={{ title: album.title, sub: album.artist, cover: <Cover src={album.cover_url} size={44} icon="disc" /> }}
+          onClose={menu.close}
+          entries={[
+            tracks.length > 0 && (allHere
+              ? { icon: 'download', label: 'Скачано', active: true, done: true, disabled: true, onSelect: () => {} }
+              : { icon: 'download', label: owned.length ? `Скачать недостающие (${missing.length})` : 'Скачать альбом', shortcut: 'D', onSelect: () => void downloadAlbum() }),
+            playableTracks.length > 0 && !canPlayAll() && { icon: 'queue', label: 'Добавить в очередь', shortcut: 'Q', onSelect: () => void addToQueue(playableTracks.map(listenTrack)) },
+            'sep',
+            (album.artist_ref || album.hub_artist_id) && { icon: 'user', label: 'Перейти к исполнителю', shortcut: 'Alt+A', onSelect: () => navigate(artistPath({ ref: album.artist_ref ?? '', hub_artist_id: album.hub_artist_id })) },
+            'sep',
+            { icon: 'edit', label: 'Переименовать', shortcut: 'F2', onSelect: () => setRename(true) },
+            { icon: 'image', label: 'Сменить обложку', onSelect: () => openAlbumArtwork(artwork, 'edit') },
+            'sep',
+            { icon: 'link', label: 'Скопировать ссылку', shortcut: 'C', onSelect: () => void share() },
+            // every service that has the release: the catalog its record is of, and the other one where it is too
+            ...(album.links ?? []).map((x) => ({
+              glyph: <BrandIcon service={x.service} size={18} />,
+              label: x.service === 'yandex' ? 'Открыть в Яндекс Музыке' : x.service === 'spotify' ? 'Открыть в Spotify' : 'Открыть в Deezer',
+              onSelect: () => void window.open(x.url, '_blank', 'noopener,noreferrer'),
+            })),
+            'sep',
+            album.artist_ref?.startsWith('dz:') && { icon: 'ban', label: `Это другой ${album.artist}`, danger: true, onSelect: () => void namesake() },
+          ]}
+        />
+      )}
       {rename && <AlbumEdit target={{ ref: String(album.release_id ?? album.ref) }} onClose={() => setRename(false)} onSaved={(saved) => {
         res.setData((prev) => prev && { ...prev, title: saved.title, artist: saved.album_artist,
           artists: saved.album_artist === prev.artist ? prev.artists : [saved.album_artist], library_album_id: saved.album_id });

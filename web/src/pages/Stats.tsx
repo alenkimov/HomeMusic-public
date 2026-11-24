@@ -2,7 +2,9 @@ import { TrackTitle } from '../components/TrackTitle';
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { NdSongOut } from '../api/types';
-import { playAll } from '../components/catalog';
+import { menuTrackOfOut, playAll } from '../components/catalog';
+import { menuPressProps } from '../components/ContextMenu';
+import { openTrackMenu } from '../lib/trackMenu';
 import { Trend } from '../components/PlaysCell';
 import { Icon, type IconName } from '../components/Icon';
 import { ServiceBadge, ServiceIcon, ServiceText } from '../components/ServiceBadge';
@@ -215,7 +217,7 @@ function Rows({ kind, items, by, bySong, icon, round }: { kind: StatsKind; items
         const title = `${playsWord(x.plays)} · ${fmtListened(x.ms)}${outside ? ' · нет в библиотеке' : ''}`;
         const cls = 'group flex w-full items-center gap-3 rounded-lg px-1 py-1.5 text-left';
         return (
-          <li key={`${x.name}|${x.sub ?? ''}|${i}`}>
+          <li key={`${x.name}|${x.sub ?? ''}|${i}`} {...(kind === 'tracks' && song ? menuPressProps((at) => openTrackMenu({ track: menuTrackOfOut(song), at })) : {})}>
             {go ? (
               <button type="button" onClick={go} title={title} className={cx(cls, 'hover:bg-fg/5')}>
                 {body}

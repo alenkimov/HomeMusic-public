@@ -9,6 +9,7 @@ import { isLiked, setLikes, toggleLike, useLiked, type LikeTarget } from '../lib
 import { attempt, toast } from '../lib/ui';
 import { Icon } from './Icon';
 import { Button, Cover, Loading, Sheet, cx } from './ui';
+import { MenuLine } from './ContextMenu';
 
 /** The one button of a track, in a row and in the players: where the track is kept. «Любимое» is a playlist among
  * the others — a special one, the first in the list — and has no button of its own.
@@ -418,5 +419,86 @@ export function PlaylistsPick({ title, picked, onClose, onDone, single, note, li
         </div>
       )}
     </Sheet>
+  );
+}
+
+/** «Добавить в плейлист» as a submenu of a computer's track menu (`components/ContextMenu.tsx`): a click does it at
+ * once — into the playlist, or out of it when the track is there already (✓) — and closes the menu. The search shows
+ * only when there are many playlists; «Новый плейлист» asks the name in place and puts the track into it. A catalog
+ * track the library has not got is downloaded into the chosen playlist. */
+export function PlaylistsSubmenu({ track, onClose }: { track: { title: string; nd_song_id?: string | null; ref?: string | null; data?: Record<string, unknown>; key?: string | null; library_track_id?: number | null }; onClose: () => void }) {
+  const songId = tagKey(track);
+  const target: LikeTarget = { targetType: 'track', trackId: songId ? Number(songId) : null, songId: track.nd_song_id, ref: track.ref, data: track.data };
+  const liked = useLiked(target);
+  const [rows, setRows] = useState<PlaylistOfSongOut[] | null>(null);
+  const [q, setQ] = useState('');
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState('');
+  useEffect(() => {
+    let alive = true;
+    (songId ? api.playlistsOfTrack(songId) : api.playlists().then((r) => r.map((p) => ({ ...p, has: false }))))
+      .then((r) => alive && setRows(r))
+      .catch(() => alive && setRows([]));
+    return () => {
+      alive = false;
+    };
+  }, [songId]);
+
+  const put = async (p: { id: string; name: string }, into: boolean) => {
+    onClose();
+    if (songId) {
+      const r = await attempt(() => api.playlistMembership({ track: songId, add: into ? [p.id] : [], remove: into ? [] : [p.id] }));
+      if (!r) return;
+      noteInPlaylists([songId], r.some((x) => x.has));
+      toast(into ? `Добавлено в «${p.name}»` : `Убрано из «${p.name}»`, 'success');
+    } else if (track.ref && into) {
+      if (await attempt(() => api.download({ track_refs: [track.ref as string], playlist_ids: [p.id] }))) toast(`Скачиваем — трек появится в «${p.name}»`, 'success');
+    }
+  };
+  const create = async () => {
+    const n = name.trim();
+    if (!n) return;
+    const p = await attempt(() => api.createPlaylist(n));
+    if (p) await put(p, true);
+  };
+
+  const needle = q.trim().toLocaleLowerCase('ru');
+  const shown = (rows ?? []).filter((p) => !needle || p.name.toLocaleLowerCase('ru').includes(needle));
+  return (
+    <>
+      {rows && rows.length > 6 && (
+        <label className="m-1 flex h-9 shrink-0 items-center gap-2 rounded-sm bg-fg/10 px-2.5 text-muted">
+          <Icon name="search" size={16} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Найти плейлист" aria-label="Найти плейлист" className="min-w-0 flex-1 bg-transparent text-fg outline-none placeholder:text-muted" />
+        </label>
+      )}
+      {naming ? (
+        <form
+          className="m-1 flex h-9 shrink-0 items-center gap-2 rounded-sm bg-fg/10 px-2.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void create();
+          }}
+        >
+          <Icon name="plus" size={16} className="text-muted" />
+          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Название и Enter" aria-label="Название нового плейлиста" className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted" />
+        </form>
+      ) : (
+        <MenuLine item={{ icon: 'plus', label: 'Новый плейлист' }} onRun={() => setNaming(true)} />
+      )}
+      <div role="separator" className="mx-2 my-1 h-px shrink-0 bg-line" />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {!needle && <MenuLine item={{ icon: 'heart', label: 'Любимое', active: liked, done: liked }} onRun={() => {
+          onClose();
+          void toggleLike(target);
+        }} />}
+        {!rows ? (
+          <div className="flex h-10 items-center px-3 text-muted">Загружаем…</div>
+        ) : (
+          shown.map((p) => <MenuLine key={p.id} item={{ label: p.name, done: p.has }} onRun={() => void put(p, !p.has)} />)
+        )}
+        {rows && !shown.length && <div className="flex h-10 items-center px-3 text-muted">{rows.length ? 'Ничего не нашлось' : 'Плейлистов пока нет'}</div>}
+      </div>
+    </>
   );
 }

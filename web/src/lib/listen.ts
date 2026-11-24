@@ -51,6 +51,9 @@ export interface ListenTrack {
   album_ref?: string | null;
   release_id?: number | null;
   artist_ref?: string | null;
+  /** the library's album and artist of the song (Navidrome's): where «Перейти к альбому» goes when the catalog has none */
+  nd_album_id?: string | null;
+  nd_artist_id?: string | null;
   hub_artist_id?: number | null;
   /** every credited artist, with the page each opens: the catalog's (`ref`) when the Hub knows it, else the library's
    * (`nd`: Navidrome's artist) — `artistTo` */

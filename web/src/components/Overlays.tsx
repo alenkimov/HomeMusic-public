@@ -13,11 +13,13 @@ import { FindFile } from './FindFile';
 import { Versions } from './Versions';
 import { ShareSheet } from './ShareSheet';
 import { PlaylistMenu } from './PlaylistMenu';
+import { TrackMenuHost } from './TrackMenu';
 import { TagsSheet } from './Tags';
 import { TelegramSetup } from './TelegramSetup';
 import { closeCoverPicker } from '../lib/coverPicker';
 import { closeFindFile } from '../lib/findFile';
 import { closePlaylistMenu } from '../lib/playlistMenu';
+import { closeTrackMenu } from '../lib/trackMenu';
 import { closeShare } from '../lib/shareTrack';
 import { closeTagsSheet } from '../lib/tags';
 import { closeTelegramSetup } from '../lib/telegram';
@@ -28,6 +30,7 @@ export function closeAccountOverlays() {
   closeCoverPicker();
   closeFindFile();
   closePlaylistMenu();
+  closeTrackMenu();
   closePlaylistsSheet();
   closeShare();
   closeTagsSheet();
@@ -77,6 +80,7 @@ export function Overlays() {
       <DragActionHint />
       <TagsSheet />
       <PlaylistMenu />
+      <TrackMenuHost />
       <TrackEdit />
       <CoverPicker />
       <FindFile />

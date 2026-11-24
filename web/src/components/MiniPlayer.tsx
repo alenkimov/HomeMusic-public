@@ -1,4 +1,7 @@
 import { TrackTitle } from './TrackTitle';
+import { menuPressProps } from './ContextMenu';
+import { menuTrackOf } from './TrackMenu';
+import { openTrackMenu } from '../lib/trackMenu';
 import { tagKey } from '../lib/tags';
 import { PlayLine } from './FileInfo';
 import { ChoosePlaybackFile } from './FindFile';
@@ -100,7 +103,7 @@ export function MiniPlayer() {
 
   return (
     <div ref={box} className={bar} role="region" aria-label="Прослушивание">
-      <div {...swipe} className="anim-up relative overflow-hidden rounded-xl bg-raised shadow-2xl">
+      <div {...swipe} {...(isUpload(track) ? {} : menuPressProps((at) => openTrackMenu({ track: menuTrackOf(track, info), inPlayer: true, at })))} className="anim-up relative overflow-hidden rounded-xl bg-raised shadow-2xl select-none [-webkit-touch-callout:none]">
         <div className="flex items-center gap-1 py-1.5 pl-2 pr-1">
           {STANDALONE ? (
             <Link to="/player" overlay className="flex min-w-0 flex-1 items-center gap-3" title="Открыть плеер">

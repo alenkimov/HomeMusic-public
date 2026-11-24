@@ -15,6 +15,7 @@ import { openAlbumArtwork } from '../lib/coverPicker';
 import { EDITED_EVENT } from '../lib/trackEdit';
 import { SaveButton } from '../components/PlaylistsButton';
 import { TrackMenuButton } from '../components/TrackMenu';
+import { trackMenuAt } from '../lib/trackMenu';
 import { listen, listenAll, type ListenTrack } from '../lib/listen';
 import { canPlay, playList } from '../lib/player';
 import { navigate } from '../lib/router';
@@ -171,7 +172,7 @@ export function LibraryAlbumPage({ id }: { id: number }) {
       ) : (
         <ul>
           {tracks.map((t) => (
-            <li key={t.id} className={cx('flex items-center pr-1', selected.has(t.id) && 'bg-accent/5')}>
+            <li key={t.id} onContextMenu={trackMenuAt({ title: t.title, artist: t.artist, nd_song_id: t.nd_song_id, library_track_id: t.id, has_file: true })} className={cx('flex items-center pr-1', selected.has(t.id) && 'bg-accent/5')}>
               <Checkbox checked={selected.has(t.id)} onChange={(v) => toggle(t.id, v)} label={`Выбрать «${t.title}»`} />
               <button type="button" className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left" onClick={() => setEditTrack(t)} aria-label={`Изменить теги «${t.title}»`}>
                 <span className="w-6 shrink-0 text-center text-sm tabular-nums text-dim">{t.track_no ?? '–'}</span>
@@ -201,7 +202,7 @@ export function LibraryAlbumPage({ id }: { id: number }) {
                 <IconButton icon="play" label={`Слушать «${t.title}»`} className="!text-accent" size={20} onClick={() => playFrom(t)} />
               )}
               <IconButton icon="trash" label={`Удалить «${t.title}»`} className="text-dim hover:text-danger" size={20} onClick={() => deleteTrack(t)} />
-              <TrackMenuButton track={{ title: t.title, artist: t.artist, nd_song_id: t.nd_song_id, library_track_id: t.id }} className="-ml-2 w-8" />
+              <TrackMenuButton track={{ title: t.title, artist: t.artist, nd_song_id: t.nd_song_id, library_track_id: t.id, has_file: true }} className="-ml-2 w-8" />
             </li>
           ))}
         </ul>

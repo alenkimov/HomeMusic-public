@@ -4,7 +4,7 @@ import type { AlbumEditOut, AlbumEditTarget } from '../api/types';
 import { useAsync } from '../lib/hooks';
 import { EDITED_EVENT } from '../lib/trackEdit';
 import { attempt, toast } from '../lib/ui';
-import { Icon, type IconName } from './Icon';
+import { ContextMenu, useContextMenu } from './ContextMenu';
 import { OtherTitles } from './OtherTitles';
 import { Button, ErrorState, Field, IconButton, Sheet, Spinner } from './ui';
 
@@ -15,23 +15,24 @@ export function LibraryAlbumMenu({ id, title, onSaved, onCover, onMerge }: {
   onCover?: () => void;
   onMerge?: () => void;
 }) {
-  const [panel, setPanel] = useState<'menu' | 'rename'>();
-  const item = (icon: IconName, label: string, action: () => void) => (
-    <button type="button" className="flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-left text-[15px] hover:bg-fg/5"
-      onClick={() => { setPanel(undefined); action(); }}>
-      <Icon name={icon} size={21} className="text-muted" />
-      {label}
-    </button>
-  );
+  const menu = useContextMenu();
+  const [renaming, setRenaming] = useState(false);
   return (
     <>
-      <IconButton icon="more" label="Ещё" onClick={() => setPanel('menu')} />
-      <Sheet open={panel === 'menu'} onClose={() => setPanel(undefined)} title={title}>
-        {item('edit', 'Переименовать', () => setPanel('rename'))}
-        {onCover && item('image', 'Сменить обложку', onCover)}
-        {onMerge && item('merge', 'Объединить с другим альбомом', onMerge)}
-      </Sheet>
-      {panel === 'rename' && <AlbumEdit target={{ album_id: id }} onClose={() => setPanel(undefined)} onSaved={onSaved} />}
+      <IconButton icon="more" label="Ещё" onClick={menu.fromButton} />
+      {menu.shown && (
+        <ContextMenu
+          at={menu.at}
+          head={{ title, sub: 'Альбом' }}
+          onClose={menu.close}
+          entries={[
+            { icon: 'edit', label: 'Переименовать', shortcut: 'F2', onSelect: () => setRenaming(true) },
+            onCover && { icon: 'image', label: 'Сменить обложку', onSelect: onCover },
+            onMerge && { icon: 'merge', label: 'Объединить с другим альбомом', onSelect: onMerge },
+          ]}
+        />
+      )}
+      {renaming && <AlbumEdit target={{ album_id: id }} onClose={() => setRenaming(false)} onSaved={onSaved} />}
     </>
   );
 }

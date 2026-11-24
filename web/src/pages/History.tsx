@@ -2,7 +2,10 @@ import { TrackTitle } from '../components/TrackTitle';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { HistoryItem, HistoryOut } from '../api/types';
-import { listenTrack } from '../components/catalog';
+import { listenTrack, menuTrackOfOut } from '../components/catalog';
+import { menuPressProps } from '../components/ContextMenu';
+import { TrackMenuButton, menuTrackOf } from '../components/TrackMenu';
+import { openTrackMenu } from '../lib/trackMenu';
 import { SaveButton } from '../components/PlaylistsButton';
 import { ListBar } from '../components/ListBar';
 import { useSearchField } from '../components/ListSearch';
@@ -103,7 +106,7 @@ export function HistoryPage() {
     const t = playable(x);
     if (t) listen(t, tracks, 'history');
   };
-  const cols = 'grid grid-cols-[3rem_minmax(0,1.5fr)_minmax(0,1fr)_7.5rem_5rem] items-center gap-3';
+  const cols = 'grid grid-cols-[3rem_minmax(0,1.5fr)_minmax(0,1fr)_7.5rem_7rem] items-center gap-3';
 
   return (
     <div>
@@ -148,10 +151,14 @@ export function HistoryPage() {
                 </span>
               </span>
             );
+            // the track's own menu, with «Убрать из истории» among its lines
+            const menu = x.track ? menuTrackOfOut(x.track) : t ? menuTrackOf(t) : null;
+            const extra = [{ icon: 'x' as const, label: 'Убрать из истории', shortcut: 'Del', onClick: () => void forget(x) }];
             const tools = (
               <span className="flex shrink-0 items-center justify-end" onClick={(e) => e.stopPropagation()}>
                 {x.track && <SaveButton songId={x.track.nd_song_id} refId={x.track.ref} listKey={tagKey(x.track)} title={x.title} data={{ ...x.track }} className="!w-9" />}
                 <IconButton icon="x" size={16} label="Убрать из истории" onClick={() => void forget(x)} className="!w-9 text-dim hover:text-danger" />
+                {menu && <TrackMenuButton track={menu} extra={extra} className="!w-9" />}
               </span>
             );
             return (
@@ -174,6 +181,7 @@ export function HistoryPage() {
                   </>
                 )}
                 <div
+                  {...(menu ? menuPressProps((at) => openTrackMenu({ track: menu, extra, at })) : {})}
                   role={t ? 'button' : undefined}
                   tabIndex={t ? 0 : undefined}
                   onClick={() => play(x)}

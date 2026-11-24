@@ -34,6 +34,9 @@ import { QueueButton } from './QueueButton';
 import { SwipeRow } from './SwipeRow';
 import { SaveButton, TrackPlaylists } from './PlaylistsButton';
 import { TrackMenuButton, type MenuExtra, type MenuTrack } from './TrackMenu';
+import { openTrackMenu, trackMenuAt } from '../lib/trackMenu';
+import { menuPressProps, useContextMenu } from './ContextMenu';
+import { AlbumMenu, ArtistMenu } from './EntityMenus';
 import { useTrackTable } from './TrackTable';
 import { Checkbox, Cover, ExplicitBadge, IconButton, OwnedBadge, PlayingBars, Spinner, cx } from './ui';
 
@@ -70,7 +73,7 @@ export function TrackStatus({
 }
 
 /** What the page player needs to know about a catalog track. */
-export function listenTrack(t: TrackOut & { nd_artist_id?: string | null; nd_artist_ids?: (string | null)[]; page_url?: string | null }): ListenTrack {
+export function listenTrack(t: TrackOut & { nd_album_id?: string | null; nd_artist_id?: string | null; nd_artist_ids?: (string | null)[]; page_url?: string | null }): ListenTrack {
   // every credited artist with the page it opens, as a track's row has them: the catalog's, else the library's
   const credited = t.artists?.length ? t.artists : [t.artist];
   const artists = credited.map((name, i) => {
@@ -90,6 +93,8 @@ export function listenTrack(t: TrackOut & { nd_artist_id?: string | null; nd_art
     page_url: t.page_url,
     album_ref: t.album_ref,
     release_id: t.release_id,
+    nd_album_id: t.nd_album_id,
+    nd_artist_id: t.nd_artist_id,
     artist_ref: t.artist_ref,
     hub_artist_id: t.hub_artist_id,
     artists,
@@ -97,6 +102,30 @@ export function listenTrack(t: TrackOut & { nd_artist_id?: string | null; nd_art
     year: t.release_date ? Number(t.release_date.slice(0, 4)) || undefined : undefined,
     duration_s: t.duration_s,
     spotify_plays: t.spotify_plays,
+  };
+}
+
+/** A track of the catalog or the library for its menu where there is no row of `TrackRow` (the history, the
+ * statistics): the same lines, but «Скачать» and «Выбрать файл» — those belong to a row. */
+export function menuTrackOfOut(t: TrackOut & { nd_album_id?: string | null; nd_artist_id?: string | null; page_url?: string | null }): MenuTrack {
+  return {
+    title: t.title,
+    artist: t.artists?.length ? t.artists.join(', ') : t.artist,
+    ref: t.ref,
+    nd_song_id: t.nd_song_id,
+    key: tagKey(t),
+    library_track_id: t.library_track_id,
+    has_file: t.owned,
+    unknown: t.unknown,
+    artist_ref: t.artist_ref,
+    hub_artist_id: t.hub_artist_id,
+    album_ref: t.album_ref,
+    release_id: t.release_id,
+    nd_album_id: t.nd_album_id,
+    nd_artist_id: t.nd_artist_id,
+    listen: needsTrackFile(t) ? undefined : listenTrack(t),
+    data: { ...t },
+    cover: t.cover_small_url || t.cover_url,
   };
 }
 
@@ -350,6 +379,10 @@ export function TrackRow({
     nd_album_id: track.nd_album_id,
     nd_artist_id: track.nd_artist_id,
     listen: needsFile ? undefined : listenTrack(track),
+    data: { ...track },
+    cover: track.cover_small_url || track.cover_url,
+    downloading: !needsFile && !track.owned && (track.downloading || dl === 'queued'),
+    onDownload: !primaryAction && !track.owned && dl !== 'done' && !needsFile ? () => void download() : undefined,
   };
   // picking several rows to act on together (`lib/selection.ts`)
   const selected = useSelected(track.ref);
@@ -478,6 +511,7 @@ export function TrackRow({
             dragSelectOver(asSel(track));
             dragActionOver(asSel(track));
           }}
+          onContextMenu={trackMenuAt(menuTrack, menuExtra)}
           data-track-row
           data-track-audience={table ? audienceKey(track) : undefined}
           aria-selected={selected}
@@ -611,19 +645,23 @@ export function TrackRow({
               e.preventDefault();
             }}
           >
-            <TrackMenuButton track={menuTrack} extra={menuExtra} noTags picked={selected} onPick={selecting ? () => toggleSelected(asSel(track)) : undefined} className={cx('!h-8 !w-8', shown)} />
+            <TrackMenuButton track={menuTrack} extra={menuExtra} picked={selected} onPick={selecting ? () => toggleSelected(asSel(track)) : undefined} className={cx('!h-8 !w-8', shown)} />
           </span>
         </div>
       );
     }
 
     const extras: MenuExtra[] = [
-      ...(!primaryAction && !track.owned && dl !== 'done' && !downloading && !needsFile ? [{ icon: 'download' as const, label: 'Скачать', onClick: () => void download() }] : []),
       selectExtra,
       ...(menuExtra ?? []),
     ];
+    // the right button, or a finger held on the row: its menu
+    const press = menuPressProps((at) => openTrackMenu({ track: menuTrack, extra: extras, at }));
     return (
-      <div ref={rowRef} onClickCapture={onPick} aria-selected={selected} data-track-row={releaseFeed || undefined}>
+      <div ref={rowRef} {...press} onClickCapture={(e) => {
+        press.onClickCapture(e);
+        if (!e.defaultPrevented) onPick(e);
+      }} aria-selected={selected} data-track-row={releaseFeed || undefined}>
         <SwipeRow
           right={{ icon: 'queue', onAction: async () => { if (needsFile) return void toast('У трека нет файла: выберите его в меню', 'info'); if (await addToQueue([menuTrack.listen as ListenTrack])) toast(`В очереди: «${displayTitle}»`, 'success'); } }}
           left={{ icon: 'plus', armedIcon: 'check', onAction: () => setPicking(true) }}
@@ -661,7 +699,7 @@ export function TrackRow({
 
   const rowClass = cx('flex min-w-0 flex-1 items-center gap-3 py-2 text-left', rowPlays && 'cursor-pointer');
   return (
-    <div ref={rowRef} className={cx('group/track flex min-h-16 items-center gap-3 pl-4 pr-1', grey, rowPlays && 'transition-colors hover:bg-fg/5 focus-within:bg-fg/5')}>
+    <div ref={rowRef} {...menuPressProps((at) => openTrackMenu({ track: menuTrack, extra: menuExtra, at }))} className={cx('group/track flex min-h-16 items-center gap-3 pl-4 pr-1', grey, rowPlays && 'transition-colors hover:bg-fg/5 focus-within:bg-fg/5')}>
       {needsFile || searchOnCover || review || sourceMarks ? (
         <div className={rowClass} onClick={sourceMarks && !review ? openTrack : undefined}>{body}</div>
       ) : !track.owned ? (
@@ -691,19 +729,7 @@ export function TrackRow({
           </>
         ))}
         <TrackMenuButton
-          track={{
-            title: track.title,
-            artist: track.artists?.length ? track.artists.join(', ') : track.artist,
-            ref: track.ref,
-            nd_song_id: track.nd_song_id,
-            artist_ref: track.artist_ref,
-            album_ref: track.album_ref,
-            nd_album_id: track.nd_album_id,
-            nd_artist_id: track.nd_artist_id,
-            unknown,
-            onFindFile: findFile,
-            listen: menuTrack.listen,
-          }}
+          track={menuTrack}
           extra={menuExtra}
           className="-ml-1 w-8"
         />
@@ -713,11 +739,15 @@ export function TrackRow({
 }
 
 export function ArtistBubble({ artist }: { artist: CatalogArtist }) {
+  const menu = useContextMenu();
   return (
-    <Link to={artistPath(artist)} className="flex w-28 shrink-0 flex-col items-center gap-2 text-center">
-      <Cover src={artist.picture_small_url || artist.picture_url} size={104} round icon="user" alt={artist.name} />
-      <span className="line-clamp-2 text-sm leading-tight">{artist.name}</span>
-    </Link>
+    <>
+      <Link to={artistPath(artist)} {...menuPressProps(menu.openAt)} className="flex w-28 shrink-0 select-none flex-col items-center gap-2 text-center [-webkit-touch-callout:none]">
+        <Cover src={artist.picture_small_url || artist.picture_url} size={104} round icon="user" alt={artist.name} />
+        <span className="line-clamp-2 text-sm leading-tight">{artist.name}</span>
+      </Link>
+      {menu.shown && <ArtistMenu artist={artist} at={menu.at} onClose={menu.close} />}
+    </>
   );
 }
 
@@ -726,8 +756,11 @@ export function ReleaseCard({ album, showArtist = false, onDownload, busy, showS
   album: AlbumOut; showArtist?: boolean; onDownload?: () => void; busy?: boolean; showSources?: boolean;
 }) {
   const year = yearOf(album);
+  const menu = useContextMenu();
   return (
-    <div className="relative min-w-0">
+    <>
+    {menu.shown && <AlbumMenu album={album} at={menu.at} onClose={menu.close} />}
+    <div className="relative min-w-0 select-none [-webkit-touch-callout:none]" {...menuPressProps(menu.openAt)}>
       <Link to={albumPath(album)} className="block">
         <Cover src={album.cover_small_url || album.cover_url} alt={album.title} className="aspect-square w-full" />
         <div className="mt-2 line-clamp-2 text-sm font-medium leading-tight">
@@ -750,6 +783,7 @@ export function ReleaseCard({ album, showArtist = false, onDownload, busy, showS
         )}
       </div>
     </div>
+    </>
   );
 }
 
