@@ -211,8 +211,8 @@ volumes:
   hub-postgres:
   caddy-data:
   caddy-config:
-  # SQLite databases live on the WSL2 ext4 disk, not on the Windows bind mount (locking/WAL are unreliable there).
-  # The Hub copies daily backups of both into MUSIC_ROOT/.backups.
+  # Navidrome's and the embedder's SQLite live in volumes, not on the Windows bind mount (locking/WAL are unreliable
+  # there). Daily backups go to MUSIC_ROOT/.backups: the Hub's pg_dump and Navidrome's own.
   navidrome-data:
   hub-data:
   embedder-data:

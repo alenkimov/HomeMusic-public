@@ -54,8 +54,7 @@ async def get_or_create(s: AsyncSession, group: str, name: str, *, code: str | N
 
 
 async def _named(s: AsyncSession, group: str, name: str, user_id: int | None, but: int | None = None) -> Tag | None:
-    """The tag of this name, whatever the case of its letters. Compared here, not in the database: SQLite's
-    `lower()` knows only Latin letters, so «Пляжный» was never found there and a second one was made."""
+    """The tag of this name, whatever the case of its letters (`casefold`, so «Пляжный» and «пляжный» are one)."""
     q = select(Tag).where(Tag.group == group, Tag.user_id.is_(None) if user_id is None else Tag.user_id == user_id)
     want = name.casefold()
     for tag in (await s.execute(q.order_by(Tag.id))).scalars():

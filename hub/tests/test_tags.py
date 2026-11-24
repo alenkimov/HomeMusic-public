@@ -1,7 +1,7 @@
 
 
 async def test_a_tag_of_the_same_name_in_cyrillic_is_one_tag(hub_env):
-    """SQLite's lower() leaves Cyrillic as it is: «Пляжный» made twice used to be two tags."""
+    """«Пляжный» made twice in different case is one tag."""
     from app import db, tags
     from app.models import User
     from app.security import encrypt

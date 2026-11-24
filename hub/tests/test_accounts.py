@@ -437,7 +437,7 @@ async def test_email_codes_are_limited(env, letters, monkeypatch):
     from app.models import EmailCode, utcnow
 
     async def age(minutes: int) -> None:
-        async with session_scope() as s:  # in Python: SQLite has no arithmetic on these datetimes
+        async with session_scope() as s:
             for row in (await s.execute(select(EmailCode))).scalars():
                 row.created_at -= timedelta(minutes=minutes)
 
