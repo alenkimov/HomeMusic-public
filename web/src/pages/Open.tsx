@@ -16,7 +16,7 @@ export function OpenPage({ query }: { query: URLSearchParams }) {
   const q = { dz: query.get('dz'), isrc: query.get('isrc'), sp: query.get('sp'), a: query.get('a'), t: query.get('t'), url: query.get('url') };
   const res = useAsync(async (s) => {
     const found = await api.openLink(q, s);
-    const song = found.nd_song_id ? (await api.ndSongs(s)).find((x) => x.nd_song_id === found.nd_song_id) : undefined;
+    const song = found.nd_song_id ? (await api.ndSongsByIds([found.nd_song_id], s))[0] : undefined;
     return { found, song };
   }, [query.toString()]);
   const found = res.data?.found;

@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Iterable
 from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -255,6 +257,29 @@ async def all_songs(user: User = Depends(current_user), s: AsyncSession = Depend
     from app.library import songs as library_songs
 
     return await cards.of_songs(s, await nd_call(user, library_songs.load))
+
+
+class SongIdsIn(BaseModel):
+    ids: list[str] = Field(max_length=2000)
+
+
+@router.post("/songs/by-ids", response_model=list[NdSongOut])
+async def songs_by_ids(body: SongIdsIn, user: User = Depends(current_user),
+                       s: AsyncSession = Depends(get_session, scope="function")):
+    """Some songs of the library by their Navidrome ids, in the order asked, as `all_songs` gives them — for a page
+    that needs a few (the tops of the statistics, a shared link), not the whole library. An id the library has not
+    is left out. The kept index of songs is read anew once when it has not some of them yet (a song just scanned)."""
+    from app.library import songs as library_songs
+
+    ids = list(dict.fromkeys(i for i in body.ids if i))
+    try:
+        index = await library_songs.index()
+        if any(i not in index for i in ids) and time.monotonic() - library_songs.loaded_at() > 5:
+            library_songs.forget()
+            index = await library_songs.index()
+    except Exception as e:  # Navidrome away
+        raise HTTPException(502, "Медиатека не отвечает") from e
+    return await cards.of_songs(s, [index[i] for i in ids if i in index])
 
 
 @router.get("/liked", response_model=NdLikedOut)

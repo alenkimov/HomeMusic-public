@@ -39,6 +39,20 @@ const ALL = 500;
 const playsWord = (n: number) => `${fmtNum(n)} ${plural(n, ['прослушивание', 'прослушивания', 'прослушиваний'])}`;
 const daysWord = (n: number) => `${n} ${plural(n, ['день', 'дня', 'дней'])}`;
 
+/** The library's songs the tops name — their covers, albums, artists, ▶ — asked by their ids (not the whole library,
+ * thousands of songs, for a few dozen) and kept while the page is open: another period asks only for the new ones. */
+function useSongsOf(ids: readonly (string | null | undefined)[]): Map<string | null | undefined, NdSongOut> {
+  const known = useRef(new Map<string | null | undefined, NdSongOut>());
+  const want = [...new Set(ids.filter((id): id is string => !!id && !known.current.has(id)))].sort();
+  const key = want.join('\n');
+  const res = useAsync((s) => (want.length ? api.ndSongsByIds(want, s) : Promise.resolve([])), [key]);
+  return useMemo(() => {
+    for (const x of res.data ?? []) if (x.nd_song_id) known.current.set(x.nd_song_id, x);
+    return new Map(known.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [res.data]);
+}
+
 /** «Статистика»: what was listened to in a period — the sums, the tops, when. Both switches act on the whole page. */
 export function StatsPage() {
   const [period, setPeriod] = useState<StatsPeriod>('month');
@@ -46,9 +60,8 @@ export function StatsPage() {
   const [all, setAll] = useState<StatsKind | null>(null);
   const [importing, setImporting] = useState(false);
   const stats = useAsync((s) => api.stats({ period, by, limit: TOP }, s), [period, by]);
-  const songs = useAsync((s) => api.ndSongs(s), []);
-  const bySong = useMemo(() => new Map((songs.data ?? []).map((t) => [t.nd_song_id, t] as const)), [songs.data]);
   const d = stats.data;
+  const bySong = useSongsOf(d ? KINDS.flatMap((k) => d[k.kind].items.map((x) => x.nd_song_id)) : []);
 
   const forget = async () => {
     if (!(await confirmDialog({ title: 'Удалить импортированную историю?', body: `${playsWord(d?.imported ?? 0)} из Spotify исчезнут из статистики. То, что вы слушали здесь, останется.`, okLabel: 'Удалить', danger: true }))) return;
@@ -268,10 +281,13 @@ function TopCard({ kind, title, icon, round, top, by, bySong, onAll }: { kind: S
   );
 }
 
-function AllSheet({ kind, period, by, bySong, onClose }: { kind: StatsKind; period: StatsPeriod; by: StatsBy; bySong: Map<string | null | undefined, NdSongOut>; onClose: () => void }) {
+function AllSheet({ kind, period, by, bySong: onPage, onClose }: { kind: StatsKind; period: StatsPeriod; by: StatsBy; bySong: Map<string | null | undefined, NdSongOut>; onClose: () => void }) {
   const full = useAsync((s) => api.stats({ period, by, limit: ALL }, s), [period, by]);
   const k = KINDS.find((x) => x.kind === kind)!;
   const top = full.data?.[kind];
+  // the whole top names more songs than the page: the ones it has already come from there
+  const more = useSongsOf((top?.items ?? []).map((x) => x.nd_song_id).filter((id) => !!id && !onPage.has(id)));
+  const bySong = useMemo(() => new Map([...onPage, ...more]), [onPage, more]);
   return (
     <Sheet open onClose={onClose} title={`${k.title} — ${PERIODS.find((p) => p.value === period)!.label.toLowerCase()}`}>
       {!top ? full.error ? <ErrorState text={full.error} /> : <Loading /> : <Rows kind={kind} items={top.items} by={by} bySong={bySong} icon={k.icon} round={k.round} />}

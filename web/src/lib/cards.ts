@@ -3,7 +3,7 @@ import { api } from '../api/client';
 import type { LibraryEvent, NdSongOut } from '../api/types';
 import { useHubEvent } from './events';
 
-/** Point updates of a list of tracks (docs/track-cards-plan.md, point 3). A track's card — its names, its file, its
+/** Point updates of a list of tracks. A track's card — its names, its file, its
  * cover, how its download goes — changes on the Hub's own (`app/library/cards.py` `build`), and the Hub says which
  * (event `cards`); a page showing some of them takes just those cards (`POST /api/tracks/cards`) and puts them in
  * place of the rows, instead of reading its whole list again — «Любимое» of thousands of tracks is megabytes. */

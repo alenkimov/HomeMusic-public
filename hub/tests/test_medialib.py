@@ -287,3 +287,27 @@ async def test_library_needs_a_session(hub_env):
     async with app.router.lifespan_context(app):
         async with app_client(app, login=None) as client:
             assert (await client.get("/api/nd/home")).status_code == 401
+
+
+async def test_some_songs_are_given_by_their_ids_as_all_songs_gives_them(env, monkeypatch):
+    from app.library import songs as library_songs
+
+    async def index():
+        return {x["id"]: x for x in SONGS}
+
+    monkeypatch.setattr(library_songs, "index", index)
+    c = env["client"]
+    r = await c.post("/api/nd/songs/by-ids", json={"ids": ["ndZ", "nope", "ndK", "ndZ", ""]})
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert [x["nd_song_id"] for x in got] == ["ndZ", "ndK"]  # in the order asked, once, the unknown left out
+    assert got[1]["ref"] == "dz:100" and got[0]["ref"] == "nd:ndZ"  # the Hub's track by its card, the other drawn
+    # the same songs as the whole library gives them
+    monkeypatch.setattr(library_songs, "load", lambda nd: _songs())
+    whole = {x["nd_song_id"]: x for x in (await c.get("/api/nd/songs")).json()}
+    assert got == [whole["ndZ"], whole["ndK"]]
+    assert (await c.post("/api/nd/songs/by-ids", json={"ids": [str(i) for i in range(2001)]})).status_code == 422
+
+
+async def _songs():
+    return SONGS

@@ -810,6 +810,8 @@ export const api = {
   tagSelectionSave: (id: number, body: Omit<TagSelection, 'id'>) => request<TagSelection>('PUT', `/api/tags/selections/${id}`, { json: body }),
   tagSelectionDelete: (id: number) => request<OkOut>('DELETE', `/api/tags/selections/${id}`),
   ndSongs: (signal?: AbortSignal) => request<NdSongOut[]>('GET', '/api/nd/songs', { signal }),
+  /** a few songs of the library by their Navidrome ids, in the order asked (not the whole library) */
+  ndSongsByIds: (ids: string[], signal?: AbortSignal) => request<NdSongOut[]>('POST', '/api/nd/songs/by-ids', { json: { ids }, signal }),
   // ListenBrainz
   listenbrainz: (signal?: AbortSignal) => request<ListenBrainzOut>('GET', '/api/listenbrainz', { signal }),
   listenbrainzConnect: (token: string) => request<ListenBrainzOut>('POST', '/api/listenbrainz/connect', { json: { token } }),
