@@ -8,7 +8,7 @@ const EDGE = 24; // a swipe from the very edge of the screen is the browser's «
 
 /** A list row on a touch screen that is swiped aside: to the right — `right` (into the queue), to the left — `left`
  * (into a playlist). The plate under the row turns to the accent color once the action would fire; released
- * earlier, the row goes back and nothing happens. A vertical move scrolls the page as usual. */
+ * earlier, the row goes back and nothing happens. Crossing that point buzzes the phone. A vertical move scrolls the page as usual. */
 export function SwipeRow({
   right,
   left,
@@ -44,7 +44,10 @@ export function SwipeRow({
       }
     }
     if (d.lock !== 'x') return;
+    const was = Math.abs(d.dx) >= THRESHOLD;
     d.dx = Math.max(left ? -MAX : 0, Math.min(right ? MAX : 0, mx));
+    // a short buzz the moment the row is pulled far enough for the action to fire, as the plate turns green
+    if (!was && Math.abs(d.dx) >= THRESHOLD) navigator.vibrate?.(10);
     setDx(d.dx);
   };
   const end = (fire: boolean) => {
