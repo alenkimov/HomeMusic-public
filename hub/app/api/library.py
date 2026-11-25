@@ -195,6 +195,15 @@ async def split_albums(user: User = Depends(current_user), s: AsyncSession = Dep
                 .order_by(Track.album_id, Track.disc_no.nulls_last(), Track.track_no.nulls_last(), Track.id))).all():
             tracks.setdefault(album_id, []).append(track_id)
     dismissed = set((await s.execute(select(AlbumSplitDismissal.key))).scalars().all())
+    # each credit of a part with its page, as on the album's own page
+    from app.library.credits import split_artists
+
+    credits = {a.id: split_artists(a.album_artist) or [a.album_artist] for albums in split for a in albums}
+    names = await artists.reader(s, (n for ns in credits.values() for n in ns))
+
+    def linked(album_id: int) -> list[dict]:
+        return [{"name": n, "id": hit[0] if (hit := names.artist(n)) else None} for n in credits[album_id]]
+
     out = []
     for albums in split:
         albums.sort(key=lambda a: (-len(tracks.get(a.id, [])), a.id))
@@ -202,7 +211,7 @@ async def split_albums(user: User = Depends(current_user), s: AsyncSession = Dep
                     "dismissed": _split_key(a.id for a in albums) in dismissed,
                     "albums": [{"id": a.id, "title": a.title, "album_artist": a.album_artist, "year": a.year,
                                 "track_count": len(tracks.get(a.id, [])), "track_ids": tracks.get(a.id, []),
-                                "has_cover": _has_cover(a)} for a in albums]})
+                                "has_cover": _has_cover(a), "artists": linked(a.id)} for a in albums]})
     return sorted(out, key=lambda g: g["title"].casefold())
 
 

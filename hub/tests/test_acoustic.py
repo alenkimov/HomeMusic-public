@@ -104,6 +104,8 @@ async def test_albums_in_pieces_are_listed(env):
     assert len(got) == 1 and got[0]["target_id"] == ids[0]  # the one with the most tracks takes the rest
     assert [(a["id"], a["track_count"]) for a in got[0]["albums"]] == [(ids[0], 2), (ids[1], 1)]
     assert got[0]["dismissed"] is False and all(len(a["track_ids"]) == a["track_count"] for a in got[0]["albums"])
+    # each part's credits, each with its page where the Hub knows the artist
+    assert [[x["name"] for x in a["artists"]] for a in got[0]["albums"]] == [["Три дня дождя"], ["Три дня дождя", "Роки"]]
 
     # «Это разные альбомы»: kept apart, offered again only when asked to
     group = {"album_ids": list(ids)}

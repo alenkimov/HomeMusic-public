@@ -810,7 +810,9 @@ export interface SplitAlbums {
   target_id: number;
   key: string;
   dismissed: boolean;
-  albums: { id: number; title: string; album_artist: string; year?: number | null; track_count: number; track_ids: number[]; has_cover: boolean }[];
+  albums: { id: number; title: string; album_artist: string; year?: number | null; track_count: number; track_ids: number[]; has_cover: boolean;
+    /** the part's credits, each with its page (id: the Hub's artist; null: nobody known) */
+    artists?: { name: string; id: number | null }[] }[];
 }
 
 export interface UploadCommitIn {

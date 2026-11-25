@@ -7,8 +7,9 @@ import { TrackTable } from '../components/TrackTable';
 import { Button, Cover, Empty, ErrorState, Loading, PageHeader, cx } from '../components/ui';
 import { fmtLength, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
-import { Link } from '../lib/router';
+import { Link, artistPath } from '../lib/router';
 import { attempt } from '../lib/ui';
+import { openAlbumArtwork } from '../lib/coverPicker';
 import { PlayPair } from './MediaLibrary';
 
 type Group = SplitAlbums;
@@ -223,10 +224,15 @@ function GroupView({ group, mergedInto, onMerged, onDismissed }: { group: Group;
 /** A part as the album it is: its head (cover, name, artist, ▶) and its tracks as an album page lists them. */
 function PartAlbum({ album, tracks, title, artist, main, out }: { album: Part; tracks: TrackOut[]; title: string; artist: string; main?: boolean; out?: boolean }) {
   const length = tracks.reduce((n, t) => n + (t.duration_s ?? 0), 0);
+  const cover = album.has_cover ? libraryCoverUrl(album.id, 600) : null;
   return (
     <section aria-label={`${title} — ${artist}`} className={cx('mt-8 transition', out && 'opacity-45')}>
       <div className="flex flex-col gap-4 px-4 lg:flex-row lg:items-end lg:gap-6 lg:px-6">
-        <Cover src={album.has_cover ? libraryCoverUrl(album.id, 600) : null} icon="disc" alt="" className="aspect-square w-44 shrink-0 self-center shadow-2xl lg:w-40 lg:self-auto" />
+        {/* the cover opens large, as on the album's own page */}
+        <button type="button" onClick={() => openAlbumArtwork({ albumId: album.id, title, artist, src: cover, tracks })} disabled={!cover}
+          aria-label={`Обложка «${title}»`} className="shrink-0 self-center rounded-md enabled:cursor-zoom-in lg:self-auto">
+          <Cover src={cover} icon="disc" alt="" className="aspect-square w-44 shadow-2xl lg:w-40" />
+        </button>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted">Альбом</span>
@@ -239,7 +245,13 @@ function PartAlbum({ album, tracks, title, artist, main, out }: { album: Part; t
           </div>
           <h2 className="mt-1 line-clamp-2 break-words text-2xl font-black leading-tight tracking-tight lg:text-5xl">{title}</h2>
           <div className="mt-2 text-sm text-muted">
-            <span className="font-medium text-fg">{artist}</span>
+            {/* each credit with its page, as on the album's own page */}
+            {(album.artists?.length ? album.artists : [{ name: artist, id: null }]).map((a, i) => (
+              <span key={`${a.name}:${i}`} className="font-medium text-fg">
+                {i > 0 && <span className="pr-1 font-normal text-muted">,</span>}
+                {a.id ? <Link to={artistPath({ ref: '', hub_artist_id: a.id })} className="hover:underline">{a.name}</Link> : a.name}
+              </span>
+            ))}
             {[album.year, tracksWord(tracks.length), length ? fmtLength(length) : null].filter(Boolean).map((x) => ` · ${x}`)}
           </div>
         </div>
