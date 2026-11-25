@@ -407,6 +407,26 @@ latest nonduplicate received decision/compensation, preserves pending refs witho
 undelivered own mirrors. Import provenance covers all three types; ambiguous legacy album/artist imports are
 quarantined from bootstrap until verified or explicitly acted upon. A stale ND star cannot resurrect an own unlike.
 
+## «Наведение порядка» (app/tidy)
+The Hub looks through the library every night (and on «Проверить сейчас») and offers changes; nothing changes until
+one is accepted. Sections: `names` (notes of videos in names, the artist or the number written into them — by rule;
+Russian names in Latin letters — the AI), `versions` (a recording of a song the library has → joined as its version;
+one recording in two files → the better stays, the other goes to the trash), `artists` (two artists who are one),
+`albums` (the albums in pieces of `/api/library/albums/split`; not proposals), `lyrics` (lines that are not sung).
+A proposal: `{id, kind (title/cyrillic/version/double/artist/lyrics), section, subject_type, subject_id, was, to,
+show, by (rule/ai), sure, why, state (open/accepted/rejected/reverted), decided_at, decided_by}`. A rejected or
+taken-back one is not offered again; one whose subject changed since is dropped (`409` on accepting it). The AI is
+paid by the month (`TIDY_AI_USD_MONTH`, spent as `ai_usage` of kind `tidy`), a question answered is not paid twice.
+
+| Method | Path | Body → Response |
+|---|---|---|
+| GET | `/api/tidy` | `{checked_at, running, can_scan, ai: {state: ok/limit/off, spent_usd, limit_usd}, sections: [{id, title, count, sure}], total}` |
+| GET | `/api/tidy/proposals?section=` | the open proposals, the sure first |
+| POST | `/api/tidy/proposals/{id}/accept` · `/reject` · `/reopen` · `/revert` | → the proposal. `409` — changed since; `403` — a file somebody else keeps |
+| POST | `/api/tidy/accept-sure` | `{section}` → `{accepted, failed}` |
+| GET | `/api/tidy/journal?section=&before=&limit=50` | accepted and taken back, the latest decided first; `before` — a proposal id |
+| POST | `/api/tidy/scan` | admin: queue a look-through → the overview |
+
 ## Uploads (FR-5)
 | Method | Path | Body → Response |
 |---|---|---|
@@ -495,6 +515,8 @@ over, liked albums and artists the library has get ★. The sign-in token is kep
 - `download` → `DownloadItemOut` (without candidates) on every status/progress change
 - `library` → `{kind: "imported"|"changed", album_id, track_id?}`
 - `import` → `{id, status}` when an import moves on (sign-in, fetched, a batch matched, done): refetch `/api/imports/{id}`
+- `tidy` → `{kind: "checked"|"decided"}` to everybody: «Наведение порядка» looked through the library, or somebody
+  answered it — refetch `/api/tidy`
 - `search_history` → `{}` after saving/clearing the account's recent queries: refetch `/api/search/history`
 - `ping` → `{}` every 20 s
 

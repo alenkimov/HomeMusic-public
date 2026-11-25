@@ -118,13 +118,14 @@ class EmailCode(Base):
 
 
 class AiUsage(Base):
-    """Every paid AI call of a user (chat turn, screenshot/link/text recognition): the admin's spending report."""
+    """Every paid AI call: the admin's spending report. `user_id` None: the Hub's own work, nobody asked for it
+    (`tidy` — «Наведение порядка»)."""
 
     __tablename__ = "ai_usage"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    kind: Mapped[str] = mapped_column(String(16))  # chat/images/link/text
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # mix / tidy
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, default=0)
@@ -1199,6 +1200,46 @@ class ArtistReleaseCheck(Base):
     last_release_date: Mapped[date | None] = mapped_column(Date)
     last_release_title: Mapped[str | None] = mapped_column(String(512))
     picture_url: Mapped[str | None] = mapped_column(String(512))  # the artist's photo, as the catalog gave it
+
+
+class TidyProposal(Base):
+    """A change «Наведение порядка» offers (app/tidy): to put a name right, to join two tracks as versions, two
+    artists as one, to drop a file twice there or the lines of a text that are not the song. Nothing is changed
+    until somebody accepts it, and an accepted one can be taken back (`undo_json`: what it takes).
+
+    `key` is the question itself — the kind, the subject and what it is and would be: one asked and answered (even
+    «нет») is not asked again, and a subject that has changed since is a new question."""
+
+    __tablename__ = "tidy_proposals"
+    __table_args__ = (Index("ix_tidy_proposals_open", "section", "state"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(128), unique=True)
+    kind: Mapped[str] = mapped_column(String(16))  # app.tidy.kinds
+    section: Mapped[str] = mapped_column(String(16))  # names / versions / artists / lyrics
+    subject_type: Mapped[str] = mapped_column(String(8))  # track / album / artist
+    subject_id: Mapped[int] = mapped_column(Integer, index=True)
+    was_json: Mapped[dict[str, Any]] = mapped_column(JSONB)  # what the subject is: a proposal holds while it still is
+    to_json: Mapped[dict[str, Any]] = mapped_column(JSONB)  # what it would be
+    show_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # what a page shows of it
+    by: Mapped[str] = mapped_column(String(8))  # rule / ai
+    sure: Mapped[bool] = mapped_column(Boolean, default=True)
+    why: Mapped[str] = mapped_column(String(300), default="")
+    state: Mapped[str] = mapped_column(String(10), default="open")  # open / accepted / rejected / reverted
+    undo_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class TidyAsked(Base):
+    """A question the AI of «Наведение порядка» has answered with «nothing to do»: not paid for again. `key` — the
+    kind and what was asked, hashed; a subject that changes is a new question."""
+
+    __tablename__ = "tidy_asked"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class AppSetting(Base):

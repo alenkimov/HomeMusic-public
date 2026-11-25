@@ -1,0 +1,418 @@
+"""How each kind of proposal is done and taken back — with the functions a listener's own changes go through, so
+the journal of edits, the files' tags and the search follow as for a change by hand.
+
+Each kind says what its subject is now (`now`): a proposal holds while that is what it was made of (`was_json`),
+and an accepted one can be taken back while the subject is what it made of it (`after`).
+"""
+
+from __future__ import annotations
+
+import hashlib
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import (
+    Album,
+    Artist,
+    ArtistName,
+    Lyrics,
+    PlaylistItem,
+    SongTrack,
+    TidyProposal,
+    Track,
+    TrackTag,
+    TrashedTrack,
+    User,
+    utcnow,
+)
+
+# the sections of the page, in its order («Альбомы» is the page of «Объединение альбомов», not proposals)
+SECTIONS = ("names", "versions", "artists", "albums", "lyrics")
+TITLES = {"names": "Названия", "versions": "Версии и дубли", "artists": "Исполнители", "albums": "Альбомы",
+          "lyrics": "Тексты"}
+
+
+class Changed(ValueError):
+    """The subject is not what the proposal is about any more (somebody changed it, or it is gone)."""
+
+
+# ---------------------------------------------------------------- what is done after (jobs, the player's apps)
+
+
+@dataclass
+class After:
+    """What has to follow a change once it is committed: the library written in an artist's name, a scan of the
+    files for Navidrome, the playlists mirrored."""
+
+    rewrite: set[int]
+    scan: bool = False
+    playlists: set[int] | None = None
+
+    async def queue(self, s: AsyncSession, user: User | None) -> None:
+        from app.jobs.downloads import enqueue_scan
+        from app.jobs.queue import enqueue
+        from app.playlists_mirror import enqueue_mirror
+
+        for artist_id in sorted(self.rewrite):
+            await enqueue(s, "artist_rewrite", {"artist_id": artist_id, "user_id": user.id if user else None})
+        for playlist_id in sorted(self.playlists or ()):
+            await enqueue_mirror(s, playlist_id)
+        if self.scan:
+            await enqueue_scan(s)
+
+
+def text_lines(row: Lyrics | None) -> list[str]:
+    """A text as the lines a proposal names by their places: the timed lines, else the plain text's."""
+    if row is None:
+        return []
+    if row.lines_json:
+        return [ln.get("text", "") for ln in row.lines_json]
+    return (row.plain or "").split("\n")
+
+
+def text_hash(row: Lyrics | None) -> str | None:
+    if row is None or row.kind == "none":
+        return None
+    return hashlib.sha1("\n".join(text_lines(row)).encode()).hexdigest()[:16]
+
+
+# ---------------------------------------------------------------- names: a track, an album, an artist
+
+
+async def _named(s: AsyncSession, subject_type: str, subject_id: int) -> Track | Album | Artist | None:
+    model = {"track": Track, "album": Album, "artist": Artist}[subject_type]
+    obj = await s.get(model, subject_id)
+    if isinstance(obj, Artist) and obj.merged_into_id is not None:
+        return None
+    return obj
+
+
+def _name_of(obj: Track | Album | Artist) -> str:
+    return obj.name if isinstance(obj, Artist) else obj.title
+
+
+async def _name_now(s: AsyncSession, p: TidyProposal) -> dict[str, Any] | None:
+    obj = await _named(s, p.subject_type, p.subject_id)
+    return {"name": _name_of(obj)} if obj is not None else None
+
+
+async def _rename(s: AsyncSession, user: User, subject_type: str, obj: Any, name: str, after: After,
+                  *, dropping: int | None = None) -> int | None:
+    """Give the subject the name, as the form of its names does. An artist's new name is one of their spellings
+    (made, if it is not: returned, so that a take-back forgets it), their music is then written in it."""
+    from app.library import artists, edits
+
+    if subject_type == "track":
+        await edits.update_track(s, user, obj, title=name)
+        after.scan = True
+        return None
+    if subject_type == "album":
+        await edits.update_album(s, user, obj, title=name)
+        after.scan = True
+        return None
+    row = (await s.execute(select(ArtistName).where(ArtistName.key == artists.key(name)))).scalar_one_or_none()
+    added = None
+    if row is None:
+        row = await artists.add_name(s, user.id, obj, name)
+        added = row.id
+    elif row.artist_id != obj.id:
+        raise Changed(f"«{name}» — уже другой исполнитель: их стоит объединить")
+    await artists.set_main(s, user.id, obj, row.id)
+    if dropping:
+        await artists.drop_name(s, user.id, obj, dropping)
+    after.rewrite.add(obj.id)
+    return added
+
+
+async def _name_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
+    obj = await _named(s, p.subject_type, p.subject_id)
+    added = await _rename(s, user, p.subject_type, obj, p.to_json["name"], after)
+    return {"added_name": added}
+
+
+async def _name_revert(s: AsyncSession, user: User, p: TidyProposal, after: After) -> None:
+    obj = await _named(s, p.subject_type, p.subject_id)
+    if obj is None or _name_of(obj) != p.to_json["name"]:
+        raise Changed("Название с тех пор изменили")
+    await _rename(s, user, p.subject_type, obj, p.was_json["name"], after,
+                  dropping=(p.undo_json or {}).get("added_name"))
+
+
+# ---------------------------------------------------------------- a version of a song
+
+
+async def _together(s: AsyncSession, a: int, b: int) -> bool:
+    rows = dict((await s.execute(select(SongTrack.track_id, SongTrack.song_id).where(SongTrack.track_id.in_((a, b))))).all())
+    return a in rows and rows.get(a) == rows.get(b)
+
+
+async def _version_now(s: AsyncSession, p: TidyProposal) -> dict[str, Any] | None:
+    of = p.to_json["of"]
+    if await s.get(Track, p.subject_id) is None or await s.get(Track, of) is None:
+        return None
+    return {"together": await _together(s, of, p.subject_id)}
+
+
+async def _version_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
+    from app.library import versions
+
+    track, of = await s.get(Track, p.subject_id), await s.get(Track, p.to_json["of"])
+    await versions.link(s, user.id, of, track)
+    if p.to_json.get("label"):
+        await versions.label(s, user.id, track, p.to_json["label"])
+    return {}
+
+
+async def _version_revert(s: AsyncSession, user: User, p: TidyProposal, after: After) -> None:
+    from app.library import versions
+
+    track = await s.get(Track, p.subject_id)
+    if track is None or not await _together(s, p.to_json["of"], p.subject_id):
+        raise Changed("Версии с тех пор разъединили")
+    await versions.unlink(s, user.id, track)
+
+
+# ---------------------------------------------------------------- one recording twice
+
+
+async def _double_now(s: AsyncSession, p: TidyProposal) -> dict[str, Any] | None:
+    from app.library.tracks import current_files
+
+    ids = [p.subject_id, p.to_json["keep"]]
+    files = await current_files(s, ids)
+    return {"both": True} if all(i in files for i in ids) else None
+
+
+async def _double_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
+    """The other copy goes to the trash; where it stood in a playlist the kept one stands now (unless it is there
+    already), and its tags are the kept one's."""
+    from app.library import access, editor
+
+    gone, keep = await s.get(Track, p.subject_id), await s.get(Track, p.to_json["keep"])
+    may, _others, _mine = await access.keeping(s, user, gone.id)
+    if not may:
+        raise PermissionError("Этот файл хранит кто-то ещё: удалить его может только администратор")
+    there = set((await s.execute(select(PlaylistItem.playlist_id).where(PlaylistItem.track_id == keep.id))).scalars())
+    moved, playlists = [], set()
+    for item in (await s.execute(select(PlaylistItem).where(PlaylistItem.track_id == gone.id))).scalars():
+        playlists.add(item.playlist_id)
+        if item.playlist_id not in there:
+            item.track_id = keep.id
+            there.add(item.playlist_id)
+            moved.append(item.id)
+    have = set((await s.execute(select(TrackTag.tag_id).where(TrackTag.track_id == keep.id))).scalars())
+    tags = [t for t, auto in (await s.execute(select(TrackTag.tag_id, TrackTag.auto).where(TrackTag.track_id == gone.id))).all()
+            if t not in have and not auto]
+    for tag_id in tags:
+        s.add(TrackTag(track_id=keep.id, tag_id=tag_id, auto=False))
+    await s.flush()
+    await editor.trash_track(s, gone, user.id)
+    trashed = (await s.execute(select(TrashedTrack.id).where(TrashedTrack.track_id == gone.id)
+                               .order_by(TrashedTrack.id.desc()).limit(1))).scalar_one()
+    after.scan, after.playlists = True, playlists
+    return {"trashed": trashed, "moved": moved, "tags": tags}
+
+
+async def _double_revert(s: AsyncSession, user: User, p: TidyProposal, after: After) -> None:
+    from sqlalchemy import delete
+
+    from app.library import trash
+
+    undo = p.undo_json or {}
+    row = await s.get(TrashedTrack, undo.get("trashed") or 0)
+    if row is None:
+        raise Changed("Файл уже удалён из корзины насовсем")
+    try:
+        back = await trash.restore(s, row)
+    except ValueError as e:
+        raise Changed(str(e)) from e
+    keep = p.to_json["keep"]
+    playlists = set()
+    if undo.get("moved"):
+        for item in (await s.execute(select(PlaylistItem).where(PlaylistItem.id.in_(undo["moved"]),
+                                                                PlaylistItem.track_id == keep))).scalars():
+            item.track_id = back.id
+            playlists.add(item.playlist_id)
+    if undo.get("tags"):
+        await s.execute(delete(TrackTag).where(TrackTag.track_id == keep, TrackTag.tag_id.in_(undo["tags"]),
+                                               TrackTag.auto.is_(False)))
+    playlists |= set((await s.execute(select(PlaylistItem.playlist_id).where(PlaylistItem.track_id == back.id))).scalars())
+    after.scan, after.playlists = True, playlists
+
+
+# ---------------------------------------------------------------- two artists who are one
+
+
+async def _artist_now(s: AsyncSession, p: TidyProposal) -> dict[str, Any] | None:
+    other, into = await s.get(Artist, p.subject_id), await s.get(Artist, p.to_json["into"])
+    if other is None or into is None or other.merged_into_id is not None or into.merged_into_id is not None:
+        return None
+    return {"apart": True}
+
+
+async def _artist_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
+    from app.library import artists
+
+    other, into = await s.get(Artist, p.subject_id), await s.get(Artist, p.to_json["into"])
+    was = await artists.merge(s, user.id, into, other)
+    after.rewrite.add(into.id)
+    return was
+
+
+async def _artist_revert(s: AsyncSession, user: User, p: TidyProposal, after: After) -> None:
+    from app.library import artists
+
+    other, into = await s.get(Artist, p.subject_id), await s.get(Artist, p.to_json["into"])
+    if other is None or into is None or other.merged_into_id != into.id:
+        raise Changed("Исполнителей с тех пор разъединили или объединили с другими")
+    try:
+        await artists.unmerge(s, user.id, into, other, p.undo_json or {})
+    except ValueError as e:
+        raise Changed(str(e)) from e
+    after.rewrite |= {into.id, other.id}
+
+
+# ---------------------------------------------------------------- the lines of a text that are not the song
+
+
+async def _lyrics_now(s: AsyncSession, p: TidyProposal) -> dict[str, Any] | None:
+    h = text_hash(await s.get(Lyrics, p.subject_id))
+    return {"text": h} if h else None
+
+
+def _set_text(row: Lyrics, lines: list[dict] | None, plain: str | None) -> None:
+    from app.lyrics import parse
+
+    row.lines_json, row.plain = lines, plain
+    row.search_text = parse.plain_of(lines, plain).casefold()
+
+
+async def _lyrics_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
+    from app.lyrics.service import _retag
+
+    row = await s.get(Lyrics, p.subject_id)
+    drop = set(p.to_json["drop"])
+    undo = {"lines": row.lines_json, "plain": row.plain, "pinned": row.pinned}
+    if row.lines_json:
+        _set_text(row, [ln for i, ln in enumerate(row.lines_json) if i not in drop], None)
+    else:
+        kept = [ln for i, ln in enumerate((row.plain or "").split("\n")) if i not in drop]
+        _set_text(row, None, "\n".join(kept).strip("\n"))
+    row.pinned = True  # put right by hand: the lyrics' search leaves it as it is
+    await s.flush()
+    await _retag(s, row.track_id)
+    return undo
+
+
+async def _lyrics_revert(s: AsyncSession, user: User, p: TidyProposal, after: After) -> None:
+    from app.lyrics.service import _retag
+
+    row = await s.get(Lyrics, p.subject_id)
+    undo = p.undo_json or {}
+    if row is None or text_hash(row) != undo.get("after"):
+        raise Changed("Текст с тех пор изменили")
+    _set_text(row, undo.get("lines"), undo.get("plain"))
+    row.pinned = bool(undo.get("pinned"))
+    await s.flush()
+    await _retag(s, row.track_id)
+
+
+# ---------------------------------------------------------------- the kinds
+
+
+@dataclass(frozen=True)
+class Kind:
+    section: str
+    now: Callable[[AsyncSession, TidyProposal], Awaitable[dict[str, Any] | None]]
+    apply: Callable[[AsyncSession, User, TidyProposal, After], Awaitable[dict[str, Any]]]
+    revert: Callable[[AsyncSession, User, TidyProposal, After], Awaitable[None]]
+
+
+KINDS: dict[str, Kind] = {
+    "title": Kind("names", _name_now, _name_apply, _name_revert),  # a note in the name, by rule
+    "cyrillic": Kind("names", _name_now, _name_apply, _name_revert),  # a Russian name in Latin letters, by the AI
+    "version": Kind("versions", _version_now, _version_apply, _version_revert),
+    "double": Kind("versions", _double_now, _double_apply, _double_revert),
+    "artist": Kind("artists", _artist_now, _artist_apply, _artist_revert),
+    "lyrics": Kind("lyrics", _lyrics_now, _lyrics_apply, _lyrics_revert),
+}
+
+
+async def holds(s: AsyncSession, p: TidyProposal) -> bool:
+    """The subject is still what the proposal was made of."""
+    return await KINDS[p.kind].now(s, p) == p.was_json
+
+
+async def accept(s: AsyncSession, user: User, p: TidyProposal) -> After:
+    """Do what the proposal says. `Changed`: the subject is not what it was made of (the proposal is gone then)."""
+    if p.state != "open":
+        raise Changed("Это предложение уже решено")
+    if not await holds(s, p):
+        await s.delete(p)
+        await s.flush()
+        raise Changed("С тех пор это уже изменили — предложение снято")
+    after = After(rewrite=set())
+    undo = await KINDS[p.kind].apply(s, user, p, after)
+    if p.kind == "lyrics":
+        undo["after"] = text_hash(await s.get(Lyrics, p.subject_id))
+    p.undo_json, p.state, p.decided_at, p.decided_by = undo, "accepted", utcnow(), user.id
+    await s.flush()
+    return after
+
+
+async def reject(s: AsyncSession, user: User, p: TidyProposal) -> None:
+    if p.state != "open":
+        raise Changed("Это предложение уже решено")
+    p.state, p.decided_at, p.decided_by = "rejected", utcnow(), user.id
+    await s.flush()
+
+
+async def reopen(s: AsyncSession, p: TidyProposal) -> None:
+    """A rejection taken back: the proposal is open again."""
+    if p.state != "rejected":
+        raise Changed("Это предложение не отклонено")
+    p.state, p.decided_at, p.decided_by = "open", None, None
+    await s.flush()
+
+
+async def revert(s: AsyncSession, user: User, p: TidyProposal) -> After:
+    """Take back what an accepted proposal did. It is not offered again: it was answered."""
+    if p.state != "accepted":
+        raise Changed("Это предложение не принято")
+    after = After(rewrite=set())
+    await KINDS[p.kind].revert(s, user, p, after)
+    p.state, p.decided_at, p.decided_by = "reverted", utcnow(), user.id
+    await s.flush()
+    return after
+
+
+async def offer(s: AsyncSession, *, kind: str, subject_type: str, subject_id: int, was: dict[str, Any],
+                to: dict[str, Any], show: dict[str, Any], by: str, sure: bool, why: str) -> bool:
+    """Write a proposal down, unless the same question was asked before (whatever the answer). Returns whether it
+    is new."""
+    import json
+
+    key = hashlib.sha1(json.dumps([kind, subject_type, subject_id, was, to], sort_keys=True, ensure_ascii=False)
+                       .encode()).hexdigest()
+    res = await s.execute(insert(TidyProposal).values(
+        key=key, kind=kind, section=KINDS[kind].section, subject_type=subject_type, subject_id=subject_id,
+        was_json=was, to_json=to, show_json=show, by=by, sure=sure, why=why[:300], state="open", created_at=utcnow(),
+    ).on_conflict_do_nothing(index_elements=[TidyProposal.key]).returning(TidyProposal.id))
+    return res.scalar_one_or_none() is not None
+
+
+async def drop_stale(s: AsyncSession) -> int:
+    """The open proposals whose subjects changed or are gone: not questions any more."""
+    n = 0
+    for p in (await s.execute(select(TidyProposal).where(TidyProposal.state == "open"))).scalars().all():
+        if not await holds(s, p):
+            await s.delete(p)
+            n += 1
+    await s.flush()
+    return n
+

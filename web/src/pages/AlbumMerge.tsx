@@ -4,7 +4,7 @@ import type { SplitAlbums, TrackOut } from '../api/types';
 import { TrackRow, TrackTableHeader } from '../components/catalog';
 import { Icon } from '../components/Icon';
 import { TrackTable } from '../components/TrackTable';
-import { Button, Cover, Empty, ErrorState, Loading, PageHeader, cx, Segmented } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, Loading, cx, Segmented } from '../components/ui';
 import { AlbumCard, AlbumHero } from '../components/Album';
 import { ServiceIcon, serviceName } from '../components/ServiceBadge';
 import { fmtLength, tracksWord } from '../lib/format';
@@ -15,19 +15,19 @@ import { attempt } from '../lib/ui';
 type Group = SplitAlbums;
 type Part = Group['albums'][number];
 
-/** «Объединение альбомов» (from «Меню»): albums of one name that came to the library in pieces — the tracks with a
- * guest filed apart («Три дня дождя» and «Три дня дождя, Роки»). On top: which album; then its parts as cards — a
- * tick to keep a part in, where each came from (a transfer, a download, an upload); then the name, the artist and the
- * cover of what comes out; under them the album it will be, tracks that play. «Это разные альбомы»: the group is not
- * offered again (`Разные релизы`, where it can be taken back). */
-export function AlbumMergePage() {
+/** «Альбомы» of «Наведение порядка»: albums of one name that came to the library in pieces — the tracks with a guest
+ * filed apart («Три дня дождя» and «Три дня дождя, Роки»). On top: which album; then its parts as cards — a tick to
+ * keep a part in, where each came from (a transfer, a download, an upload); then the name, the artist and the cover of
+ * what comes out; under them the album it will be, tracks that play. «Это разные альбомы»: the group is not offered
+ * again (`Разные релизы`, where it can be taken back). `onChange`: a group was joined or answered. */
+export function AlbumMergeSection({ onChange }: { onChange?: () => void }) {
   const res = useAsync((s) => api.splitAlbums(s), [], true, 'album-merge');
   const [tab, setTab] = useState<'pending' | 'separate'>('pending');
   const [picked, setPicked] = useState<string | null>(null);
   const [merged, setMerged] = useState<Record<string, number>>({}); // group → the album it became
 
-  if (res.loading) return (<><PageHeader title="Объединение альбомов" back="/more" /><Loading /></>);
-  if (!res.data) return (<><PageHeader title="Объединение альбомов" back="/more" /><ErrorState text={res.error ?? 'Не удалось загрузить'} onRetry={() => res.reload()} /></>);
+  if (res.loading) return <Loading />;
+  if (!res.data) return <ErrorState text={res.error ?? 'Не удалось загрузить'} onRetry={() => res.reload()} />;
   const all = res.data;
   const pending = all.filter((g) => !g.dismissed);
   const separate = all.filter((g) => g.dismissed);
@@ -40,12 +40,12 @@ export function AlbumMergePage() {
     const rest = next.filter((g) => g.key !== group?.key);
     setPicked(rest[0]?.key ?? null);
     res.reload(true);
+    onChange?.();
   };
 
   return (
     <div className="pb-8">
-      <PageHeader title="Объединение альбомов" back="/more" />
-      <p className="max-w-3xl px-4 text-[15px] leading-relaxed text-muted lg:px-6">
+      <p className="max-w-3xl px-4 pt-4 text-[15px] leading-relaxed text-muted lg:px-6">
         Альбом попал в библиотеку несколькими частями: треки с гостями записались отдельно. Проверьте части и объедините их. Если это разные релизы, отметьте это.
       </p>
       <div className="px-4 pt-4 lg:px-6">
@@ -76,7 +76,7 @@ export function AlbumMergePage() {
             key={group.key}
             group={group}
             mergedInto={merged[group.key]}
-            onMerged={(id) => setMerged((m) => ({ ...m, [group.key]: id }))}
+            onMerged={(id) => { setMerged((m) => ({ ...m, [group.key]: id })); onChange?.(); }}
             onDismissed={() => after(shown)}
           />
         </>

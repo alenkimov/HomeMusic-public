@@ -1,0 +1,335 @@
+import { useEffect, useState, type ReactNode } from 'react';
+import { api } from '../api/client';
+import type { TidyOverviewOut, TidyProposalOut, TidyProposalSection, TidySectionId } from '../api/types';
+import { Icon } from '../components/Icon';
+import { Badge, Button, Cover, Empty, ErrorState, IconButton, PageHeader, SkeletonRows, Segmented, cx } from '../components/ui';
+import { useHubEvent } from '../lib/events';
+import { fmtWhen, plural } from '../lib/format';
+import { useAsync } from '../lib/hooks';
+import { Link, artistPath, navigate, useRoute } from '../lib/router';
+import { attempt, toast } from '../lib/ui';
+import { AlbumMergeSection } from './AlbumMerge';
+
+const SECTIONS: TidySectionId[] = ['names', 'versions', 'artists', 'albums', 'lyrics'];
+const isSection = (x: string | null): x is TidySectionId => !!x && (SECTIONS as string[]).includes(x);
+
+/** What a section looks for, in a line under its tabs. */
+const ABOUT: Record<TidySectionId, string> = {
+  names: 'Лишнее в названиях — «(Official Video)», «[Lyrics]», имя исполнителя — и русские названия, записанные латиницей.',
+  versions: 'Другие записи той же песни (Sped Up, Live, Remix…) — связать с оригиналом как версии. Одна запись в двух файлах — оставить лучший.',
+  artists: 'Один исполнитель под разными написаниями — объединить. Прежние написания останутся: по ним тоже найдётся.',
+  albums: '',
+  lyrics: 'Строки текста, которые не поются: ссылки, призывы подписаться, реклама, подписи сайтов.',
+};
+
+/** The AI's month and the last look-through, in a line. */
+function statusLine(o: TidyOverviewOut): string {
+  const checked = o.running ? 'Проверяю…' : o.checked_at ? `Проверено ${fmtWhen(o.checked_at)}` : 'Ещё не проверялось';
+  const money = (x: number) => `$${x.toFixed(x < 10 ? 2 : 0)}`;
+  const ai = o.ai.state === 'off'
+    ? 'ИИ не подключён — работают только правила'
+    : o.ai.state === 'limit'
+      ? `ИИ: лимит месяца исчерпан (${money(o.ai.spent_usd)} из ${money(o.ai.limit_usd)})`
+      : `ИИ за месяц: ${money(o.ai.spent_usd)} из ${money(o.ai.limit_usd)}`;
+  return `${checked} · ${ai}`;
+}
+
+/** «Наведение порядка» (from «Меню»): what the Hub found to put right in the library, by sections — names, versions and
+ * doubles, artists, albums in pieces, lyrics. Nothing changes until it is accepted; what was accepted is in «Журнал»,
+ * where it can be taken back. The admins start a look-through by hand; it also runs every night. */
+export function TidyPage() {
+  const route = useRoute();
+  const asked = route.query.get('tab');
+  const overview = useAsync((s) => api.tidy(s), [], true, 'tidy');
+  const o = overview.data;
+  // the tab asked for, else the first with something in it
+  const section: TidySectionId = isSection(asked) ? asked : (o?.sections.find((x) => x.count > 0)?.id ?? 'names');
+  const pick = (id: TidySectionId) => navigate(`/tidy?tab=${id}`, { replace: true });
+  const [scanning, setScanning] = useState(false);
+
+  useHubEvent('tidy', () => overview.reload(true));
+  // while a look-through goes, its end is asked for now and then too (an event may be missed)
+  useEffect(() => {
+    if (!o?.running) return;
+    const t = window.setInterval(() => overview.reload(true), 5000);
+    return () => window.clearInterval(t);
+  }, [o?.running, overview]);
+
+  const scan = async () => {
+    setScanning(true);
+    await attempt(() => api.tidyScan(), 'Проверка началась — это займёт пару минут');
+    setScanning(false);
+    overview.reload(true);
+  };
+
+  return (
+    <div className="pb-10">
+      <PageHeader
+        title="Наведение порядка"
+        back="/more"
+        right={o?.can_scan ? (
+          // a phone has the room for the title only: the button is its icon there
+          <>
+            <Button small icon="refresh" busy={scanning || o.running} disabled={o.running} onClick={scan} className="mr-2 whitespace-nowrap max-sm:hidden">
+              {o.running ? 'Проверяю' : 'Проверить сейчас'}
+            </Button>
+            <IconButton icon="refresh" label="Проверить сейчас" busy={scanning || o.running} disabled={o.running} onClick={scan} className="sm:hidden" />
+          </>
+        ) : undefined}
+      />
+      {!o ? (
+        overview.error ? <ErrorState text={overview.error} onRetry={() => overview.reload()} /> : <SkeletonRows n={6} />
+      ) : (
+        <>
+          <p className="px-4 text-[13px] text-muted lg:px-6">{statusLine(o)}</p>
+          <div className="px-4 pt-4 lg:px-6">
+            <Segmented<TidySectionId>
+              label="Что навести"
+              value={section}
+              onChange={pick}
+              options={o.sections.map((x) => ({ value: x.id, label: x.title, count: x.count || null }))}
+            />
+          </div>
+          {section === 'albums' ? (
+            <AlbumMergeSection onChange={() => overview.reload(true)} />
+          ) : (
+            <Proposals
+              key={section}
+              section={section}
+              sure={o.sections.find((x) => x.id === section)?.sure ?? 0}
+              checked={o.checked_at}
+              onChange={() => overview.reload(true)}
+            />
+          )}
+          <Link to="/tidy/journal" className="mx-4 mt-6 flex max-w-3xl items-center gap-3 rounded-xl bg-raised px-4 py-3.5 hover:bg-hover lg:mx-6">
+            <Icon name="history" size={20} className="text-muted" />
+            <span className="min-w-0 flex-1">
+              <span className="block font-semibold">Журнал</span>
+              <span className="block text-[13px] text-muted">Всё принятое — с возможностью откатить</span>
+            </span>
+            <Icon name="chevron" size={18} className="text-muted" />
+          </Link>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** A section's proposals. A decided one stays where it was, dimmed, with «Отменить», until the list is asked anew
+ * (another tab, a look-through done). */
+function Proposals({ section, sure, checked, onChange }: { section: TidyProposalSection; sure: number; checked: string | null; onChange: () => void }) {
+  const res = useAsync((s) => api.tidyProposals(section, s), [section]);
+  const [rows, setRows] = useState<TidyProposalOut[] | null>(null);
+  const [busy, setBusy] = useState<number | 'sure' | null>(null);
+  useEffect(() => { if (res.data) setRows(res.data); }, [res.data]);
+  useHubEvent('tidy', (d) => { if (d.kind === 'checked') res.reload(true); });
+
+  const decide = async (p: TidyProposalOut, what: 'accept' | 'reject' | 'reopen' | 'revert') => {
+    setBusy(p.id);
+    try {
+      const next = await api.tidyDecide(p.id, what);
+      setRows((xs) => (xs ?? []).map((x) => (x.id === p.id ? next : x)));
+    } catch (e) {
+      // what changed since is gone from the list: the Hub said why
+      toast(e instanceof Error ? e.message : 'Не получилось', 'error');
+      if ((e as { status?: number }).status === 409) setRows((xs) => (xs ?? []).filter((x) => x.id !== p.id));
+    }
+    setBusy(null);
+    onChange();
+  };
+
+  const acceptSure = async () => {
+    setBusy('sure');
+    const r = await attempt(() => api.tidyAcceptSure(section));
+    setBusy(null);
+    if (r) {
+      toast(r.failed ? `Принято: ${r.accepted}. Не получилось: ${r.failed} — уже изменились.` : `Принято: ${r.accepted}`, 'success');
+      res.reload(true);
+      onChange();
+    }
+  };
+
+  const shown = rows ?? res.data;
+  const waiting = (shown ?? []).filter((p) => p.state === 'open' && p.sure).length;
+  return (
+    <div className="max-w-4xl">
+      <div className="flex flex-wrap items-center gap-3 px-4 pt-3 lg:px-6">
+        <p className="min-w-0 flex-1 text-[13px] leading-snug text-muted max-sm:basis-full">{ABOUT[section]}</p>
+        {sure > 0 && waiting > 0 && (
+          <Button small variant="primary" icon="check" busy={busy === 'sure'} onClick={acceptSure} className="whitespace-nowrap max-sm:w-full">
+            Принять уверенные · {waiting}
+          </Button>
+        )}
+      </div>
+      {!shown ? (
+        res.error ? <ErrorState text={res.error} onRetry={() => res.reload()} /> : <SkeletonRows n={5} />
+      ) : shown.length === 0 ? (
+        <Empty icon="check" title="Здесь всё в порядке" text={checked ? `Хаб проверил библиотеку ${fmtWhen(checked)} и ничего не нашёл.` : 'Хаб проверяет библиотеку каждую ночь.'} />
+      ) : (
+        <ul className="mt-3 space-y-2 px-2 lg:px-4">
+          {shown.map((p) => (
+            <li key={p.id}>
+              <ProposalCard p={p} busy={busy === p.id} onDecide={(what) => decide(p, what)} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** Who says so: a rule, the AI, the AI unsure (in yellow — a person decides). */
+function ByMark({ p }: { p: TidyProposalOut }) {
+  if (p.by === 'rule') return <Badge tone="muted">Правило</Badge>;
+  return p.sure ? <Badge tone="accent">ИИ уверен</Badge> : <Badge tone="warn">ИИ сомневается</Badge>;
+}
+
+/** Where the subject leads: a track and an album — to their album, an artist — to their page. */
+function subjectLink(p: TidyProposalOut): string | null {
+  if (p.subject_type === 'artist') return artistPath({ ref: '', hub_artist_id: p.show.artist_id ?? p.subject_id });
+  return p.show.album_id ? `/library/album/${p.show.album_id}` : null;
+}
+
+const WHAT: Record<TidyProposalOut['subject_type'], string> = { track: 'Трек', album: 'Альбом', artist: 'Исполнитель' };
+
+/** The subject as the proposal names it: its picture, what it is and whose; then «было → станет» in the kind's words. */
+export function ProposalCard({ p, busy, onDecide, journal }: {
+  p: TidyProposalOut; busy: boolean; onDecide: (what: 'accept' | 'reject' | 'reopen' | 'revert') => void; journal?: boolean;
+}) {
+  const to = subjectLink(p);
+  const head = [WHAT[p.subject_type], p.show.line].filter(Boolean).join(' · ');
+  const decided = p.state !== 'open';
+  const picture = p.subject_type === 'artist'
+    ? <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-raised text-lg font-bold uppercase text-muted">{(p.show.name || p.was).slice(0, 1)}</span>
+    : <Cover src={p.show.cover} size={48} />;
+
+  let body: ReactNode;
+  if (p.kind === 'lyrics') {
+    body = (
+      <>
+        <span className="block truncate text-[15px] font-semibold">{p.show.title_now}</span>
+        <span className="mt-1 block space-y-0.5">
+          {(p.show.lines ?? []).map((line, i) => (
+            <span key={i} className="block truncate text-[13px] text-muted line-through decoration-danger/70">{line}</span>
+          ))}
+        </span>
+        <span className="mt-1 block text-[13px] font-semibold">{p.to}</span>
+      </>
+    );
+  } else if (p.kind === 'double') {
+    body = (
+      <>
+        <span className="block truncate text-[15px] font-semibold">{p.show.title_now}</span>
+        <span className="mt-0.5 line-clamp-2 block break-words text-[13px] text-muted line-through decoration-danger/70">Удалить копию: {p.was}</span>
+        <span className="line-clamp-2 block break-words text-[13px] font-semibold">Оставить: {p.to}</span>
+      </>
+    );
+  } else {
+    body = (
+      <>
+        <span className="line-clamp-2 block break-words text-[14px] text-muted line-through decoration-danger/70">{p.was}</span>
+        <span className="line-clamp-2 block break-words text-[15px] font-semibold"><span className="text-dim">→ </span>{p.to}</span>
+        {p.kind === 'artist' && p.show.into_line && <span className="block text-[12px] text-dim">{p.show.line} → {p.show.into_line}</span>}
+      </>
+    );
+  }
+
+  const stateWord = p.state === 'accepted' ? 'Принято' : p.state === 'rejected' ? 'Отклонено' : p.state === 'reverted' ? 'Откачено' : '';
+  const actions = journal ? (
+    p.state === 'accepted' && (
+      <Button small variant="outline" busy={busy} onClick={() => onDecide('revert')} className="whitespace-nowrap">Откатить</Button>
+    )
+  ) : decided ? (
+    <span className="flex items-center gap-2 text-[13px] text-muted">
+      {stateWord}
+      <button type="button" disabled={busy} onClick={() => onDecide(p.state === 'accepted' ? 'revert' : 'reopen')} className="min-h-9 px-2 underline hover:text-fg disabled:opacity-50">
+        Отменить
+      </button>
+    </span>
+  ) : (
+    <span className="flex gap-2 max-sm:w-full">
+      <Button small variant="outline" disabled={busy} onClick={() => onDecide('reject')} className="max-sm:flex-1">Отклонить</Button>
+      <Button small variant="primary" busy={busy} onClick={() => onDecide('accept')} className="max-sm:flex-1">Принять</Button>
+    </span>
+  );
+
+  return (
+    <div className={cx('flex items-start gap-3 rounded-xl bg-raised/60 p-3 transition max-sm:flex-wrap sm:items-center', decided && !journal && 'opacity-60')}>
+      {to ? <Link to={to} className="shrink-0">{picture}</Link> : picture}
+      <div className="min-w-0 flex-1">
+        <span className="block truncate text-[12px] text-dim">{head}</span>
+        {body}
+        <span className="mt-1 flex min-w-0 items-center gap-2">
+          <ByMark p={p} />
+          {p.why && <span className={cx('truncate text-[12px]', p.by === 'ai' && !p.sure ? 'text-warn' : 'text-dim')}>{p.why}</span>}
+        </span>
+        {journal && (
+          <span className="mt-1 block text-[12px] text-dim">
+            {stateWord}{p.decided_by ? ` · ${p.decided_by}` : ''}{p.decided_at ? ` · ${fmtWhen(p.decided_at)}` : ''}
+          </span>
+        )}
+      </div>
+      {actions && <div className="shrink-0 max-sm:w-full max-sm:pl-[60px]">{actions}</div>}
+    </div>
+  );
+}
+
+const PAGE = 50;
+
+/** «Журнал» of «Наведение порядка»: everything accepted, the latest first, each with «Откатить» while it can be. */
+export function TidyJournalPage() {
+  const first = useAsync((s) => api.tidyJournal(undefined, s), []);
+  const [rows, setRows] = useState<TidyProposalOut[] | null>(null);
+  const [more, setMore] = useState(true);
+  const [busy, setBusy] = useState<number | 'more' | null>(null);
+  useEffect(() => {
+    if (first.data) {
+      setRows(first.data);
+      setMore(first.data.length >= PAGE);
+    }
+  }, [first.data]);
+
+  const revert = async (p: TidyProposalOut) => {
+    setBusy(p.id);
+    const next = await attempt(() => api.tidyDecide(p.id, 'revert'), 'Откачено');
+    setBusy(null);
+    if (next) setRows((xs) => (xs ?? []).map((x) => (x.id === p.id ? next : x)));
+  };
+
+  const loadMore = async () => {
+    const last = rows?.[rows.length - 1];
+    if (!last) return;
+    setBusy('more');
+    const next = await attempt(() => api.tidyJournal(last.id));
+    setBusy(null);
+    if (next) {
+      setRows((xs) => [...(xs ?? []), ...next]);
+      setMore(next.length >= PAGE);
+    }
+  };
+
+  return (
+    <div className="pb-10">
+      <PageHeader title="Журнал" back="/tidy" sub="Наведение порядка" />
+      {!rows ? (
+        first.error ? <ErrorState text={first.error} onRetry={() => first.reload()} /> : <SkeletonRows n={6} />
+      ) : rows.length === 0 ? (
+        <Empty icon="history" title="Пока ничего не принято" text="Здесь появится всё, что вы примете в «Наведении порядка»." />
+      ) : (
+        <div className="max-w-4xl">
+          <p className="px-4 text-[13px] text-muted lg:px-6">{rows.length} {plural(rows.length, ['изменение', 'изменения', 'изменений'])}{more ? ' и раньше' : ''}</p>
+          <ul className="mt-3 space-y-2 px-2 lg:px-4">
+            {rows.map((p) => (
+              <li key={p.id}><ProposalCard p={p} journal busy={busy === p.id} onDecide={() => revert(p)} /></li>
+            ))}
+          </ul>
+          {more && (
+            <div className="px-4 pt-4 lg:px-6">
+              <Button small busy={busy === 'more'} onClick={loadMore}>Показать ещё</Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

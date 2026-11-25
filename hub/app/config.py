@@ -187,6 +187,8 @@ class Settings(BaseSettings):
     llm_price_in: float = 0.10
     llm_price_out: float = 0.50
     llm_timeout_s: float = 90
+    # what «Наведение порядка» may spend on the AI in a calendar month (app/tidy); 0 — rules only
+    tidy_ai_usd_month: float = 2.0
 
     deezer_catalog: bool = True
     # Yandex Music as one more catalog (app/catalog/yandex_catalog.py): read without signing in, no key

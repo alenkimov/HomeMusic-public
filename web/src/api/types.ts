@@ -1450,6 +1450,8 @@ export interface HubEventMap {
   playback_queue: Record<string, never>;
   playback_devices: Record<string, never>;
   ping: Record<string, never>;
+  /** «Наведение порядка» looked through the library, or somebody answered it: its counts are new */
+  tidy: { kind: 'checked' | 'decided' };
   /** Pseudo event: the stream (re)connected after a drop; refetch state. */
   reconnect: Record<string, never>;
 }
@@ -1808,4 +1810,69 @@ export interface DownloadsOverviewOut {
   review: number;
   done: number;
   groups: DownloadGroupOut[];
+}
+
+// --- «Наведение порядка» (hub/app/api/tidy.py) ------------------------------------------------------------------
+
+export type TidySectionId = 'names' | 'versions' | 'artists' | 'albums' | 'lyrics';
+export type TidyProposalSection = Exclude<TidySectionId, 'albums'>;
+
+export interface TidySectionOut {
+  id: TidySectionId;
+  title: string;
+  /** waiting for an answer */
+  count: number;
+  /** of them, found by a rule or by a sure AI: «Принять уверенные» */
+  sure: number;
+}
+
+export interface TidyOverviewOut {
+  checked_at: string | null;
+  running: boolean;
+  /** «Проверить сейчас»: the admins */
+  can_scan: boolean;
+  ai: { state: 'ok' | 'limit' | 'off'; spent_usd: number; limit_usd: number };
+  sections: TidySectionOut[];
+  total: number;
+}
+
+/** What a page draws of a proposal's subject; which of the keys there are depends on the kind. */
+export interface TidyShow {
+  what?: string;
+  line?: string | null;
+  cover?: string | null;
+  album_id?: number | null;
+  artist_id?: number | null;
+  title_now?: string;
+  /** a version: the song's track it is a version of */
+  of_title?: string;
+  label?: string;
+  /** a double: its file, the one that stays */
+  file?: string;
+  keep_title?: string;
+  keep_file?: string;
+  keep_album?: string | null;
+  /** an artist joined: who into */
+  name?: string;
+  into_name?: string;
+  into_line?: string;
+  /** a text: the lines to drop */
+  lines?: string[];
+}
+
+export interface TidyProposalOut {
+  id: number;
+  kind: 'title' | 'cyrillic' | 'version' | 'double' | 'artist' | 'lyrics';
+  section: TidyProposalSection;
+  subject_type: 'track' | 'album' | 'artist';
+  subject_id: number;
+  was: string;
+  to: string;
+  show: TidyShow;
+  by: 'rule' | 'ai';
+  sure: boolean;
+  why: string;
+  state: 'open' | 'accepted' | 'rejected' | 'reverted';
+  decided_at: string | null;
+  decided_by: string | null;
 }

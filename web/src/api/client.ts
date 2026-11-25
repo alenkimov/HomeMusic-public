@@ -104,6 +104,9 @@ import type {
   QualityOut,
   TrackFileOut,
   SplitAlbums,
+  TidyOverviewOut,
+  TidyProposalOut,
+  TidyProposalSection,
   TrackEditEntry,
   CoverSearchOut,
   TrackEditOut,
@@ -570,6 +573,18 @@ export const api = {
   /** The tracks that are one recording twice, told by the sound: groups of `library_track_id`s. */
   fileDoubles: (signal?: AbortSignal) => request<number[][]>('GET', '/api/library/files/doubles', { signal }),
   /** Albums that are one album in pieces (the same name, artists that differ by a guest). */
+  /** «Наведение порядка»: the sections and what waits in each, the last look-through, the AI's month. */
+  tidy: (signal?: AbortSignal) => request<TidyOverviewOut>('GET', '/api/tidy', { signal }),
+  tidyProposals: (section: TidyProposalSection, signal?: AbortSignal) =>
+    request<TidyProposalOut[]>('GET', withQuery('/api/tidy/proposals', { section }), { signal }),
+  tidyJournal: (before?: number, signal?: AbortSignal) =>
+    request<TidyProposalOut[]>('GET', withQuery('/api/tidy/journal', { before }), { signal }),
+  /** accept / reject / reopen (a rejection taken back) / revert (what an accepted one did, taken back) */
+  tidyDecide: (id: number, what: 'accept' | 'reject' | 'reopen' | 'revert') =>
+    request<TidyProposalOut>('POST', `/api/tidy/proposals/${id}/${what}`),
+  tidyAcceptSure: (section: TidyProposalSection) =>
+    request<{ accepted: number; failed: number }>('POST', '/api/tidy/accept-sure', { json: { section } }),
+  tidyScan: () => request<TidyOverviewOut>('POST', '/api/tidy/scan'),
   splitAlbums: (signal?: AbortSignal) => request<SplitAlbums[]>('GET', '/api/library/albums/split', { signal }),
   /** «Это разные альбомы» / and back: the group is (not) offered for joining. */
   splitDismiss: (album_ids: number[]) => request<{ ok: boolean }>('POST', '/api/library/albums/split/dismiss', { json: { album_ids } }),

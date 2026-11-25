@@ -170,15 +170,9 @@ def _split_key(ids) -> str:
     return ",".join(str(i) for i in sorted(set(ids)))
 
 
-@router.get("/api/library/albums/split")
-async def split_albums(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")) -> list[dict]:
-    """Albums that are one album in pieces: the same name, and artists that differ only by who is a guest («Три дня
-    дождя» and «Три дня дождя, Роки») — a file that names no artist of its album is filed by its own artists. Each
-    group with the one to join the rest into (the one with the most tracks), each album with its tracks in order
-    (their cards: `POST /api/tracks/cards`). Among the files the asker looks after. A group someone called separate
-    releases («Это разные альбомы») is `dismissed`: «Объединение альбомов» shows it apart and does not count it."""
+async def split_groups(s: AsyncSession, user: User) -> list[list[Album]]:
+    """The albums in pieces among the files `user` looks after: groups of one name and one main artist."""
     from app.library.credits import main_artist
-    from app.models import AlbumSplitDismissal
 
     rows = (await s.execute(select(Album).where(access.albums_of(user)))).scalars().all()
     groups: dict[tuple[str, str], list[Album]] = {}
@@ -186,7 +180,27 @@ async def split_albums(user: User = Depends(current_user), s: AsyncSession = Dep
         key = (normalize_title(a.title).text, main_artist(a.album_artist).casefold())
         if key[0] and key[1]:
             groups.setdefault(key, []).append(a)
-    split = [albums for albums in groups.values() if len(albums) >= 2]
+    return [albums for albums in groups.values() if len(albums) >= 2]
+
+
+async def split_waiting(s: AsyncSession, user: User) -> int:
+    """How many of those groups wait for an answer (none called separate releases)."""
+    from app.models import AlbumSplitDismissal
+
+    dismissed = set((await s.execute(select(AlbumSplitDismissal.key))).scalars().all())
+    return sum(_split_key(a.id for a in g) not in dismissed for g in await split_groups(s, user))
+
+
+@router.get("/api/library/albums/split")
+async def split_albums(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")) -> list[dict]:
+    """Albums that are one album in pieces: the same name, and artists that differ only by who is a guest («Три дня
+    дождя» and «Три дня дождя, Роки») — a file that names no artist of its album is filed by its own artists. Each
+    group with the one to join the rest into (the one with the most tracks), each album with its tracks in order
+    (their cards: `POST /api/tracks/cards`). Among the files the asker looks after. A group someone called separate
+    releases («Это разные альбомы») is `dismissed`: «Объединение альбомов» shows it apart and does not count it."""
+    from app.models import AlbumSplitDismissal
+
+    split = await split_groups(s, user)
     ids = [a.id for albums in split for a in albums]
     tracks: dict[int, list[int]] = {}
     if ids:

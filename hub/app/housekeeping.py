@@ -87,6 +87,12 @@ async def run_daily() -> None:
             from app.library import upgrade
 
             await upgrade.purge(s)
+        from app.jobs.queue import notify
+        from app.tidy import scan as tidy
+
+        async with session_scope() as s:  # «Наведение порядка» looks through the library after the night's work
+            await tidy.request(s)
+        notify()
         m = await asyncio.to_thread(purge_stale_uploads)
         c = await cache_purge_expired()
         e = await purge_email_codes()

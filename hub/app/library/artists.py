@@ -26,7 +26,8 @@ its file called it, one a listener adds («Марафоны» for «Спорт»
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -537,27 +538,79 @@ async def _hand_over(s: AsyncSession, table: Any, column: Any, into: int, other:
     await s.execute(update(table).where(table.artist_id == other).values(artist_id=into))
 
 
-async def merge(s: AsyncSession, user_id: int | None, into: Artist, other: Artist) -> None:
+async def merge(s: AsyncSession, user_id: int | None, into: Artist, other: Artist) -> dict[str, Any]:
     """Two artists are one: `other`'s spellings, catalog records, music and projects are `into`'s (the caller
-    queues `rewrite`, which writes that music in the name)."""
+    queues `rewrite`, which writes that music in the name). Returns what `unmerge` needs to part them again."""
     if into.id == other.id:
-        return
+        return {}
+    touching = or_(ArtistLink.low_id == other.id, ArtistLink.high_id == other.id)
+    apart_ = or_(ArtistApart.low_id == other.id, ArtistApart.high_id == other.id)
+    was: dict[str, Any] = {
+        "names": list((await s.execute(select(ArtistName.id).where(ArtistName.artist_id == other.id))).scalars()),
+        "refs": list((await s.execute(select(ArtistRef.ref).where(ArtistRef.artist_id == other.id))).scalars()),
+        "tracks": [list(r) for r in (await s.execute(select(TrackArtist.track_id, TrackArtist.position).where(TrackArtist.artist_id == other.id))).all()],
+        "albums": [list(r) for r in (await s.execute(select(AlbumArtist.album_id, AlbumArtist.position).where(AlbumArtist.artist_id == other.id))).all()],
+        "links": [list(r) for r in (await s.execute(select(ArtistLink.low_id, ArtistLink.high_id).where(touching))).all()],
+        "apart": [list(r) for r in (await s.execute(select(ArtistApart.low_id, ArtistApart.high_id).where(apart_))).all()],
+        "merged_in": list((await s.execute(select(Artist.id).where(Artist.merged_into_id == other.id))).scalars()),
+        "added_name": None, "added_links": [],
+    }
     await s.execute(update(ArtistName).where(ArtistName.artist_id == other.id).values(artist_id=into.id))
     if await holder(s, other.name) is None:  # a namesake held no spelling: now its name is one of the artist's
-        s.add(ArtistName(artist_id=into.id, name=other.name, key=key(other.name), source="catalog"))
+        added = ArtistName(artist_id=into.id, name=other.name, key=key(other.name), source="catalog")
+        s.add(added)
+        await s.flush()
+        was["added_name"] = added.id
     await s.execute(update(ArtistRef).where(ArtistRef.artist_id == other.id).values(artist_id=into.id))
     await _hand_over(s, TrackArtist, TrackArtist.track_id, into.id, other.id)
     await _hand_over(s, AlbumArtist, AlbumArtist.album_id, into.id, other.id)
     theirs = (await _linked(s, other.id)) - {into.id}
     mine = await _linked(s, into.id)
-    await s.execute(delete(ArtistLink).where(or_(ArtistLink.low_id == other.id, ArtistLink.high_id == other.id)))
-    await s.execute(delete(ArtistApart).where(or_(ArtistApart.low_id == other.id, ArtistApart.high_id == other.id)))
+    await s.execute(delete(ArtistLink).where(touching))
+    await s.execute(delete(ArtistApart).where(apart_))
     for i in theirs - mine:
         s.add(ArtistLink(low_id=_pair(into.id, i)[0], high_id=_pair(into.id, i)[1]))
+        was["added_links"].append(list(_pair(into.id, i)))
     _journal(s, user_id, into.id, {"merged": [other.name, into.name]})
     await s.flush()
     await s.execute(update(Artist).where(Artist.merged_into_id == other.id).values(merged_into_id=into.id))
     other.merged_into_id = into.id
+    await s.flush()
+    return was
+
+
+async def unmerge(s: AsyncSession, user_id: int | None, into: Artist, other: Artist, was: dict[str, Any]) -> None:
+    """Part two artists joined by `merge` (`was`: what it returned): `other` has their spellings, records, music
+    and projects back. What came to `into` since stays theirs. The caller queues `rewrite` of both."""
+    if other.merged_into_id != into.id:
+        raise ValueError("Исполнители уже не объединены")
+    other.merged_into_id = None
+    if was.get("merged_in"):
+        await s.execute(update(Artist).where(Artist.id.in_(was["merged_in"]), Artist.merged_into_id == into.id)
+                        .values(merged_into_id=other.id))
+    if was.get("added_name"):
+        await s.execute(delete(ArtistName).where(ArtistName.id == was["added_name"], ArtistName.artist_id == into.id))
+    if was.get("names"):
+        await s.execute(update(ArtistName).where(ArtistName.id.in_(was["names"]), ArtistName.artist_id == into.id)
+                        .values(artist_id=other.id))
+    if was.get("refs"):
+        await s.execute(update(ArtistRef).where(ArtistRef.ref.in_(was["refs"]), ArtistRef.artist_id == into.id)
+                        .values(artist_id=other.id))
+    for table, column, rows in ((TrackArtist, TrackArtist.track_id, was.get("tracks") or []),
+                                (AlbumArtist, AlbumArtist.album_id, was.get("albums") or [])):
+        for owner, position in rows:
+            row = (await s.execute(select(table).where(column == owner, table.position == position))).scalar_one_or_none()
+            if row is None:  # it named them both: the merge left one
+                await s.execute(insert(table).values({column.key: owner, "position": position, "artist_id": other.id})
+                                .on_conflict_do_nothing())
+            elif row.artist_id == into.id:
+                row.artist_id = other.id
+    for low, high in was.get("added_links") or []:
+        await s.execute(delete(ArtistLink).where(ArtistLink.low_id == low, ArtistLink.high_id == high))
+    for table, rows in ((ArtistLink, was.get("links") or []), (ArtistApart, was.get("apart") or [])):
+        for low, high in rows:
+            await s.execute(insert(table).values(low_id=low, high_id=high).on_conflict_do_nothing())
+    _journal(s, user_id, into.id, {"unmerged": [into.name, other.name]})
     await s.flush()
 
 

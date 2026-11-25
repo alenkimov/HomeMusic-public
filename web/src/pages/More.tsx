@@ -34,9 +34,9 @@ export function MorePage() {
   const downloads = useActiveDownloads();
   // what stands now behind the lines: asked once the menu opens, kept between visits — a line waits for none of it
   const quality = useAsync((s) => (STANDALONE ? api.quality(s) : Promise.resolve(null)), [], true, 'menu:quality');
-  // albums in pieces waiting for a decision: a green count draws the eye to «Объединение альбомов»
-  const split = useAsync((s) => (STANDALONE ? api.splitAlbums(s) : Promise.resolve([])), [], true, 'menu:split');
-  const splitWaiting = (split.data ?? []).filter((g) => !g.dismissed).length;
+  // what «Наведение порядка» found and waits for an answer: a count draws the eye to it
+  const tidy = useAsync((s) => (STANDALONE ? api.tidy(s) : Promise.resolve(null)), [], true, 'menu:tidy');
+  const tidyWaiting = tidy.data?.total ?? 0;
   // what waits for the user in «Загрузки»: files to choose, failed ones — a transfer's too
   const review = useAsync((s) => (STANDALONE ? api.downloadsOverview(s) : Promise.resolve(null)), [], true, 'menu:downloads')?.data?.review ?? 0;
   const telegram = useAsync(api.telegram, []);
@@ -107,7 +107,7 @@ export function MorePage() {
             <Group>
               <Item icon="download" tint="bg-[#3d8ef0]" to="/downloads" title="Загрузки" value={downloads > 0 ? `качается ${downloads > 99 ? '99+' : downloads}` : undefined} badge={review ? (review > 999 ? '999+' : String(review)) : undefined} badgeTone="warn" />
               <Item icon="folder" tint="bg-[#ef8b3a]" to="/files" title={me.is_admin ? 'Все файлы' : 'Мои файлы'} />
-              <Item icon="merge" tint="bg-[#1f9d55]" to="/albums/merge" title="Объединение альбомов" badge={splitWaiting ? (splitWaiting > 99 ? '99+' : String(splitWaiting)) : undefined} />
+              <Item icon="sparkle" tint="bg-[#1f9d55]" to="/tidy" title="Наведение порядка" badge={tidyWaiting ? (tidyWaiting > 99 ? '99+' : String(tidyWaiting)) : undefined} />
               <Item icon="sliders" tint="bg-[#30b85c]" to="/quality" title="Качество звука" value={waiting ? `ждут решения: ${waiting}` : weak ? `слабых: ${weak}` : undefined} />
             </Group>
           )}
