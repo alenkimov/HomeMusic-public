@@ -3,7 +3,8 @@ import { api } from '../api/client';
 import type { CatalogArtist } from '../api/types';
 import { ArtistMap, ArtistMapPanel, ArtistsViewSwitch, useArtistMap, useArtistsView } from '../components/ArtistMap';
 import { Icon } from '../components/Icon';
-import { Button, Cover, ErrorState, PageHeader, SkeletonRows, cx } from '../components/ui';
+import { ArtistCard } from '../components/Artist';
+import { Button, ErrorState, PageHeader, SkeletonRows } from '../components/ui';
 import { useAsync, useDebounced } from '../lib/hooks';
 import { navigate, useRoute } from '../lib/router';
 import { tastePicked } from '../lib/taste';
@@ -29,17 +30,20 @@ interface Alike {
 /** An artist to pick: the round photo with a check on it once picked, the name under it. */
 function ArtistTile({ a, on, onToggle, className }: { a: CatalogArtist; on: boolean; onToggle: () => void; className?: string }) {
   return (
-    <button type="button" onClick={onToggle} aria-pressed={on} className={cx('flex flex-col items-center gap-2 text-center', className)}>
-      <span className="relative">
-        <Cover src={a.picture_small_url || a.picture_url} size={88} round icon="user" alt="" className={cx('transition', on && 'ring-4 ring-accent')} />
-        {on && (
-          <span className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full bg-accent text-on-accent ring-2 ring-bg">
-            <Icon name="check" size={16} stroke={3} />
-          </span>
-        )}
-      </span>
-      <span className={cx('line-clamp-2 w-full text-sm leading-tight', on && 'font-semibold text-accent')}>{a.name}</span>
-    </button>
+    <ArtistCard
+      artist={{ name: a.name, photo: a.picture_small_url || a.picture_url }}
+      size={88}
+      sub={false}
+      selected={on}
+      onClick={onToggle}
+      button={{ 'aria-pressed': on }}
+      className={className}
+      overlay={on && (
+        <span className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full bg-accent text-on-accent ring-2 ring-bg">
+          <Icon name="check" size={16} stroke={3} />
+        </span>
+      )}
+    />
   );
 }
 

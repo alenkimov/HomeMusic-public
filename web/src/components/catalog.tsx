@@ -38,6 +38,7 @@ import { openTrackMenu, trackMenuAt } from '../lib/trackMenu';
 import { menuPressProps, useContextMenu } from './ContextMenu';
 import { AlbumMenu, ArtistMenu } from './EntityMenus';
 import { AlbumCard, AlbumLink, catalogLook } from './Album';
+import { ArtistCard } from './Artist';
 import { useTrackTable } from './TrackTable';
 import { Checkbox, Cover, IconButton, OwnedBadge, PlayingBars, Spinner, cx } from './ui';
 
@@ -739,10 +740,7 @@ export function ArtistBubble({ artist }: { artist: CatalogArtist }) {
   const menu = useContextMenu();
   return (
     <>
-      <Link to={artistPath(artist)} {...menuPressProps(menu.openAt)} className="flex w-28 shrink-0 select-none flex-col items-center gap-2 text-center [-webkit-touch-callout:none]">
-        <Cover src={artist.picture_small_url || artist.picture_url} size={104} round icon="user" alt={artist.name} />
-        <span className="line-clamp-2 text-sm leading-tight">{artist.name}</span>
-      </Link>
+      <ArtistCard artist={{ name: artist.name, to: artistPath(artist), photo: artist.picture_small_url || artist.picture_url }} onMenu={menu.openAt} />
       {menu.shown && <ArtistMenu artist={artist} at={menu.at} onClose={menu.close} />}
     </>
   );

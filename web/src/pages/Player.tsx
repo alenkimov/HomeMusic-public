@@ -14,6 +14,7 @@ import { TrackMenuButton, menuTrackOf } from '../components/TrackMenu';
 import { trackMenuAt } from '../lib/trackMenu';
 import { OtherVersions } from '../components/Versions';
 import { ServiceBadge } from '../components/ServiceBadge';
+import { ArtistRow } from '../components/Artist';
 import { Cover, Empty, IconButton, Sheet, Spinner, cx } from '../components/ui';
 import { fmtDuration, fmtNum, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
@@ -404,27 +405,16 @@ function Credits({ track }: { track: ListenTrack }) {
     <section aria-label="Участники" className="mx-4 mt-5 rounded-2xl bg-surface px-4 pb-2 pt-3">
       <h2 className="pb-1 text-base font-bold">Участники</h2>
       <ul>
-        {people.map((a, i) => {
-          const who = (
-            <>
-              <CreditPhoto refId={a.ref} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[15px]">{a.name}</span>
-                <span className="block text-[13px] text-muted">Исполнитель</span>
-              </span>
-            </>
-          );
-          return (
-            <li key={`${a.ref ?? a.name}:${i}`} className="flex min-h-14 items-center gap-1">
-              {artistTo(a) ? (
-                <Link to={artistTo(a)!} className="flex min-w-0 flex-1 items-center gap-3 py-1.5 hover:underline">{who}</Link>
-              ) : (
-                <div className="flex min-w-0 flex-1 items-center gap-3 py-1.5">{who}</div>
-              )}
-              {a.ref && <LikeButton targetType="artist" refId={a.ref} title={a.name} data={{ name: a.name }} className="-mr-2" />}
-            </li>
-          );
-        })}
+        {people.map((a, i) => (
+          <li key={`${a.ref ?? a.name}:${i}`}>
+            <ArtistRow
+              artist={{ name: a.name, to: artistTo(a) }}
+              picture={<CreditPhoto refId={a.ref} />}
+              actions={a.ref && <LikeButton targetType="artist" refId={a.ref} title={a.name} data={{ name: a.name }} className="-mr-2" />}
+              className="!px-0"
+            />
+          </li>
+        ))}
       </ul>
     </section>
   );
@@ -432,7 +422,7 @@ function Credits({ track }: { track: ListenTrack }) {
 
 function CreditPhoto({ refId }: { refId?: string }) {
   const res = useAsync((signal) => api.catalogArtistPhoto(refId!, signal), [refId], !!refId);
-  return <Cover src={res.data?.url} size={40} round alt="" icon="user" />;
+  return <Cover src={res.data?.url} size={48} round alt="" icon="user" />;
 }
 
 /** The head of the player: what is playing — «Играет из плейлиста · JAPAN», a link to that list. */

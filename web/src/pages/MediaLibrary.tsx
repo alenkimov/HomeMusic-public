@@ -1,7 +1,7 @@
 import { titleWithVersion } from '../lib/versionLabels';
 import { Children, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { imageUrl } from '../lib/img';
-import { ArtistPage } from './Artist';
+import { ArtistBanner, ArtistPage, BannerPicture } from './Artist';
 import { api } from '../api/client';
 import type { NdAlbumOut, NdArtistOut, NdSongOut, TrackOut } from '../api/types';
 import { LibraryAlbumMenu } from '../components/AlbumEdit';
@@ -11,9 +11,10 @@ import { Icon } from '../components/Icon';
 import { ListBar } from '../components/ListBar';
 import { useListSearch, type Found } from '../components/ListSearch';
 import { CoverView, ownCover } from '../components/PlaylistMenu';
-import { ContextMenu, menuAtButton, menuPressProps, useContextMenu, type MenuAt } from '../components/ContextMenu';
+import { ContextMenu, menuAtButton, useContextMenu, type MenuAt } from '../components/ContextMenu';
 import { NdAlbumMenu, NdArtistMenu } from '../components/EntityMenus';
 import { AlbumCard, AlbumHero } from '../components/Album';
+import { ArtistRow, artistLine } from '../components/Artist';
 import { LIKED_MARK, PlaylistHero, playlistLook } from '../components/Playlist';
 import { useSession } from '../lib/session';
 import { listChanged, patch, useCardUpdates } from '../lib/cards';
@@ -30,7 +31,7 @@ import { needsTrackFile, withRecordingAvailability } from '../lib/findFile';
 import { useListSort } from '../lib/listSort';
 import { cyclePageShuffle, useListen } from '../lib/listen';
 import { useAsync, useRememberScrollX } from '../lib/hooks';
-import { Link, enc, navigate, useCanonicalPath, useRoute } from '../lib/router';
+import { enc, navigate, useCanonicalPath, useRoute } from '../lib/router';
 import { filterActive, filterOfQuery, filterWords, passes, selectionsChanged, tagKey, useTags, type TagFilter } from '../lib/tags';
 import { attempt, confirmDialog } from '../lib/ui';
 import { openPlaylistMenu } from '../lib/playlistMenu';
@@ -54,44 +55,6 @@ export function NdAlbumCard({ album, showArtist = true }: { album: NdAlbumOut; s
   );
 }
 
-/** An artist of the library: a tap opens it; `radio` — a tap starts the wave by the artist («Радиостанции»). */
-export function NdArtistBubble({ artist, radio = false }: { artist: NdArtistOut; radio?: boolean }) {
-  const { starting } = useWave();
-  const menu = useContextMenu();
-  const body = (
-    <>
-      <span className="relative">
-        <Cover src={artist.cover_url} size={104} round icon="user" alt={artist.name} />
-        {radio && (
-          <span className="absolute bottom-1 right-1 flex h-8 w-8 items-center justify-center rounded-full bg-accent text-on-accent shadow">
-            {starting === seedKey({ nd_artist_id: artist.id }) ? <Spinner size={16} /> : <Icon name="wave" size={18} />}
-          </span>
-        )}
-      </span>
-      <span className="line-clamp-2 text-sm leading-tight">{artist.name}</span>
-    </>
-  );
-  const cls = 'flex w-28 shrink-0 select-none flex-col items-center gap-2 text-center [-webkit-touch-callout:none]';
-  const press = menuPressProps(menu.openAt);
-  const drawn = menu.shown && <NdArtistMenu artist={artist} at={menu.at} onClose={menu.close} />;
-  if (radio && canWave())
-    return (
-      <>
-        <button type="button" {...press} className={cls} aria-label={`Радио: ${artist.name}`} onClick={() => void startWave({ nd_artist_id: artist.id }, 'radio')}>
-          {body}
-        </button>
-        {drawn}
-      </>
-    );
-  return (
-    <>
-      <Link to={`/lib/artist/${enc(artist.id)}`} {...press} className={cls}>
-        {body}
-      </Link>
-      {drawn}
-    </>
-  );
-}
 
 /** ▶ and the shuffle of a whole list, at the right of its name. The shuffle goes round as the player's — off, on,
  * and for a playlist or «Любимое» the smart one; ▶ starts the list as the button says. */
@@ -509,19 +472,29 @@ export function ArtistsPage() {
         <ul>
           {shown.map((a) => (
             <li key={a.id}>
-              <Link to={`/lib/artist/${enc(a.id)}`} className="flex min-h-16 items-center gap-3 px-4 py-2 hover:bg-fg/5">
-                <Cover src={a.cover_url} size={48} round icon="user" alt="" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">{a.name}</span>
-                  <span className="block text-xs text-muted">{albumsWord(a.album_count)}</span>
-                </span>
-                {a.starred && <Icon name="heart" filled size={16} className="text-accent" />}
-              </Link>
+              <LibArtistRow artist={a} />
             </li>
           ))}
         </ul>
       )}
     </div>
+  );
+}
+
+/** An artist of the library in its list: their albums, the ♥ of one followed, their menu. */
+function LibArtistRow({ artist }: { artist: NdArtistOut }) {
+  const menu = useContextMenu();
+  return (
+    <>
+      <ArtistRow
+        artist={{ name: artist.name, to: `/lib/artist/${enc(artist.id)}`, photo: artist.cover_url }}
+        sub={artistLine(albumsWord(artist.album_count))}
+        actions={artist.starred && <Icon name="heart" filled size={16} className="shrink-0 text-accent" />}
+        onMenu={menu.openAt}
+        className="hover:bg-fg/5"
+      />
+      {menu.shown && <NdArtistMenu artist={artist} at={menu.at} onClose={menu.close} />}
+    </>
   );
 }
 
@@ -554,6 +527,7 @@ export function NdArtistPage({ id }: { id: string }) {
   }
   const { artist, albums } = d;
   const tracks = d.tracks ?? [];
+  const photo = artist.cover_url ?? albums[0]?.cover_url ?? tracks[0]?.cover_small_url;
   const follow = async () => {
     setBusy(true);
     try {
@@ -564,16 +538,11 @@ export function NdArtistPage({ id }: { id: string }) {
   };
   return (
     <div>
+      {photo && <BannerPicture src={photo} blurred />}
       <ListBar title={artist.name} back="/artists" tracks={tracks} context="artist" />
-      <Hero
-        kicker="Исполнитель"
-        cover={artist.cover_url ?? albums[0]?.cover_url ?? tracks[0]?.cover_small_url}
-        round
-        title={artist.name}
-        sub={[tracks.length ? tracksWord(tracks.length) : null, albums.length ? albumsWord(albums.length) : null, 'только в медиатеке'].filter(Boolean).join(' · ')}
-        tracks={tracks}
-        context="artist"
-      />
+      <ArtistBanner name={artist.name} photo={photo ?? null} sub={[tracks.length ? tracksWord(tracks.length) : null, albums.length ? albumsWord(albums.length) : null, 'только в медиатеке'].filter(Boolean).join(' · ')} />
+      {/* what goes up over the picture has the page's own colour under it */}
+      <div className="relative z-[1] min-h-[60dvh] bg-bg">
       <div className="flex items-center px-4 pb-3 lg:px-6">
         {/* the buttons go sideways where they do not fit; the ⋯ stays at the right edge, whatever the width */}
         <div className="no-scrollbar -my-1 flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-1 pr-5 [mask-image:linear-gradient(to_right,#000_calc(100%-1.25rem),transparent)] [&>*]:shrink-0">
@@ -600,6 +569,8 @@ export function NdArtistPage({ id }: { id: string }) {
         )}
         <ArtistProjects card={names.card} />
         </div>
+        {/* ▶ and the shuffle, as on a catalog artist's page: of the row under the head */}
+        {tracks.length > 0 && <PlayPair tracks={tracks} context="artist" />}
         {names.card && (
           <button type="button" onClick={(e) => {
             setNamingAt(menuAtButton(e.currentTarget));
@@ -652,6 +623,7 @@ export function NdArtistPage({ id }: { id: string }) {
         </section>
       )}
       {!tracks.length && !albums.length && <Empty icon="user" title="Здесь пока пусто" text="В медиатеке нет треков этого исполнителя." />}
+      </div>
     </div>
   );
 }

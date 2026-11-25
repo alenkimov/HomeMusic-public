@@ -10,8 +10,9 @@ import { plural, tracksWord, yearOf } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { setUnseenReleases } from '../lib/releases';
 import { AlbumRow } from '../components/Album';
+import { ArtistRow } from '../components/Artist';
 import { AlbumMenu } from '../components/EntityMenus';
-import { Link, enc } from '../lib/router';
+import { enc } from '../lib/router';
 import { toggleLike, useLiked, useLikesKnown } from '../lib/stars';
 
 /** «Подписки» (`/subscriptions`): the artists the user follows («Подписаться» on an artist's page) and what they
@@ -242,16 +243,22 @@ function ArtistLine({ f, on, onPick }: { f: FollowOut; on: boolean; onPick: () =
     }
   };
   return (
-    <li className={cx('flex min-h-15 items-center gap-2 rounded-lg px-1', on && 'bg-accent/10')}>
-      <button type="button" onClick={onPick} aria-pressed={on} aria-label={on ? 'Показать релизы всех' : `Релизы · ${f.name}`} className={cx('shrink-0 rounded-full p-0.5', f.new > 0 && 'ring-2 ring-accent')}>
-        <Cover src={f.picture_url} size={40} round icon="user" alt="" />
-      </button>
-      <Link to={`/artist/${enc(f.ref)}`} className="min-w-0 flex-1 py-1.5">
-        <span className="block wrap-anywhere font-medium hover:underline">{f.name}</span>
-        <span className={cx('line-clamp-2 wrap-anywhere text-[13px]', unfollow && f.new ? 'text-accent' : 'text-muted')}>
-          {!unfollow ? 'Подписка снята' : f.new ? `Новых релизов: ${f.new}` : f.last_release_date ? `${f.last_release_title ?? 'Последний релиз'} · ${day(f.last_release_date)}` : 'Релизов пока не видно'}
-        </span>
-      </Link>
+    <li className={cx('flex items-center rounded-lg pr-1', on && 'bg-accent/10')}>
+      <ArtistRow
+        artist={{ name: f.name, to: `/artist/${enc(f.ref)}` }}
+        className="min-w-0 flex-1 !gap-2 !px-1"
+        lead={
+          <button type="button" onClick={onPick} aria-pressed={on} aria-label={on ? 'Показать релизы всех' : `Релизы · ${f.name}`} className={cx('shrink-0 rounded-full p-0.5', f.new > 0 && 'ring-2 ring-accent')}>
+            <Cover src={f.picture_url} size={48} round icon="user" alt="" />
+          </button>
+        }
+        picture={null}
+        sub={
+          <span className={unfollow && f.new ? 'text-accent' : undefined}>
+            {!unfollow ? 'Подписка снята' : f.new ? `Новых релизов: ${f.new}` : f.last_release_date ? `${f.last_release_title ?? 'Последний релиз'} · ${day(f.last_release_date)}` : 'Релизов пока не видно'}
+          </span>
+        }
+      />
       <IconButton icon="more" size={18} label={`Действия · ${f.name}`} popoverTarget={id} onClick={positionMenu}
         aria-expanded={open} busy={busy} className="text-muted hover:bg-fg/5 hover:text-fg" />
       <div id={id} ref={menu} popover="auto" onToggle={(event) => setOpen(event.newState === 'open')}

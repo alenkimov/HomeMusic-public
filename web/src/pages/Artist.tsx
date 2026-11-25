@@ -189,7 +189,7 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
           </>
         }
       />
-      <Banner name={shownName} photo={d.banner_url ? undefined : (photo ?? null)} />
+      <ArtistBanner name={shownName} photo={d.banner_url ? undefined : (photo ?? null)} />
 
       {/* what goes up over the picture has the page's own colour under it */}
       <div className="relative z-[1] min-h-[60dvh] bg-bg">
@@ -315,7 +315,7 @@ const BANNER_H = 'h-[clamp(15rem,34vw,26rem)]';
  * over it (moved after every scroll instead, it lagged a frame behind and sprang). As the page covers it a shade of
  * the page's colour comes over it too; that is set a frame at a time on the element, and a shade a frame late is
  * not seen. */
-function BannerPicture({ src, blurred }: { src: string; /** not a wide picture but the artist's photo: shown out of focus, as a ground */ blurred?: boolean }) {
+export function BannerPicture({ src, blurred }: { src: string; /** not a wide picture but the artist's photo: shown out of focus, as a ground */ blurred?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = box.current;
@@ -382,7 +382,7 @@ function useOneLine(what: string) {
  * there is no wide picture (`photo` given: the address, or null for no photo at all) the head is as tall as the
  * round photo, which stands before the name — on a phone and on a computer alike — on the ground made of it.
  */
-function Banner({ name, photo }: { name: string; photo?: string | null }) {
+export function ArtistBanner({ name, photo, sub }: { name: string; photo?: string | null; /** a line under the name */ sub?: string }) {
   const round = 'h-32 w-32 shrink-0 rounded-full shadow-xl sm:h-44 sm:w-44 lg:h-56 lg:w-56';
   const wide = photo === undefined;
   const title = useOneLine(name);
@@ -403,6 +403,7 @@ function Banner({ name, photo }: { name: string; photo?: string | null }) {
           <h2 ref={title} data-list-title className="line-clamp-2 break-words text-[clamp(2.5rem,12vw,9rem)] font-black leading-[1.05] tracking-tight [text-shadow:0_2px_16px_rgb(0_0_0/0.55)]">
             {name}
           </h2>
+          {sub && <div className="mt-1 text-sm text-fg/80 [text-shadow:0_1px_8px_rgb(0_0_0/0.6)]">{sub}</div>}
         </div>
       </div>
     </div>
