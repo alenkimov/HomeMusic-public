@@ -11,9 +11,11 @@ moment only (`get`): a stream must start at once, so when the copy is not ready 
 finished in the background, and that answer is flagged ("pending"). Bytes of the two variants must never meet in
 one cache entry of a client, so for `STICKY_S` after such an answer the same source keeps getting the original.
 
-The same copies serve a player that cannot play the source's format at all (Safari of an iPhone and Ogg Opus,
-`PLAYABLE`): an AAC copy in MP4, made whatever the bitrate, and waited for (`convert`) — the original would not play.
-A light copy for such a player is AAC too (`AAC`). What a copy is encoded to is its `Encoding`.
+The same copies serve a player that cannot play the source's format at all (Safari of an iPhone and Ogg Opus), made
+whatever the bitrate and waited for (`convert`) — the original would not play: Opus put as it is into MP4 for a
+player that plays Opus there (iOS 17 and later: `OPUS_MP4`, a tenth of a second, not a bit of the sound changed —
+as Jellyfin serves Safari), else an AAC copy (`PLAYABLE`). A light copy for a player without Ogg is AAC too (`AAC`).
+What a copy is made into is its `Encoding`.
 
 ffmpeg runs a few at a time (`ENCODERS`), at a low CPU priority, and a background encode yields to one a user waits
 for (`app.net.PrioritySemaphore`). The copies are kept least recently used out, up to `MAX_BYTES`.
@@ -55,7 +57,7 @@ class Encoding:
     name: str
     suffix: str
     media_type: str
-    kbps: int
+    kbps: int  # 0: the audio is copied as it is
     codec: tuple[str, ...]
     lighten: bool = True  # a copy only of a source above `HEAVY_KBPS`; else of any source
 
@@ -67,6 +69,9 @@ AAC = Encoding("aac", ".m4a", "audio/mp4", LIGHT_KBPS, _M4A)  # the light copy f
 # the source's own format won't play: a player waits for this one, so the quick coder (twice as fast; at 256 kbps
 # the same to the ear)
 PLAYABLE = Encoding("playable", ".m4a", "audio/mp4", 256, ("-aac_coder", "fast", *_M4A), lighten=False)
+# Opus as it is, in MP4 (a player that plays Opus in MP4 but not in Ogg)
+OPUS_MP4 = Encoding("opus-mp4", ".m4a", "audio/mp4", 0, ("-c:a", "copy", "-f", "mp4", "-movflags", "+faststart"),
+                    lighten=False)
 SUFFIX, MEDIA_TYPE = OPUS.suffix, OPUS.media_type
 
 # What a request is answered with (header `X-HomeMusic-Variant`)
@@ -77,6 +82,7 @@ PENDING = "original-pending"  # the copy is not ready (or failed): the original,
 _sem: PrioritySemaphore | None = None
 _jobs: dict[str, tuple[asyncio.Task[Path], Priority, Path]] = {}  # key -> the encode, its priority, the copy
 _kbps: dict[str, int | None] = {}  # key -> probed bitrate
+_codecs: dict[str, str | None] = {}  # ident -> probed codec
 _served_original: dict[str, float] = {}  # key -> monotonic time an original was served in place of the copy
 _failed: dict[str, float] = {}  # key -> monotonic time ffmpeg failed
 
@@ -114,6 +120,17 @@ async def bitrate(src: Path, key: str, hint: int | None = None) -> int | None:
             log.info("light %s: not probed: %s", src.name, e)
             _kbps[key] = None
     return _kbps[key]
+
+
+async def codec(src: Path, ident: str) -> str | None:
+    """The source's audio codec («opus», «vorbis»…), probed once. None: unreadable."""
+    if ident not in _codecs:
+        try:
+            _codecs[ident] = (await probe(src)).codec
+        except ProbeError as e:
+            log.info("light %s: not probed: %s", src.name, e)
+            _codecs[ident] = None
+    return _codecs[ident]
 
 
 async def cached(ident: str, enc: Encoding = OPUS) -> tuple[Path | None, str] | None:
@@ -246,7 +263,7 @@ def ffmpeg_args(src: Path, out: Path, enc: Encoding = OPUS) -> list[str]:
     made again has the same size: a client that has half of it cached keeps reading the same file)."""
     args = [ffmpeg_bin(), "-hide_banner", "-nostats", "-nostdin", "-loglevel", "error", "-y", "-i", str(src),
             "-map", "0:a:0", "-vn", "-map_metadata", "-1", "-fflags", "+bitexact", "-flags:a", "+bitexact",
-            "-b:a", f"{enc.kbps}k", *enc.codec, str(out)]
+            *(("-b:a", f"{enc.kbps}k") if enc.kbps else ()), *enc.codec, str(out)]
     nice = shutil.which("nice")
     return [nice, "-n", "10", *args] if nice else args
 
@@ -297,6 +314,7 @@ def reset() -> None:
         task.cancel()
     _jobs.clear()
     _kbps.clear()
+    _codecs.clear()
     _served_original.clear()
     _failed.clear()
     _sem = None

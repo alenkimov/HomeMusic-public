@@ -24,13 +24,15 @@ needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg
 def fake_encoder(monkeypatch):
     """No ffmpeg: a bitrate by the file name ("heavy" is 320 kbps, the rest 141) and an "encode" that keeps half
     of the bytes. `gate` holds the encodes, `running` counts those in progress."""
-    st = SimpleNamespace(gate=None, running=0, peak=0, calls=[])
+    st = SimpleNamespace(gate=None, running=0, peak=0, calls=[], encodings=[])
 
     async def fake_probe(path, timeout=60):
-        return SimpleNamespace(bitrate_kbps=320 if "heavy" in str(path) else 141)
+        return SimpleNamespace(bitrate_kbps=320 if "heavy" in str(path) else 141,
+                               codec="opus" if str(path).endswith(".opus") else "mp3")
 
     async def fake_ffmpeg(src, out, enc=None):
         st.calls.append(src)
+        st.encodings.append(enc)
         st.running += 1
         st.peak = max(st.peak, st.running)
         try:
@@ -385,6 +387,25 @@ async def test_a_format_the_player_cannot_play_comes_as_its_aac_copy(env, fake_e
     assert r.content == AUDIO and len(fake_encoder.calls) == 1
 
 
+async def test_opus_goes_into_mp4_as_it_is_for_a_player_that_plays_it_there(env, fake_encoder):
+    c = env["client"]
+    await song(env, "plain.opus", "nd45")
+    await song(env, "lossless.flac", "nd46")
+    r = await c.get("/api/listen/stream", params={"ref": "nd:nd45", "cant": "ogg", "can": "opus-mp4,unknown"})
+    assert r.status_code == 200 and r.headers["content-type"] == "audio/mp4"
+    assert fake_encoder.encodings == [light.OPUS_MP4]
+    # what is not Opus is AAC, «can» or not; and a player that did not say «can» gets AAC of Opus too
+    r = await c.get("/api/listen/stream", params={"ref": "nd:nd46", "cant": "ogg,flac", "can": "opus-mp4"})
+    assert r.headers["content-type"] == "audio/mp4" and fake_encoder.encodings[-1] == light.PLAYABLE
+    r = await c.get("/api/listen/stream", params={"ref": "nd:nd45", "cant": "ogg"})
+    assert fake_encoder.encodings[-1] == light.PLAYABLE and len(fake_encoder.calls) == 3
+
+
+def test_opus_into_mp4_is_a_copy_of_the_audio():
+    args = light.ffmpeg_args(Path("in.opus"), Path("out.m4a"), light.OPUS_MP4)
+    assert "-c:a copy -f mp4" in " ".join(args) and "-b:a" not in args
+
+
 async def test_a_light_copy_for_a_player_without_ogg_is_aac(env, fake_encoder):
     c = env["client"]
     await song(env, "heavy.mp3", "nd42")
@@ -439,3 +460,6 @@ async def test_ffmpeg_makes_an_m4a_of_ogg_opus(tmp_path):
     await light._ffmpeg(src, out, light.PLAYABLE)
     head = out.read_bytes()[:12]
     assert head[4:8] == b"ftyp" and head[8:12] == b"M4A "
+    remuxed = tmp_path / "copy.m4a"
+    await light._ffmpeg(src, remuxed, light.OPUS_MP4)
+    assert remuxed.read_bytes()[4:8] == b"ftyp" and (await light.probe(remuxed)).codec == "opus"

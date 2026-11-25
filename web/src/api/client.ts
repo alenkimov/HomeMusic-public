@@ -1,5 +1,5 @@
 import type { ListenTrack, ManualQueueEntry } from '../lib/listen';
-import { cantPlay } from '../lib/formats';
+import { formats, type Formats } from '../lib/formats';
 import type { LyricsCandidate, LyricsOut, LyricsSettings, LyricsTranslation, LyricsTranslators } from '../lib/lyrics';
 import type { StatsBy, StatsImportOut, StatsOut, StatsPeriod, StatsTrackOut } from '../lib/stats';
 import { timeZone } from '../lib/stats';
@@ -514,7 +514,7 @@ export const api = {
   /** `ahead`: the queue plays the track soon — the Hub opens its file and copies it to its disk now: 'whole' for
    * the track that plays next, 'head' (its start only) for the ones after it. */
   listen: (ref: string, signal?: AbortSignal, ahead?: 'whole' | 'head') =>
-    request<ListenOut>('GET', withQuery('/api/listen', ahead ? { ref, ahead, cant: cantPlay() } : { ref }), { signal }),
+    request<ListenOut>('GET', withQuery('/api/listen', ahead ? { ref, ahead, ...formats() } : { ref }), { signal }),
   // the catalog tracks on screen, top first: the Hub picks their files in the background (replaces the last list)
   listenPrefetch: (refs: string[]) => request<{ queued: number }>('POST', '/api/listen/prefetch', { json: { refs } }),
 
@@ -922,8 +922,8 @@ export const api = {
 export const libraryCoverUrl = (albumId: number, size = 300, bust?: string | number) =>
   withQuery(`/api/library/albums/${albumId}/cover`, { size, v: bust });
 
-/** Audio of a catalog track for `<audio src>`; the Hub picks the file on the first request if needed. `cant`: the
- * formats this browser does not play (`lib/formats`) — such a file comes as its AAC copy. */
-export const listenStreamUrl = (ref: string, cant = cantPlay()) => withQuery('/api/listen/stream', { ref, cant });
+/** Audio of a catalog track for `<audio src>`; the Hub picks the file on the first request if needed. `play`: what this
+ * browser does and does not play (`lib/formats`) — a file it cannot play comes as a copy it can. */
+export const listenStreamUrl = (ref: string, play: Formats = formats()) => withQuery('/api/listen/stream', { ref, ...play });
 
 export const uploadCoverUrl = (uploadId: number) => `/api/uploads/${uploadId}/cover`;

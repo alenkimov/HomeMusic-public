@@ -35,9 +35,11 @@ of the file when it is heavy (the copy of a catalog track is made from its serve
 time (`warm_light`: a mix's songs, a wave's tracks); a stream that finds none ready waits a moment, then serves the
 original and says so (`Media.variant`) while the copy is finished in the background.
 
-A player says which formats it cannot play at all (`cant`: Safari of an iPhone and Ogg Opus): a file in one of them
-is served as its AAC copy (`light.PLAYABLE`), made from the file on disk (a catalog track: its server copy, whole) and
-waited for; the next track of a queue gets its copy ahead (`load_ahead`).
+A player says which formats it cannot play at all (`cant`: Safari of an iPhone and Ogg Opus) and what else it can
+(`can`: «opus-mp4», Opus in MP4 — iOS 17 and later): a file in such a format is served as its copy, made from the
+file on disk (a catalog track: its server copy, whole) and waited for — Opus put into MP4 as it is where the player
+plays that (`light.OPUS_MP4`, a moment), else AAC (`light.PLAYABLE`); the next track of a queue gets its copy ahead
+(`load_ahead`).
 """
 
 from __future__ import annotations
@@ -271,9 +273,17 @@ MOBILE = "mobile"  # the quality of a stream for a metered network (`light`)
 FORMATS = {"audio/ogg": "ogg", "audio/opus": "ogg", "audio/webm": "webm", "video/webm": "webm", "audio/flac": "flac"}
 
 
+CAN = {"opus-mp4"}  # what a player may say it can play besides (`can`)
+
+
 def parse_cant(value: str | None) -> frozenset[str]:
     """`cant` of a request: «ogg,webm» — the formats known here, the rest ignored."""
     return frozenset(f for f in (value or "").split(",") if f in FORMATS.values())
+
+
+def parse_can(value: str | None) -> frozenset[str]:
+    """`can` of a request: «opus-mp4» — what is known here, the rest ignored."""
+    return frozenset(f for f in (value or "").split(",") if f in CAN)
 
 
 def _plays(media_type: str, cant: frozenset[str]) -> bool:
@@ -285,17 +295,17 @@ def _light_encoding(cant: frozenset[str]) -> light.Encoding:
 
 
 async def open_media(ref: str, range_header: str | None, *, ahead: bool = False, quality: str | None = None,
-                     cant: frozenset[str] = frozenset()) -> Media:
+                     cant: frozenset[str] = frozenset(), can: frozenset[str] = frozenset()) -> Media:
     """The audio for the client's Range: the library file, a local copy, or the server copy of the picked file.
     `ahead`: the app loads a track of its queue ahead; its server copy waits for those of
     played tracks. `quality` "mobile": the light variant when the file is heavy (`app.light`). `cant`: the formats
-    the player cannot play (`FORMATS`): a file in one of them comes as its AAC copy. A pick none of whose files opens
-    is replaced by a new one (once)."""
+    the player cannot play (`FORMATS`): a file in one of them comes as its copy (`can`: what that may be). A pick
+    none of whose files opens is replaced by a new one (once)."""
     c = await choose(ref, background=ahead)
     searched_again = False
     while True:
         try:
-            media = await _open_choice(c, range_header, ahead, quality == MOBILE, cant)
+            media = await _open_choice(c, range_header, ahead, quality == MOBILE, cant, can)
         except ListenError:
             # A range of a file already served must never become a range of another encoding.
             if c.candidate is None or (c.heard and range_header and not range_header.startswith("bytes=0-")):
@@ -315,7 +325,8 @@ async def open_media(ref: str, range_header: str | None, *, ahead: bool = False,
             return media
 
 
-async def _open_choice(c: Choice, range_header: str | None, ahead: bool, lite: bool, cant: frozenset[str]) -> Media:
+async def _open_choice(c: Choice, range_header: str | None, ahead: bool, lite: bool, cant: frozenset[str],
+                       can: frozenset[str]) -> Media:
     enc = _light_encoding(cant)
     if c.kind == "library" or _uses_local_copy(c):
         if c.kind == "library":
@@ -327,7 +338,7 @@ async def _open_choice(c: Choice, range_header: str | None, ahead: bool, lite: b
             path, ident = c.local, _file_ident(c)
             media = Media(c, path=path, media_type=local_media_type(path))
         if not _plays(local_media_type(path), cant):
-            return await _playable(c, path, ident, lite)
+            return await _playable(c, path, ident, lite, can)
         return await _lighten(c, media, path, ident, ahead, enc) if lite else media
     known = await light.cached(_file_ident(c), enc) if lite else None
     if known is not None and known[0] is not None:
@@ -341,7 +352,7 @@ async def _open_choice(c: Choice, range_header: str | None, ahead: bool, lite: b
         await cp.until(cp.settled)
         if not cp.done:
             raise cp.failed or ListenError(502, "Источник не отдал аудио")
-        return await _playable(c, cp.path, _file_ident(c), lite)
+        return await _playable(c, cp.path, _file_ident(c), lite, can)
     variant = known[1] if known else light.PENDING
     if lite and known is None:
         media, variant = await _lighten_copy(c, cp, ahead, enc)
@@ -373,17 +384,25 @@ def _variant(c: Choice, hit: tuple[Path | None, str], enc: light.Encoding, origi
     return replace(original, variant=variant)
 
 
-async def _playable(c: Choice, src: Path, ident: str, lite: bool) -> Media:
-    """A file the player cannot play: its AAC copy, waited for."""
+async def _playable_encoding(src: Path, ident: str, can: frozenset[str]) -> light.Encoding:
+    """What a file the player cannot play is made into: Opus is put into MP4 as it is where the player plays that."""
+    if "opus-mp4" in can and await light.codec(src, ident) == "opus":
+        return light.OPUS_MP4
+    return light.PLAYABLE
+
+
+async def _playable(c: Choice, src: Path, ident: str, lite: bool, can: frozenset[str]) -> Media:
+    """A file the player cannot play: its copy in a format it plays, waited for."""
+    enc = await _playable_encoding(src, ident, can)
     try:
-        path = await light.convert(src, ident)
+        path = await light.convert(src, ident, enc)
     except asyncio.CancelledError:
         raise
     except Exception as e:
         log.warning("listen %s: no playable copy of %s: %r", c.ref, src.name, e)
         raise ListenError(502, "Устройство не воспроизводит формат этого файла, а перекодировать его не получилось") from e
     # one and the same copy for every request of this player: as stable as an original for its cache
-    return Media(c, path=path, media_type=light.PLAYABLE.media_type, variant=light.ORIGINAL if lite else None)
+    return Media(c, path=path, media_type=enc.media_type, variant=light.ORIGINAL if lite else None)
 
 
 async def _lighten(c: Choice, media: Media, src: Path, ident: str, ahead: bool, enc: light.Encoding) -> Media:
@@ -456,8 +475,8 @@ async def _warm_light(refs: list[str]) -> None:
             log.info("listen %s: no light copy: %r", ref, e)
 
 
-async def _make_playable(c: Choice, cant: frozenset[str]) -> None:
-    """The AAC copy of the pick's file, if the player cannot play its format (`load_ahead`)."""
+async def _make_playable(c: Choice, cant: frozenset[str], can: frozenset[str]) -> None:
+    """The playable copy of the pick's file, if the player cannot play its format (`load_ahead`)."""
     if c.kind == "library" and c.path is not None and _plays(local_media_type(c.path), cant):
         return  # nothing to wait for
     try:
@@ -466,7 +485,10 @@ async def _make_playable(c: Choice, cant: frozenset[str]) -> None:
             return
         cp = _copies.get(c.ref)
         media_type = cp.media_type if cp is not None and cp.path == src[0] else local_media_type(src[0])
-        if not _plays(media_type, cant) and (task := light.ensure(*src, enc=light.PLAYABLE)) is not None:
+        if _plays(media_type, cant):
+            return
+        enc = await _playable_encoding(*src, can)
+        if (task := light.ensure(*src, enc=enc)) is not None:
             await task
     except asyncio.CancelledError:
         raise
@@ -679,13 +701,14 @@ async def _warm(ref: str, user_id: int) -> None:
             bus.publish(user_id, "recording", {"ref": ref, "unavailable": True})
 
 
-def load_ahead(c: Choice, *, whole: bool, cant: frozenset[str] = frozenset()) -> None:
+def load_ahead(c: Choice, *, whole: bool, cant: frozenset[str] = frozenset(), can: frozenset[str] = frozenset()) -> None:
     """A queue plays this pick soon: its file is opened and copied to the Hub's disk now, behind the copies of
     played tracks. `whole`: it plays next — all of it; else only its start, enough for a switch to it to sound at
     once. A source with no plain HTTP audio has no start to take: its file is downloaded only when it plays next.
-    `cant`: what the player cannot play — the next track in such a format gets its AAC copy now."""
+    `cant`, `can`: what the player cannot play, and what else it can — the next track in a format it cannot play gets
+    its copy now."""
     if whole and cant:
-        _spawn(_make_playable(c, cant), background=True)
+        _spawn(_make_playable(c, cant, can), background=True)
     if c.kind != "full" or c.candidate is None:
         return  # a library file is on disk already
     if _uses_local_copy(c):

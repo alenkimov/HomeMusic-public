@@ -5,7 +5,7 @@ import { ofHiddenArtist } from './dislikes';
 import { keptInfo, keptPlays } from './offline';
 import { OFFLINE_WAVE, waveAudio } from './offlineWave';
 import { ApiError, api, errorMessage, isAbort, listenStreamUrl } from '../api/client';
-import { CANT_ANY } from './formats';
+import { ANY_FORMAT, CANT_ANY } from './formats';
 import type { LaunchOrigin, ListenOut } from '../api/types';
 import { startDownload } from './actions';
 import { hubEvents } from './events';
@@ -485,12 +485,13 @@ function el(): HTMLAudioElement {
 function mediaFailed(a: HTMLAudioElement) {
   // The audio element has no HTTP status. Let the parallel lookup report the cause and decide whether to retry.
   if (!a.getAttribute('src') || resolving?.pending) return;
-  // the browser said it plays the file's format and did not: once, the file comes in a format every browser plays
+  // the browser said it plays the file's format (or Opus in MP4) and did not: once, the file comes as AAC
   const src = new URL(a.src, window.location.href);
   if (a.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED && resolving && !resolving.anyFormat && !played?.started
-      && src.pathname === '/api/listen/stream' && src.searchParams.get('cant') !== CANT_ANY) {
+      && src.pathname === '/api/listen/stream' && !(src.searchParams.get('cant') === CANT_ANY && !src.searchParams.has('can'))) {
     resolving.anyFormat = true;
-    src.searchParams.set('cant', CANT_ANY);
+    src.searchParams.set('cant', ANY_FORMAT.cant);
+    src.searchParams.delete('can'); // nor Opus in MP4: AAC
     const paused = state.phase === 'paused';
     a.src = src.href;
     if (paused) a.load();

@@ -24,11 +24,11 @@ router = APIRouter(prefix="/api/listen", tags=["listen"])
 
 @router.get("", response_model=ListenOut)
 async def resolve(ref: str, ahead: Literal["whole", "head"] | None = None, cant: str | None = None,
-                  user: User = Depends(current_user)):
+                  can: str | None = None, user: User = Depends(current_user)):
     """Picks the file (may take a while: providers are searched), then the client plays `stream_url`. `ahead`: the
     client's queue plays the track soon — the Hub opens the file and copies it to its disk now (`listen.load_ahead`):
-    "whole" for the track that plays next, "head" for the ones after it (their start only). `cant`: as of the stream —
-    the next track in a format the player cannot play gets its AAC copy now."""
+    "whole" for the track that plays next, "head" for the ones after it (their start only). `cant`, `can`: as of the
+    stream — the next track in a format the player cannot play gets its copy now."""
     try:
         c = await listen.choose(ref, background=ahead == "head")
     except listen.ListenError as e:
@@ -37,7 +37,7 @@ async def resolve(ref: str, ahead: Literal["whole", "head"] | None = None, cant:
         raise HTTPException(e.status, str(e)) from e
     bus.publish(user.id, "recording", {"ref": ref, "unavailable": False})
     if ahead:
-        listen.load_ahead(c, whole=ahead == "whole", cant=listen.parse_cant(cant))
+        listen.load_ahead(c, whole=ahead == "whole", cant=listen.parse_cant(cant), can=listen.parse_can(can))
     cand = c.candidate
     async with session_scope() as s:
         track_id = None
@@ -80,19 +80,21 @@ async def prefetch(body: ListenPrefetchIn, user: User = Depends(current_user)):
 
 
 @router.get("/stream")
-async def stream(ref: str, request: Request, q: str | None = None, cant: str | None = None,
+async def stream(ref: str, request: Request, q: str | None = None, cant: str | None = None, can: str | None = None,
                  user: User = Depends(current_user)):
     """Audio of the chosen file (Range → 206): the library file, the server copy of the picked file (read while
     it downloads), or the copy of a file of a source without plain HTTP audio.
     `q=mobile`: the light variant for a metered network (Opus copy of a heavy file, `app.light`); the answer says
     which variant it is in `X-HomeMusic-Variant`.
-    `cant=ogg,webm,flac`: the formats the player cannot play — a file in one of them comes as its AAC copy (m4a)."""
+    `cant=ogg,webm,flac`: the formats the player cannot play — a file in one of them comes as its copy (m4a): Opus put
+    into MP4 as it is if the player says `can=opus-mp4`, else AAC."""
     rng = request.headers.get("range") or ""
     # the app loads the next tracks of its queue ahead (`X-HomeMusic-Prefetch`): that is no listen yet, its
     # `start` event is (app/api/plays.py), and its server copy waits for those of played tracks
     ahead = request.headers.get("x-homemusic-prefetch") == "1"
     try:
-        m = await listen.open_media(ref, rng or None, ahead=ahead, quality=q, cant=listen.parse_cant(cant))
+        m = await listen.open_media(ref, rng or None, ahead=ahead, quality=q, cant=listen.parse_cant(cant),
+                                    can=listen.parse_can(can))
     except listen.ListenError as e:
         if isinstance(e, listen.RecordingUnavailable):
             bus.publish(user.id, "recording", {"ref": ref, "unavailable": True})

@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { api, listenStreamUrl } from '../api/client';
 import type { ListenOut, TrackOut } from '../api/types';
+import { AS_IT_IS } from './formats';
 import { hubFetch, hubReachable, onHubBack } from './reach';
 
 /** «Офлайн»: lists kept on the device — a playlist, «Любимое», a list of «Для вас» — so they play without the network.
@@ -37,7 +38,7 @@ const PARALLEL = 2;
 
 export const offlineSupported = (): boolean => typeof caches !== 'undefined' && typeof indexedDB !== 'undefined' && 'serviceWorker' in navigator && window.isSecureContext;
 // the key is the address without `cant` (as `public/sw.js` looks it up); the bytes are what this browser plays
-const audioKey = (ref: string) => new URL(listenStreamUrl(ref, ''), window.location.origin).href;
+const audioKey = (ref: string) => new URL(listenStreamUrl(ref, AS_IT_IS), window.location.origin).href;
 
 // --- state --------------------------------------------------------------------------------------------------
 
