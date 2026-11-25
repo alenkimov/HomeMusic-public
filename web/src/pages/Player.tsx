@@ -310,7 +310,7 @@ export function PlayerPage() {
           onClick={cycleShuffle}
           className={shuffle && !onWave ? '!text-accent' : 'text-muted'}
         />
-        <IconButton icon="prev" label={canPrev ? 'Предыдущий трек' : 'Сначала'} onClick={prev} size={30} className="h-14 w-14" />
+        <IconButton icon="prev" filled label={canPrev ? 'Предыдущий трек' : 'Сначала'} onClick={prev} size={30} className="h-14 w-14" />
         <button
           type="button"
           onClick={toggle}
@@ -324,10 +324,10 @@ export function PlayerPage() {
           ) : playing ? (
             <Icon name="pause" size={28} stroke={3} />
           ) : (
-            <Icon name="play" size={28} stroke={2.4} className="translate-x-0.5" />
+            <Icon name="play" size={28} filled className="translate-x-0.5" />
           )}
         </button>
-        <IconButton icon="next" label="Следующий трек" onClick={() => void next()} disabled={!canNext} size={30} className="h-14 w-14" />
+        <IconButton icon="next" filled label="Следующий трек" onClick={() => void next()} disabled={!canNext} size={30} className="h-14 w-14" />
         <IconButton
           icon={repeat === 'one' ? 'repeat1' : 'repeat'}
           label={repeat === 'off' ? 'Повтор выключен' : repeat === 'all' ? 'Повтор очереди' : 'Повтор трека'}

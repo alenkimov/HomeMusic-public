@@ -108,7 +108,7 @@ export function DesktopPlayer() {
               onClick={cycleShuffle}
               className={cx('!h-9 !w-9', shuffle && !onWave ? '!text-accent' : 'text-muted')}
             />
-            <IconButton icon="prev" size={20} label={canPrev ? 'Предыдущий трек' : 'Сначала'} disabled={!track} onClick={prev} className="!h-9 !w-9 text-muted hover:text-fg" />
+            <IconButton icon="prev" filled size={20} label={canPrev ? 'Предыдущий трек' : 'Сначала'} disabled={!track} onClick={prev} className="!h-9 !w-9 text-muted hover:text-fg" />
             <button
               type="button"
               onClick={toggle}
@@ -116,9 +116,9 @@ export function DesktopPlayer() {
               aria-label={phase === 'error' ? 'Повторить' : playing ? 'Пауза' : 'Слушать'}
               className="mx-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-fg text-bg transition hover:scale-110 active:scale-95 disabled:opacity-40"
             >
-              {phase === 'error' ? <Icon name="refresh" size={18} stroke={2.4} /> : waiting ? <Spinner size={18} /> : playing ? <Icon name="pause" size={18} stroke={3} /> : <Icon name="play" size={18} stroke={2.4} className="translate-x-px" />}
+              {phase === 'error' ? <Icon name="refresh" size={18} stroke={2.4} /> : waiting ? <Spinner size={18} /> : playing ? <Icon name="pause" size={18} stroke={3} /> : <Icon name="play" size={18} filled className="translate-x-px" />}
             </button>
-            <IconButton icon="next" size={20} label="Следующий трек" disabled={!track || !canNext} onClick={() => void next()} className="!h-9 !w-9 text-muted hover:text-fg" />
+            <IconButton icon="next" filled size={20} label="Следующий трек" disabled={!track || !canNext} onClick={() => void next()} className="!h-9 !w-9 text-muted hover:text-fg" />
             <IconButton
               icon={repeat === 'one' ? 'repeat1' : 'repeat'}
               size={18}
