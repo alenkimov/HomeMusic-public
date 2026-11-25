@@ -8,7 +8,8 @@ import { noteInPlaylists, useInPlaylists } from '../lib/inPlaylists';
 import { isLiked, setLikes, toggleLike, useLiked, type LikeTarget } from '../lib/stars';
 import { attempt, toast } from '../lib/ui';
 import { Icon } from './Icon';
-import { Button, Cover, Loading, Sheet, cx } from './ui';
+import { LIKED_MARK, PlaylistRow, playlistLine, playlistLook } from './Playlist';
+import { Button, Loading, Sheet, cx } from './ui';
 import { MenuLine } from './ContextMenu';
 
 /** The one button of a track, in a row and in the players: where the track is kept. «Любимое» is a playlist among
@@ -58,16 +59,14 @@ export function SaveMark({ state, size = 20 }: { state: 'liked' | 'listed' | 'no
 /** The row of «Любимое» on top of a list of playlists. */
 function LikedRow({ mark, sub, changed, onClick }: { mark: Mark; sub: string; changed?: boolean; onClick: () => void }) {
   return (
-    <button type="button" role="checkbox" aria-checked={mark === 'all' ? true : mark === 'some' ? 'mixed' : false} onClick={onClick} className="flex min-h-14 w-full items-center gap-3 px-4 py-1.5 text-left transition hover:bg-fg/5">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-accent/20 text-accent">
-        <Icon name="heart" size={20} filled />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[15px]">Любимое</span>
-        <span className={cx('block text-xs', changed ? 'text-accent' : 'text-muted')}>{sub}</span>
-      </span>
-      <Tick mark={mark} />
-    </button>
+    <PlaylistRow
+      playlist={{ title: 'Любимое', mark: LIKED_MARK }}
+      sub={<span className={changed ? 'text-accent' : undefined}>{sub}</span>}
+      onClick={onClick}
+      button={{ role: 'checkbox', 'aria-checked': mark === 'all' ? true : mark === 'some' ? 'mixed' : false }}
+      actions={<Tick mark={mark} />}
+      className="transition hover:bg-fg/5"
+    />
   );
 }
 
@@ -187,14 +186,8 @@ export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_
     const on = has(p);
     return (
       <li key={p.id}>
-        <button type="button" role="checkbox" aria-checked={on} onClick={() => setWant((w) => ({ ...w, [p.id]: !on }))} className="flex min-h-14 w-full items-center gap-3 px-4 py-1.5 text-left transition hover:bg-fg/5">
-          <Cover src={p.cover_url ? `${p.cover_url}&size=96` : null} size={40} icon="playlist" />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[15px]">{p.name}</span>
-            <span className="block text-xs text-muted">{tracksWord(p.song_count + (p.pending_count ?? 0))}</span>
-          </span>
-          <Tick mark={on ? 'all' : 'none'} />
-        </button>
+        <PlaylistRow playlist={playlistLook(p, 96)} onClick={() => setWant((w) => ({ ...w, [p.id]: !on }))}
+          button={{ role: 'checkbox', 'aria-checked': on }} actions={<Tick mark={on ? 'all' : 'none'} />} className="transition hover:bg-fg/5" />
       </li>
     );
   };
@@ -330,14 +323,10 @@ export function BulkPlaylists({ tracks, onClose, onDone }: { tracks: PickedTrack
               const at = now(p);
               return (
                 <li key={p.id}>
-                  <button type="button" role="checkbox" aria-checked={at === 'all' ? true : at === 'some' ? 'mixed' : false} onClick={() => setWant((w) => ({ ...w, [p.id]: next(at, was(p)) }))} className="flex min-h-14 w-full items-center gap-3 px-4 py-1.5 text-left transition hover:bg-fg/5">
-                    <Cover src={p.cover_url ? `${p.cover_url}&size=96` : null} size={40} icon="playlist" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[15px]">{p.name}</span>
-                      <span className={cx('block text-xs', at !== was(p) ? 'text-accent' : 'text-muted')}>{sub(at, was(p), p.count, tracksWord(p.song_count + (p.pending_count ?? 0)))}</span>
-                    </span>
-                    <Tick mark={at} />
-                  </button>
+                  <PlaylistRow playlist={playlistLook(p, 96)} onClick={() => setWant((w) => ({ ...w, [p.id]: next(at, was(p)) }))}
+                    button={{ role: 'checkbox', 'aria-checked': at === 'all' ? true : at === 'some' ? 'mixed' : false }}
+                    sub={<span className={at !== was(p) ? 'text-accent' : undefined}>{sub(at, was(p), p.count, playlistLine(playlistLook(p)))}</span>}
+                    actions={<Tick mark={at} />} className="transition hover:bg-fg/5" />
                 </li>
               );
             })}
@@ -403,14 +392,8 @@ export function PlaylistsPick({ title, picked, onClose, onDone, single, note, li
               const on = !!want[p.id];
               return (
                 <li key={p.id}>
-                  <button type="button" role={single ? 'radio' : 'checkbox'} aria-checked={on} onClick={() => tick(p.id, !on)} className="flex min-h-14 w-full items-center gap-3 px-4 py-1.5 text-left transition hover:bg-fg/5">
-                    <Cover src={p.cover_url ? `${p.cover_url}&size=96` : null} size={40} icon="playlist" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[15px]">{p.name}</span>
-                      <span className="block text-xs text-muted">{tracksWord(p.song_count + (p.pending_count ?? 0))}</span>
-                    </span>
-                    <Tick mark={on ? 'all' : 'none'} />
-                  </button>
+                  <PlaylistRow playlist={playlistLook(p, 96)} onClick={() => tick(p.id, !on)}
+                    button={{ role: single ? 'radio' : 'checkbox', 'aria-checked': on }} actions={<Tick mark={on ? 'all' : 'none'} />} className="transition hover:bg-fg/5" />
                 </li>
               );
             })}

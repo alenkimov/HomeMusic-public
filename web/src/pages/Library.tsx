@@ -5,18 +5,21 @@ import { ForYouTiles } from '../components/ForYouTiles';
 import { Icon } from '../components/Icon';
 import { ArtistBubble, TrackRow, TrackTableHeader } from '../components/catalog';
 import { TrackTable } from '../components/TrackTable';
-import { Cover, Empty, ErrorState, IconButton, PageBar, PageHeader, SectionTitle, SkeletonRows } from '../components/ui';
+import { Empty, ErrorState, IconButton, PageBar, PageHeader, SectionTitle, SkeletonRows } from '../components/ui';
 import { useHubEvent } from '../lib/events';
-import { plural, tracksWord } from '../lib/format';
+import { plural } from '../lib/format';
 import { useAsync, useDebounced } from '../lib/hooks';
-import { playlistMenuProps } from '../lib/playlistMenu';
-import { Link, enc, navigate } from '../lib/router';
+import { LIKED_MARK, PlaylistRow, playlistLook } from '../components/Playlist';
+import { useSession } from '../lib/session';
+import { openPlaylistMenu } from '../lib/playlistMenu';
+import { Link, navigate } from '../lib/router';
 
 /** «Библиотека» of a phone: the lists themselves, at once — «Любимое» and the playlists one keeps (a group of rows),
  * (a finger held on one of them: its menu — the name, the picture, deleting it), the lists that make themselves («Для вас», tiles) and, last, the tags: the saved filters by them and «Все теги». A computer has the same in its
  * side panel (`components/Sidebar.tsx`). The files the Hub keeps are «Мои файлы» of «Меню» (`pages/Files.tsx`). */
 export function LibraryPage() {
   const lists = useAsync((s) => api.playlists(s), [], true, 'playlists');
+  const { me } = useSession();
   const liked = useAsync((s) => api.ndLiked(s), [], true, 'liked');
   const sels = useAsync((s) => api.tagSelections(s), [], true, 'selections');
   const again = () => {
@@ -43,7 +46,9 @@ export function LibraryPage() {
 
       <Title>Плейлисты</Title>
       <ul className="overflow-hidden rounded-2xl bg-surface">
-        <Row to="/liked" title="Любимое" sub={liked.data ? tracksWord(liked.data.songs.length) : undefined} art={<span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-accent text-on-accent"><Icon name="heart" size={22} filled /></span>} />
+        <li className="border-b border-fg/5">
+          <PlaylistRow playlist={{ title: 'Любимое', to: '/liked', owners: [me.username], count: liked.data?.songs.length, mark: LIKED_MARK }} className="hover:bg-fg/5" />
+        </li>
         <Row
           to="/subscriptions"
           title="Релизы"
@@ -51,14 +56,9 @@ export function LibraryPage() {
           art={<span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent/20 text-accent"><Icon name="user" size={22} />{fresh > 0 && <span className="absolute right-0 top-0 h-3 w-3 rounded-full bg-accent ring-2 ring-surface" />}</span>}
         />
         {(lists.data ?? []).map((p) => (
-          <Row
-            key={p.id}
-            menu={playlistMenuProps(p)}
-            to={`/playlist/${enc(p.id)}`}
-            title={p.name}
-            sub={tracksWord(p.song_count + (p.pending_count ?? 0))}
-            art={<Cover src={p.cover_url ? `${p.cover_url}&size=160` : null} size={48} icon="playlist" className="!rounded-xl" />}
-          />
+          <li key={p.id} className="border-b border-fg/5 last:border-0">
+            <PlaylistRow playlist={playlistLook(p)} onMenu={(at) => openPlaylistMenu(p, at)} className="hover:bg-fg/5" />
+          </li>
         ))}
       </ul>
       {lists.loading && !lists.data ? <SkeletonRows n={3} /> : lists.error && !lists.data ? <ErrorState text={lists.error} onRetry={() => lists.reload()} /> : null}
@@ -89,9 +89,9 @@ function Title({ children }: { children: ReactNode }) {
 }
 
 /** A row of the group of playlists: the rule between two rows starts after the picture. */
-function Row({ to, title, sub, art, menu }: { to: string; title: string; sub?: string; art: ReactNode; menu?: ReturnType<typeof playlistMenuProps> }) {
+function Row({ to, title, sub, art }: { to: string; title: string; sub?: string; art: ReactNode }) {
   return (
-    <li className="group select-none [-webkit-touch-callout:none]" {...menu}>
+    <li className="group">
       <Link to={to} className="flex h-[68px] items-center gap-3.5 pl-3.5 hover:bg-fg/5">
         {art}
         <span className="flex min-w-0 flex-1 flex-col justify-center self-stretch border-b border-fg/5 pr-3.5 group-last:border-0">

@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { api, withQuery } from '../api/client';
 import { TrackRow, TrackTableHeader } from '../components/catalog';
 import { TrackTable } from '../components/TrackTable';
-import { ServiceBadge } from '../components/ServiceBadge';
-import { Button, Cover, ErrorState, Loading, PageHeader } from '../components/ui';
+import { PlaylistHero } from '../components/Playlist';
+import { Button, ErrorState, Loading, PageHeader } from '../components/ui';
 import { tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { navigate } from '../lib/router';
@@ -23,19 +23,17 @@ export function SpotifyPlaylistPage({ id, query }: { id: string; query: string |
   };
   return (
     <div>
-      <PageHeader title={data?.playlist.title || 'Плейлист Spotify'} back={back} />
+      <PageHeader hero title={data?.playlist.title || 'Плейлист Spotify'} back={back} />
       {res.error && <ErrorState text={res.error} onRetry={() => res.reload()} />}
       {!data && !res.error && <Loading text="Читаю плейлист Spotify…" />}
       {data && (
         <>
-          <div className="flex flex-wrap items-center gap-4 px-4 py-3 lg:px-6">
-            <Cover src={data.playlist.cover_url} size={64} alt="" icon="playlist" />
-            <div className="min-w-0 flex-1 text-sm text-muted">
-              <ServiceBadge service="spotify" label={data.playlist.owner ? `Spotify · ${data.playlist.owner}` : 'Spotify'} size={16} />
-              <div>{tracksWord(data.tracks.length + data.local_tracks)}</div>
-            </div>
-            <Button icon="transfer" variant="primary" onClick={() => void run()} busy={busy}>Импортировать</Button>
-          </div>
+          <PlaylistHero
+            playlist={{ title: data.playlist.title, kind: 'Плейлист Spotify', cover: data.playlist.cover_url, owners: data.playlist.owner ? [data.playlist.owner] : ['Spotify'] }}
+            facts={[tracksWord(data.tracks.length + data.local_tracks)]}
+            tracks={data.tracks}
+            right={<Button icon="transfer" variant="primary" onClick={() => void run()} busy={busy}>Импортировать</Button>}
+          />
           {data.local_tracks > 0 && <p className="px-4 pb-2 text-sm text-muted lg:px-6">Локальные треки войдут в перенос — {data.local_tracks}</p>}
           {data.skipped > 0 && <p className="px-4 pb-2 text-sm text-muted lg:px-6">Пропущено недоступных записей и подкастов — {data.skipped}</p>}
           <TrackTable tracks={data.tracks} numbered album>

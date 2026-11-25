@@ -5,7 +5,9 @@ import { ServiceBadge, ServiceIcon, ServiceText } from '../components/ServiceBad
 import { PlaylistsPick } from '../components/PlaylistsButton';
 import { AfterImport } from './Upload';
 import { Icon, type IconName } from '../components/Icon';
-import { Button, Checkbox, Cover, ErrorState, Loading, Notice, PageHeader, ProgressBar, Radio, SectionTitle, SkeletonRows, Spinner, cx } from '../components/ui';
+import { Button, Checkbox, ErrorState, Loading, Notice, PageHeader, ProgressBar, Radio, SectionTitle, SkeletonRows, Spinner, cx } from '../components/ui';
+import { LIKED_MARK, PlaylistRow, playlistLook } from '../components/Playlist';
+import { useSession } from '../lib/session';
 import { EMBEDDED } from '../lib/embedded';
 import { useHubEvent } from '../lib/events';
 import { fmtDuration, fmtSize, fmtWhen, plural, tracksWord } from '../lib/format';
@@ -667,6 +669,7 @@ function Progress({ imp, onChange }: { imp: ImportOut; onChange: (r: ImportOut) 
 }
 
 function Destinations({ destinations }: { destinations: ImportOut['destinations'] }) {
+  const { me } = useSession();
   const hasPlaylists = destinations.some(({ playlist_id }) => playlist_id != null);
   const hasLiked = destinations.some(({ playlist_id }) => playlist_id == null);
   const lists = useAsync(api.playlists, [], hasPlaylists, 'playlists');
@@ -687,20 +690,12 @@ function Destinations({ destinations }: { destinations: ImportOut['destinations'
         const count = id == null ? liked.data?.songs.length : playlist && playlist.song_count + (playlist.pending_count ?? 0);
         return (
           <li key={id ?? 'liked'} className="border-b border-line/60 last:border-0">
-            <Link to={id == null ? '/liked' : `/playlist/${enc(id)}`} className="flex min-h-16 items-center gap-3 px-4 py-2 hover:bg-fg/5">
-              {id == null ? (
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/20 text-accent">
-                  <Icon name="heart" size={18} filled />
-                </span>
-              ) : (
-                <Cover src={playlist?.cover_url ? `${playlist.cover_url}&size=96` : null} size={36} icon="playlist" />
-              )}
-              <span className="min-w-0 flex-1">
-                <span className="block truncate">{playlist?.name ?? name}</span>
-                {count !== undefined && <span className="block truncate text-xs text-dim">{tracksWord(count)}</span>}
-              </span>
-              <Icon name="chevron" size={18} className="shrink-0 text-dim" />
-            </Link>
+            <PlaylistRow
+              playlist={id == null
+                ? { title: 'Любимое', to: '/liked', mark: LIKED_MARK, owners: [me.username], count }
+                : { ...(playlist ? playlistLook(playlist) : { title: name, owners: [me.username] }), to: `/playlist/${enc(id)}`, count }}
+              className="hover:bg-fg/5"
+            />
           </li>
         );
       })}

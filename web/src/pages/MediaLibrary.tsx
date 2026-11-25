@@ -14,6 +14,8 @@ import { CoverView, ownCover } from '../components/PlaylistMenu';
 import { ContextMenu, menuAtButton, menuPressProps, useContextMenu, type MenuAt } from '../components/ContextMenu';
 import { NdAlbumMenu, NdArtistMenu } from '../components/EntityMenus';
 import { AlbumCard, AlbumHero } from '../components/Album';
+import { LIKED_MARK, PlaylistHero, playlistLook } from '../components/Playlist';
+import { useSession } from '../lib/session';
 import { listChanged, patch, useCardUpdates } from '../lib/cards';
 import { SaveSelection, TagFilterChips } from '../components/Tags';
 import { ArtistLooksWindow } from '../components/ArtistLooks';
@@ -250,6 +252,7 @@ const plays = <T extends TrackOut>(tracks: readonly T[]): T[] => tracks.filter((
 // --- pages -------------------------------------------------------------------------------------------------
 
 export function LikedPage() {
+  const { me } = useSession();
   const res = useAsync((s) => api.ndLiked(s), [], true, 'liked');
   useSmartPage('liked', null);
   // what only changes cards comes as their own event (`lib/cards.ts`): the list is not read again for it
@@ -302,15 +305,9 @@ export function LikedPage() {
       {saving && <SaveSelection scope="liked" filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`)} />}
       <ListBar title={title} back={back} tracks={playing} context="liked" offline={by ? undefined : { key: 'liked', to: '/liked', tracks: plays(songs) }} search={songs.length ? search : undefined} tags={songs.length ? { songIds, filter, onChange: setFilter, onSave: () => setSaving(true), count: shown ? shown.length : songs.length } : undefined} />
       {res.data && !search.alone && (
-        <Hero
-          kicker={by ? 'Из «Любимого»' : 'Плейлист'}
-          title={title}
-          art={
-            <div className="flex h-full w-full items-center justify-center bg-accent/20 text-accent">
-              <Icon name="heart" size={84} filled />
-            </div>
-          }
-          sub={[tracksWord(songs.length), length ? fmtLength(length) : null].filter(Boolean).join(' · ')}
+        <PlaylistHero
+          playlist={{ title, kind: by ? 'Из «Любимого»' : 'Плейлист', owners: [me.username], mark: LIKED_MARK }}
+          facts={[tracksWord(songs.length), length ? fmtLength(length) : null]}
           tracks={playing}
           context="liked"
         />
@@ -335,6 +332,7 @@ export function LikedPage() {
  * tracks are found anew each time. `/selection/library?yes=…&no=…` is the same over the whole library, not saved
  * yet (the page of tags opens it). The filter can be changed here and saved again. */
 export function SelectionPage({ id }: { id: string }) {
+  const { me } = useSession();
   const route = useRoute();
   const tags = useTags();
   const unsaved = id === 'library';
@@ -401,15 +399,9 @@ export function SelectionPage({ id }: { id: string }) {
     <div>
       {saving && <SaveSelection scope="library" filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`, { replace: true })} />}
       <ListBar title={name} back="/tags" tracks={inOrder(list, sort)} context="selection" search={search} tags={{ songIds, filter, onChange: setFilter, onSave: unsaved ? () => setSaving(true) : undefined, count: list.length }} />
-      {!search.alone && <Hero
-        kicker={unsaved ? 'Фильтр по тегам' : 'Подборка по тегам'}
-        title={name}
-        art={
-          <div className="flex h-full w-full items-center justify-center bg-accent/20 text-accent">
-            <Icon name="filter" size={84} />
-          </div>
-        }
-        sub={[unsaved ? null : src.data.title, filterActive(filter) ? filterWords(filter, tags.byId) : 'теги не выбраны', `${tracksWord(list.length)}${list.length ? ` · ${fmtLength(list.reduce((n, t) => n + (t.duration_s ?? 0), 0))}` : ''}`].filter(Boolean).join(' · ')}
+      {!search.alone && <PlaylistHero
+        playlist={{ title: name, kind: unsaved ? 'Фильтр по тегам' : 'Подборка по тегам', owners: [me.username], mark: { icon: 'filter' } }}
+        facts={[unsaved ? null : src.data.title, filterActive(filter) ? filterWords(filter, tags.byId) : 'теги не выбраны', `${tracksWord(list.length)}${list.length ? ` · ${fmtLength(list.reduce((n, t) => n + (t.duration_s ?? 0), 0))}` : ''}`]}
         tracks={inOrder(list, sort)}
         context="selection"
       />}
@@ -474,14 +466,11 @@ export function PlaylistPage({ id }: { id: string }) {
         extra={p.editable !== false && <IconButton icon="more" label="Ещё" onClick={(e) => openPlaylistMenu({ id, name: p.name, cover_url: p.cover_url }, menuAtButton(e.currentTarget))} />}
         offline={{ key: `playlist:${id}`, to: `/playlist/${id}`, tracks: plays(all) }} search={all.length ? search : undefined} tags={all.length ? { songIds, filter, onChange: setFilter, onSave: () => setSaving(true), count: shown ? shown.length : all.length } : undefined} />
       {viewing && <CoverView src={cover} title={p.name} playlistId={id} own={ownCover(p.cover_url)} onClose={closeCover} />}
-      {!search.alone && <Hero
-        kicker="Плейлист"
+      {!search.alone && <PlaylistHero
+        playlist={{ ...playlistLook(p), cover }}
         onCover={() => setViewing(true)}
-        cover={cover}
-        title={p.name}
-        sub={[tracksWord(all.length), p.duration_s ? fmtLength(p.duration_s) : null].filter(Boolean).join(' · ')}
+        facts={[tracksWord(all.length), p.duration_s ? fmtLength(p.duration_s) : null]}
         tracks={playing}
-        context="playlist"
       />}
       {all.length ? (
         <>

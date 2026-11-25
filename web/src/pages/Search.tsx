@@ -7,7 +7,7 @@ import { TrackTable } from '../components/TrackTable';
 import { SourceStatuses } from '../components/SourceStatuses';
 import { CatalogSourceMarks } from '../components/CatalogSourceMarks';
 import { CandidateRow, fileRef } from '../components/candidate';
-import { ServiceBadge, ServiceText } from '../components/ServiceBadge';
+import { ServiceText } from '../components/ServiceBadge';
 import { Icon } from '../components/Icon';
 import { Button, Cover, Empty, ErrorState, IconButton, Notice, PageBar, SectionTitle, Segmented, SkeletonRows, Spinner } from '../components/ui';
 import { startDownload } from '../lib/actions';
@@ -16,7 +16,8 @@ import { useHubEvent } from '../lib/events';
 import { useAsync, useDebounced, useRememberScrollX } from '../lib/hooks';
 import { extendQueue, markQueued, useListen } from '../lib/listen';
 import { canPlayAll } from '../lib/player';
-import { Link, RouteBackground, albumPath, artistPath, enc, navigate } from '../lib/router';
+import { PlaylistRow } from '../components/Playlist';
+import { RouteBackground, albumPath, artistPath, enc, navigate } from '../lib/router';
 import { useLiveSearch } from '../lib/search';
 import { spotifyURL } from '../lib/spotify';
 import { FOCUS_SEARCH } from '../components/TabBar';
@@ -171,14 +172,10 @@ function PlaylistResults({ q, search }: { q: string; search: SearchRun }) {
       {search.error && <li><ErrorState text={search.error} onRetry={search.reload} /></li>}
       {playlists.map((p) => (
         <li key={p.id}>
-          <Link to={`/spotify/playlist/${enc(p.id)}?q=${enc(q)}`} className="flex items-center gap-3 rounded-lg p-2 hover:bg-hover">
-            <Cover src={p.cover_url} size={48} alt="" icon="playlist" />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[15px] font-semibold">{p.title}</span>
-              <ServiceBadge service="spotify" label={p.owner ? `Spotify · ${p.owner}` : 'Spotify'} size={14} className="text-xs text-muted" />
-            </span>
-            <Icon name="chevron" size={18} className="text-dim" />
-          </Link>
+          <PlaylistRow
+            playlist={{ title: p.title, to: `/spotify/playlist/${enc(p.id)}?q=${enc(q)}`, cover: p.cover_url, kind: 'Плейлист Spotify', owners: p.owner ? [p.owner] : ['Spotify'], count: p.total_tracks }}
+            className="rounded-lg !px-2 hover:bg-hover"
+          />
         </li>
       ))}
     </ul>

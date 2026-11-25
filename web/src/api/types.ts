@@ -954,6 +954,10 @@ export interface PlaylistOut {
   cover_art?: string | null;
   /** the playlist's picture, the user's own or Navidrome's (add `&size=`) */
   cover_url?: string | null;
+  /** user: somebody's own; mix: «Микс дня», the Hub's */
+  kind?: 'user' | 'mix';
+  /** who made it — a list, for a playlist made together; none: the Hub's */
+  owners?: { id: number; name: string }[];
 }
 
 export interface PlaylistOfSongOut extends PlaylistOut {

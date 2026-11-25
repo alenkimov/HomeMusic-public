@@ -900,6 +900,11 @@ class UploadCommitOut(BaseModel):
 # --- playlists -----------------------------------------------------------------------------
 
 
+class PlaylistOwnerOut(BaseModel):
+    id: int
+    name: str
+
+
 class PlaylistOut(BaseModel):
     id: str
     name: str
@@ -910,6 +915,9 @@ class PlaylistOut(BaseModel):
     cover_art: str | None = None
     # the playlist's picture: the user's own, else the one Navidrome makes of its albums (add `&size=`)
     cover_url: str | None = None
+    kind: str = "user"  # user: somebody's own; mix: «Микс дня», the Hub's
+    # who made it, as an album's artists are named: a list, for a playlist made together; none: the Hub's
+    owners: list[PlaylistOwnerOut] = []
 
 
 class PlaylistRenameIn(BaseModel):

@@ -20,7 +20,7 @@ from app.api.schemas import (
     PlaylistMembershipManyIn,
     PlaylistOfSongOut,
     PlaylistOfSongsOut,
-    PlaylistOut,
+    PlaylistOut, PlaylistOwnerOut,
     PlaylistPageOut,
     PlaylistRemoveIn,
     PlaylistRenameIn,
@@ -61,6 +61,8 @@ async def _outs(s: AsyncSession, rows: list[Playlist]) -> list[PlaylistOut]:
     numbers = await playlists.counts(s, [p.id for p in rows])
     keys = dict((await s.execute(select(PlaylistCover.playlist_id, PlaylistCover.key).where(
         PlaylistCover.playlist_id.in_([p.id for p in rows])))).all()) if rows else {}
+    names = dict((await s.execute(select(User.id, User.nd_username).where(User.id.in_({p.user_id for p in rows}))))
+                 .all()) if rows else {}
     out = []
     for p in rows:
         total, filed, seconds = numbers.get(p.id, (0, 0, 0))
@@ -71,7 +73,9 @@ async def _outs(s: AsyncSession, rows: list[Playlist]) -> list[PlaylistOut]:
         else:
             cover = None
         out.append(PlaylistOut(id=str(p.id), name=p.name, editable=p.kind == playlists.USER, song_count=filed, pending_count=total - filed,
-                               duration_s=seconds, cover_art=p.nd_cover, cover_url=cover))
+                               duration_s=seconds, cover_art=p.nd_cover, cover_url=cover, kind=p.kind,
+                               owners=[PlaylistOwnerOut(id=p.user_id, name=names[p.user_id])]
+                               if p.kind == playlists.USER and p.user_id in names else []))
     return out
 
 

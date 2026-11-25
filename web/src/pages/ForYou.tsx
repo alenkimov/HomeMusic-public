@@ -18,7 +18,8 @@ import { useSession } from '../lib/session';
 import { AUTO_PLAYLISTS } from '../lib/stats';
 import { tagKey, type TagFilter } from '../lib/tags';
 import { attempt, toast } from '../lib/ui';
-import { Hero, SongList, inOrder, useShown } from './MediaLibrary';
+import { SongList, inOrder, useShown } from './MediaLibrary';
+import { PlaylistHero } from '../components/Playlist';
 
 /** «Для вас»: a list the Hub makes by itself — «Микс дня» (`mix`), «Открытия недели» (`weekly`), a top or «Давно не
  * слушал» (a kind of `AUTO_PLAYLISTS`). They are one page: the Hub tells every one of them the same way
@@ -168,12 +169,10 @@ export function ForYouPage({ kind, mix }: { kind: string; mix?: number }) {
         offline={mix === undefined && issue === null ? { key: `foryou:${kind}`, to: kind === 'mix' ? '/mix' : kind === 'weekly' ? '/discoveries' : `/auto/${kind}`, tracks } : undefined}
       />
       {!search.alone && (
-        <Hero
-          kicker="Для вас"
-          title={title}
-          cover={tracks[0]?.cover_url}
+        <PlaylistHero
+          playlist={{ title, kind: 'Для вас', cover: tracks[0]?.cover_url }}
           art={<ListCover tracks={tracks} icon={icon} />}
-          sub={[tracks.length ? tracksWord(tracks.length) : null, length ? fmtLength(length) : null, d.weekly?.week ? weekTitle(d.weekly.week) : null, d.note].filter(Boolean).join(' · ')}
+          facts={[tracks.length ? tracksWord(tracks.length) : null, length ? fmtLength(length) : null, d.weekly?.week ? weekTitle(d.weekly.week) : null, d.note]}
           tracks={playing}
           context={d.context}
         />

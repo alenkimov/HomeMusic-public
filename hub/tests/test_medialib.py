@@ -311,3 +311,12 @@ async def test_some_songs_are_given_by_their_ids_as_all_songs_gives_them(env, mo
 
 async def _songs():
     return SONGS
+
+
+async def test_a_playlist_names_who_made_it(env):
+    """A playlist says who made it, as an album says its artists: a list of them, for a playlist made together."""
+    c = env["client"]
+    r = await c.post("/api/playlists", json={"name": "Дорога"})
+    assert r.status_code == 200, r.text
+    mine = next(p for p in (await c.get("/api/playlists")).json() if p["name"] == "Дорога")
+    assert mine["kind"] == "user" and [o["name"] for o in mine["owners"]] == ["admin"]
