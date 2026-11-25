@@ -52,14 +52,24 @@ async def test_a_transfers_likes_go_before_its_queued_downloads(db):
         await _add("download_item", queue.PRIORITY_IMPORT)
     async with session_scope() as s:  # a ♥ rewrite queued at the transfer's priority, as before
         await queue.enqueue(s, "import_likes", {"import_id": 7}, priority=queue.PRIORITY_IMPORT)
-    assert await _claimed() == "download_item"  # older downloads went first
+    assert await _claimed() == "import_likes"  # a short job, ahead of the older downloads all the same
+    async with session_scope() as s:
+        await queue.enqueue(s, "import_likes", {"import_id": 7}, priority=queue.PRIORITY_IMPORT)
     async with session_scope() as s:  # the next downloads that finish ask for the rewrite again
         await enqueue_once(s, "import_likes", 7, priority=queue.PRIORITY_IMPORT + 1)
         await enqueue_once(s, "import_likes", 7)  # a lower ask leaves it where it is
     async with session_scope() as s:
-        assert [j.priority for j in (await s.execute(select(Job).where(Job.kind == "import_likes"))).scalars()] == [
+        assert [j.priority for j in (await s.execute(select(Job).where(Job.kind == "import_likes", Job.status == "queued"))).scalars()] == [
             queue.PRIORITY_IMPORT + 1]
     assert await _claimed() == "import_likes"
+
+
+async def test_a_transfers_finish_does_not_wait_for_anothers_downloads(db):
+    for _ in range(3):  # another transfer's downloads, queued before
+        await _add("download_item", queue.PRIORITY_IMPORT)
+    await _add("import_finish", queue.PRIORITY_IMPORT)
+    await _add("import_fetch", queue.PRIORITY_IMPORT)
+    assert [await _claimed() for _ in range(2)] == ["import_finish", "import_fetch"]
 
 
 async def test_background_work_leaves_a_worker_for_the_user(db):

@@ -104,7 +104,8 @@ async def test_pause_holds_matching_and_preserves_the_download_queue(env, monkey
 
     response = await client.put(pause_url, json={"paused": False})
     assert response.status_code == 200 and response.json()["status"] == "running"
-    assert (await queue._claim("general")).id == download_job.id
+    # the short finish goes ahead of the download at the same priority, and the download right after it
+    assert [(await queue._claim("general")).id for _ in range(2)] == [finish.id, download_job.id]
     assert len(env["state"]["fetches"]) == 1
 
 

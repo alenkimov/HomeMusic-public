@@ -127,6 +127,8 @@ _IMPORT_CLAIMABLE = (
 
 
 async def _claim(worker_id: str, *, imports: bool = False) -> Job | None:
+    # At one priority the short jobs go before downloads: a transfer queues thousands of downloads at once, and a
+    # transfer's finish (or another's fetch, a mix) re-queued after them would wait until every one was through.
     claimable = _IMPORT_CLAIMABLE if imports else _GENERAL_CLAIMABLE
     async with session_scope() as s:
         # Take the lock in a separate statement so the slot count sees the previous claim.
@@ -137,7 +139,7 @@ async def _claim(worker_id: str, *, imports: bool = False) -> Job | None:
                 text(
                     "UPDATE jobs SET status='running', locked_by=:w, locked_at=:now, attempts=attempts+1, updated_at=:now "
                     f"WHERE id = (SELECT id FROM jobs WHERE {claimable} AND run_after <= :now "
-                    "ORDER BY priority DESC, run_after, id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id"
+                    "ORDER BY priority DESC, kind = 'download_item', run_after, id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id"
                 ),
                 {"w": worker_id, "now": now, "bg": background_slots()},
             )
