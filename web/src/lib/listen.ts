@@ -362,6 +362,63 @@ function reportEnd(ended = false, failed = false, interrupted = false) {
   if (persisted) try { localStorage.removeItem(OPEN_PLAY_KEY); } catch (e) { console.error('Could not close listening checkpoint', e); }
 }
 
+// --- a soft start and stop -------------------------------------------------------------------------------------------
+// A pause and a resume are not a cut: the sound fades out before the pause and in after the resume, as the players of
+// the music services do — too short to notice as a fade, long enough not to hit the ears. Only a pause and a resume
+// by the listener: a new track, a seek and a failure are as they are. The element's volume is the listener's volume
+// times `fadeGain`. In a hidden tab the timers are slowed down to a second, so there it is a plain pause; where the
+// volume cannot be changed (iOS) it is a plain pause and start too.
+
+const FADE_OUT_MS = 180;
+const FADE_IN_MS = 300;
+let fadeGain = 1;
+let fadeTimer: number | undefined;
+// a resume waits to fade in until the sound really starts (`playing`): a fade during loading would be lost
+let fadeInOnPlaying = false;
+
+function applyVolume() {
+  if (audio) audio.volume = state.volume * fadeGain;
+}
+
+function cancelFade() {
+  window.clearInterval(fadeTimer);
+  fadeTimer = undefined;
+}
+
+/** The gain to `to` over `ms`, then `done`. An equal-power curve: the loudness changes evenly to the ear. */
+function fade(to: number, ms: number, done?: () => void) {
+  cancelFade();
+  if (document.hidden || ms <= 0) {
+    fadeGain = to;
+    applyVolume();
+    done?.();
+    return;
+  }
+  const from = fadeGain;
+  const t0 = performance.now();
+  const step = () => {
+    const k = Math.min(1, (performance.now() - t0) / ms);
+    const eased = to > from ? Math.sin((k * Math.PI) / 2) : Math.cos(((1 - k) * Math.PI) / 2);
+    fadeGain = from + (to - from) * eased;
+    applyVolume();
+    if (k >= 1) {
+      cancelFade();
+      done?.();
+    }
+  };
+  fadeTimer = window.setInterval(step, 16);
+  step();
+}
+
+/** Stop the sound at once (a new track, a failure, the player closed): no fade is left to finish later. */
+function hardPause(a: HTMLAudioElement) {
+  cancelFade();
+  fadeInOnPlaying = false;
+  a.pause();
+  fadeGain = 1;
+  applyVolume();
+}
+
 function el(): HTMLAudioElement {
   if (audio) return audio;
   const a = new Audio();
@@ -384,6 +441,10 @@ function el(): HTMLAudioElement {
   a.addEventListener('durationchange', sync);
   a.addEventListener('play', pauseNative);
   a.addEventListener('playing', () => {
+    if (fadeInOnPlaying) {
+      fadeInOnPlaying = false;
+      fade(1, FADE_IN_MS);
+    }
     if (resolving) resolving.retryMedia = false;
     set({ phase: 'playing', error: null });
     confirmManualPlayback();
@@ -435,7 +496,7 @@ function mediaFailed(a: HTMLAudioElement) {
 
 function playbackFailed(message: string) {
   set({ phase: 'error', error: message });
-  audio?.pause();
+  if (audio) hardPause(audio);
   if (autoAdvanceOnFailure) {
     if (activeManual && !activeManual.started) {
       failedManualEntries.add(activeManual.id);
@@ -445,10 +506,27 @@ function playbackFailed(message: string) {
   }
 }
 
-function play(a: HTMLAudioElement) {
+/** `soft`: a resume by the listener — the sound comes in from silence (see `fade`). Otherwise at full volume at once,
+ * and a fade-out under way (a pause tapped just before) is dropped: it would pause what plays now. */
+function play(a: HTMLAudioElement, soft = false) {
+  cancelFade();
+  fadeInOnPlaying = soft && !document.hidden;
+  if (fadeInOnPlaying && !a.paused) {
+    // still sounding, fading out from a pause a moment ago: back up from where it is
+    fadeInOnPlaying = false;
+    fade(1, FADE_IN_MS);
+  } else {
+    fadeGain = fadeInOnPlaying ? 0 : 1;
+    applyVolume();
+  }
   // NotAllowedError (no user gesture): wait for the play button; AbortError: a newer track or a pause won.
   a.play().catch((e: unknown) => {
     if ((e as Error)?.name === 'NotAllowedError') set({ phase: 'paused' });
+    if (a.paused) {
+      fadeInOnPlaying = false;
+      fadeGain = 1;
+      applyVolume();
+    }
   });
 }
 
@@ -1328,20 +1406,28 @@ function resume() {
   if (state.phase === 'error') return start(state.queue, state.index);
   if (state.phase === 'ended') return start(state.queue, state.index);
   set({ phase: state.info || state.position ? 'loading' : 'resolving' });
-  play(a);
+  play(a, true);
 }
 
+/** The sound fades out, then the element pauses; the player shows the pause at once. */
 export function pause() {
-  if (!audio || !state.track || state.phase === 'error' || state.phase === 'ended') return;
-  audio.pause();
+  const a = audio;
+  if (!a || !state.track || state.phase === 'error' || state.phase === 'ended') return;
   set({ phase: 'paused' });
+  if (a.paused) return hardPause(a);
+  fadeInOnPlaying = false;
+  fade(0, FADE_OUT_MS, () => {
+    a.pause();
+    fadeGain = 1;
+    applyVolume();
+  });
 }
 
 export function setVolume(volume: number) {
   if (!Number.isFinite(volume)) return;
   const value = Math.max(0, Math.min(1, volume));
-  if (audio) audio.volume = value;
   set({ volume: value });
+  applyVolume();
   try { localStorage.setItem(VOLUME_KEY, String(value)); } catch { /* storage is optional */ }
 }
 
@@ -1367,7 +1453,7 @@ export function stopListening() {
   pendingSeek = 0;
   pendingPosition = null;
   if (audio) {
-    audio.pause();
+    hardPause(audio);
     audio.removeAttribute('src');
     audio.load();
   }
