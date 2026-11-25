@@ -5,6 +5,7 @@ import { ofHiddenArtist } from './dislikes';
 import { keptInfo } from './offline';
 import { OFFLINE_WAVE, waveAudio } from './offlineWave';
 import { ApiError, api, errorMessage, isAbort, listenStreamUrl } from '../api/client';
+import { CANT_ANY } from './formats';
 import type { LaunchOrigin, ListenOut } from '../api/types';
 import { startDownload } from './actions';
 import { hubEvents } from './events';
@@ -208,7 +209,7 @@ export const listenAudio = (): HTMLAudioElement | null => audio;
 let pendingSeek = 0;
 let pendingPosition: (() => number) | null = null;
 let seekRevision = 0;
-let resolving: { controller: AbortController; pending: boolean; retryMedia: boolean } | null = null;
+let resolving: { controller: AbortController; pending: boolean; retryMedia: boolean; anyFormat: boolean } | null = null;
 let autoAdvanceOnFailure = false;
 /** How many tracks of the queue are loaded ahead (`prefetchNext`): the next one whole, the rest only their start. */
 const AHEAD = 3;
@@ -482,6 +483,18 @@ function el(): HTMLAudioElement {
 function mediaFailed(a: HTMLAudioElement) {
   // The audio element has no HTTP status. Let the parallel lookup report the cause and decide whether to retry.
   if (!a.getAttribute('src') || resolving?.pending) return;
+  // the browser said it plays the file's format and did not: once, the file comes in a format every browser plays
+  const src = new URL(a.src, window.location.href);
+  if (a.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED && resolving && !resolving.anyFormat && !played?.started
+      && src.pathname === '/api/listen/stream' && src.searchParams.get('cant') !== CANT_ANY) {
+    resolving.anyFormat = true;
+    src.searchParams.set('cant', CANT_ANY);
+    const paused = state.phase === 'paused';
+    a.src = src.href;
+    if (paused) a.load();
+    else play(a);
+    return;
+  }
   if (resolving?.retryMedia) {
     resolving.retryMedia = false;
     const paused = state.phase === 'paused';
@@ -552,7 +565,7 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
     account: listeningAccount(), manual: activeManual };
   resolving?.controller.abort();
   const ctl = new AbortController();
-  const resolution = { controller: ctl, pending: true, retryMedia: false };
+  const resolution = { controller: ctl, pending: true, retryMedia: false, anyFormat: false };
   resolving = resolution;
   refreshed = null;
   autoAdvanceOnFailure = auto;

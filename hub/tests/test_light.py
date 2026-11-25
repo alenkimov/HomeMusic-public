@@ -14,7 +14,7 @@ import pytest
 
 from app import light
 from tests.support import cand, filed_track
-from tests.test_listen import AUDIO, env, search_files  # noqa: F401  (the fixture)
+from tests.test_listen import AUDIO, env, ranged, search_files  # noqa: F401  (the fixture)
 
 VARIANT = "x-homemusic-variant"
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is needed")
@@ -29,7 +29,7 @@ def fake_encoder(monkeypatch):
     async def fake_probe(path, timeout=60):
         return SimpleNamespace(bitrate_kbps=320 if "heavy" in str(path) else 141)
 
-    async def fake_ffmpeg(src, out):
+    async def fake_ffmpeg(src, out, enc=None):
         st.calls.append(src)
         st.running += 1
         st.peak = max(st.peak, st.running)
@@ -69,7 +69,7 @@ def test_variant_is_chosen_by_the_bitrate():
 def test_ffmpeg_makes_opus_160_without_tags():
     args = light.ffmpeg_args(Path("in.mp3"), Path("out.opus"))
     joined = " ".join(args)
-    assert "-c:a libopus -b:a 160k -vbr on" in joined and "-map_metadata -1" in joined and "-vn" in args
+    assert "-b:a 160k -c:a libopus -vbr on" in joined and "-map_metadata -1" in joined and "-vn" in args
     assert "+bitexact" in joined and args[-1] == "out.opus"
 
 
@@ -136,7 +136,7 @@ async def test_copy_not_ready_in_time_gives_the_original_and_is_finished_in_the_
 async def test_failed_encode_gives_the_original_and_is_not_retried(env, fake_encoder, monkeypatch):
     c = env["client"]
 
-    async def broken(src, out):
+    async def broken(src, out, enc=None):
         fake_encoder.calls.append(src)
         raise RuntimeError("Unknown encoder 'libopus'")
 
@@ -357,3 +357,85 @@ async def test_real_ffmpeg_halves_a_320_mp3_and_the_copy_is_reproducible(env):
 
     r = await c.get("/api/listen/stream", params={"ref": "nd:b", "q": "mobile"})
     assert r.headers[VARIANT] == light.ORIGINAL and r.content == plain.read_bytes()
+
+
+# ---------------------------------------------------------------- a player that cannot play the format
+
+
+def test_the_playable_copy_is_aac_in_mp4():
+    joined = " ".join(light.ffmpeg_args(Path("in.opus"), Path("out.m4a"), light.PLAYABLE))
+    assert "-b:a 256k -aac_coder fast -c:a aac -f ipod -movflags +faststart" in joined
+
+
+async def test_a_format_the_player_cannot_play_comes_as_its_aac_copy(env, fake_encoder):
+    c = env["client"]
+    await song(env, "plain.opus", "nd40")  # light: no light copy would be made of it
+    r = await c.get("/api/listen/stream", params={"ref": "nd:nd40", "cant": "ogg,webm"}, headers={"Range": "bytes=0-"})
+    copy = b"OggS" + AUDIO[: len(AUDIO) // 2]
+    assert r.status_code == 206 and r.headers["content-type"] == "audio/mp4" and r.content == copy
+    assert VARIANT not in r.headers
+    r = await c.get("/api/listen/stream", params={"ref": "nd:nd40", "cant": "ogg"}, headers={"Range": "bytes=4-7"})
+    assert r.status_code == 206 and r.content == copy[4:8]
+    assert len(fake_encoder.calls) == 1  # made once
+    # a player that plays it gets the file itself; a format it can play is never re-encoded
+    r = await c.get("/api/listen/stream", params={"ref": "nd:nd40"})
+    assert r.content == AUDIO and r.headers["content-type"].startswith("audio/ogg")
+    await song(env, "heavy.mp3", "nd41")
+    r = await c.get("/api/listen/stream", params={"ref": "nd:nd41", "cant": "ogg,flac,something"})
+    assert r.content == AUDIO and len(fake_encoder.calls) == 1
+
+
+async def test_a_light_copy_for_a_player_without_ogg_is_aac(env, fake_encoder):
+    c = env["client"]
+    await song(env, "heavy.mp3", "nd42")
+    r = await c.get("/api/listen/stream", params={"ref": "nd:nd42", "q": "mobile", "cant": "ogg"})
+    assert r.headers[VARIANT] == light.LIGHT and r.headers["content-type"] == "audio/mp4"
+    assert any(f.suffix == ".m4a" for f in root_files(env))
+
+
+async def test_a_catalog_file_the_player_cannot_play_is_copied_whole_then_converted(env, fake_encoder):
+    c, hm = env["client"], env["hm"]
+    def ogg(request):
+        r = ranged(request)
+        r.headers["content-type"] = "audio/ogg"
+        return r
+
+    env["mock"].route(host="cdn.test", path="/good.opus").mock(side_effect=ogg)
+    hm.cands = [cand("1", "https://cdn.test/good.opus")]
+    await search_files(c)
+    r = await c.get("/api/listen/stream", params={"ref": "file:hitmoz:1", "cant": "ogg"})
+    assert r.status_code == 200 and r.headers["content-type"] == "audio/mp4"
+    assert r.content == b"OggS" + AUDIO[: len(AUDIO) // 2]
+
+
+async def test_a_failed_conversion_is_an_error_not_the_unplayable_file(env, fake_encoder, monkeypatch):
+    c = env["client"]
+
+    async def broken(src, out, enc=None):
+        raise RuntimeError("Unknown encoder 'aac'")
+
+    monkeypatch.setattr(light, "_ffmpeg", broken)
+    await song(env, "plain.opus", "nd43")
+    r = await c.get("/api/listen/stream", params={"ref": "nd:nd43", "cant": "ogg"})
+    assert r.status_code == 502 and "перекодировать" in r.json()["detail"]
+
+
+async def test_the_next_track_of_a_queue_is_converted_ahead(env, fake_encoder):
+    c = env["client"]
+    await song(env, "plain.opus", "nd44")
+    r = await c.get("/api/listen", params={"ref": "nd:nd44", "ahead": "whole", "cant": "ogg"})
+    assert r.status_code == 200
+    await settled(lambda: any(f.suffix == ".m4a" for f in root_files(env)))
+    r = await c.get("/api/listen", params={"ref": "nd:nd44", "ahead": "whole"})  # a player that plays it: nothing
+    await settled(lambda: not light._jobs)
+    assert len(fake_encoder.calls) == 1
+
+
+@needs_ffmpeg
+async def test_ffmpeg_makes_an_m4a_of_ogg_opus(tmp_path):
+    src, out = tmp_path / "in.opus", tmp_path / "out.m4a"
+    await asyncio.to_thread(subprocess.run, ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i",
+                            "sine=frequency=440:duration=2", "-c:a", "libopus", "-f", "ogg", str(src)], check=True)
+    await light._ffmpeg(src, out, light.PLAYABLE)
+    head = out.read_bytes()[:12]
+    assert head[4:8] == b"ftyp" and head[8:12] == b"M4A "

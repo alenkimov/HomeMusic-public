@@ -34,7 +34,8 @@ const AUDIO = 'hm-audio-v1';
 const PARALLEL = 2;
 
 export const offlineSupported = (): boolean => typeof caches !== 'undefined' && typeof indexedDB !== 'undefined' && 'serviceWorker' in navigator && window.isSecureContext;
-const audioKey = (ref: string) => new URL(listenStreamUrl(ref), window.location.origin).href;
+// the key is the address without `cant` (as `public/sw.js` looks it up); the bytes are what this browser plays
+const audioKey = (ref: string) => new URL(listenStreamUrl(ref, ''), window.location.origin).href;
 
 // --- state --------------------------------------------------------------------------------------------------
 
