@@ -311,7 +311,6 @@ function TrackEditSheet({ track, onClose, onSaved }: { track: LibTrackOut | null
   const [trackNo, setTrackNo] = useState('');
   const [discNo, setDiscNo] = useState('');
   const [genre, setGenre] = useState('');
-  const [explicit, setExplicit] = useState(false);
   const version = useVersionLabel({ track_id: track?.id });
   const [busy, setBusy] = useState(false);
 
@@ -322,7 +321,6 @@ function TrackEditSheet({ track, onClose, onSaved }: { track: LibTrackOut | null
     setTrackNo(track.track_no ? String(track.track_no) : '');
     setDiscNo(track.disc_no ? String(track.disc_no) : '');
     setGenre('');
-    setExplicit(!!track.explicit);
   }, [track]);
 
   const save = async () => {
@@ -336,7 +334,6 @@ function TrackEditSheet({ track, onClose, onSaved }: { track: LibTrackOut | null
           track_no: toIntOrNull(trackNo),
           disc_no: toIntOrNull(discNo),
           genre: genre.trim() || undefined,
-          explicit,
         }),
       'Теги сохранены',
     );
@@ -376,10 +373,6 @@ function TrackEditSheet({ track, onClose, onSaved }: { track: LibTrackOut | null
             <input className="input" value={genre} onChange={(e) => setGenre(e.target.value)} placeholder="без изм." />
           </Field>
         </div>
-        <label className="flex min-h-11 items-center gap-3">
-          <input type="checkbox" className="h-5 w-5 accent-[#1ed760]" checked={explicit} onChange={(e) => setExplicit(e.target.checked)} />
-          <span>Explicit (18+)</span>
-        </label>
         {track && <p className="break-all text-xs text-dim">{track.path}</p>}
       </div>
     </Sheet>
