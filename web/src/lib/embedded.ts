@@ -7,7 +7,7 @@ export const EMBEDDED =
 
 /** A plain browser: the PWA is the whole service on its own — «Главная», the Navidrome library («Любимое»,
  * playlists, artists), the full player with its queue, its own tab bar. Inside the app these screens are the app's
- * native ones (Tempus), so the PWA there is only the Hub: catalog, downloads, assistant, own files. Screens and
+ * native ones (Tempus), so the PWA there is only the Hub: catalog, downloads, own files. Screens and
  * actions of the standalone service check this flag; routes of it are not opened inside the app (`App.tsx`). */
 export const STANDALONE = !EMBEDDED;
 

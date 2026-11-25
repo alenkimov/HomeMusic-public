@@ -105,7 +105,6 @@ export function MorePage() {
           </Group>
           {STANDALONE && (
             <Group>
-              <Item icon="sparkle" tint="bg-[#8b6cf6]" to="/assistant" title="Ассистент" />
               <Item icon="download" tint="bg-[#3d8ef0]" to="/downloads" title="Загрузки" value={downloads > 0 ? `качается ${downloads > 99 ? '99+' : downloads}` : undefined} badge={review ? (review > 999 ? '999+' : String(review)) : undefined} badgeTone="warn" />
               <Item icon="folder" tint="bg-[#ef8b3a]" to="/files" title={me.is_admin ? 'Все файлы' : 'Мои файлы'} />
               <Item icon="merge" tint="bg-[#1f9d55]" to="/albums/merge" title="Объединение альбомов" badge={splitWaiting ? (splitWaiting > 99 ? '99+' : String(splitWaiting)) : undefined} />

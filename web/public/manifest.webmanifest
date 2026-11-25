@@ -2,7 +2,7 @@
   "id": "/",
   "name": "HomeMusic",
   "short_name": "HomeMusic",
-  "description": "Домашняя музыка: поиск, загрузки, библиотека и ИИ-ассистент",
+  "description": "Домашняя музыка: поиск, загрузки и библиотека",
   "lang": "ru",
   "dir": "ltr",
   "start_url": "/",
@@ -21,8 +21,7 @@
   ],
   "shortcuts": [
     { "name": "Поиск", "url": "/#/search", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Загрузки", "url": "/#/downloads", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Ассистент", "url": "/#/assistant", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+    { "name": "Загрузки", "url": "/#/downloads", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
   ],
   "share_target": {
     "action": "/share-target",
@@ -35,7 +34,7 @@
       "files": [
         {
           "name": "files",
-          "accept": ["image/*", "audio/*", ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".wav"]
+          "accept": ["audio/*", ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".wav"]
         }
       ]
     }

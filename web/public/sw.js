@@ -10,7 +10,7 @@ const WAVE_AUDIO = 'hm-wave-audio-v1'; // separate from manually saved lists
 const API = 'hm-api-v1'; // the last answer of the Hub to what a page reads: shown when the Hub cannot be reached
 const IMG = 'hm-img-v1'; // covers
 /* What a page reads to draw the library: kept as last answered, for when there is no network. Not what must be live
-   (downloads, the search of the catalog, events) nor what is asked once (the assistant, the admin's pages). */
+   (downloads, the search of the catalog, events) nor what is asked once (the admin's pages). */
 const KEPT = ['/api/auth/me', '/api/playlists', '/api/nd/', '/api/for-you', '/api/tags', '/api/starred', '/api/stats/counts',
   '/api/lyrics', '/api/mixes/today', '/api/plays/history', '/api/library/version-labels'];
 const NOT_KEPT = ['/api/lyrics/candidates', '/api/lyrics/search', '/api/lyrics/probe', '/api/lyrics/sources', '/api/lyrics/settings', '/api/lyrics/translators'];
@@ -223,7 +223,7 @@ async function handleShare(req) {
     return Response.redirect('/#/share', 303);
   } catch (e) {
     // Could not store locally: let the server-side fallback handle it next time.
-    return Response.redirect('/#/assistant', 303);
+    return Response.redirect('/#/share', 303);
   }
 }
 

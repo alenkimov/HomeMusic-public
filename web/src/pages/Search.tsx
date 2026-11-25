@@ -21,7 +21,6 @@ import { RouteBackground, albumPath, artistPath, enc, navigate } from '../lib/ro
 import { useLiveSearch } from '../lib/search';
 import { spotifyURL } from '../lib/spotify';
 import { FOCUS_SEARCH } from '../components/TabBar';
-import { startChatWith } from './AssistantChat';
 import { onHubBack } from '../lib/reach';
 
 export type SearchTab = 'catalog' | 'playlists' | 'files' | 'reuploads';
@@ -37,10 +36,6 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
   const scope = tab === 'files' ? 'sources' : tab === 'reuploads' ? 'reuploads' : 'catalog';
   const search = useLiveSearch(dq, scope, !!dq && !publicLink);
   const inputRef = useRef<HTMLInputElement>(null);
-  const shots = useRef<HTMLInputElement>(null);
-  const [nothing, setNothing] = useState(false); // the search that is on the screen found nothing
-  // the assistant is the same search, asked in one's own words (or with a screenshot): one button away, never guessed
-  const ask = (images: File[] = []) => startChatWith(q.trim() || (images.length ? 'Найди и скачай треки с этих скриншотов' : ''), images, false);
 
   // Keep the query in the URL so "back" from an artist/album restores the results.
   useEffect(() => {
@@ -110,12 +105,6 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
                   }}
                 />
               )}
-              {STANDALONE && (
-                <>
-                  <IconButton icon="image" label="Скриншот или список — ассистенту" className="!w-9 text-muted sm:!w-10" onClick={() => shots.current?.click()} />
-                  <input ref={shots} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length) ask(files); }} />
-                </>
-              )}
             </div>
           </div>
         </div>
@@ -132,13 +121,6 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
                 { value: 'files', label: 'Файлы' },
                 { value: 'reuploads', label: 'Без цензуры' },
               ]}
-              // nothing was found: one more place to ask, the fourth in the row — the assistant
-              after={STANDALONE && nothing && (
-                <button type="button" onClick={() => ask()} className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-full bg-raised px-4 text-sm hover:bg-hover">
-                  <Icon name="sparkle" size={16} className="text-accent" />
-                  Спросить ассистента
-                </button>
-              )}
             />
           </div>
         )}
@@ -149,11 +131,11 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
       ) : !dq ? (
         <RecentSearches onPick={setQ} />
       ) : tab === 'catalog' ? (
-        <CatalogResults q={dq} search={search} onNothing={setNothing} />
+        <CatalogResults q={dq} search={search} />
       ) : tab === 'playlists' ? (
         <PlaylistResults q={dq} search={search} />
       ) : (
-        <FileResults search={search} reuploads={tab === 'reuploads'} onNothing={setNothing} />
+        <FileResults search={search} reuploads={tab === 'reuploads'} />
       )}
     </div>
   );
@@ -371,21 +353,12 @@ function useMoreTracks(q: string, first: SearchOut | undefined) {
   return { tracks, trigger, sentinel, loading: cur.loading, failed: cur.failed, loadMore };
 }
 
-/** Says to the page whether the search on the screen found nothing (and takes it back when it leaves the screen). */
-function useNothing(nothing: boolean, tell: (nothing: boolean) => void) {
-  useEffect(() => {
-    tell(nothing);
-    return () => tell(false);
-  }, [nothing, tell]);
-}
-
-function CatalogResults({ q, search, onNothing }: { q: string; search: SearchRun; onNothing: (nothing: boolean) => void }) {
+function CatalogResults({ q, search }: { q: string; search: SearchRun }) {
   const data = search.data && 'library' in search.data ? search.data : undefined;
   const more = useMoreTracks(q, data);
   const artistsRow = useRememberScrollX(`search:${q}:artists`);
   const albumsRow = useRememberScrollX(`search:${q}:albums`);
   const empty = !!data && !data.library.length && !data.artists.length && !data.albums.length && !data.tracks.length;
-  useNothing(!search.loading && !search.error && empty, onNothing);
   if (search.loading && (!data || empty)) return <SkeletonRows n={8} />;
   if (search.error && !data) return <ErrorState text={search.error} onRetry={search.reload} />;
   if (!data) return null;
@@ -468,10 +441,9 @@ function Opened({ item, className, children }: { item: Omit<SearchRecent, 'key'>
   );
 }
 
-function FileResults({ search, reuploads, onNothing }: { search: SearchRun; reuploads: boolean; onNothing: (nothing: boolean) => void }) {
+function FileResults({ search, reuploads }: { search: SearchRun; reuploads: boolean }) {
   const [queued, setQueued] = useState<Record<string, 'busy' | 'done'>>({});
   const data = search.data && 'candidates' in search.data ? search.data : undefined;
-  useNothing(!search.loading && !search.error && !!data && !data.candidates.length, onNothing);
 
   const download = async (c: Candidate) => {
     const key = `${c.provider}:${c.provider_id}`;

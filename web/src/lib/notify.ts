@@ -1,4 +1,4 @@
-// FR-7: assistant notifications and the active downloads badge.
+// FR-7: the active downloads badge and the notifications of downloads.
 import { api } from '../api/client';
 import type { DownloadItemOut } from '../api/types';
 import { hubEvents } from './events';
@@ -124,13 +124,6 @@ export function startNotificationWatcher() {
         pendingSeed = undefined;
         refresh();
       }, 800);
-    }),
-    hubEvents.on('assistant', (d) => {
-      if (d.status === 'awaiting_confirmation') {
-        void notify('Ассистент нашёл треки', 'Проверьте список и подтвердите', `/assistant/${d.id}`, `as-${d.id}`);
-      } else if (d.status === 'failed') {
-        void notify('Ассистент', 'Задача завершилась с ошибкой', `/assistant/${d.id}`, `as-${d.id}`);
-      }
     }),
   ];
 }

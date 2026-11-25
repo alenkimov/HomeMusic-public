@@ -182,27 +182,6 @@ export function downloadStatusLabel(status: string, progress = 0): string {
   }
 }
 
-export function assistantStatusLabel(status: string): string {
-  switch (status) {
-    case 'queued':
-      return 'В очереди';
-    case 'extracting':
-      return 'Распознаю';
-    case 'resolving':
-      return 'Ищу в каталоге';
-    case 'awaiting_confirmation':
-      return 'Ждёт подтверждения';
-    case 'confirmed':
-      return 'Скачивается';
-    case 'done':
-      return 'Готово';
-    case 'failed':
-      return 'Ошибка';
-    default:
-      return status;
-  }
-}
-
 export function inputKindLabel(kind: string): string {
   switch (kind) {
     case 'images':

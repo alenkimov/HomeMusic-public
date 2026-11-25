@@ -397,7 +397,7 @@ unlike the wave). The rows are kept for the analytics: `smart_sessions`, `smart_
 | GET | `/api/starred` | `StarredOut` `{song_ids, album_ids, artist_ids, refs, subjects}`. ND lists remain visible, refs also include own pending track likes. Own subjects include `{target_type,key,ref,nd_id,liked,liked_since,event_id,aliases,target_data,provenance:"own"}`; known imported objects carry provenance import. Use type plus aliases for button state; an own false state takes precedence over a stale ND list |
 
 An `/api/star` retry with the same event_id does not reapply an old command to Navidrome. Delayed commands older
-than the effective decision are journaled without overwriting the mirror. Successful chunks of a bulk assistant/API
+than the effective decision are journaled without overwriting the mirror. Successful chunks of a bulk API
 operation remain journaled if a later chunk fails. For a wave buffer, reuse the returned per-object event_id and the
 same typed target so `/api/plays/events` returns duplicate.
 
@@ -449,34 +449,6 @@ from it → `502`.
 `library_track_id` when the Hub keeps the file. Covers are `/api/nd/cover/…` (`cover_small_url` 300 px, `cover_url`
 1000 px; an album's `cover_url` 300 px).
 
-## Assistant (FR-6)
-
-Every message may contain up to **15 photos** (each up to 15 MB) and **5000 Unicode characters** of user text,
-including whitespace. These per-message limits apply to admins too. They cover chat JSON/multipart and the
-legacy task API (`text`/`url`, including multipart text alongside images). Exceeding either limit returns `400`
-with a Russian `detail` before model calls, queuing tasks or consuming the daily allowance.
-The current accepted message is sent to the model in full; only older chat context may be compacted.
-
-Non-admin users may submit **5 messages per calendar day**, shared by `POST /api/assistant/chat`
-(JSON and multipart) and `POST /api/assistant/tasks` (text, links and images). Each accepted request counts once,
-regardless of model/tool calls or attached image count, including requests whose later processing fails.
-Invalid input or a foreign/deleted chat is rejected before counting. Admins (`is_admin`) have no daily limit.
-The persistent counter resets at midnight in `Settings.timezone` (default `Europe/Moscow`); creating/deleting chats,
-signing in again or restarting the Hub does not reset it. Previous history is not charged retroactively.
-At the limit these POST routes return `429` with a Russian `detail` and `Retry-After` in seconds until midnight,
-before calling the model, saving images or queuing a task. History, confirmation and dismissal remain available
-and do not count as messages.
-
-| Method | Path | Body → Response |
-|---|---|---|
-| POST | `/api/assistant/tasks` | multipart `images` (repeat) **or** JSON `AssistantTextIn` (`url` of a Yandex Music / YouTube playlist or album, or free `text`) → `AssistantTaskOut` |
-| GET | `/api/assistant/tasks` | `AssistantTaskOut[]` (own tasks, newest first, rows omitted) |
-| GET | `/api/assistant/tasks/{id}` | `AssistantTaskOut` |
-| POST | `/api/assistant/tasks/{id}/confirm` | `AssistantConfirmIn` → `AssistantTaskOut` |
-
-Task statuses: `queued, extracting, resolving, awaiting_confirmation, confirmed, done, failed`.
-Row statuses: `owned` (already in library), `auto` (confident, pre-selected), `confirm` (pick one of `options`), `not_found` (manual input).
-
 ## Imports from music services («Перенести музыку»)
 | Method | Path | Body → Response |
 |---|---|---|
@@ -521,7 +493,6 @@ over, liked albums and artists the library has get ★. The sign-in token is kep
 ## Events (SSE)
 `GET /api/events` — `text/event-stream`, named events, `data` is JSON:
 - `download` → `DownloadItemOut` (without candidates) on every status/progress change
-- `assistant` → `{id, status}`
 - `library` → `{kind: "imported"|"changed", album_id, track_id?}`
 - `import` → `{id, status}` when an import moves on (sign-in, fetched, a batch matched, done): refetch `/api/imports/{id}`
 - `search_history` → `{}` after saving/clearing the account's recent queries: refetch `/api/search/history`
@@ -530,79 +501,6 @@ over, liked albums and artists the library has get ★. The sign-in token is kep
 ## Share target / system
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/share-target` | Fallback for Web Share Target if the service worker didn't handle it: images → new assistant task, audio → uploads; redirects to `/#/assistant/{id}` or `/#/upload` (the service worker's path, `/#/share`, opens a new assistant chat with the shared screenshots or text instead) |
+| POST | `/share-target` | Fallback for Web Share Target if the service worker didn't handle it: redirects to `/#/share?fallback=1` (the PWA's page takes what was shared: a Spotify link opens, audio goes to uploads, other text or a link becomes a search) |
 | GET | `/healthz` | `HealthOut` (no auth). `capabilities` includes `typed_favorites_v1`: new clients may send typed events/targets and causal rollback only when present. `launch_events_v1` — the Hub stores `launch_id`/`launch_origin` of `PlayEventIn`; `wave_origin_v1` — it keeps `origin`/`client`/`restart_of` of `WaveStartIn` (an older Hub ignores them silently, clients gate on these anyway). `smart_shuffle_v1` — the smart shuffle's endpoints exist (`/api/smart-shuffle/*`). `favorite_compensation_chains_v1` additionally permits retraction of compensations (late accept); clients retain chain events until this separate capability is present. `web_build` — id of the PWA build the Hub serves (`<meta name="hm-build">` of `index.html`, `null` without a build): an open page with another id reloads itself (`web/src/lib/update.ts`) |
 | GET | `/api/system/health` | `HealthOut` with provider health (admin) |
-
-### Free chat (stage 3.8)
-| Method | Path | Body → Response |
-|---|---|---|
-| POST | `/api/assistant/chat` | JSON `{messages: [...], chat_id?}` or multipart `messages` (JSON) + `chat_id?` + repeated `images` (PNG/JPEG/WebP/HEIC, up to 15 × 15 MB). The latest user message is limited to 5000 Unicode characters. Images are sent to the model with the latest user message. The turn (the latest user message and the reply) is saved into the chat `chat_id` (a foreign or deleted one → 404 before the model runs) or a new one. Response: `{reply, done: [str], cost_usd, actions: [...], task_id?, confirm_token?, summary?, chat_id, title}` |
-| POST | `/api/assistant/chat/{task_id}/confirm` | `{confirm_token, chat_id?}` → `{ok, playlists_deleted: [id], tracks_deleted}`; the proposal in that saved chat becomes `confirmed`. A proposal of the old chat (other action types) or a dismissed one → 409 |
-| POST | `/api/assistant/chat/{task_id}/dismiss` | `{chat_id?}` → `{ok}`: the proposal is cancelled (its token no longer works) and becomes `dismissed` in the saved chat |
-| GET | `/api/assistant/chats` | the user's saved chats, latest first (up to 100): `[{id, title, messages (count), created_at, updated_at}]` |
-| GET | `/api/assistant/chats/{id}` | `{id, title, created_at, updated_at, messages: [{role, content, images? (count), cost?, done?, proposal?: {task_id, token, summary, actions, state: pending/confirmed/dismissed}}]}` |
-| DELETE | `/api/assistant/chats/{id}` | `{ok}` |
-
-Saved chats (`assistant_chats`) keep the messages as the PWA shows them; screenshots are not stored, only their
-count. The title is the first message (up to 80 characters) or «Скриншот(ы)». The client still sends the whole
-visible history in `messages`.
-
-Only deleting needs a confirmation. Action objects: `{type: "delete_playlist", playlist_id, name}` /
-`{type: "delete_library_tracks", track_ids, titles}` (files go to the trash, for everyone).
-
-Tools of the model (`app/ai/agent.py`, compact tables `{cols, rows}`): `account_overview` (library size, ♥ counts,
-playlists, imports with collections, downloads, uploads, recently played, AI spending), catalog search, artist, album,
-library search, `list_starred` (with the import that starred a song), `get_playlist`, `get_import_items`,
-`get_downloads`; changes: `create_playlist`, `add_to_playlist`, `remove_from_playlist`, `rename_playlist`, `star`,
-`unstar`, `enqueue_download`, `cancel_downloads`, `retry_downloads`. Many songs are named by a set (`songs_from`):
-`starred`, `starred_from_imports`, `playlist:<id>`, `import_collection:<id>`. SSE `library` `{kind: "unstarred",
-song_ids}` — the assistant took ♥ off.
-
-### Internal embedder geometry v2 (stage E, 2026-10-26)
-
-The compose-only embedder adds authenticated POST routes; these are not public `/api` routes.
-The existing `/similarity`, `/vectors` (raw vectors) and `/text` contracts remain unchanged.
-
-| Path | Body → response |
-|---|---|
-| `/v2/profile` | `{positives: [{key, weight}], negatives?: [key]}` → `{model, space_id, dim, facets: [{id, weight, members, center}], negatives, missing, diagnostics}` |
-| `/v2/similarity` | `{space_id, candidates, facets, negatives?: [key]}` → `{model, space_id, dim, results: [{key, pos, neg, score}], missing, diagnostics}` |
-| `/v2/vectors` | `{space_id, keys}` → `{model, space_id, dim, vectors: {key: [float]}, missing, diagnostics}` |
-| `/v2/shadow` | `{candidates, baseline: [{key, weight}], positives: [{key, weight}], negatives}` → `{model, space_id, dim, v1: {key: score}, v2: {key: score}, missing_v1, missing_v2, missing_baseline, missing_positive, missing_negative}` |
-
-Vectors are normalized after subtracting the mean of all valid done vectors of the current model.
-Facet weights are positive-profile weight fractions; `score = max facet cosine − 0.5 * max(0, closest negative cosine)`.
-An empty positive/negative set contributes zero. Missing vectors, zero residuals and invalid stored vectors are omitted;
-`diagnostics` contains `{available, zero_residual: [key], invalid: [key]}` for the requested keys.
-Each list is limited to 5000 keys (1–300 characters), positive weights to finite `[1, 1000000]`, facets to five,
-centers to 4096 finite coordinates in `[-1, 1]` with nonzero norm and the snapshot dimension; invalid input → 422.
-`space_id` identifies the model and vector snapshot. An expired id → 409
-`{detail: {code: "stale_space", space_id, model}}`; rebuild the profile and session coordinates before retrying.
-The service retains only its current geometry snapshot. Hub wrappers raise `EmbedderSpaceExpired` (an `EmbedderDown`)
-on stale or changed space; old-service 404, HTTP failures and malformed replies use `EmbedderDown`.
-`/v2/shadow` reads one atomic copy of already completed vectors and calculates v1 raw-center and v2 centered-facet
-scores on that same snapshot. It creates no embedding jobs and does not require model inference. Candidates are limited
-to 500; profile lists to 5000, baseline weights finite in `[-1000000, 1000000]`. Missing candidates and profile
-vectors are reported separately. Optional `include_vectors: true` additionally returns `raw_vectors` and
-`centered_vectors` for candidates from the same snapshot, or null if `dim × candidate_count` exceeds 512000.
-Hub uses these transient coordinates only to replay select/order on a fully captured pool of at most 500 candidates;
-coordinates are not stored in mix stats. Hub's optional diagnostic uses a five-second timeout and preserves the no-sound report if
-the endpoint is absent or unavailable. This is not a complete policy comparison.
-See `MIXES.md` 4.2 for deterministic clustering, snapshot invalidation and consumer rollout.
-
-
-Волна по исполнителю трека: `seed` принимает `ref` или `nd_song_id` вместе с `by_artist: true`. Хаб разрешает исполнителя и сохраняет в ответе `artist_ref` / `nd_artist_id`; если исполнитель не найден, возвращает 404. Личная волна запускается без `seed`.
-
-
-### Android application updates
-
-`GET /app/latest.json` retains the historical `versionCode`, `versionName`, `notes`, `size`, `sha256`,
-`url: /app/latest.apk` contract. Historical manifests are read with UTF-8 BOM support. `GET /app/latest.apk`
-serves the current complete APK for first installs and old clients. New manifests can additionally contain `full`
-(`url`, `size`, `sha256`) and `patches` entries (`baseVersionCode`, `baseSha256`, `format: bsdiff40-v1`,
-`url`, `size`, `sha256`). The full APK and patches are addressed as
-`/app/artifacts/apk-<sha256>.apk` and `/app/artifacts/patch-<sha256>.bsdiff`. These files are immutable;
-the Hub checks paths and sizes when exposing metadata and verifies the file hash before download. Clients select
-only a smaller patch with the exact installed base hash and version, then verify the reconstructed APK against `full`.
-The metadata is optional: clients fall back to the historical full APK when absent.

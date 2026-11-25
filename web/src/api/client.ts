@@ -17,13 +17,6 @@ import type {
   AlbumOut,
   AlbumPatchIn,
   ArtistPageOut,
-  AssistantConfirmIn,
-  AssistantTaskOut,
-  ChatBriefOut,
-  ChatConfirmOut,
-  ChatMessage,
-  ChatOut,
-  ChatSavedOut,
   Candidate,
   ClearOut,
   DislikeIn,
@@ -901,27 +894,6 @@ export const api = {
   importSetPaused: (id: number, paused: boolean) => request<ImportOut>('PUT', `/api/imports/${id}/pause`, { json: { paused } }),
   importDelete: (id: number) => request<OkOut>('DELETE', `/api/imports/${id}`),
   confirmImportMatch: (itemId: number) => request<OkOut>('POST', `/api/imports/items/${itemId}/confirm_match`),
-
-  // assistant
-  assistantTask: (id: number, signal?: AbortSignal) =>
-    request<AssistantTaskOut>('GET', `/api/assistant/tasks/${id}`, { signal }),
-  assistantConfirm: (id: number, body: AssistantConfirmIn) =>
-    request<AssistantTaskOut>('POST', `/api/assistant/tasks/${id}/confirm`, { json: body }),
-  chat: (messages: ChatMessage[], chatId: number | null, images: Blob[] = [], signal?: AbortSignal) => {
-    if (!images.length) return request<ChatOut>('POST', '/api/assistant/chat', { json: { messages, chat_id: chatId }, signal });
-    const form = new FormData();
-    form.append('messages', JSON.stringify(messages));
-    if (chatId) form.append('chat_id', String(chatId));
-    images.forEach((img, i) => form.append('images', img, img instanceof File ? img.name : `screenshot-${i + 1}.png`));
-    return request<ChatOut>('POST', '/api/assistant/chat', { form, signal });
-  },
-  chatConfirm: (taskId: number, confirm_token: string, chatId: number | null) =>
-    request<ChatConfirmOut>('POST', `/api/assistant/chat/${taskId}/confirm`, { json: { confirm_token, chat_id: chatId } }),
-  chatDismiss: (taskId: number, chatId: number | null) =>
-    request<OkOut>('POST', `/api/assistant/chat/${taskId}/dismiss`, { json: { chat_id: chatId } }),
-  chats: (signal?: AbortSignal) => request<ChatBriefOut[]>('GET', '/api/assistant/chats', { signal }),
-  savedChat: (id: number, signal?: AbortSignal) => request<ChatSavedOut>('GET', `/api/assistant/chats/${id}`, { signal }),
-  deleteChat: (id: number) => request<OkOut>('DELETE', `/api/assistant/chats/${id}`),
 };
 
 export const libraryCoverUrl = (albumId: number, size = 300, bust?: string | number) =>

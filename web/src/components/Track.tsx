@@ -7,7 +7,7 @@ import { Cover, cx } from './ui';
 /** A track the way every view of one draws it outside a track list (`TrackRow` is the list's row: it plays, it has
  * the columns, the menu, the swipes). Here: `TrackCell` — the cover beside the name (with its version's mark) and a
  * line; `TrackItem` — a whole row of that, for the places that list tracks of their own: the queue, «История»,
- * «Скрытое», «Качество», the versions, the assistant's rows, the device a track comes from. */
+ * «Скрытое», «Качество», the versions, the device a track comes from. */
 export interface TrackLook {
   title: string;
   artist?: string | null;

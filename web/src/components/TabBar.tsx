@@ -7,10 +7,10 @@ import { cx } from './ui';
 /** «Поиск» was tapped while it is open: `pages/Search.tsx` puts the cursor into its field. */
 export const FOCUS_SEARCH = 'hm:focus-search';
 
-export type Tab = 'home' | 'search' | 'downloads' | 'library' | 'assistant' | 'more';
+export type Tab = 'home' | 'search' | 'downloads' | 'library' | 'more';
 
 /** Only a plain browser draws it (inside the app the app's tabs open the routes): what is listened to — «Главная»,
- * «Поиск», «Библиотека» — and «Меню» with everything else (the downloads and the assistant among it: the number of
+ * «Поиск», «Библиотека» — and «Меню» with everything else (the downloads among it: the number of
  * downloads under way stands on «Меню»). */
 const TABS: Array<{ id: Tab; to: string; label: string; icon: IconName }> = [
   { id: 'home', to: '/home', label: 'Главная', icon: 'home' },
@@ -19,7 +19,7 @@ const TABS: Array<{ id: Tab; to: string; label: string; icon: IconName }> = [
   { id: 'more', to: '/more', label: 'Меню', icon: 'menu' },
 ];
 
-/** The tab a route's own tab shows under: the downloads and the assistant live in «Меню». */
+/** The tab a route's own tab shows under: the downloads live in «Меню». */
 const shownTab = (t: Tab | null): Tab | null => (t && !TABS.some((x) => x.id === t) ? 'more' : t);
 
 export function TabBar({ active: routeTab, last }: { active: Tab | null; last: Partial<Record<Tab, string>> }) {

@@ -1063,139 +1063,6 @@ export interface PlaylistAddIn {
   track_ids: number[];
 }
 
-// --- assistant --------------------------------------------------------------------------------
-
-export type AssistantTaskStatus =
-  | 'queued'
-  | 'extracting'
-  | 'resolving'
-  | 'awaiting_confirmation'
-  | 'confirmed'
-  | 'done'
-  | 'failed';
-
-export type AssistantRowStatus = 'auto' | 'confirm' | 'not_found' | 'owned';
-
-export interface AssistantChoice {
-  kind: 'catalog' | 'library' | 'candidate' | 'manual' | 'skip';
-  ref?: string | null;
-  track_id?: number | null;
-  candidate?: Candidate | null;
-  artist?: string | null;
-  title?: string | null;
-}
-
-export interface AssistantRowIn {
-  index: number;
-  selected: boolean;
-  choice?: AssistantChoice | null;
-}
-
-export interface AssistantTargetIn {
-  kind: 'new' | 'existing' | 'library';
-  name?: string | null;
-  playlist_id?: string | null;
-}
-
-export interface AssistantConfirmIn {
-  confirm_token: string;
-  rows: AssistantRowIn[];
-  target: AssistantTargetIn;
-}
-
-export interface AssistantRowOut {
-  index: number;
-  artist_raw: string;
-  title_raw: string;
-  album_raw?: string | null;
-  duration?: string | null;
-  truncated: boolean;
-  status: AssistantRowStatus;
-  best?: TrackOut | null;
-  options: TrackOut[];
-  score: number;
-  library_track_id?: number | null;
-}
-
-export interface AssistantTaskOut {
-  id: number;
-  status: AssistantTaskStatus | string;
-  input_kind: string;
-  source_app?: string | null;
-  page_type?: string | null;
-  context: Record<string, unknown>;
-  rows: AssistantRowOut[];
-  suggested_playlist_name?: string | null;
-  confirm_token?: string | null;
-  batch_id?: number | null;
-  playlist_id?: string | null;
-  error?: string | null;
-  cost_usd: number;
-  created_at: ISODateTime;
-}
-
-// --- assistant free chat (stage 3.8) --------------------------------------------------------------
-
-export interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
-/** What the assistant may not do without a tap: everything else it does itself (`ChatOut.done`). */
-export type ChatAction =
-  | { type: 'delete_playlist'; playlist_id: string; name: string }
-  | { type: 'delete_library_tracks'; track_ids: number[]; titles: string[] };
-
-export interface ChatOut {
-  reply: string;
-  cost_usd?: number;
-  /** changes the assistant made this turn, written by the Hub */
-  done?: string[];
-  actions?: ChatAction[];
-  task_id?: number | null;
-  confirm_token?: string | null;
-  summary?: string | null;
-  /** the saved chat this turn went into */
-  chat_id: number;
-  title: string;
-}
-
-/** A saved chat in the history list. */
-export interface ChatBriefOut {
-  id: number;
-  title: string;
-  /** number of messages */
-  messages: number;
-  created_at: string;
-  updated_at: string;
-}
-
-/** A message of a saved chat, as the Hub stored it (screenshots only by their count). */
-export interface SavedChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  images?: number;
-  cost?: number;
-  done?: string[];
-  proposal?: {
-    task_id: number;
-    token: string;
-    summary: string;
-    actions: ChatAction[];
-    state: 'pending' | 'confirmed' | 'dismissed';
-  };
-}
-
-export interface ChatSavedOut extends Omit<ChatBriefOut, 'messages'> {
-  messages: SavedChatMessage[];
-}
-
-export interface ChatConfirmOut {
-  ok: boolean;
-  playlists_deleted: string[];
-  tracks_deleted: number;
-}
-
 // --- imports from music services ------------------------------------------------------------
 
 export type ImportSource = 'yandex' | 'spotify' | 'vk';
@@ -1355,11 +1222,6 @@ export interface ImportEvent {
 }
 
 // --- events (SSE) -------------------------------------------------------------------------------
-
-export interface AssistantEvent {
-  id: number;
-  status: string;
-}
 
 /** The user's ListenBrainz account (pages/ListenBrainz.tsx). */
 export interface ListenBrainzOut {
@@ -1565,7 +1427,7 @@ export interface LibraryEvent {
   playlist_id?: string | null;
   album_id?: number | null;
   track_id?: number | null;
-  /** starred / unstarred: songs the Hub (an import, a download queued with ♥, the assistant) starred or unstarred */
+  /** starred / unstarred: songs the Hub (an import, a download queued with ♥) starred or unstarred */
   song_ids?: string[];
 }
 
@@ -1576,7 +1438,6 @@ export interface BatchEvent {
 
 export interface HubEventMap {
   download: DownloadItemOut;
-  assistant: AssistantEvent;
   library: LibraryEvent;
   recording: { ref: string; unavailable: boolean };
   /** the cards of these tracks changed (a file came, a name, a cover…): a list showing them takes them anew

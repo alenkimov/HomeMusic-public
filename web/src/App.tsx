@@ -39,9 +39,6 @@ import { MixDetailPage, WaveDetailPage } from './pages/insights/Recs';
 import { TrackWeightPage } from './pages/insights/Track';
 import { AlbumPage } from './pages/Album';
 import { ArtistNamedPage, ArtistPage } from './pages/Artist';
-import { AssistantChatsPage, AssistantPage } from './pages/Assistant';
-import { AssistantTaskPage } from './pages/AssistantTask';
-import { setAssistantAccount } from './pages/AssistantChat';
 import { DownloadDetailPage } from './pages/DownloadDetail';
 import { DownloadsPage } from './pages/Downloads';
 import { ArtistMapPage } from './pages/ArtistMapPage';
@@ -137,9 +134,6 @@ const ROUTES: RouteDef[] = [
   ['/albums/merge', 'more', () => <AlbumMergePage />],
   ['/quality', 'more', () => <QualityPage />],
   ['/library/album/:id', 'more', (p) => <LibraryAlbumPage key={p.id} id={Number(p.id)} />, 'text'],
-  ['/assistant', 'assistant', (_, r) => <AssistantPage chatId={Number(r.query.get('chat')) || null} />, 'text'],
-  ['/assistant/chats', 'assistant', () => <AssistantChatsPage />, 'text'],
-  ['/assistant/:id', 'assistant', (p) => <AssistantTaskPage key={p.id} id={Number(p.id)} />, 'text'],
   ['/upload', 'more', () => <UploadPage />],
   ['/playlists', STANDALONE ? 'library' : 'more', () => <PlaylistsPage />],
   ['/file/:id', 'library', (p) => <FileJournalPage key={p.id} id={Number(p.id)} />, 'text'],
@@ -201,7 +195,6 @@ export function App() {
       accountRef.current = account;
       setApiAccount(account);
       setOfflineWaveAccount(STANDALONE ? account : null);
-      setAssistantAccount(account);
     }
     setMe(next);
   }, []);

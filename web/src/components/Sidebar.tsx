@@ -59,7 +59,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
       window.clearTimeout(timer);
     };
   }, [liked.reload]);
-  // the downloads, the assistant: in «Меню». A page of the library is none of the sections: its own row below is lit
+  // the downloads: in «Меню». A page of the library is none of the sections: its own row below is lit
   const shown = active === 'library' ? null : active && !NAV.some((x) => x.id === active) ? 'more' : active;
   const item = 'flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm transition-colors';
   const at = (to: string) => route.path === to;
