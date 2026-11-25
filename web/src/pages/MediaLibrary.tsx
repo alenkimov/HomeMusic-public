@@ -13,6 +13,7 @@ import { useListSearch, type Found } from '../components/ListSearch';
 import { CoverView, ownCover } from '../components/PlaylistMenu';
 import { ContextMenu, menuAtButton, menuPressProps, useContextMenu, type MenuAt } from '../components/ContextMenu';
 import { NdAlbumMenu, NdArtistMenu } from '../components/EntityMenus';
+import { AlbumCard, AlbumHero } from '../components/Album';
 import { listChanged, patch, useCardUpdates } from '../lib/cards';
 import { SaveSelection, TagFilterChips } from '../components/Tags';
 import { ArtistLooksWindow } from '../components/ArtistLooks';
@@ -42,16 +43,12 @@ import { VirtualRows } from '../components/VirtualRows';
 // --- pieces ------------------------------------------------------------------------------------------------
 
 export function NdAlbumCard({ album, showArtist = true }: { album: NdAlbumOut; showArtist?: boolean }) {
-  const menu = useContextMenu();
   return (
-    <>
-      <Link to={`/lib/album/${enc(album.id)}`} {...menuPressProps(menu.openAt)} className="block min-w-0 select-none [-webkit-touch-callout:none]">
-        <Cover src={album.cover_url} alt={album.title} icon="disc" className="aspect-square w-full" />
-        <div className="mt-2 line-clamp-2 text-sm font-medium leading-tight">{album.title}</div>
-        <div className="mt-0.5 truncate text-xs text-muted">{[showArtist ? album.artist : null, album.year].filter(Boolean).join(' · ')}</div>
-      </Link>
-      {menu.shown && <NdAlbumMenu album={album} at={menu.at} onClose={menu.close} />}
-    </>
+    <AlbumCard
+      album={{ title: album.title, to: `/lib/album/${enc(album.id)}`, cover: album.cover_url, artist: album.artist, year: album.year }}
+      showArtist={showArtist}
+      menu={(at, onClose) => <NdAlbumMenu album={album} at={at} onClose={onClose} />}
+    />
   );
 }
 
@@ -690,25 +687,12 @@ export function NdAlbumPage({ id }: { id: string }) {
           onCover={() => openAlbumArtwork(artwork, 'edit')}
           onSaved={(saved) => res.setData((prev) => prev && { ...prev, title: saved.title, artist: saved.album_artist })} />}
       />
-      <Hero
-        kicker="Альбом"
-        cover={a.cover_url?.replace(/size=\d+/, 'size=600')}
+      <AlbumHero
+        album={{ title: a.title, cover: a.cover_url?.replace(/size=\d+/, 'size=600') }}
+        artists={[{ name: a.artist, to: a.artist_id ? `/lib/artist/${enc(a.artist_id)}` : null }]}
+        facts={[a.year, tracksWord(a.song_count), a.duration_s ? fmtLength(a.duration_s) : null]}
         onCover={() => openAlbumArtwork(artwork)}
-        title={a.title}
-        sub={
-          <>
-            {a.artist_id ? (
-              <Link to={`/lib/artist/${enc(a.artist_id)}`} className="font-medium text-fg hover:underline">
-                {a.artist}
-              </Link>
-            ) : (
-              a.artist
-            )}
-            {[a.year, tracksWord(a.song_count), a.duration_s ? fmtLength(a.duration_s) : null].filter(Boolean).map((x) => ` · ${x}`)}
-          </>
-        }
         tracks={tracks}
-        context="album"
       />
       <TrackTable tracks={tracks} numbered kind="album">
         <ul>

@@ -263,13 +263,13 @@ function RecentSearches({ onPick }: { onPick: (q: string) => void }) {
       <ul id="recent-searches-list">
         {(expanded ? recent : recent.slice(0, 8)).map((r) => (
           <li key={r.key} className="flex items-center pr-1 hover:bg-fg/5">
-            <button type="button" className="flex min-h-14 min-w-0 flex-1 items-center gap-3 py-1.5 pl-4 text-left" onClick={() => (r.link ? navigate(r.link) : onPick(r.title))}>
+            <button type="button" className="flex min-h-16 min-w-0 flex-1 items-center gap-3 py-2 pl-4 text-left" onClick={() => (r.link ? navigate(r.link) : onPick(r.title))}>
               {r.kind === 'query' ? (
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center text-dim">
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center text-dim">
                   <Icon name="search" size={18} />
                 </span>
               ) : (
-                <Cover src={r.cover_url} size={40} round={r.kind === 'artist'} icon={r.kind === 'artist' ? 'user' : r.kind === 'album' ? 'disc' : 'note'} alt="" />
+                <Cover src={r.cover_url} size={48} round={r.kind === 'artist'} icon={r.kind === 'artist' ? 'user' : r.kind === 'album' ? 'disc' : 'note'} alt="" />
               )}
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[15px]"><TrackTitle title={r.title} track={r.kind === 'track' ? r : undefined} /></span>

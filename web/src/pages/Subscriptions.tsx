@@ -1,14 +1,16 @@
 import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { api } from '../api/client';
-import type { FollowOut, ReleaseOut } from '../api/types';
+import type { AlbumOut, FollowOut, ReleaseOut } from '../api/types';
 import { TrackRow, playAll } from '../components/catalog';
 import { Icon } from '../components/Icon';
 import { Cover, Empty, ErrorState, IconButton, Loading, PageHeader, Segmented, cx } from '../components/ui';
 import { STANDALONE } from '../lib/embedded';
 import { useHubEvent } from '../lib/events';
-import { plural, recordTypeLabel, tracksWord } from '../lib/format';
+import { plural, tracksWord, yearOf } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { setUnseenReleases } from '../lib/releases';
+import { AlbumRow } from '../components/Album';
+import { AlbumMenu } from '../components/EntityMenus';
 import { Link, enc } from '../lib/router';
 import { toggleLike, useLiked, useLikesKnown } from '../lib/stars';
 
@@ -159,22 +161,19 @@ function ReleaseBlock({ r }: { r: ReleaseOut }) {
         <TrackRow track={tracks[0]} queue={tracks} releaseFeed />
       </div>
     );
-  const to = `/album/${enc(r.album_ref)}`;
-  const n = tracks.length || r.nb_tracks || 0;
   const visible = all ? tracks : tracks.slice(0, 3);
   const rest = tracks.length - visible.length;
+  // the feed knows a release by less than the catalog: enough for its menu
+  const asAlbum = { ref: r.album_ref, title: r.title, artist: r.artist, artist_ref: r.artist_ref, record_type: r.record_type,
+    release_date: r.release_date, cover_url: r.cover_url, nb_tracks: r.nb_tracks } as AlbumOut;
   return (
-    <div>
-      <div className="relative flex min-h-14 items-center gap-2 border-t border-line px-2 py-1">
-        {mark}
-        <Link to={to} className="shrink-0">
-          <Cover src={r.cover_url} size={44} icon="disc" alt="" />
-        </Link>
-        <Link to={to} className="min-w-0 flex-1">
-          <span className="line-clamp-2 wrap-anywhere font-medium hover:underline" title={r.title}>{r.title}</span>
-          <span className="line-clamp-2 wrap-anywhere text-[13px] text-muted">{[r.artist, recordTypeLabel(r.record_type), n ? tracksWord(n) : null].filter(Boolean).join(' · ')}</span>
-        </Link>
-        {tracks.length > 0 && (
+    <div className="relative border-t border-line">
+      {mark}
+      <AlbumRow
+        album={{ title: r.title, to: `/album/${enc(r.album_ref)}`, cover: r.cover_url, type: r.record_type, artist: r.artist, year: yearOf(r) }}
+        className="[&>div]:px-2"
+        menu={(at, onClose) => <AlbumMenu album={asAlbum} at={at} onClose={onClose} />}
+        actions={tracks.length > 0 && (
           <>
             <button type="button" aria-label={`Слушать «${r.title}»`} title="Слушать" onClick={() => playAll(tracks, { context: 'album' })} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-fg hover:bg-fg/10">
               <Icon name="play" size={20} filled />
@@ -184,19 +183,23 @@ function ReleaseBlock({ r }: { r: ReleaseOut }) {
             </button>
           </>
         )}
-      </div>
-      {expanded && visible.length > 0 && (
-        <div className="ml-3 min-w-0 border-l border-line pl-1">
-          {visible.map((t, i) => (
-            <TrackRow key={t.ref} track={t} number={t.track_no ?? i + 1} queue={tracks} releaseFeed />
-          ))}
-        </div>
-      )}
-      {expanded && rest > 0 && (
-        <button type="button" onClick={() => setAll(true)} className="ml-[4.5rem] py-1.5 text-[13px] text-muted hover:text-fg">
-          Ещё {tracksWord(rest)}
-        </button>
-      )}
+        below={
+          <>
+            {expanded && visible.length > 0 && (
+              <div className="ml-3 min-w-0 border-l border-line pl-1">
+                {visible.map((t, i) => (
+                  <TrackRow key={t.ref} track={t} number={t.track_no ?? i + 1} queue={tracks} releaseFeed />
+                ))}
+              </div>
+            )}
+            {expanded && rest > 0 && (
+              <button type="button" onClick={() => setAll(true)} className="ml-[4.5rem] py-1.5 text-[13px] text-muted hover:text-fg">
+                Ещё {tracksWord(rest)}
+              </button>
+            )}
+          </>
+        }
+      />
     </div>
   );
 }

@@ -8,19 +8,19 @@ import { addToQueue } from '../lib/listen';
 import { TrackTable } from '../components/TrackTable';
 import { ListBar } from '../components/ListBar';
 import { BrandIcon } from '../components/BrandIcon';
-import { Cover, ErrorState, ExplicitBadge, HeroSkeleton, IconButton, OwnedBadge, PageHeader } from '../components/ui';
+import { Cover, ErrorState, HeroSkeleton, IconButton, OwnedBadge, PageHeader } from '../components/ui';
 import { startDownload } from '../lib/actions';
 import { openAlbumArtwork } from '../lib/coverPicker';
 import { useHubEvent } from '../lib/events';
 import { needsTrackFile, withRecordingAvailability } from '../lib/findFile';
-import { fmtLength, recordTypeLabel, tracksWord, yearOf } from '../lib/format';
+import { fmtLength, tracksWord, yearOf } from '../lib/format';
 import { SourceStatuses } from '../components/SourceStatuses';
 import { useSourceRequest } from '../lib/hooks';
 import { canPlay, canPlayAll, playList } from '../lib/player';
-import { Link, albumPath, artistPath, enc, navigate, useCanonicalPath } from '../lib/router';
+import { AlbumHero, catalogLook } from '../components/Album';
+import { albumPath, artistPath, enc, navigate, useCanonicalPath } from '../lib/router';
 import { copyText } from '../lib/share';
 import { attempt, confirmDialog, toast } from '../lib/ui';
-import { Hero } from './MediaLibrary';
 
 /** A release of the catalog (`/album/<ref>`), in the shape of every list: the head — the cover, the kind of release
  * over its name, the artist, the year, the tracks and their length, ▶ and the shuffle — then a row of buttons
@@ -142,32 +142,14 @@ export function AlbumPage({ refId }: { refId: string }) {
           </>
         }
       />
-      <Hero
-        kicker={recordTypeLabel(album.record_type) || 'Релиз'}
-        cover={album.cover_url}
+      <AlbumHero
+        album={{ ...catalogLook(album), cover: album.cover_url }}
+        /* everyone the release is credited to, each with their page */
+        artists={(album.artists?.length ? album.artists.map((name, i) => ({ name, ref: album.artist_refs?.[i], id: album.hub_artist_ids?.[i] })) : [{ name: album.artist, ref: album.artist_ref, id: album.hub_artist_id }])
+          .map((a) => ({ name: a.name, to: a.ref || a.id ? artistPath({ ref: a.ref ?? '', hub_artist_id: a.id }) : null }))}
+        facts={facts}
         onCover={() => openAlbumArtwork(artwork)}
-        title={album.title}
-        sub={
-          <span className="flex flex-wrap items-center gap-x-1.5">
-            {album.explicit && <ExplicitBadge />}
-            {/* everyone the release is credited to, each with their page */}
-            {(album.artists?.length ? album.artists.map((name, i) => ({ name, ref: album.artist_refs?.[i], id: album.hub_artist_ids?.[i] })) : [{ name: album.artist, ref: album.artist_ref, id: album.hub_artist_id }]).map((a, i) => (
-              <span key={`${a.name}:${i}`} className="font-semibold text-fg">
-                {i > 0 && <span className="pr-1.5 font-normal text-muted">,</span>}
-                {a.ref || a.id ? (
-                  <Link to={artistPath({ ref: a.ref ?? '', hub_artist_id: a.id })} className="hover:underline">
-                    {a.name}
-                  </Link>
-                ) : (
-                  a.name
-                )}
-              </span>
-            ))}
-            {facts.length > 0 && <span>· {facts.join(' · ')}</span>}
-          </span>
-        }
         tracks={playableTracks}
-        context="album"
       />
 
       {!allHere && owned.length > 0 && (

@@ -5,21 +5,21 @@ import { TrackRow, TrackTableHeader } from '../components/catalog';
 import { Icon } from '../components/Icon';
 import { TrackTable } from '../components/TrackTable';
 import { Button, Cover, Empty, ErrorState, Loading, PageHeader, cx } from '../components/ui';
+import { AlbumCard, AlbumHero } from '../components/Album';
+import { ServiceIcon, serviceName } from '../components/ServiceBadge';
 import { fmtLength, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { Link, artistPath } from '../lib/router';
 import { attempt } from '../lib/ui';
-import { openAlbumArtwork } from '../lib/coverPicker';
-import { PlayPair } from './MediaLibrary';
 
 type Group = SplitAlbums;
 type Part = Group['albums'][number];
 
 /** «Объединение альбомов» (from «Меню»): albums of one name that came to the library in pieces — the tracks with a
- * guest filed apart («Три дня дождя» and «Три дня дождя, Роки»). On top: which album, then its parts as cards — a
- * check to keep a part in, a yellow star for the main one (its name, artist and cover are the album's). Under them
- * each part as the album it is now, tracks that play; joined, the one album it became. «Это разные альбомы»: the
- * group is not offered again (`Разные релизы`, where it can be taken back). */
+ * guest filed apart («Три дня дождя» and «Три дня дождя, Роки»). On top: which album; then its parts as cards — a
+ * tick to keep a part in, where each came from (a transfer, a download, an upload); then the name, the artist and the
+ * cover of what comes out; under them the album it will be, tracks that play. «Это разные альбомы»: the group is not
+ * offered again (`Разные релизы`, where it can be taken back). */
 export function AlbumMergePage() {
   const res = useAsync((s) => api.splitAlbums(s), [], true, 'album-merge');
   const [tab, setTab] = useState<'pending' | 'separate'>('pending');
@@ -90,39 +90,72 @@ function differs(g: Group): boolean {
   return new Set(g.albums.map((a) => a.title.trim().toLowerCase())).size > 1;
 }
 
-/** What a name has beyond the main one's: «(English Version)» of «Watch me! (English Version)» beside «Watch me!»;
- * the whole name when they share no start. Empty: the same name. */
-function beyond(name: string, base: string): { head: string; extra: string } {
-  if (name.trim().toLowerCase() === base.trim().toLowerCase()) return { head: name, extra: '' };
-  if (name.toLowerCase().startsWith(base.toLowerCase())) return { head: name.slice(0, base.length), extra: name.slice(base.length) };
-  return { head: '', extra: name };
+type Source = NonNullable<Part['sources']>[number];
+
+/** Where a part came from, in words: «Перенос из Spotify», «Скачано: YouTube», «Загружено вами». */
+function sourceLabel(x: Source): string {
+  if (x.kind === 'import') return `Перенос из ${serviceName(x.service)}`;
+  if (x.service === 'upload') return 'Загружено вами';
+  if (x.service === 'manual') return 'Добавлено вручную';
+  return `Скачано: ${serviceName(x.service)}`;
 }
+
+function SourceLine({ x }: { x: Source }) {
+  return (
+    <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
+      <ServiceIcon service={x.service} size={14} />
+      <span className="truncate">{sourceLabel(x)}</span>
+    </span>
+  );
+}
+
+const unique = (xs: string[]) => [...new Map(xs.map((x) => [x.trim().toLowerCase(), x.trim()])).values()];
 
 function GroupView({ group, mergedInto, onMerged, onDismissed }: { group: Group; mergedInto?: number; onMerged: (albumId: number) => void; onDismissed: () => void }) {
   const ids = useMemo(() => group.albums.flatMap((a) => a.track_ids), [group]);
   const cards = useAsync(() => (ids.length ? api.trackCards(ids) : Promise.resolve([])), [group.key]);
   const byId = useMemo(() => new Map((cards.data ?? []).map((t) => [t.library_track_id, t as TrackOut])), [cards.data]);
   const [off, setOff] = useState<Set<number>>(new Set());
-  const [main, setMain] = useState(group.target_id);
   const [busy, setBusy] = useState<'merge' | 'dismiss' | null>(null);
+
+  const first = group.albums.find((a) => a.id === group.target_id) ?? group.albums[0];
+  const titles = useMemo(() => unique([first.title, ...group.albums.map((a) => a.title)]), [group, first]);
+  // the album's artist: the shortest credit first — a guest's part names the album's artist and the guest
+  const artists = useMemo(() => unique([...group.albums.map((a) => a.album_artist)].sort((x, y) => x.length - y.length)), [group]);
+  const withCover = group.albums.filter((a) => a.has_cover);
+  const [title, setTitle] = useState(0); // an index of `titles`; -1: the user's own
+  const [own, setOwn] = useState('');
+  const [artist, setArtist] = useState(0);
+  const [coverFrom, setCoverFrom] = useState<number | null>((first.has_cover ? first : withCover[0])?.id ?? null);
 
   const tracksOf = (a: Part) => a.track_ids.map((id) => byId.get(id)).filter((t): t is TrackOut => !!t);
   const inside = group.albums.filter((a) => !off.has(a.id));
-  const head = group.albums.find((a) => a.id === main && !off.has(a.id)) ?? inside[0] ?? group.albums[0];
-  const total = inside.reduce((n, a) => n + a.track_count, 0);
-  // the artists' common part: what a part has beyond it is its guest
-  const artistBase = group.albums.map((a) => a.album_artist).reduce((x, y) => (y.length < x.length ? y : x));
-  const can = inside.length >= 2 && mergedInto === undefined;
+  const target = inside.find((a) => a.id === first.id) ?? inside[0] ?? first;
+  const finalTitle = title === -1 ? own.trim() || first.title : titles[title];
+  const finalArtist = artists[artist];
+  const cover = coverFrom !== null && !off.has(coverFrom) ? coverFrom : withCover.find((a) => !off.has(a.id))?.id ?? null;
+  const tracks = inside.flatMap((a) => tracksOf(a).map((t) => ({ t, from: a.sources?.[0] })));
+  const length = tracks.reduce((n, x) => n + (x.t.duration_s ?? 0), 0);
+  const year = inside.map((a) => a.year).find((y) => y);
+  // each credit of the album's artist with its page, where a part knows it
+  const known = new Map(group.albums.flatMap((a) => a.artists ?? []).filter((x) => x.id).map((x) => [x.name.toLowerCase(), x.id]));
+  const credits = finalArtist.split(/,\s*/).filter(Boolean).map((name) => {
+    const id = known.get(name.toLowerCase());
+    return { name, to: id ? artistPath({ ref: '', hub_artist_id: id }) : null };
+  });
+  const can = inside.length >= 2 && mergedInto === undefined && finalTitle.length > 0;
 
   const toggle = (a: Part) => setOff((s) => { const n = new Set(s); if (n.has(a.id)) n.delete(a.id); else n.add(a.id); return n; });
-  const makeMain = (a: Part) => { setMain(a.id); setOff((s) => { const n = new Set(s); n.delete(a.id); return n; }); };
 
   const merge = async () => {
     if (!can) return;
     setBusy('merge');
-    const ok = await attempt(() => api.mergeAlbums({ target_id: head.id, source_ids: inside.filter((a) => a.id !== head.id).map((a) => a.id) }), `«${head.title}» — один альбом`);
+    const ok = await attempt(() => api.mergeAlbums({
+      target_id: target.id, source_ids: inside.filter((a) => a.id !== target.id).map((a) => a.id),
+      title: finalTitle, album_artist: finalArtist, cover_from: cover ?? undefined,
+    }), `«${finalTitle}» — один альбом`);
     setBusy(null);
-    if (ok) onMerged(head.id);
+    if (ok) onMerged(target.id);
   };
   const dismiss = async () => {
     setBusy('dismiss');
@@ -133,142 +166,124 @@ function GroupView({ group, mergedInto, onMerged, onDismissed }: { group: Group;
     if (ok) onDismissed();
   };
 
+  const legend = 'mb-2 text-[13px] text-muted';
+  const radio = 'flex min-h-10 cursor-pointer items-center gap-2.5 text-[15px]';
+  const done = mergedInto !== undefined;
   return (
     <>
-      <section aria-label="Что объединить" className="mx-4 mt-4 rounded-2xl bg-surface p-4 lg:mx-6 lg:p-5">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h2 className="text-lg font-bold">Что объединить</h2>
-          <span className="text-[13px] text-muted">Галочка: часть войдёт в альбом. Звезда: главная часть, от неё альбом получит название, исполнителя и обложку.</span>
-        </div>
-        <div className="no-scrollbar -mx-1 mt-3 flex gap-3 overflow-x-auto px-1 pb-1">
+      <section aria-label="Какие части объединить" className="mx-4 mt-4 rounded-2xl bg-surface p-4 lg:mx-6 lg:p-5">
+        <h2 className="text-lg font-bold">1. Какие части объединить</h2>
+        <p className="mt-0.5 text-[13px] text-muted">Под каждой частью — откуда она пришла. Снимите галочку, если часть — другой релиз.</p>
+        <div className="no-scrollbar -mx-1 mt-3 flex gap-4 overflow-x-auto px-1 pb-1">
           {group.albums.map((a) => {
             const isIn = !off.has(a.id);
-            const isMain = a.id === head.id && isIn;
-            const name = beyond(a.title, head.title);
-            const guest = a.album_artist.startsWith(artistBase) ? a.album_artist.slice(artistBase.length) : '';
             return (
-              <div key={a.id} className={cx('w-36 shrink-0 rounded-xl bg-raised p-2.5 transition lg:w-48 lg:p-3', !isIn && 'opacity-45')}>
-                <div className="relative">
-                  <Cover src={a.has_cover ? libraryCoverUrl(a.id, 300) : null} icon="disc" alt="" className="aspect-square w-full" />
-                  <button
-                    type="button"
-                    role="checkbox"
-                    aria-checked={isIn}
-                    aria-label={`Часть «${a.title}» (${a.album_artist}) войдёт в альбом`}
-                    onClick={() => toggle(a)}
-                    className="absolute left-1 top-1 flex h-10 w-10 items-center justify-center rounded-full bg-black/55"
-                  >
+              <AlbumCard
+                key={a.id}
+                className={cx('w-36 shrink-0 transition lg:w-44', !isIn && 'opacity-40')}
+                album={{ title: a.title, cover: a.has_cover ? libraryCoverUrl(a.id, 300) : null, artist: a.album_artist, year: a.year }}
+                overlay={!done && (
+                  <button type="button" role="checkbox" aria-checked={isIn} aria-label={`Часть «${a.title}» (${a.album_artist}) войдёт в альбом`}
+                    onClick={() => toggle(a)} className="absolute left-1 top-1 flex h-10 w-10 items-center justify-center rounded-full bg-black/55">
                     <span className={cx('flex h-5 w-5 items-center justify-center rounded-md border-2 transition', isIn ? 'border-accent bg-accent text-on-accent' : 'border-white/70')}>
                       {isIn && <Icon name="check" size={13} stroke={3.5} />}
                     </span>
                   </button>
-                  <button
-                    type="button"
-                    aria-pressed={isMain}
-                    aria-label={isMain ? 'Главная часть' : `Сделать главной: ${a.title} (${a.album_artist})`}
-                    title={isMain ? 'Главная часть' : 'Сделать главной'}
-                    onClick={() => makeMain(a)}
-                    className={cx('absolute right-1 top-1 flex h-10 w-10 items-center justify-center rounded-full bg-black/55 transition', isMain ? 'text-warn' : 'text-white/80 hover:text-white')}
-                  >
-                    <Icon name="star" size={19} filled={isMain} />
-                  </button>
-                </div>
-                <div className="mt-2 line-clamp-2 break-words text-sm font-semibold leading-snug lg:text-[15px]" title={a.title}>
-                  {name.head}{name.extra && <span className="text-warn">{name.extra}</span>}
-                </div>
-                <div className="truncate text-[13px] text-muted" title={a.album_artist}>
-                  {guest ? <>{artistBase}<span className="text-info">{guest}</span></> : a.album_artist}
-                </div>
-                <div className="text-[13px] text-muted">{[a.year, tracksWord(a.track_count)].filter(Boolean).join(' · ')}</div>
-              </div>
+                )}
+                extra={
+                  <div className="mt-1.5 space-y-1">
+                    <span className="block text-xs text-muted">{tracksWord(a.track_count)}</span>
+                    {(a.sources ?? []).slice(0, 3).map((x) => <SourceLine key={`${x.kind}:${x.service}`} x={x} />)}
+                  </div>
+                }
+              />
             );
           })}
         </div>
-        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-4">
-          <span className="min-w-0 flex-[1_1_20rem] text-[15px] leading-snug">
-            {mergedInto !== undefined ? (
-              <>Готово: <b>«{head.title}»</b> теперь один альбом. <Link to={`/library/album/${mergedInto}`} className="text-accent hover:underline">Открыть альбом</Link></>
-            ) : (
-              <>Получится один альбом <b>«{head.title}»</b><span className="text-muted"> · {head.album_artist} · {tracksWord(total)}</span></>
-            )}
-          </span>
-          {mergedInto === undefined && (
-            <div className="flex w-full flex-col-reverse gap-2 lg:w-auto lg:flex-row">
-              <Button busy={busy === 'dismiss'} disabled={busy !== null} onClick={() => void dismiss()}>
-                {group.dismissed ? 'Вернуть к объединению' : 'Это разные альбомы'}
-              </Button>
-              {!group.dismissed && (
-                <Button variant="primary" busy={busy === 'merge'} disabled={!can || busy !== null} onClick={() => void merge()}>
-                  {inside.length >= 2 ? `Объединить ${inside.length} ${inside.length < 5 ? 'части' : 'частей'}` : 'Отметьте хотя бы 2 части'}
-                </Button>
-              )}
-            </div>
-          )}
-        </div>
       </section>
 
-      {cards.loading ? (
-        <Loading />
-      ) : mergedInto !== undefined ? (
-        <PartAlbum album={head} tracks={inside.flatMap(tracksOf)} title={head.title} artist={head.album_artist} />
-      ) : (
-        group.albums.map((a) => (
-          <PartAlbum key={a.id} album={a} tracks={tracksOf(a)} title={a.title} artist={a.album_artist}
-            main={a.id === head.id && !off.has(a.id)} out={off.has(a.id)} />
-        ))
-      )}
-    </>
-  );
-}
-
-/** A part as the album it is: its head (cover, name, artist, ▶) and its tracks as an album page lists them. */
-function PartAlbum({ album, tracks, title, artist, main, out }: { album: Part; tracks: TrackOut[]; title: string; artist: string; main?: boolean; out?: boolean }) {
-  const length = tracks.reduce((n, t) => n + (t.duration_s ?? 0), 0);
-  const cover = album.has_cover ? libraryCoverUrl(album.id, 600) : null;
-  return (
-    <section aria-label={`${title} — ${artist}`} className={cx('mt-8 transition', out && 'opacity-45')}>
-      <div className="flex flex-col gap-4 px-4 lg:flex-row lg:items-end lg:gap-6 lg:px-6">
-        {/* the cover opens large, as on the album's own page */}
-        <button type="button" onClick={() => openAlbumArtwork({ albumId: album.id, title, artist, src: cover, tracks })} disabled={!cover}
-          aria-label={`Обложка «${title}»`} className="shrink-0 self-center rounded-md enabled:cursor-zoom-in lg:self-auto">
-          <Cover src={cover} icon="disc" alt="" className="aspect-square w-44 shadow-2xl lg:w-40" />
-        </button>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm text-muted">Альбом</span>
-            {main && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-warn/15 px-2 py-0.5 text-xs font-semibold text-warn">
-                <Icon name="star" size={12} filled />Главная часть
-              </span>
+      {!done && (
+        <section aria-label="Каким будет альбом" className="mx-4 mt-3 rounded-2xl bg-surface p-4 lg:mx-6 lg:p-5">
+          <h2 className="mb-3 text-lg font-bold">2. Каким будет альбом</h2>
+          <div className="grid gap-5 lg:grid-cols-3">
+            <fieldset className="min-w-0">
+              <legend className={legend}>Название</legend>
+              {titles.map((t, i) => (
+                <label key={t} className={radio}>
+                  <input type="radio" name={`title:${group.key}`} checked={title === i} onChange={() => setTitle(i)} className="h-4.5 w-4.5 shrink-0 accent-accent" />
+                  <span className="min-w-0 break-words">{t}</span>
+                </label>
+              ))}
+              <label className={radio}>
+                <input type="radio" name={`title:${group.key}`} checked={title === -1} onChange={() => setTitle(-1)} aria-label="Своё название" className="h-4.5 w-4.5 shrink-0 accent-accent" />
+                <input type="text" value={own} placeholder="Своё название" onFocus={() => setTitle(-1)} onChange={(e) => { setOwn(e.target.value); setTitle(-1); }}
+                  className="h-9 min-w-0 flex-1 rounded-lg border border-line bg-bg px-3 text-sm outline-none focus:border-fg/40" />
+              </label>
+            </fieldset>
+            <fieldset className="min-w-0">
+              <legend className={legend}>Исполнитель альбома</legend>
+              {artists.map((t, i) => (
+                <label key={t} className={radio}>
+                  <input type="radio" name={`artist:${group.key}`} checked={artist === i} onChange={() => setArtist(i)} className="h-4.5 w-4.5 shrink-0 accent-accent" />
+                  <span className="min-w-0 break-words">{t}</span>
+                </label>
+              ))}
+              <p className="mt-1 text-xs text-dim">Гости останутся у своих треков.</p>
+            </fieldset>
+            <fieldset className="min-w-0">
+              <legend className={legend}>Обложка</legend>
+              {withCover.length ? (
+                <div className="flex flex-wrap gap-2.5">
+                  {withCover.map((a) => (
+                    <button key={a.id} type="button" aria-pressed={cover === a.id} disabled={off.has(a.id)} onClick={() => setCoverFrom(a.id)}
+                      aria-label={`Обложка части «${a.title}» (${a.album_artist})`}
+                      className={cx('rounded-lg transition disabled:opacity-40', cover === a.id ? 'ring-3 ring-accent' : 'hover:ring-2 hover:ring-fg/30')}>
+                      <Cover src={libraryCoverUrl(a.id, 200)} size={72} icon="disc" alt="" />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted">Ни у одной части нет обложки — её можно поставить на странице альбома после объединения.</p>
+              )}
+            </fieldset>
+          </div>
+          <div className="mt-5 flex flex-col-reverse gap-2 border-t border-line pt-4 lg:flex-row lg:justify-end">
+            <Button busy={busy === 'dismiss'} disabled={busy !== null} onClick={() => void dismiss()}>
+              {group.dismissed ? 'Вернуть к объединению' : 'Это разные альбомы'}
+            </Button>
+            {!group.dismissed && (
+              <Button variant="primary" busy={busy === 'merge'} disabled={!can || busy !== null} onClick={() => void merge()}>
+                {inside.length >= 2 ? `Объединить ${inside.length} ${inside.length < 5 ? 'части' : 'частей'}` : 'Отметьте хотя бы 2 части'}
+              </Button>
             )}
-            {out && <span className="rounded-full bg-hover px-2 py-0.5 text-xs font-semibold text-muted">Не войдёт</span>}
           </div>
-          <h2 className="mt-1 line-clamp-2 break-words text-2xl font-black leading-tight tracking-tight lg:text-5xl">{title}</h2>
-          <div className="mt-2 text-sm text-muted">
-            {/* each credit with its page, as on the album's own page */}
-            {(album.artists?.length ? album.artists : [{ name: artist, id: null }]).map((a, i) => (
-              <span key={`${a.name}:${i}`} className="font-medium text-fg">
-                {i > 0 && <span className="pr-1 font-normal text-muted">,</span>}
-                {a.id ? <Link to={artistPath({ ref: '', hub_artist_id: a.id })} className="hover:underline">{a.name}</Link> : a.name}
-              </span>
-            ))}
-            {[album.year, tracksWord(tracks.length), length ? fmtLength(length) : null].filter(Boolean).map((x) => ` · ${x}`)}
-          </div>
-        </div>
-        {tracks.length > 0 && <div className="self-end"><PlayPair tracks={tracks} context="album" /></div>}
-      </div>
-      <div className="mt-3">
-        <TrackTable tracks={tracks} numbered kind="album">
-          <ul>
-            {tracks.length > 0 && <li><TrackTableHeader numbered /></li>}
-            {tracks.map((t, i) => (
-              <li key={`${t.library_track_id}:${i}`}>
-                <TrackRow track={t} index={i + 1} queue={tracks} link={false} />
-              </li>
-            ))}
-          </ul>
-        </TrackTable>
-      </div>
-    </section>
+        </section>
+      )}
+
+      {/* the preview's light stays inside it: it does not reach up over the choices */}
+      <section aria-label="Так будет выглядеть альбом" className="relative isolate mt-6 overflow-hidden pt-2">
+        <p className="px-4 pb-2 text-xs font-bold uppercase tracking-wider text-dim lg:px-6">
+          {done ? <>Готово — <Link to={`/library/album/${mergedInto}`} className="text-accent normal-case tracking-normal hover:underline">открыть альбом</Link></> : '3. Так будет выглядеть альбом'}
+        </p>
+        <AlbumHero
+          album={{ title: finalTitle, cover: cover !== null ? libraryCoverUrl(cover, 600) : null }}
+          artists={credits}
+          facts={[year, tracksWord(tracks.length), length ? fmtLength(length) : null]}
+          tracks={tracks.map((x) => x.t)}
+        />
+        {cards.loading ? <Loading /> : (
+          <TrackTable tracks={tracks.map((x) => x.t)} numbered kind="album">
+            <ul>
+              {tracks.length > 0 && <li><TrackTableHeader numbered /></li>}
+              {tracks.map(({ t, from }, i) => (
+                <li key={`${t.library_track_id}:${i}`}>
+                  <TrackRow track={t} index={i + 1} queue={tracks.map((x) => x.t)} link={false} note={from && <SourceLine x={from} />} />
+                </li>
+              ))}
+            </ul>
+          </TrackTable>
+        )}
+      </section>
+    </>
   );
 }

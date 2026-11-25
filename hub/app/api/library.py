@@ -201,6 +201,24 @@ async def split_albums(user: User = Depends(current_user), s: AsyncSession = Dep
     credits = {a.id: split_artists(a.album_artist) or [a.album_artist] for albums in split for a in albums}
     names = await artists.reader(s, (n for ns in credits.values() for n in ns))
 
+    # where each part came from: a transfer of which service, the sources its files were downloaded from, an upload
+    from app.models import Import, ImportItem
+
+    came: dict[int, list[dict]] = {}
+    if ids:
+        for album_id, service, n in (await s.execute(
+                select(Track.album_id, Import.source, func.count(func.distinct(Track.id)))
+                .join(ImportItem, ImportItem.track_id == Track.id).join(Import, Import.id == ImportItem.import_id)
+                .where(Track.album_id.in_(ids)).group_by(Track.album_id, Import.source)
+                .order_by(func.count(func.distinct(Track.id)).desc()))).all():
+            came.setdefault(album_id, []).append({"kind": "import", "service": service, "count": n})
+        for album_id, service, n in (await s.execute(
+                select(Track.album_id, TrackFile.source, func.count(func.distinct(Track.id)))
+                .join(TrackFile, TrackFile.track_id == Track.id)
+                .where(Track.album_id.in_(ids), TrackFile.source.is_not(None)).group_by(Track.album_id, TrackFile.source)
+                .order_by(func.count(func.distinct(Track.id)).desc()))).all():
+            came.setdefault(album_id, []).append({"kind": "file", "service": service, "count": n})
+
     def linked(album_id: int) -> list[dict]:
         return [{"name": n, "id": hit[0] if (hit := names.artist(n)) else None} for n in credits[album_id]]
 
@@ -211,7 +229,8 @@ async def split_albums(user: User = Depends(current_user), s: AsyncSession = Dep
                     "dismissed": _split_key(a.id for a in albums) in dismissed,
                     "albums": [{"id": a.id, "title": a.title, "album_artist": a.album_artist, "year": a.year,
                                 "track_count": len(tracks.get(a.id, [])), "track_ids": tracks.get(a.id, []),
-                                "has_cover": _has_cover(a), "artists": linked(a.id)} for a in albums]})
+                                "has_cover": _has_cover(a), "artists": linked(a.id),
+                                "sources": came.get(a.id, [])} for a in albums]})
     return sorted(out, key=lambda g: g["title"].casefold())
 
 
@@ -404,6 +423,18 @@ async def save_album_cover(s: AsyncSession, user: User, a: Album, data: bytes) -
     return await album_out(s, a, user, with_tracks=True)
 
 
+async def _cover_bytes(s: AsyncSession, a: Album | None) -> bytes | None:
+    """An album's picture: its cover.jpg, else the one in its first file."""
+    if a is None:
+        return None
+    p = library_abs(album_reldir(a)) / "cover.jpg"
+    if p.is_file():
+        return await asyncio.to_thread(p.read_bytes)
+    t = (await s.execute(select(Track).where(Track.album_id == a.id, Track.path.is_not(None)).limit(1))).scalar_one_or_none()
+    f = library_abs(t.path) if t is not None else None
+    return await asyncio.to_thread(tagger.read_cover, f) if f is not None and f.is_file() else None
+
+
 @router.get("/api/library/albums/{album_id}/cover")
 async def get_cover(album_id: int, size: int | None = Query(None, ge=32, le=1000), v: str | None = None,
                     user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
@@ -441,7 +472,18 @@ async def merge(body: AlbumMergeIn, user: User = Depends(current_user), s: Async
     target = await access.need_own_album(s, user, body.target_id)
     for source_id in body.source_ids:
         await access.need_own_album(s, user, source_id)
+    # «Объединение альбомов» chooses the name, the artist and the picture of what comes out; the picture is read
+    # before its part is gone
+    cover = None
+    if body.cover_from is not None and body.cover_from != target.id:
+        if body.cover_from not in body.source_ids:
+            raise HTTPException(400, "Обложка — только одной из объединяемых частей")
+        cover = await _cover_bytes(s, await s.get(Album, body.cover_from))
     await editor.merge_albums(s, body.source_ids, target)
+    if body.title or body.album_artist:
+        await edits.update_album(s, user, target, title=body.title, album_artist=body.album_artist)
+    if cover:
+        await edits.set_album_cover(s, user, target, cover)
     await _after_edit(s, user, target.id)
     return await album_out(s, target, user, with_tracks=True)
 

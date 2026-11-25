@@ -385,6 +385,10 @@ export interface AlbumCreateIn {
 export interface AlbumMergeIn {
   source_ids: number[];
   target_id: number;
+  /** what comes out («Объединение альбомов»): its name, its artist, the part whose picture it takes */
+  title?: string;
+  album_artist?: string;
+  cover_from?: number;
 }
 
 export interface TracksMoveIn {
@@ -812,7 +816,9 @@ export interface SplitAlbums {
   dismissed: boolean;
   albums: { id: number; title: string; album_artist: string; year?: number | null; track_count: number; track_ids: number[]; has_cover: boolean;
     /** the part's credits, each with its page (id: the Hub's artist; null: nobody known) */
-    artists?: { name: string; id: number | null }[] }[];
+    artists?: { name: string; id: number | null }[];
+    /** where the part came from: a transfer of a service, the sources its files were downloaded from */
+    sources?: { kind: 'import' | 'file'; service: string; count: number }[] }[];
 }
 
 export interface UploadCommitIn {

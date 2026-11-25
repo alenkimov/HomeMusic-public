@@ -8,7 +8,7 @@ import { KeptMark, useUnreachable } from './Offline';
 import { FileInfo } from './FileInfo';
 import { filePickerTarget, needsTrackFile, openFindFile } from '../lib/findFile';
 import type { AlbumOut, CatalogArtist, TrackOut } from '../api/types';
-import { fmtAdded, fmtCompactCount, fmtDuration, fmtNum, parseTime, recordTypeLabel, yearOf } from '../lib/format';
+import { fmtAdded, fmtCompactCount, fmtDuration, fmtNum, parseTime } from '../lib/format';
 import { useDesktop } from '../lib/desktop';
 import { addToQueue, downloadRef, listen, listenAll, shuffled, touchTrack, useListen, watchOnScreen, type ListenTrack } from '../lib/listen';
 import { canPlay, canPlayAll, playSongs, playTracks } from '../lib/player';
@@ -37,8 +37,9 @@ import { TrackMenuButton, type MenuExtra, type MenuTrack } from './TrackMenu';
 import { openTrackMenu, trackMenuAt } from '../lib/trackMenu';
 import { menuPressProps, useContextMenu } from './ContextMenu';
 import { AlbumMenu, ArtistMenu } from './EntityMenus';
+import { AlbumCard, AlbumLink, catalogLook } from './Album';
 import { useTrackTable } from './TrackTable';
-import { Checkbox, Cover, ExplicitBadge, IconButton, OwnedBadge, PlayingBars, Spinner, cx } from './ui';
+import { Checkbox, Cover, IconButton, OwnedBadge, PlayingBars, Spinner, cx } from './ui';
 
 export function TrackStatus({
   owned,
@@ -570,11 +571,7 @@ export function TrackRow({
             </span>
           </div>
           {visible.album &&
-            (albumTo && track.album_title ? (
-              <Link to={albumTo} className="truncate text-sm text-muted hover:text-fg hover:underline">{track.album_title}</Link>
-            ) : (
-              <span className="truncate text-sm text-muted">{track.album_title}</span>
-            ))}
+            (track.album_title ? <AlbumLink title={track.album_title} to={albumTo} /> : <span />)}
           {visible.tagLang && tagCell('lang', 2)}
           {visible.tagGenre && <GenreCell genres={myTags.filter((t) => t.group === 'genre')}
             sources={tagState.genre_sources[trackTagKey ?? ''] ?? {}} title={track.title} />}
@@ -751,39 +748,27 @@ export function ArtistBubble({ artist }: { artist: CatalogArtist }) {
   );
 }
 
-/** Release card for grids and horizontal rows; optional download button. */
+/** A catalog release as a card (`AlbumCard`): what the library has of it under its line, the services that know it,
+ * a download button on its cover. */
 export function ReleaseCard({ album, showArtist = false, onDownload, busy, showSources = false }: {
   album: AlbumOut; showArtist?: boolean; onDownload?: () => void; busy?: boolean; showSources?: boolean;
 }) {
-  const year = yearOf(album);
-  const menu = useContextMenu();
   return (
-    <>
-    {menu.shown && <AlbumMenu album={album} at={menu.at} onClose={menu.close} />}
-    <div className="relative min-w-0 select-none [-webkit-touch-callout:none]" {...menuPressProps(menu.openAt)}>
-      <Link to={albumPath(album)} className="block">
-        <Cover src={album.cover_small_url || album.cover_url} alt={album.title} className="aspect-square w-full" />
-        <div className="mt-2 line-clamp-2 text-sm font-medium leading-tight">
-          {album.explicit && (
-            <span className="mr-1 inline-block align-[-2px]">
-              <ExplicitBadge />
-            </span>
-          )}
-          {album.title}
-        </div>
-        <div className="mt-0.5 truncate text-xs text-muted">
-          {[showArtist ? album.artist : null, year, recordTypeLabel(album.record_type)].filter(Boolean).join(' · ')}
-        </div>
-      </Link>
-      {showSources && <AlbumSourceMarks album={album} className="mt-1" />}
-      <div className="mt-1.5 flex items-center justify-between gap-1">
-        <OwnedBadge status={album.owned_status} count={album.owned_count} total={album.nb_tracks} />
-        {onDownload && album.owned_status !== 'full' && (
-          <IconButton icon="download" label={`Скачать «${album.title}»`} onClick={onDownload} busy={busy} className="-my-2 -mr-2 ml-auto text-muted" size={20} />
-        )}
-      </div>
-    </div>
-    </>
+    <AlbumCard
+      album={catalogLook(album)}
+      showArtist={showArtist}
+      menu={(at, onClose) => <AlbumMenu album={album} at={at} onClose={onClose} />}
+      overlay={onDownload && album.owned_status !== 'full' && (
+        <IconButton icon="download" label={`Скачать «${album.title}»`} onClick={onDownload} busy={busy} size={18}
+          className="!absolute bottom-2 right-2 !h-10 !w-10 bg-black/60 !text-white hover:bg-black/75" />
+      )}
+      extra={
+        <>
+          {showSources && <AlbumSourceMarks album={album} className="mt-1" />}
+          <div className="mt-1.5"><OwnedBadge status={album.owned_status} count={album.owned_count} total={album.nb_tracks} /></div>
+        </>
+      }
+    />
   );
 }
 

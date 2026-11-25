@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { api, libraryCoverUrl } from '../api/client';
 import type { LibAlbumOut } from '../api/types';
 import { useAsync, useDebounced } from '../lib/hooks';
-import { tracksWord } from '../lib/format';
 import { attempt } from '../lib/ui';
 import { Icon } from './Icon';
-import { Button, Cover, Empty, ErrorState, Field, Loading, Sheet } from './ui';
+import { AlbumRow } from './Album';
+import { Button, Empty, ErrorState, Field, Loading, Sheet } from './ui';
 
 export function AlbumPicker({
   open,
@@ -82,20 +82,12 @@ export function AlbumPicker({
           <ul>
             {list.map((a) => (
               <li key={a.id}>
-                <button
-                  type="button"
-                  disabled={busy}
+                <AlbumRow
+                  album={{ title: a.title, cover: a.has_cover ? libraryCoverUrl(a.id, 100) : null, artist: a.album_artist, year: a.year }}
                   onClick={() => onPick(a)}
-                  className="flex min-h-16 w-full items-center gap-3 px-4 py-2 text-left hover:bg-fg/5 disabled:opacity-50"
-                >
-                  <Cover src={a.has_cover ? libraryCoverUrl(a.id, 100) : null} size={48} icon="disc" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">{a.title}</span>
-                    <span className="block truncate text-xs text-muted">
-                      {[a.album_artist, a.year, tracksWord(a.track_count)].filter(Boolean).join(' · ')}
-                    </span>
-                  </span>
-                </button>
+                  disabled={busy}
+                  className="hover:bg-fg/5"
+                />
               </li>
             ))}
           </ul>

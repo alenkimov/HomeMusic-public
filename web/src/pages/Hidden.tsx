@@ -3,9 +3,9 @@ import { useEffect, useMemo } from 'react';
 import { api } from '../api/client';
 import type { NamesakeOut } from '../api/types';
 import { Icon } from '../components/Icon';
+import { AlbumRow } from '../components/Album';
 import { Button, Cover, Empty, PageHeader } from '../components/ui';
 import { refreshDislikes, setDisliked, useDislikes } from '../lib/dislikes';
-import { recordTypeLabel } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { Link, enc } from '../lib/router';
 import { attempt } from '../lib/ui';
@@ -75,15 +75,13 @@ export function HiddenPage() {
             </div>
             <ul className="overflow-hidden rounded-2xl bg-surface">
               {list.map((n) => (
-                <li key={n.album_ref} className="flex min-h-14 items-center gap-3 border-b border-fg/5 pl-3 pr-2 last:border-0">
-                  <Cover src={n.cover_url} size={40} icon="disc" alt="" />
-                  <Link to={`/album/${enc(n.album_ref)}`} className="min-w-0 flex-1 py-2">
-                    <span className="block truncate hover:underline">{n.title}</span>
-                    <span className="block truncate text-[13px] text-muted">{[n.year, recordTypeLabel(n.record_type)].filter(Boolean).join(' · ')}</span>
-                  </Link>
-                  <Button small variant="ghost" onClick={() => void bringBack(artistRef, [n.album_ref])}>
-                    Вернуть
-                  </Button>
+                <li key={n.album_ref} className="border-b border-fg/5 last:border-0">
+                  <AlbumRow
+                    album={{ title: n.title, to: `/album/${enc(n.album_ref)}`, cover: n.cover_url, type: n.record_type, artist: n.artist, year: n.year }}
+                    showArtist={false}
+                    className="[&>div]:pl-3 [&>div]:pr-2"
+                    actions={<Button small variant="ghost" onClick={() => void bringBack(artistRef, [n.album_ref])}>Вернуть</Button>}
+                  />
                 </li>
               ))}
             </ul>

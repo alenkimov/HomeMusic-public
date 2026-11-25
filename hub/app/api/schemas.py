@@ -268,6 +268,10 @@ class AlbumCreateIn(BaseModel):
 class AlbumMergeIn(BaseModel):
     source_ids: list[int]
     target_id: int
+    # what comes out («Объединение альбомов»): its name, its artist, the part whose picture it takes; none: the target's
+    title: str | None = Field(default=None, max_length=512)
+    album_artist: str | None = Field(default=None, max_length=512)
+    cover_from: int | None = None
 
 
 class TracksDeleteIn(BaseModel):

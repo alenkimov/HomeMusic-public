@@ -199,7 +199,7 @@ function Rows({ kind, items, by, bySong, icon, round }: { kind: StatsKind; items
             <span className="w-5 shrink-0 text-right text-xs tabular-nums text-dim">{i + 1}</span>
             {kind !== 'genres' && (
               <span className="relative shrink-0">
-                <Cover src={song?.cover_url} size={36} round={round} icon={icon} className={cx(outside && 'opacity-50')} />
+                <Cover src={song?.cover_url} size={48} round={round} icon={icon} className={cx(outside && 'opacity-50')} />
                 {kind === 'tracks' && go && (
                   <span className="absolute inset-0 flex items-center justify-center rounded-md bg-black/55 text-white opacity-0 transition group-hover:opacity-100">
                     <Icon name="play" size={16} filled />

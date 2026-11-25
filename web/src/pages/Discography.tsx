@@ -5,14 +5,15 @@ import { TrackRow, TrackTableHeader } from '../components/catalog';
 import { TrackTable } from '../components/TrackTable';
 import { AlbumSourceMarks } from '../components/CatalogSourceMarks';
 import { SourceStatuses } from '../components/SourceStatuses';
-import { Icon } from '../components/Icon';
 import { ListBar } from '../components/ListBar';
 import { useSearchField } from '../components/ListSearch';
-import { Button, Checkbox, Cover, Empty, ErrorState, Loading, PageHeader, Segmented, cx } from '../components/ui';
+import { Button, Checkbox, Empty, ErrorState, Loading, PageHeader, Segmented, cx } from '../components/ui';
 import { plural, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { attempt, toast } from '../lib/ui';
-import { Link, albumPath, artistPath, enc, navigate, useCanonicalPath, useRoute } from '../lib/router';
+import { AlbumRow, catalogLook } from '../components/Album';
+import { AlbumMenu } from '../components/EntityMenus';
+import { Link, artistPath, enc, navigate, useCanonicalPath, useRoute } from '../lib/router';
 import { VirtualRows } from '../components/VirtualRows';
 
 /** «Дискография» (`/artist/<ref>/discography`): everything an artist released, shown one of two ways. «Релизы» —
@@ -29,7 +30,6 @@ const KINDS: Array<{ value: Kind; label: string }> = [
   { value: 'single', label: 'Синглы и EP' },
   { value: 'compile', label: 'Сборники' },
 ];
-const KIND_NAME: Record<string, string> = { album: 'Альбом', single: 'Сингл', ep: 'EP', compile: 'Сборник' };
 const STEP = 8; // releases drawn at once; more as the end comes into view
 const SOURCE_LABELS = { searching: 'Загружает', ready: 'Ответил', empty: 'Нет данных', error: 'Ошибка запроса' };
 
@@ -167,21 +167,14 @@ export function DiscographyPage({ refId }: { refId: string }) {
 
   const named = (x: Row): TrackOut => ({ ...x.t, album_title: `${x.a.title}${yearOf(x.a) ? ` · ${yearOf(x.a)}` : ''}` });
   const release = (a: AlbumOut) => (
-    <li key={a.ref} className={cx('flex items-center gap-3 px-4 py-2 lg:px-6', picked?.has(a.ref) && 'opacity-50')}>
-      {picked && <Checkbox checked={picked.has(a.ref)} onChange={() => pick(a.ref)} label={`«${a.title}» — другого исполнителя`} />}
-      <div className="relative flex min-w-0 flex-1 items-center gap-3 rounded-lg hover:bg-fg/5">
-        <Cover src={a.cover_small_url || a.cover_url} size={56} alt="" />
-        <span className="min-w-0 flex-1">
-          <Link to={albumPath(a)} className="block truncate text-[15px] font-semibold after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-fg">{a.title}</Link>
-          <span className="flex items-center gap-1.5">
-            <span className="truncate text-[13px] text-muted">
-              {[KIND_NAME[a.record_type] ?? 'Релиз', yearOf(a), a.tracks?.length ? tracksWord(a.tracks.length) : a.nb_tracks ? tracksWord(a.nb_tracks) : null].filter(Boolean).join(' · ')}
-            </span>
-            <AlbumSourceMarks album={a} className="relative z-1" />
-          </span>
-        </span>
-        <Icon name="chevron" size={18} className="shrink-0 text-dim" />
-      </div>
+    <li key={a.ref} className={cx('lg:px-2', picked?.has(a.ref) && 'opacity-50')}>
+      <AlbumRow
+        album={catalogLook(a)}
+        showArtist={false}
+        lead={picked && <Checkbox checked={picked.has(a.ref)} onChange={() => pick(a.ref)} label={`«${a.title}» — другого исполнителя`} />}
+        actions={<AlbumSourceMarks album={a} />}
+        menu={(at, onClose) => <AlbumMenu album={a} at={at} onClose={onClose} />}
+      />
     </li>
   );
   const list = (rows: Row[], queue: TrackOut[]) => {

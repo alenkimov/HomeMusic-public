@@ -97,7 +97,7 @@ async def test_albums_in_pieces_are_listed(env):
         await s.flush()
         s.add(filed_track(uid="f1", path="x/1.mp3", artist="Три дня дождя", title="Демоны", fingerprint="a", album_id=one.id, added_by=uid))
         s.add(filed_track(uid="f2", path="x/2.mp3", artist="Три дня дождя", title="Ещё", fingerprint="b", album_id=one.id, added_by=uid))
-        s.add(filed_track(uid="f3", path="x/3.mp3", artist="Три дня дождя, Роки", title="Марафоны", fingerprint="c", album_id=two.id, added_by=uid))
+        s.add(filed_track(uid="f3", path="x/3.mp3", artist="Три дня дождя, Роки", title="Марафоны", fingerprint="c", album_id=two.id, added_by=uid, source="ytdlp"))
         await s.flush()
         ids = (one.id, two.id)
     got = (await c.get("/api/library/albums/split")).json()
@@ -114,6 +114,16 @@ async def test_albums_in_pieces_are_listed(env):
     assert [g["dismissed"] for g in (await c.get("/api/library/albums/split")).json()] == [True]
     assert (await c.post("/api/library/albums/split/restore", json=group)).status_code == 200
     assert [g["dismissed"] for g in (await c.get("/api/library/albums/split")).json()] == [False]
+    # where each part came from: here only the source its file was downloaded from
+    assert [a["sources"] for a in got[0]["albums"]] == [[], [{"kind": "file", "service": "ytdlp", "count": 1}]]
+
+    # merged with the name and the artist chosen; a picture only of a part being merged
+    r = await c.post("/api/library/albums/merge", json={"target_id": ids[0], "source_ids": [ids[1]], "cover_from": 999})
+    assert r.status_code == 400
+    r = await c.post("/api/library/albums/merge", json={"target_id": ids[0], "source_ids": [ids[1]],
+                                                       "title": "Любовь, аддикция и марафоны (Deluxe)", "album_artist": "Три дня дождя"})
+    assert r.status_code == 200, r.text
+    assert (r.json()["title"], r.json()["album_artist"], r.json()["track_count"]) == ("Любовь, аддикция и марафоны (Deluxe)", "Три дня дождя", 3)
 
 
 async def test_the_files_as_a_list_and_the_doubles(env):
