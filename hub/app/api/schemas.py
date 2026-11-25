@@ -445,6 +445,7 @@ class FileOut(BaseModel):
     bitrate_kbps: int | None = None
     sounds_like_kbps: int | None = None
     journal: bool = False  # the download that brought it kept its journal (`GET /api/library/tracks/<id>/journal`)
+    uid: str | None = None  # which file it is: a file put in its place (another one picked, an upgrade) has another
 
 
 class FileJournalOut(BaseModel):
@@ -669,6 +670,7 @@ class ListenOut(BaseModel):
     codec: str | None = None
     sounds_like_kbps: int | None = None
     journal: bool = False  # an own file whose download kept its journal
+    file_uid: str | None = None  # an own file: which one (`FileOut.uid`)
     page_url: str | None = None
     nd_song_id: str | None = None  # "library": the Navidrome song (♥, the app's player)
     track_id: int | None = None  # the Hub's track, if the Hub knows the song (tags, playlists)

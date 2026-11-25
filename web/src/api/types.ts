@@ -224,6 +224,8 @@ export interface FileOut {
   sounds_like_kbps?: number | null;
   /** the download that brought it kept its journal (`/file/<track>`) */
   journal?: boolean;
+  /** which file it is: a file put in its place (another one picked, an upgrade) has another */
+  uid?: string | null;
 }
 
 /** How a track's file came to the library: the journal of the download that brought it. */
@@ -588,6 +590,8 @@ export interface ListenOut {
   sounds_like_kbps?: number | null;
   /** an own file whose download kept its journal */
   journal?: boolean;
+  /** an own file: which one (`FileOut.uid`) */
+  file_uid?: string | null;
   page_url?: string | null;
   /** library: the Navidrome song (♥), once Navidrome has scanned the file */
   nd_song_id?: string | null;

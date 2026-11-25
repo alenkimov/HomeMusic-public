@@ -50,7 +50,7 @@ _BLOWN_RE = re.compile(r"по звуку около (\d+)")
 def file_out(f: TrackFile) -> FileOut:
     """A file as a list and the player say it."""
     blown = next((m for w in (f.warnings or []) if (m := _BLOWN_RE.search(str(w)))), None)
-    return FileOut(source=f.source, codec=f.codec, bitrate_kbps=f.bitrate_kbps,
+    return FileOut(source=f.source, codec=f.codec, bitrate_kbps=f.bitrate_kbps, uid=f.uid,
                    sounds_like_kbps=int(blown.group(1)) if blown else None)
 
 

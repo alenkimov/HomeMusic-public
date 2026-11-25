@@ -11,7 +11,9 @@ import { hubFetch, hubReachable, onHubBack } from './reach';
  * player plays a kept track without knowing it is kept — with the network and without. The lists and covers a page
  * reads are kept by the service worker as well, so the pages open offline.
  *
- * A track is kept while some kept list has it; a list opened again is brought up to date (`syncList`). Needs a
+ * A track is kept while some kept list has it; a list opened again is brought up to date (`syncList`) — and so is a
+ * kept track whose file was put another in its place (another file picked, an upgrade: `FileOut.uid` is not the one
+ * kept): it is fetched anew, and until then plays from the Hub where the Hub is reached (`keptPlays`). Needs a
  * service worker, so a secure address (https or localhost). */
 
 export interface KeptTrack {
@@ -42,6 +44,7 @@ const audioKey = (ref: string) => new URL(listenStreamUrl(ref, ''), window.locat
 const tracks = new Map<string, KeptTrack>();
 const lists = new Map<string, KeptList>();
 const failed = new Map<string, string>(); // ref -> why it was not fetched (tried again when its list is opened)
+const stale = new Set<string>(); // kept with a file the track has no more: fetched anew
 const waiting: string[] = [];
 const busy = new Set<string>();
 let wanted = new Map<string, TrackOut>(); // what a track is, for the ones still to fetch
@@ -125,6 +128,7 @@ async function fetchOne(ref: string): Promise<void> {
   const kept: KeptTrack = { ref, info, track, size: blob.size, at: Date.now() };
   await tx('tracks', 'readwrite', (s) => s.put(kept));
   tracks.set(ref, kept);
+  stale.delete(ref);
   // its covers go through the service worker, which keeps them
   for (const url of new Set([track.cover_small_url, track.cover_url])) if (url?.startsWith('/')) void hubFetch(url, { credentials: 'include' }).catch(() => undefined);
 }
@@ -132,7 +136,7 @@ async function fetchOne(ref: string): Promise<void> {
 function pump() {
   while (busy.size < PARALLEL && waiting.length && hubReachable()) {
     const ref = waiting.shift() as string;
-    if (tracks.has(ref) || busy.has(ref) || !needed().has(ref)) continue;
+    if ((tracks.has(ref) && !stale.has(ref)) || busy.has(ref) || !needed().has(ref)) continue;
     busy.add(ref);
     failed.delete(ref);
     emit();
@@ -148,12 +152,43 @@ function pump() {
   }
 }
 
+/** The file a kept track was fetched with is not the track's file now. (A track without its file said — a list
+ * that does not tell — is taken to be the same.) */
+function outdated(kept: KeptTrack, file: { uid?: string | null } | null | undefined): boolean {
+  return !!file?.uid && kept.info.file_uid !== file.uid;
+}
+
 function enqueue(items: readonly TrackOut[]) {
   for (const t of items) {
     wanted.set(t.ref, t);
-    if (!tracks.has(t.ref) && !busy.has(t.ref) && !waiting.includes(t.ref)) waiting.push(t.ref);
+    const kept = tracks.get(t.ref);
+    if (kept && outdated(kept, t.file)) stale.add(t.ref);
+    if ((!kept || stale.has(t.ref)) && !busy.has(t.ref) && !waiting.includes(t.ref)) waiting.push(t.ref);
   }
   pump();
+}
+
+/** The file of a track was put another in its place here (`FindFile`, «Качество звука»): a copy of it kept on the
+ * device is fetched anew. The track by its ref or the library's id. */
+export function fileReplaced(track: { ref?: string | null; library_track_id?: number | null }) {
+  const hits = [...tracks.values()].filter((k) =>
+    k.ref === track.ref || (track.library_track_id != null && k.track.library_track_id === track.library_track_id));
+  for (const kept of hits) {
+    stale.add(kept.ref);
+    if (!wanted.has(kept.ref)) wanted.set(kept.ref, kept.track);
+    if (!busy.has(kept.ref) && !waiting.includes(kept.ref)) waiting.push(kept.ref);
+  }
+  if (!hits.length) return;
+  emit();
+  pump();
+}
+
+/** The kept copy is what plays this track: it is the track's file — or the Hub cannot be reached (the old file is
+ * better than none). */
+export function keptPlays(t: { ref: string; file?: { uid?: string | null } | null }): boolean {
+  const kept = tracks.get(t.ref);
+  if (!kept) return false;
+  return !hubReachable() || !(stale.has(t.ref) || outdated(kept, t.file));
 }
 
 /** Tracks no kept list has any more leave the device. */

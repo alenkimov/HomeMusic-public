@@ -705,6 +705,10 @@ async def test_file_picker_keeps_cover_from_the_selected_recording(env, monkeypa
     assert (await c.post(f"{page}/add", json={"track_ids": [track_id]})).status_code == 200
     take = await c.post(f"/api/quality/track/{track_id}/take", json={"ref": ref, "expected_file_uid": None})
     assert take.status_code == 200, take.text
+    # which file the track has now: a device that keeps another fetches it anew (`web/src/lib/offline.ts`)
+    async with session_scope() as s:
+        uid = (await current_file(s, track_id)).uid
+    assert (await c.get("/api/listen", params={"ref": f"lib:{track_id}"})).json()["file_uid"] == uid
     row, = (await c.get(page)).json()["tracks"]
     assert row["cover_url"].startswith("/api/library/albums/")
     cover = await c.get(row["cover_url"])

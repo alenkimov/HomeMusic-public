@@ -64,6 +64,7 @@ async def resolve(ref: str, ahead: Literal["whole", "head"] | None = None, cant:
         codec=file.codec if file else None,
         sounds_like_kbps=file.sounds_like_kbps if file else None,
         journal=bool(file and file.journal),
+        file_uid=file.uid if file else None,
         page_url=cand.page_url if cand else None,
         nd_song_id=c.nd_song_id,
         track_id=track_id,

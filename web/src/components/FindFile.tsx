@@ -7,6 +7,7 @@ import { closeFindFile, filePickerTarget, openFindFile, useFindFile, type FileSo
 import { fmtDuration } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { isUpload, pause, useListen } from '../lib/listen';
+import { fileReplaced } from '../lib/offline';
 import { pauseNative } from '../lib/player';
 import { EDITED_EVENT } from '../lib/trackEdit';
 import { confirmDialog, toast, toastError } from '../lib/ui';
@@ -367,6 +368,7 @@ function FilePicker({ track }: { track: FileSought & { library_track_id: number 
         return;
       }
       window.dispatchEvent(new Event(EDITED_EVENT));
+      fileReplaced(track); // a copy kept on this device for offline is fetched anew
       closeFindFile();
       if (existing == null) toast('Файл привязан к треку', 'success');
       else toast('Файл заменён. Прежний хранится 30 дней', 'success', { label: 'Сравнить', to: '/quality' });

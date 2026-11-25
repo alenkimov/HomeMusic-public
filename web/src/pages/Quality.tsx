@@ -4,6 +4,7 @@ import { titleWithVersion } from '../lib/versionLabels';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { QualityRow } from '../api/types';
+import { fileReplaced } from '../lib/offline';
 import { Icon } from '../components/Icon';
 import { Button, Empty, ErrorState, PageHeader, ProgressBar, SkeletonRows, cx , Segmented } from '../components/ui';
 import { fmtDuration, tracksWord } from '../lib/format';
@@ -88,6 +89,7 @@ export function QualityPage() {
     setBusy(null);
     if (!ok) return;
     if (yes) window.dispatchEvent(new Event(EDITED_EVENT));
+    if (yes && (r.kind !== 'identify' || file)) fileReplaced({ library_track_id: r.track_id });
     res.reload(true);
   };
   /** «Другая версия той же песни»: the track stays as it is, tied to the catalog's record as a version. */
@@ -109,6 +111,7 @@ export function QualityPage() {
     if (!ok) return;
     setOpen(null);
     window.dispatchEvent(new Event(EDITED_EVENT));
+    fileReplaced({ library_track_id: r.track_id });
     res.reload(true);
   };
   const takeAll = async () => {

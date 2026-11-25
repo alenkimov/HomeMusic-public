@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { subscribeVersionLabels, titleWithVersion } from './versionLabels';
 import { imageUrl } from './img';
 import { ofHiddenArtist } from './dislikes';
-import { keptInfo } from './offline';
+import { keptInfo, keptPlays } from './offline';
 import { OFFLINE_WAVE, waveAudio } from './offlineWave';
 import { ApiError, api, errorMessage, isAbort, listenStreamUrl } from '../api/client';
 import { CANT_ANY } from './formats';
@@ -43,6 +43,8 @@ export interface ListenTrack {
   rec?: { label: string; session: string } | null;
   /** The current track came from the manual queue. Pending manual entries are kept separately. */
   queued?: boolean;
+  /** an owned track: which file it has (`FileOut.uid`) — a kept copy of another file is not played (`keptPlays`) */
+  file?: { uid?: string | null } | null;
   title: string;
   artist: string;
   cover_url?: string | null;
@@ -128,7 +130,7 @@ export interface ListenState {
 export const idOf = (t: Pick<ListenTrack, 'ref' | 'nd_song_id'>) => t.nd_song_id || t.ref;
 
 function playbackRef(t: ListenTrack) {
-  return t.library_track_id && !t.ref.startsWith('file:') && !isUpload(t) && !keptInfo(t.ref)
+  return t.library_track_id && !t.ref.startsWith('file:') && !isUpload(t) && !keptPlays(t)
     ? `lib:${t.library_track_id}` : t.ref;
 }
 
