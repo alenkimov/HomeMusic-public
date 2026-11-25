@@ -14,8 +14,6 @@ import { attempt } from '../lib/ui';
 import { playAll } from './catalog';
 import { Link, enc, useRoute } from '../lib/router';
 import { Icon, type IconName } from './Icon';
-import { playlistLine, playlistLook } from './Playlist';
-import { useSession } from '../lib/session';
 import type { Tab } from './TabBar';
 import { Cover, Spinner, cx } from './ui';
 
@@ -47,7 +45,6 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
     return () => window.removeEventListener(SELECTIONS_EVENT, changed);
   }, [sels.reload]);
   // «Любимое» is a playlist too: its number of tracks, kept fresh as ♥ are set
-  const { me } = useSession();
   const liked = useAsync((s) => api.ndLiked(s), [], true, 'liked');
   useHubEvent('library', () => liked.reload(true));
   useEffect(() => {
@@ -106,7 +103,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
             </span>
             <span className="min-w-0">
               <span className={cx('block truncate', at('/liked') ? 'font-semibold text-accent' : 'text-fg')}>Любимое</span>
-              {liked.data && <span className="block truncate text-xs text-dim">{playlistLine({ title: 'Любимое', owners: [me.username], count: liked.data.songs.length })}</span>}
+              {liked.data && <span className="block truncate text-xs text-dim">{tracksWord(liked.data.songs.length)}</span>}
             </span>
           </Link>
           <PlayOver name="Любимое" context="liked" page="/liked" load={async () => (await api.ndLiked()).songs} />
@@ -121,7 +118,7 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
                 <Cover src={p.cover_url ? `${p.cover_url}&size=96` : null} size={36} icon="playlist" />
                 <span className="min-w-0">
                   <span className={cx('block truncate', on ? 'font-semibold text-accent' : 'text-fg')}>{p.name}</span>
-                  <span className="block truncate text-xs text-dim">{playlistLine(playlistLook(p))}</span>
+                  <span className="block truncate text-xs text-dim">{tracksWord(p.song_count + (p.pending_count ?? 0))}</span>
                 </span>
               </Link>
               {p.song_count > 0 && <PlayOver name={p.name} context="playlist" page={to} load={async () => (await api.playlist(p.id)).tracks} />}
