@@ -1,4 +1,4 @@
-import { TrackTitle } from './TrackTitle';
+import { PlayingArtists, PlayingMarks, PlayingTitle } from './NowPlaying';
 import { menuPressProps } from './ContextMenu';
 import { menuTrackOf } from './TrackMenu';
 import { openTrackMenu } from '../lib/trackMenu';
@@ -67,24 +67,16 @@ export function MiniPlayer() {
     <>
       <Cover src={track.cover_small_url || track.cover_url} size={40} alt="" />
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[15px] font-medium leading-tight"><TrackTitle title={track.title} track={{ ...track, library_track_id: info?.track_id ?? track.library_track_id, nd_song_id: info?.nd_song_id ?? track.nd_song_id, page_url: info?.page_url ?? track.page_url }} /></div>
+        {/* the whole bar is a link already: the name and the artists are not */}
+        <PlayingTitle track={track} info={info} link={false} className="block truncate text-[15px] font-medium leading-tight" />
         {phase === 'error' ? (
           // a narrow bar has two lines: what went wrong takes the artists' while it is so
           <PlayLine phase={phase} info={info} error={error} className="block truncate text-[13px] leading-tight" />
         ) : (
           <div className="flex items-center gap-1.5 text-[13px] leading-tight text-muted">
             {waiting && <PlayLine phase={phase} info={info} className="shrink-0" />}
-            {onWave && (
-              <span title="Моя волна" className="shrink-0 text-accent">
-                <Icon name="wave" size={14} />
-              </span>
-            )}
-            {track.rec && (
-              <span title={track.rec.label} className="shrink-0 text-accent">
-                <Icon name="sparkle" size={14} />
-              </span>
-            )}
-            <span className="truncate">{track.artist}</span>
+            <PlayingMarks track={track} onWave={onWave} />
+            <span className="truncate"><PlayingArtists track={track} link={false} /></span>
           </div>
         )}
       </div>

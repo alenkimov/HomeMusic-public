@@ -1,11 +1,11 @@
-import { TrackTitle } from './TrackTitle';
+import { PlayingArtists, PlayingMarks, PlayingTitle } from './NowPlaying';
 import { askForQueue } from '../lib/playerQueue';
 import { openTagsSheet, tagKey } from '../lib/tags';
 import { useEffect, useRef, type CSSProperties } from 'react';
 import { fmtDuration } from '../lib/format';
-import { isUpload, artistTo, creditedOf, cycleRepeat, cycleShuffle, getListenState, hasNext, hasPrev, next, prev, setVolume, toggle, useListen } from '../lib/listen';
+import { isUpload, cycleRepeat, cycleShuffle, getListenState, hasNext, hasPrev, next, prev, setVolume, toggle, useListen } from '../lib/listen';
 import { useSeek } from '../lib/seek';
-import { Link, albumPath } from '../lib/router';
+import { Link } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
 import { PlayLine } from './FileInfo';
 import { PlaybackDevicesButton } from './PlaybackDevices';
@@ -71,26 +71,13 @@ export function DesktopPlayer() {
               {/* the name leads to the album, each artist to their page; a long line runs under the mouse (`Marquee`) */}
               <span className="ml-2 min-w-0">
                 <Marquee className="text-sm font-medium leading-5">
-                  <Link to={track.album_ref || track.release_id ? albumPath({ ref: track.album_ref ?? '', release_id: track.release_id }) : '/player'} className="hover:underline">
-                    <TrackTitle title={track.title} track={{ ...track, library_track_id: info?.track_id ?? track.library_track_id, nd_song_id: info?.nd_song_id ?? track.nd_song_id, page_url: info?.page_url ?? track.page_url }} />
-                  </Link>
+                  <PlayingTitle track={track} info={info} />
                 </Marquee>
                 <span className="flex items-center gap-1.5 text-xs text-muted">
-                  {onWave && <Icon name="wave" size={13} className="shrink-0 text-accent" />}
+                  <PlayingMarks track={track} onWave={onWave} size={13} />
                   {/* the artists, always: what the player is doing is said by the line under them */}
                   <Marquee>
-                    {creditedOf(track).map((a, i) => (
-                      <span key={`${a.name}:${i}`}>
-                        {i > 0 && ', '}
-                        {artistTo(a) ? (
-                          <Link to={artistTo(a)!} className="hover:text-fg hover:underline">
-                            {a.name}
-                          </Link>
-                        ) : (
-                          a.name
-                        )}
-                      </span>
-                    ))}
+                    <PlayingArtists track={track} />
                   </Marquee>
                 </span>
                 {/* the file's line: what plays — its source's mark, what it is, its bitrate — or what the player is

@@ -1,4 +1,3 @@
-import { TrackTitle } from '../components/TrackTitle';
 import { tagKey } from '../lib/tags';
 import { imageUrl } from '../lib/img';
 import { FileCard, PlayLine } from '../components/FileInfo';
@@ -15,6 +14,7 @@ import { trackMenuAt } from '../lib/trackMenu';
 import { OtherVersions } from '../components/Versions';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { ArtistRow } from '../components/Artist';
+import { PlayingArtists, PlayingMarks, PlayingTitle } from '../components/NowPlaying';
 import { TrackCell } from '../components/Track';
 import { Cover, Empty, IconButton, Sheet, Spinner, cx } from '../components/ui';
 import { fmtDuration, fmtNum, tracksWord } from '../lib/format';
@@ -44,7 +44,7 @@ import { isUpload,
   artistTo,
   creditedOf,
 } from '../lib/listen';
-import { Link, albumPath, goBack } from '../lib/router';
+import { Link, goBack } from '../lib/router';
 import { openShare } from '../lib/shareTrack';
 import { addRec, hideRec } from '../lib/smartShuffle';
 
@@ -200,7 +200,6 @@ export function PlayerPage() {
   const owned = info?.kind === 'library';
   const versionTrackId = info?.track_id ?? track.library_track_id;
   const versionSongId = versionTrackId == null ? (info?.nd_song_id ?? track.nd_song_id) : null;
-  const versionIdentity = { library_track_id: versionTrackId, nd_song_id: versionSongId, ref: track.ref, page_url: info?.page_url ?? track.page_url };
   const download = async () => {
     setBusy(true);
     await downloadRef(track.ref);
@@ -264,35 +263,11 @@ export function PlayerPage() {
 
       <div className="flex items-center gap-2 px-6 pt-6">
         <div className="min-w-0 flex-1">
-          {track.album_ref || track.release_id ? (
-            <Link to={albumPath({ ref: track.album_ref ?? '', release_id: track.release_id })} className="block truncate text-xl font-bold hover:underline">
-              <TrackTitle title={track.title} track={versionIdentity} />
-            </Link>
-          ) : (
-            <div className="truncate text-xl font-bold"><TrackTitle title={track.title} track={versionIdentity} /></div>
-          )}
+          <PlayingTitle track={track} info={info} className="block truncate text-xl font-bold" />
           <div className="flex items-center gap-1.5 text-[15px] text-muted">
-            {onWave && <Icon name="wave" size={16} className="shrink-0 text-accent" />}
-            {track.rec && (
-              <span title="Рекомендация" className="shrink-0 text-accent">
-                <Icon name="sparkle" size={15} />
-              </span>
-            )}
+            <PlayingMarks track={track} onWave={onWave} size={16} />
             {/* every credited artist opens their own page */}
-            <span className="truncate">
-              {creditedOf(track).map((a, i) => (
-                <span key={`${a.name}:${i}`}>
-                  {i > 0 && ', '}
-                  {artistTo(a) ? (
-                    <Link to={artistTo(a)!} className="hover:text-fg hover:underline">
-                      {a.name}
-                    </Link>
-                  ) : (
-                    a.name
-                  )}
-                </span>
-              ))}
-            </span>
+            <span className="truncate"><PlayingArtists track={track} /></span>
           </div>
         </div>
         {/* a track that is not in the library yet can be downloaded into it; one that is needs no mark */}
