@@ -370,3 +370,128 @@ async def test_only_an_admin_starts_a_look_through(env):
         assert await s.scalar(select(func.count(Job.id)).where(Job.kind == "tidy_scan")) == 1
     await drain_jobs()
     assert (await c.get("/api/tidy")).json()["running"] is False
+
+
+# ---------------------------------------------------------------- censorship in lyrics
+
+
+def test_a_censored_word_and_what_may_hide_behind_it():
+    from app.tidy import rules
+
+    assert rules.masks("Я б***ь не знаю, «х*й»!") == ["б***ь", "х*й"]
+    assert rules.masks("Всё [цензура] надоело") == ["[цензура]"]
+    assert rules.masks("строка со * звездой") == []
+    # a star not hiding anything: a separator, a name, an action
+    assert rules.masks("toushindai no ura•omote") == rules.masks("くって*ねて*あそべ！") == []
+    assert rules.masks("ネバーランド - DECO*27") == rules.masks("*sigh* okay") == []
+    assert rules.masks("I'm ****ing 'em both, (beep)") == ["****ing", "(beep)"]
+    assert (rules.fits("б***ь", "блять"), rules.fits("б**", "блять"), rules.fits("б***ь", "блин"), rules.fits("х*й", "хуй")) == (
+        "strict", "loose", None, "strict")
+    assert rules.fits("б***ь", "б***ь") is None
+    got = rules.unmask("Я б***ь не знаю, х*й", ["Совсем другое", "Я блять не знаю, хуй"])
+    assert got == rules.Unmasked(("блять", "хуй"), True)
+    assert rules.unmask("Я б***ь не знаю", ["Мы блять не знаем"]) is None  # another line, not this one whole
+    assert rules.put_words("«Б***ь», — сказал", ["блять"]) == "«Блять», — сказал"
+
+
+async def _censored(tid: int, timed: bool) -> str:
+    from app.db import session_scope
+    from app.models import Lyrics
+
+    lines = ["Я б***ь не знаю", "что делать"]
+    async with session_scope() as s:
+        if timed:
+            s.add(Lyrics(track_id=tid, kind="word", source="lrclib", lines_json=[
+                {"t": 0, "text": lines[0], "words": [{"t": 0, "text": "Я "}, {"t": 300, "text": "б***ь "},
+                                                     {"t": 600, "text": "не "}, {"t": 800, "text": "знаю"}]},
+                {"t": 2000, "text": lines[1]}], search_text="\n".join(lines).casefold()))
+        else:
+            s.add(Lyrics(track_id=tid, kind="plain", source="lrclib", plain="\n".join(lines),
+                         search_text="\n".join(lines).casefold()))
+    return "\n".join(lines)
+
+
+async def test_a_censored_word_comes_back_from_another_source_with_its_timing(env, monkeypatch):
+    from app.db import session_scope
+    from app.lyrics import service as lyrics_
+    from app.lyrics.providers import Found
+    from app.models import Lyrics
+
+    c = env["client"]
+    tid = await _add(artist="Кто-то", title="Песня")
+    await _censored(tid, timed=True)
+    asked = []
+
+    async def candidates(s, track):
+        asked.append(track.id)
+        return [Found(source="lrclib", plain="Я б***ь не знаю\nчто делать"),
+                Found(source="netease", plain="Я блять не знаю\nчто делать")]
+
+    monkeypatch.setattr(lyrics_, "candidates", candidates)
+    await _scan()
+    (p,) = await _open(c, "lyrics")
+    assert (p["kind"], p["by"], p["sure"], p["to"]) == ("uncensor", "rule", True, "Вернуть 1 слово без цензуры")
+    assert p["show"]["pairs"] == [{"was": "Я б***ь не знаю", "to": "Я блять не знаю"}] and "NetEase" in p["why"]
+    await _scan()
+    assert asked == [tid]  # a text is looked up once
+    assert (await c.post(f"/api/tidy/proposals/{p['id']}/accept")).status_code == 200
+    async with session_scope() as s:
+        row = await s.get(Lyrics, tid)
+        assert row.lines_json[0]["text"] == "Я блять не знаю" and row.lines_json[0]["words"][1] == {"t": 300, "text": "блять "}
+        assert row.lines_json[1] == {"t": 2000, "text": "что делать"} and "блять" in row.search_text
+    assert (await c.post(f"/api/tidy/proposals/{p['id']}/revert")).status_code == 200
+    async with session_scope() as s:
+        assert (await s.get(Lyrics, tid)).lines_json[0]["words"][1]["text"] == "б***ь "
+
+
+async def test_what_no_source_has_the_ai_reads_off_the_mask_and_is_never_sure(env, monkeypatch):
+    import json
+
+    from app.ai.llm import LLMClient, LLMUsage
+    from app.lyrics import service as lyrics_
+    from app.tidy import ai
+
+    c = env["client"]
+    tid = await _add(artist="Кто-то", title="Песня")
+    await _censored(tid, timed=False)
+
+    async def candidates(s, track):
+        return []
+
+    async def call_tool(self, *, user_content, **kw):
+        items = json.loads(user_content.split("Items:\n", 1)[1])
+        assert items[0]["masks"] == ["б***ь"] and items[0]["context"][1] == "что делать"
+        return {"items": [{"id": items[0]["id"], "words": ["блять"], "sure": True}]}, LLMUsage()
+
+    monkeypatch.setattr(lyrics_, "candidates", candidates)
+    monkeypatch.setattr(ai, "available", lambda: True)
+    monkeypatch.setattr(LLMClient, "call_tool", call_tool)
+    await _scan()
+    (p,) = await _open(c, "lyrics")
+    assert (p["kind"], p["by"], p["sure"], p["why"]) == ("uncensor", "ai", False, "Восстановил ИИ по маске")
+    assert (await c.post("/api/tidy/accept-sure", json={"section": "lyrics"})).json()["accepted"] == 0
+
+
+async def test_an_ai_word_that_does_not_fit_the_mask_is_not_offered(env, monkeypatch):
+    import json
+
+    from app.ai.llm import LLMClient, LLMUsage
+    from app.lyrics import service as lyrics_
+    from app.tidy import ai
+
+    c = env["client"]
+    tid = await _add(artist="Кто-то", title="Песня")
+    await _censored(tid, timed=False)
+
+    async def candidates(s, track):
+        return []
+
+    async def call_tool(self, *, user_content, **kw):
+        items = json.loads(user_content.split("Items:\n", 1)[1])
+        return {"items": [{"id": items[0]["id"], "words": ["блин"], "sure": True}]}, LLMUsage()
+
+    monkeypatch.setattr(lyrics_, "candidates", candidates)
+    monkeypatch.setattr(ai, "available", lambda: True)
+    monkeypatch.setattr(LLMClient, "call_tool", call_tool)
+    await _scan()
+    assert await _open(c, "lyrics") == []

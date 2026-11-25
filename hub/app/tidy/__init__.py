@@ -11,7 +11,9 @@ What it looks for, by the sections of its page:
 * **Исполнители** — two artists that are one («LSP» and «ЛСП»: by how the names read, then the AI for what looks
   alike only).
 * **Альбомы** — one album in pieces: the page of «Объединение альбомов» (`app.api.library`), shown here.
-* **Тексты** — the lines of a text that are not the song: links, «подписывайтесь», a site's own header.
+* **Тексты** — the lines of a text that are not the song: links, «подписывайтесь», a site's own header; and the
+  words censorship hid («б***ь», «[цензура]»): put back from another source of the text where the same line is whole
+  there (by rule), else read off the mask by the AI (never sure).
 
 Nothing is changed by itself. What is found is a proposal (`TidyProposal`): what the subject is now (`was`), what
 it would be (`to`), who says so — a rule, or the AI and how sure it is. Somebody accepts it, and it is done the

@@ -182,3 +182,130 @@ def lyric_junk(lines: list[str]) -> list[Junk]:
         elif _WEAK.search(text):
             out.append(Junk(i, text, False))
     return out
+
+
+# ---------------------------------------------------------------- censored words in lyrics
+
+# a word with letters hidden: «б***», «х*й», «***», «f**k»
+_STARS = "*✱"
+# a word bleeped out altogether: «[цензура]», «(censored)», «пи-и-и», «*beep*»
+_MARKER = re.compile(r"^[\[(*]*(?:цензура|censored|бип|beep|пи+(?:-и+)+)[\])*]*$", re.I)
+_EDGE = "\"'«»„“”.,!?:;…()[]—–"
+
+
+def _tokens(line: str) -> list[str]:
+    return line.split()
+
+
+def _core(token: str) -> tuple[str, str, str]:
+    """A token as (what is before the word, the word, what is after): «"б***,» → ('"', 'б***', ',')."""
+    if _MARKER.match(token.strip(_EDGE.replace("[", "").replace("]", "").replace("(", "").replace(")", ""))):
+        return "", token, ""
+    start, end = 0, len(token)
+    while start < end and token[start] in _EDGE:
+        start += 1
+    while end > start and token[end - 1] in _EDGE:
+        end -= 1
+    return token[:start], token[start:end], token[end:]
+
+
+def is_mask(word: str) -> bool:
+    """A word with hidden letters («б***ь», «f**k», «***»), or a bleep in its place. Not a star used otherwise: an
+    action between stars («*sigh*»), a name («DECO*27»), a separator in Japanese («くって*ねて»)."""
+    if _MARKER.match(word):
+        return True
+    if not any(c in _STARS for c in word) or re.fullmatch(rf"[{_STARS}]+[^\W\d_]+[{_STARS}]+", word):
+        return False
+    rest = re.sub(rf"[{_STARS}'’-]", "", word)
+    if not rest:
+        return len(word) >= 2
+    return bool(re.fullmatch(r"[A-Za-zА-Яа-яЁё]+", rest))
+
+
+def masks(line: str) -> list[str]:
+    """The censored words of a line, in their order."""
+    return [w for t in _tokens(line) if (w := _core(t)[1]) and is_mask(w)]
+
+
+def fits(mask: str, word: str) -> str | None:
+    """Whether a word can be what the mask hides: "strict" — the letters shown are in their places and every star
+    is one letter; "loose" — a star run stands for any number of letters (or a bleep for any word); None — no."""
+    if not word or any(c in _STARS for c in word) or not any(c.isalpha() for c in word):
+        return None
+    if _MARKER.match(mask):
+        return "loose"
+    if mask.count("*") == len(mask) or set(mask) <= set(_STARS):
+        return "strict" if len(word) == len(mask) else "loose"
+
+    def pattern(strict: bool) -> str:
+        out, i = "", 0
+        while i < len(mask):
+            if mask[i] in _STARS:
+                j = i
+                while j < len(mask) and mask[j] in _STARS:
+                    j += 1
+                out += rf"[^\W\d_]{{{j - i}}}" if strict else r"[^\W\d_]+"
+                i = j
+            else:
+                out += re.escape(mask[i].casefold())
+                i += 1
+        return out
+
+    w = word.casefold()
+    if re.fullmatch(pattern(True), w):
+        return "strict"
+    if re.fullmatch(pattern(False), w):
+        return "loose"
+    return None
+
+
+def _same(a: str, b: str) -> bool:
+    return _key(_core(a)[1]) == _key(_core(b)[1])
+
+
+@dataclass(frozen=True)
+class Unmasked:
+    words: tuple[str, ...]  # what each mask of the line hides, in order
+    strict: bool  # every word fits its mask letter for letter
+
+
+def unmask(line: str, others: list[str]) -> Unmasked | None:
+    """The words a censored line hides, read off the same line of another text: one with as many words, the same
+    words where the line shows them, and where it hides one a word that fits the mask."""
+    mine = _tokens(line)
+    for other in others:
+        theirs = _tokens(other)
+        if len(theirs) != len(mine) or other.strip() == line.strip():
+            continue
+        words: list[str] = []
+        strict = True
+        for a, b in zip(mine, theirs, strict=True):
+            m = _core(a)[1]
+            if m and is_mask(m):
+                fit = fits(m, _core(b)[1])
+                if fit is None:
+                    break
+                strict = strict and fit == "strict"
+                words.append(_core(b)[1])
+            elif not _same(a, b):
+                break
+        else:
+            if words:
+                return Unmasked(tuple(words), strict)
+    return None
+
+
+def put_words(line: str, words: list[str] | tuple[str, ...]) -> str:
+    """The line with its masks replaced by the words, in order; the punctuation around a mask stays, and a word
+    starts with a capital where the mask did."""
+    left = list(words)
+    out = []
+    for token in line.split(" "):
+        before, word, after = _core(token)
+        if word and is_mask(word) and left:
+            new = left.pop(0)
+            if word[:1].isupper() and new[:1].islower():
+                new = new[:1].upper() + new[1:]
+            token = before + new + after
+        out.append(token)
+    return " ".join(out)

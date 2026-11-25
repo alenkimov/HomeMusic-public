@@ -453,6 +453,89 @@ async def _lyrics(s: AsyncSession, budget: ai.Budget | None) -> int:
     return n
 
 
+LOOKUPS = 60  # censored texts whose other sources are asked in one look-through (each asks every source)
+
+
+async def _uncensor(s: AsyncSession, budget: ai.Budget | None) -> int:
+    """Words hidden by censorship («б***ь», «[цензура]»): put back from another source of the text, where the same
+    line is whole there (by rule; sure when every word fits its mask letter for letter); what no source has, the AI
+    reads off the mask and the line — never sure, a person decides. A text is looked up once (until it changes)."""
+    from app.lyrics import parse
+    from app.lyrics import service as lyrics_
+    from app.lyrics.providers import TITLES as SOURCES
+
+    busy = await _busy(s, "lyrics")
+    found: dict[int, tuple[Lyrics, list[str], dict[int, list[str]]]] = {}
+    for row in (await s.execute(select(Lyrics).where(Lyrics.kind != "none"))).scalars():
+        if ("track", row.track_id) in busy:
+            continue
+        lines = kinds.text_lines(row)
+        hidden = {i: m for i, line in enumerate(lines) if (m := rules.masks(line))}
+        if hidden:
+            found[row.track_id] = (row, lines, hidden)
+    if not found:
+        return 0
+    questions = [{"id": tid, "text": kinds.text_hash(row)} for tid, (row, _, _) in found.items()]
+    todo = (await ai.unasked(s, "uncensor-sources", questions))[:LOOKUPS]
+    tracks = {t.id: t for t in (await s.execute(select(Track).where(Track.id.in_([q["id"] for q in todo])))).scalars()}
+    fixes: dict[int, dict[int, tuple[list[str], bool, str]]] = defaultdict(dict)
+    for q in todo:
+        tid = q["id"]
+        _row, lines, hidden = found[tid]
+        if tid not in tracks:
+            continue
+        try:
+            others = await lyrics_.candidates(s, tracks[tid])
+        except Exception as e:  # a source away: asked again next time
+            log.info("tidy: the lyrics sources of %s failed: %r", tid, e)
+            continue
+        for f in others:
+            theirs = parse.plain_of(f.lines, f.plain).split("\n")
+            for i, masks in hidden.items():
+                if i not in fixes[tid] and (u := rules.unmask(lines[i], theirs)) and len(u.words) == len(masks):
+                    fixes[tid][i] = (list(u.words), u.strict, f.source)
+        await ai.mark_asked(s, "uncensor-sources", [q])
+    if budget is not None:
+        # what no source had: the AI, where the mask shows a letter (a bare «***» it would only guess)
+        asked: list[tuple[int, int]] = []
+        qs = []
+        for q in todo:
+            tid = q["id"]
+            if tid not in tracks:
+                continue
+            _row, lines, hidden = found[tid]
+            for i, masks in hidden.items():
+                if i in fixes[tid] or not all(any(c.isalpha() for c in m) for m in masks):
+                    continue
+                qs.append({"id": len(asked), "artist": tracks[tid].artist, "title": tracks[tid].title,
+                           "line": lines[i], "masks": masks, "context": lines[max(0, i - 2):i + 3]})
+                asked.append((tid, i))
+        for item in await ai.ask(s, budget, "uncensor", qs):
+            tid, i = asked[item["id"]]
+            words = [str(w).strip() for w in item.get("words") or []]
+            masks = found[tid][2][i]
+            if len(words) == len(masks) and all(rules.fits(m, w) for m, w in zip(masks, words, strict=True)):
+                fixes[tid][i] = (words, False, "ai")
+    albums = await _albums(s)
+    n = 0
+    for tid, fixed in fixes.items():
+        if not fixed:
+            continue
+        row, lines, _hidden = found[tid]
+        sources = {src for _, _, src in fixed.values()}
+        named = [SOURCES.get(x, x) for x in sorted(sources - {"ai"})]
+        why = ("Восстановил ИИ по маске" if sources == {"ai"}
+               else f"Без цензуры в {', '.join(named)}" + (" и восстановил ИИ" if "ai" in sources else ""))
+        sure = all(strict and src != "ai" for _, strict, src in fixed.values())
+        pairs = [{"was": lines[i], "to": rules.put_words(lines[i], words)} for i, (words, _, _) in sorted(fixed.items())]
+        n += await kinds.offer(
+            s, kind="uncensor", subject_type="track", subject_id=tid, was={"text": kinds.text_hash(row)},
+            to={"replace": {str(i): words for i, (words, _, _) in sorted(fixed.items())}},
+            show=_track_show(tracks[tid], albums, title=tracks[tid].title, pairs=pairs),
+            by="ai" if "ai" in sources else "rule", sure=sure, why=why)
+    return n
+
+
 # ---------------------------------------------------------------- the look-through
 
 
@@ -495,7 +578,7 @@ async def run() -> dict[str, Any]:
     use_ai = ai.available()
     async with session_scope() as s:
         budget = await ai.Budget.of_month(s) if use_ai else None
-    for step in (_versions, _artists, _lyrics):
+    for step in (_versions, _artists, _lyrics, _uncensor):
         async with session_scope() as s:
             found += await step(s, budget)
     if budget is not None:

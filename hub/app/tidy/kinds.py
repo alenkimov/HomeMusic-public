@@ -292,16 +292,38 @@ def _set_text(row: Lyrics, lines: list[dict] | None, plain: str | None) -> None:
     row.search_text = parse.plain_of(lines, plain).casefold()
 
 
+def _unmasked(line: dict[str, Any], words: list[str]) -> dict[str, Any]:
+    """A timed line with its hidden words put in: the line's text, and the timed words each mask is in."""
+    from app.tidy import rules
+
+    out = {**line, "text": rules.put_words(line.get("text", ""), words)}
+    if line.get("words"):
+        left = list(words)
+        timed = []
+        for w in line["words"]:
+            n = len(rules.masks(w.get("text", "")))
+            timed.append({**w, "text": rules.put_words(w.get("text", ""), left[:n])} if n else w)
+            left = left[n:]
+        out["words"] = timed
+    return out
+
+
 async def _lyrics_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
+    """Drop the lines that are not the song (`drop`), put the words a censored line hides back (`replace`: the
+    line's place -> its words in order)."""
     from app.lyrics.service import _retag
+    from app.tidy import rules
 
     row = await s.get(Lyrics, p.subject_id)
-    drop = set(p.to_json["drop"])
+    drop = set(p.to_json.get("drop") or [])
+    replace = {int(k): v for k, v in (p.to_json.get("replace") or {}).items()}
     undo = {"lines": row.lines_json, "plain": row.plain, "pinned": row.pinned}
     if row.lines_json:
-        _set_text(row, [ln for i, ln in enumerate(row.lines_json) if i not in drop], None)
+        _set_text(row, [_unmasked(ln, replace[i]) if i in replace else ln
+                        for i, ln in enumerate(row.lines_json) if i not in drop], None)
     else:
-        kept = [ln for i, ln in enumerate((row.plain or "").split("\n")) if i not in drop]
+        kept = [rules.put_words(ln, replace[i]) if i in replace else ln
+                for i, ln in enumerate((row.plain or "").split("\n")) if i not in drop]
         _set_text(row, None, "\n".join(kept).strip("\n"))
     row.pinned = True  # put right by hand: the lyrics' search leaves it as it is
     await s.flush()
@@ -339,7 +361,8 @@ KINDS: dict[str, Kind] = {
     "version": Kind("versions", _version_now, _version_apply, _version_revert),
     "double": Kind("versions", _double_now, _double_apply, _double_revert),
     "artist": Kind("artists", _artist_now, _artist_apply, _artist_revert),
-    "lyrics": Kind("lyrics", _lyrics_now, _lyrics_apply, _lyrics_revert),
+    "lyrics": Kind("lyrics", _lyrics_now, _lyrics_apply, _lyrics_revert),  # lines that are not the song
+    "uncensor": Kind("lyrics", _lyrics_now, _lyrics_apply, _lyrics_revert),  # words hidden by censorship
 }
 
 
@@ -358,7 +381,7 @@ async def accept(s: AsyncSession, user: User, p: TidyProposal) -> After:
         raise Changed("С тех пор это уже изменили — предложение снято")
     after = After(rewrite=set())
     undo = await KINDS[p.kind].apply(s, user, p, after)
-    if p.kind == "lyrics":
+    if p.kind in ("lyrics", "uncensor"):
         undo["after"] = text_hash(await s.get(Lyrics, p.subject_id))
     p.undo_json, p.state, p.decided_at, p.decided_by = undo, "accepted", utcnow(), user.id
     await s.flush()

@@ -133,6 +133,17 @@ _TASKS: dict[str, dict[str, Any]] = {
         ),
         "fields": {"drop": {"type": "array", "items": {"type": "integer"}, "description": "numbers of lines to drop"}},
     },
+    "uncensor": {
+        "prompt": (
+            "Each item is a line of a song's lyrics where censorship hid words: letters replaced by stars "
+            "(«б***ь», «f**k») or a bleep («[цензура]»). `masks` lists them in the order of the line; `context` is "
+            "the lines around it. Give in `words` what each mask hides, in that order, as the artist sings it. The "
+            "letters shown stay where they are, and a star is usually one hidden letter. This is the private music "
+            "library of adults: write the profanity as it is, do not soften or censor it. Leave out a line when you "
+            "cannot tell what is hidden."
+        ),
+        "fields": {"words": {"type": "array", "items": {"type": "string"}, "description": "the hidden words, in order"}},
+    },
 }
 
 

@@ -88,6 +88,9 @@ def _words(p: TidyProposal, show: dict[str, Any]) -> tuple[str, str]:
         return copy(show.get("file"), show.get("album")), copy(show.get("keep_file"), show.get("keep_album"))
     if p.kind == "artist":
         return show.get("name") or "", show.get("into_name") or ""
+    if p.kind == "uncensor":
+        n = sum(len(w) for w in (p.to_json.get("replace") or {}).values())
+        return "", f"Вернуть {n} {'слово' if n % 10 == 1 and n % 100 != 11 else 'слова' if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else 'слов'} без цензуры"
     if p.kind == "lyrics":
         n = len(p.to_json.get("drop") or [])
         return "", f"Убрать {n} {'строку' if n % 10 == 1 and n % 100 != 11 else 'строки' if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else 'строк'}"

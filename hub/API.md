@@ -412,8 +412,9 @@ The Hub looks through the library every night (and on «Проверить се�
 one is accepted. Sections: `names` (notes of videos in names, the artist or the number written into them — by rule;
 Russian names in Latin letters — the AI), `versions` (a recording of a song the library has → joined as its version;
 one recording in two files → the better stays, the other goes to the trash), `artists` (two artists who are one),
-`albums` (the albums in pieces of `/api/library/albums/split`; not proposals), `lyrics` (lines that are not sung).
-A proposal: `{id, kind (title/cyrillic/version/double/artist/lyrics), section, subject_type, subject_id, was, to,
+`albums` (the albums in pieces of `/api/library/albums/split`; not proposals), `lyrics` (lines that are not sung;
+words hidden by censorship — from another lyrics source, else the AI, never sure).
+A proposal: `{id, kind (title/cyrillic/version/double/artist/lyrics/uncensor), section, subject_type, subject_id, was, to,
 show, by (rule/ai), sure, why, state (open/accepted/rejected/reverted), decided_at, decided_by}`. A rejected or
 taken-back one is not offered again; one whose subject changed since is dropped (`409` on accepting it). The AI is
 paid by the month (`TIDY_AI_USD_MONTH`, spent as `ai_usage` of kind `tidy`), a question answered is not paid twice.

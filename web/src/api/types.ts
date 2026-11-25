@@ -1858,11 +1858,13 @@ export interface TidyShow {
   into_line?: string;
   /** a text: the lines to drop */
   lines?: string[];
+  /** a text: its censored lines and what they become */
+  pairs?: { was: string; to: string }[];
 }
 
 export interface TidyProposalOut {
   id: number;
-  kind: 'title' | 'cyrillic' | 'version' | 'double' | 'artist' | 'lyrics';
+  kind: 'title' | 'cyrillic' | 'version' | 'double' | 'artist' | 'lyrics' | 'uncensor';
   section: TidyProposalSection;
   subject_type: 'track' | 'album' | 'artist';
   subject_id: number;

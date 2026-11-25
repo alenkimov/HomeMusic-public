@@ -19,7 +19,7 @@ const ABOUT: Record<TidySectionId, string> = {
   versions: 'Другие записи той же песни (Sped Up, Live, Remix…) — связать с оригиналом как версии. Одна запись в двух файлах — оставить лучший.',
   artists: 'Один исполнитель под разными написаниями — объединить. Прежние написания останутся: по ним тоже найдётся.',
   albums: '',
-  lyrics: 'Строки текста, которые не поются: ссылки, призывы подписаться, реклама, подписи сайтов.',
+  lyrics: 'Строки текста, которые не поются (ссылки, призывы подписаться, реклама), и слова, скрытые цензурой: «б***ь», «[цензура]».',
 };
 
 /** The AI's month and the last look-through, in a line. */
@@ -214,6 +214,20 @@ export function ProposalCard({ p, busy, onDecide, journal }: {
           ))}
         </span>
         <span className="mt-1 block text-[13px] font-semibold">{p.to}</span>
+      </>
+    );
+  } else if (p.kind === 'uncensor') {
+    body = (
+      <>
+        <span className="block truncate text-[15px] font-semibold">{p.show.title_now}</span>
+        <span className="mt-1 block space-y-1">
+          {(p.show.pairs ?? []).map((x, i) => (
+            <span key={i} className="block">
+              <span className="block break-words text-[13px] text-muted line-through decoration-danger/70">{x.was}</span>
+              <span className="block break-words text-[13px] font-semibold"><span className="text-dim">→ </span>{x.to}</span>
+            </span>
+          ))}
+        </span>
       </>
     );
   } else if (p.kind === 'double') {
