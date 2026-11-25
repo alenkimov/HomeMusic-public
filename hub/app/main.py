@@ -26,11 +26,6 @@ def _import_handlers() -> None:
     import app.mixes.discover
     import app.playlists_mirror
 
-    try:
-        import app.ai.pipeline  # noqa: F401
-    except ImportError:
-        log.warning("assistant pipeline not available")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -194,12 +189,6 @@ def create_app() -> FastAPI:
               artists.router, insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, quality.router, discoveries.router, listenbrainz.router, for_you.router, subsonic.router, integrations.router):
         app.include_router(r)
     app.include_router(integrations.callback_router)
-    try:
-        from app.api import assistant
-
-        app.include_router(assistant.router)
-    except ImportError:
-        pass
 
     app.add_middleware(HubMark)
 

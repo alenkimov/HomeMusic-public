@@ -89,20 +89,37 @@ def profile_login(text: str) -> str:
     raise SourceError("Нужна ссылка на профиль: music.yandex.ru/users/<логин>/playlists/3")
 
 
-def link_target(url: str) -> tuple[str, tuple[str, ...]]:
-    """A link to a playlist or an album of Yandex Music → what it points at (`ai.links.parse_yandex_path`)."""
-    from app.ai.links import UnsupportedLink, parse_yandex_path
+_UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+_PLAYLIST_ID_RE = re.compile(rf"^(?:[a-z]{{2}}\.)?{_UUID}$", re.I)
 
+
+def parse_yandex_path(path: str) -> tuple[str, tuple[str, ...]] | None:
+    """A Yandex Music URL's path → (kind, ids): ("user_playlist", (owner, kind)), ("playlist", (uuid,)),
+    ("album", (album_id,)), ("track", (track_id,)); None: none of these."""
+    parts = [x for x in path.split("/") if x]
+    if len(parts) >= 4 and parts[0] == "users" and parts[2] == "playlists" and parts[3].isdigit():
+        return "user_playlist", (parts[1], parts[3])
+    if len(parts) >= 2 and parts[0] == "playlists" and _PLAYLIST_ID_RE.match(parts[1]):
+        return "playlist", (parts[1],)
+    if len(parts) >= 4 and parts[0] == "album" and parts[2] == "track" and parts[3].isdigit():
+        return "track", (parts[3],)
+    if len(parts) >= 2 and parts[0] == "album" and parts[1].isdigit():
+        return "album", (parts[1],)
+    if len(parts) >= 2 and parts[0] == "track" and parts[1].isdigit():
+        return "track", (parts[1],)
+    return None
+
+
+def link_target(url: str) -> tuple[str, tuple[str, ...]]:
+    """A link to a playlist or an album of Yandex Music → what it points at."""
     raw = (url or "").strip()
     if "://" not in raw:
         raw = "https://" + raw
     p = urlparse(raw)
-    try:
-        if not _HOST_RE.match((p.hostname or "").lower()):
-            raise UnsupportedLink()
-        kind, ids = parse_yandex_path(p.path)
-    except UnsupportedLink as e:
-        raise SourceError("Нужна ссылка на плейлист или альбом Яндекс Музыки") from e
+    found = parse_yandex_path(p.path) if _HOST_RE.match((p.hostname or "").lower()) else None
+    if found is None:
+        raise SourceError("Нужна ссылка на плейлист или альбом Яндекс Музыки")
+    kind, ids = found
     if kind == "track":
         raise SourceError("Это ссылка на трек — нужна на плейлист или альбом")
     return kind, ids

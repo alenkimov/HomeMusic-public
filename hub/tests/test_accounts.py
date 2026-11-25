@@ -642,24 +642,6 @@ async def test_user_list_survives_navidrome_admin_api_failure(env):
     assert r.json()["users"][0]["starred_songs"] is None
 
 
-async def test_chat_turn_records_spending(env, monkeypatch):
-    from app import config
-
-    monkeypatch.setenv("LLM_API_KEY", "test-key")
-    monkeypatch.setenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
-    config.get_settings.cache_clear()
-    reply = {"id": "x", "object": "chat.completion", "created": 0, "model": "m",
-             "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "Привет"}}],
-             "usage": {"prompt_tokens": 1200, "completion_tokens": 40, "total_tokens": 1240, "cost": 0.00042}}
-    route = env["mock"].post("https://openrouter.ai/api/v1/chat/completions").mock(
-        return_value=httpx.Response(200, json=reply))
-    r = await env["admin"].post("/api/assistant/chat", json={"messages": [{"role": "user", "content": "привет"}]})
-    assert r.status_code == 200, r.text
-    assert r.json()["cost_usd"] == pytest.approx(0.00042)  # OpenRouter's own figure, not the configured price
-    assert json.loads(route.calls[0].request.content)["usage"] == {"include": True}
-    me = next(u for u in (await env["admin"].get("/api/admin/users")).json()["users"] if u["username"] == "admin")
-    assert me["ai_requests"] == 1 and me["ai_cost_usd"] == pytest.approx(0.00042)
-
 async def test_files_are_looked_after_by_who_brought_them(env):
     """«Мои файлы»: a listener sees and changes what they brought, an admin everything; an album with tracks of
     several listeners is changed only by an admin."""

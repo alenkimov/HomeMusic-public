@@ -477,42 +477,6 @@ async def test_upload_commit_and_album_edit(env, tmp_path):
     assert list((env["music"] / ".trash").rglob("*.mp3"))
 
 
-async def test_assistant_link_confirm(env, monkeypatch):
-    from app.ai import extract, links
-
-    async def fake_link(url):
-        return extract.Extraction(
-            source_app="yandex_music", page_type="playlist",
-            context=extract.ExtractionContext(playlist_name="Рок"),
-            items=[extract.ExtractedItem(artist_raw="Кино", title_raw="Группа крови", conf=1.0),
-                   extract.ExtractedItem(artist_raw="Нет такого", title_raw="Совсем", conf=1.0)],
-        )
-
-    monkeypatch.setattr(links, "extract_from_link", fake_link)
-    c = env["client"]
-    r = await c.post("/api/assistant/tasks", json={"url": "https://music.yandex.ru/users/x/playlists/1"})
-    assert r.status_code == 200, r.text
-    tid = r.json()["id"]
-    await drain_jobs()
-    t = (await c.get(f"/api/assistant/tasks/{tid}")).json()
-    assert t["status"] == "awaiting_confirmation", t
-    assert t["suggested_playlist_name"] == "Рок"
-    # not in the catalog, Cyrillic -> hitmoz files are offered, never auto-picked
-    assert [row["status"] for row in t["rows"]] == ["auto", "confirm"]
-    assert t["rows"][1]["options"] and t["rows"][1]["options"][0]["title"] == "Совсем"
-    # side effects need the token
-    bad = await c.post(f"/api/assistant/tasks/{tid}/confirm", json={"confirm_token": "x", "rows": []})
-    assert bad.status_code == 403
-    r = await c.post(f"/api/assistant/tasks/{tid}/confirm", json={
-        "confirm_token": t["confirm_token"],
-        "rows": [{"index": 0, "selected": True}, {"index": 1, "selected": False}],
-        "target": {"kind": "new", "name": "Рок"},
-    })
-    assert r.status_code == 200, r.text
-    await drain_jobs()
-    assert env["state"]["playlists"]["pl1"] == {"name": "Рок", "songs": ["nd0"]}
-
-
 async def test_refs_expand_skips_dead_ref(env):
     c = env["client"]
     r = await c.post("/api/downloads", json={"track_refs": ["dz:999", "dz:100"]})

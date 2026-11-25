@@ -88,16 +88,6 @@ class SearchHistory(Base):
     searched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
-class AssistantDailyUsage(Base):
-    """Persistent message allowance, independent of saved chats and LLM token usage."""
-
-    __tablename__ = "assistant_daily_usage"
-
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    day: Mapped[date] = mapped_column(Date, primary_key=True)
-    messages: Mapped[int] = mapped_column(Integer)
-
-
 class Invite(Base):
     """One-time registration code the admin hands to a person (FR-1: accounts only by invitation)."""
 
@@ -429,41 +419,6 @@ class Upgrade(Base):
     was_kbps: Mapped[int | None] = mapped_column(Integer)
     # where that file lies now, in the trash folder (absolute): heard beside the new one, and brought back, while kept
     was_path: Mapped[str | None] = mapped_column(String(1024))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
-
-
-class AssistantTask(Base):
-    __tablename__ = "assistant_tasks"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    input_kind: Mapped[str] = mapped_column(String(16))  # images/link/text
-    input_ref: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # image paths / url / text
-    extraction_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
-    resolution_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
-    status: Mapped[str] = mapped_column(String(24), default="queued")
-    # queued/extracting/resolving/awaiting_confirmation/confirmed/done/failed
-    confirm_token: Mapped[str | None] = mapped_column(String(64))
-    batch_id: Mapped[int | None] = mapped_column(ForeignKey("download_batches.id", ondelete="SET NULL"))
-    error: Mapped[str | None] = mapped_column(Text)
-    tokens_in: Mapped[int] = mapped_column(Integer, default=0)
-    tokens_out: Mapped[int] = mapped_column(Integer, default=0)
-    cost_usd: Mapped[float] = mapped_column(Float, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
-
-
-class AssistantChat(Base):
-    """A saved conversation with the assistant: the messages as the PWA shows them (no images, only their count)."""
-
-    __tablename__ = "assistant_chats"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    title: Mapped[str] = mapped_column(String(200), default="")
-    # [{"role", "content", "images"?, "cost"?, "done"?, "proposal"?: {task_id, token, summary, actions, state}}]
-    messages: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
