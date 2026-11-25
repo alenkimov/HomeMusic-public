@@ -5,7 +5,7 @@ import { ServiceBadge, ServiceIcon, ServiceText } from '../components/ServiceBad
 import { PlaylistsPick } from '../components/PlaylistsButton';
 import { AfterImport } from './Upload';
 import { Icon, type IconName } from '../components/Icon';
-import { Button, Checkbox, ErrorState, Loading, Notice, PageHeader, ProgressBar, Radio, SectionTitle, SkeletonRows, Spinner, cx } from '../components/ui';
+import { Button, Checkbox, ErrorState, Loading, Notice, PageHeader, ProgressBar, Radio, SectionTitle, SkeletonRows, Spinner, cx, Badge } from '../components/ui';
 import { LIKED_MARK, PlaylistRow, playlistLook } from '../components/Playlist';
 import { useSession } from '../lib/session';
 import { EMBEDDED } from '../lib/embedded';
@@ -562,7 +562,7 @@ function ModeCard({ on, onClick, title, badge, children }: { on: boolean; onClic
       <span className="min-w-0 flex-1">
         <span className="flex flex-wrap items-center gap-2 font-semibold">
           {title}
-          {badge && <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-medium text-accent">{badge}</span>}
+          {badge && <Badge>{badge}</Badge>}
         </span>
         <span className="mt-1 block text-sm text-muted">{children}</span>
       </span>

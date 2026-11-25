@@ -1,3 +1,4 @@
+import { Chip } from '../components/Chip';
 import { TrackTitle, VersionBadge } from '../components/TrackTitle';
 import { titleWithVersion, useVersionLabel, type VersionIdentity } from '../lib/versionLabels';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -5,7 +6,7 @@ import { api, apiSessionSignal, errorMessage, uploadCoverUrl } from '../api/clie
 import type { CoverInfo, TrackOut, UploadAlbumIn, UploadOut, UploadTrackIn } from '../api/types';
 import { Icon } from '../components/Icon';
 import { PlaylistsPick } from '../components/PlaylistsButton';
-import { Button, Cover, Empty, ErrorState, Field, IconButton, Loading, PageHeader, ProgressBar, Sheet, Spinner, cx } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, Field, IconButton, Loading, PageHeader, ProgressBar, Sheet, Spinner, cx, Segmented } from '../components/ui';
 import { useDesktop } from '../lib/desktop';
 import { fmtDuration, fmtSize, pictureWords, plural, toIntOrNull, tracksWord } from '../lib/format';
 import { useAsync, useDebounced } from '../lib/hooks';
@@ -931,13 +932,13 @@ export function UploadPage() {
       ) : uploads.length === 0 ? null : (
         <>
           <div className="flex flex-wrap items-center gap-2 px-4 pt-4 lg:px-6">
-            <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto" role="group" aria-label="Какие файлы показывать" style={{ scrollbarWidth: 'none' }}>
-              {chips.filter(([id, , n]) => id === 'all' || id === only || n > 0).map(([id, label, n, urgent]) => (
-                <button key={id} type="button" aria-pressed={only === id} onClick={() => setOnly(only === id ? 'all' : id)} className={cx('shrink-0 rounded-full px-3 py-1.5 text-sm transition', only === id ? (urgent ? 'bg-danger font-semibold text-white' : 'bg-fg font-semibold text-bg') : urgent ? 'bg-danger/15 text-danger' : 'bg-fg/10 text-muted hover:text-fg')}>
-                  {label}
-                  <span className={cx('pl-1.5 tabular-nums', only === id || urgent ? 'opacity-80' : 'text-dim')}>{n}</span>
-                </button>
-              ))}
+            <div className="min-w-0 flex-1">
+              <Segmented
+                label="Какие файлы показывать"
+                value={only}
+                onChange={(id) => setOnly(only === id ? 'all' : id)}
+                options={chips.filter(([id, , n]) => id === 'all' || id === only || n > 0).map(([id, label, n, urgent]) => ({ value: id, label, count: n, urgent: !!urgent }))}
+              />
             </div>
           </div>
           {toFill.length > 0 && (
@@ -1592,12 +1593,6 @@ const KEEP_OFF = 'hm-upload-keep-off';
 export function AfterImport({ made = [], count, like, onLike, playlists, onPlaylists, onPickPlaylists, tagIds, onTags, keepName, keep = false, onKeep, label = 'После загрузки', className = 'mx-4 mt-5' }: { made?: { id: number; name: string }[]; keepName?: string; keep?: boolean; onKeep?: (on: boolean) => void; label?: string; className?: string; count: number; like: boolean; onLike: (v: boolean) => void; playlists: { id: string; name: string }[]; onPlaylists: (list: { id: string; name: string }[]) => void; onPickPlaylists: () => void; tagIds: number[]; onTags: (ids: number[]) => void }) {
   const tags = useTags();
   const picked = tagIds.map((id) => tags.byId.get(id)).filter((t) => !!t);
-  const chip = 'flex min-w-0 items-center gap-1.5 rounded-full bg-fg/10 py-1 pl-3 pr-1 text-sm';
-  const off = (label: string, onClick: () => void) => (
-    <button type="button" aria-label={label} title={label} onClick={onClick} className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted hover:bg-fg/10 hover:text-fg">
-      <Icon name="x" size={13} stroke={2.5} />
-    </button>
-  );
   const kept = !!keepName && keep;
   const nothing = !like && !playlists.length && !picked.length && !kept && !made.length;
   return (
@@ -1609,42 +1604,22 @@ export function AfterImport({ made = [], count, like, onLike, playlists, onPlayl
       {nothing && <span className="text-xs text-dim">Только в библиотеку. Можно сразу добавить в «Любимое», плейлисты и поставить теги.</span>}
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         {made.map((m) => (
-          <span key={m.id} className={cx(chip, 'pr-3')} title={`Плейлист «${m.name}» создастся сам — в нём будут все треки этого списка`}>
-            <Icon name="playlist" size={14} className="shrink-0 text-accent" />
-            <span className="truncate">Плейлист «{m.name}»</span>
-          </span>
+          <Chip key={m.id} icon="playlist" iconClass="text-accent" title={`Плейлист «${m.name}» создастся сам — в нём будут все треки этого списка`}>Плейлист «{m.name}»</Chip>
         ))}
-        {like && (
-          <span className={chip}>
-            <Icon name="heart" size={14} filled className="text-accent" />
-            Любимое
-            {off('Не добавлять в «Любимое»', () => onLike(false))}
-          </span>
-        )}
+        {like && <Chip icon="heart" iconFilled iconClass="text-accent" onRemove={() => onLike(false)} removeLabel="Не добавлять в «Любимое»">Любимое</Chip>}
         {keepName && onKeep && (kept ? (
-          <span className={chip} title="Плейлист создастся сам: в нём останется всё, что загружено за день">
-            <Icon name="playlist" size={14} className="shrink-0 text-accent" />
-            <span className="truncate">{keepName}</span>
-            {off('Не собирать загруженное в плейлист', () => onKeep(false))}
-          </span>
+          <Chip icon="playlist" iconClass="text-accent" title="Плейлист создастся сам: в нём останется всё, что загружено за день"
+            onRemove={() => onKeep(false)} removeLabel="Не собирать загруженное в плейлист">{keepName}</Chip>
         ) : (
           <button type="button" onClick={() => onKeep(true)} className="rounded-full border border-dashed border-line px-3 py-1 text-sm text-muted hover:text-fg">
             + плейлист «{keepName}»
           </button>
         ))}
         {playlists.map((p) => (
-          <span key={p.id} className={chip}>
-            <Icon name="playlist" size={14} className="shrink-0 text-muted" />
-            <span className="truncate">{p.name}</span>
-            {off(`Не добавлять в «${p.name}»`, () => onPlaylists(playlists.filter((x) => x.id !== p.id)))}
-          </span>
+          <Chip key={p.id} icon="playlist" onRemove={() => onPlaylists(playlists.filter((x) => x.id !== p.id))} removeLabel={`Не добавлять в «${p.name}»`}>{p.name}</Chip>
         ))}
         {picked.map((t) => (
-          <span key={t.id} className={chip}>
-            <Icon name="tag" size={14} className="shrink-0 text-muted" />
-            <span className="truncate">{t.name}</span>
-            {off(`Не ставить тег «${t.name}»`, () => onTags(tagIds.filter((x) => x !== t.id)))}
-          </span>
+          <Chip key={t.id} icon="tag" onRemove={() => onTags(tagIds.filter((x) => x !== t.id))} removeLabel={`Не ставить тег «${t.name}»`}>{t.name}</Chip>
         ))}
       </div>
     </div>

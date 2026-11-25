@@ -13,7 +13,7 @@ export { cx };
 
 // --- buttons --------------------------------------------------------------------------------------
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'danger-solid';
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'danger-solid' | 'outline';
 
 const VARIANTS: Record<Variant, string> = {
   primary: 'bg-accent text-on-accent hover:bg-accent-strong active:scale-[0.98] font-semibold disabled:bg-raised disabled:text-dim disabled:opacity-100',
@@ -21,7 +21,15 @@ const VARIANTS: Record<Variant, string> = {
   ghost: 'text-fg hover:bg-fg/5',
   danger: 'bg-danger/15 text-danger border border-danger/30 hover:bg-danger/25',
   'danger-solid': 'bg-[#b52e29] text-white hover:bg-[#9f2723] font-semibold',
+  // the light buttons of a page's head (an artist's «Подписаться», «Все треки»)
+  outline: 'border border-fg/40 text-fg font-semibold hover:border-fg active:scale-95',
 };
+
+/** A link drawn as a `Button`: the same look (`variant`, `small`), for what leads somewhere rather than does. */
+export function buttonClass(variant: Variant = 'secondary', small = false, className?: string): string {
+  return cx('inline-flex select-none items-center justify-center gap-2 rounded-full transition', small ? 'min-h-9 px-3.5 text-sm' : 'min-h-12 px-5 text-[15px]',
+    VARIANTS[variant], className);
+}
 
 type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: Variant;
@@ -35,13 +43,7 @@ export function Button({ variant = 'secondary', icon, busy, small, block, classN
   return (
     <button
       type="button"
-      className={cx(
-        'inline-flex select-none items-center justify-center gap-2 rounded-full transition disabled:opacity-50 disabled:pointer-events-none',
-        small ? 'min-h-9 px-3.5 text-sm' : 'min-h-12 px-5 text-[15px]',
-        block && 'w-full',
-        VARIANTS[variant],
-        className,
-      )}
+      className={buttonClass(variant, small, cx('disabled:opacity-50 disabled:pointer-events-none', block && 'w-full', className))}
       disabled={disabled || busy}
       aria-busy={busy || undefined}
       {...rest}
@@ -215,10 +217,15 @@ export function PageHeader({ title, back, right, sub, hero, toolbar }: { title: 
   );
 }
 
-export function SectionTitle({ children, right }: { children: ReactNode; right?: ReactNode }) {
+/** The heading of a section of a page. `note`: a small word after it (how many, where from); `right`: a control at
+ * the other end; `page`: the page's own side margins (wider on a computer), for a page whose content has them. */
+export function SectionTitle({ children, right, note, page, id }: { children: ReactNode; right?: ReactNode; note?: ReactNode; page?: boolean; id?: string }) {
   return (
-    <div className="flex items-center justify-between px-4 pb-2 pt-5">
-      <h2 className="text-lg font-bold">{children}</h2>
+    <div className={cx('flex items-center justify-between gap-3 px-4 pb-2 pt-5', page && 'lg:px-6')}>
+      <h2 id={id} className="flex min-w-0 items-baseline gap-2 text-lg font-bold">
+        {children}
+        {note && <span className="text-xs font-normal text-dim">{note}</span>}
+      </h2>
       {right}
     </div>
   );
@@ -249,18 +256,32 @@ export function ExplicitBadge() {
   );
 }
 
+/** A small word or count in a pill: «новый», «в библиотеке», «ИИ не настроен», the counter of a menu's line. `tone`:
+ * accent (good, new), warn (wants a look), danger, muted; `solid`: filled with it (what calls to be looked at, a
+ * count), else a tint; `size`: `sm` beside a name, `md` a menu's counter. */
+export function Badge({ children, tone = 'accent', solid = false, size = 'sm', icon, className }: {
+  children: ReactNode; tone?: 'accent' | 'warn' | 'danger' | 'muted'; solid?: boolean; size?: 'sm' | 'md'; icon?: IconName; className?: string;
+}) {
+  const look = solid
+    ? { accent: 'bg-accent text-on-accent', warn: 'bg-warn text-bg', danger: 'bg-danger text-white', muted: 'bg-fg/20 text-fg' }[tone]
+    : { accent: 'bg-accent/15 text-accent', warn: 'bg-warn/15 text-warn', danger: 'bg-danger/15 text-danger', muted: 'bg-fg/10 text-muted' }[tone];
+  return (
+    <span className={cx('inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full',
+      size === 'md' ? 'h-6 min-w-6 px-2 text-[13px] font-bold' : cx('px-2 py-0.5 text-[11px]', solid ? 'font-bold' : 'font-medium'), look, className)}>
+      {icon && <Icon name={icon} size={12} stroke={3} />}
+      {children}
+    </span>
+  );
+}
+
 export function OwnedBadge({ status, count, total }: { status: OwnedStatus; count?: number; total?: number | null }) {
   if (status === 'full')
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-medium text-accent">
-        <Icon name="check" size={12} stroke={3} />в библиотеке
-      </span>
+      <Badge icon="check">в библиотеке</Badge>
     );
   if (status === 'partial')
     return (
-      <span className="inline-flex items-center rounded-full bg-warn/15 px-2 py-0.5 text-[11px] font-medium text-warn">
-        частично{count != null && total ? ` ${count}/${total}` : ''}
-      </span>
+      <Badge tone="warn">частично{count != null && total ? ` ${count}/${total}` : ''}</Badge>
     );
   return null; // «нет» under every release was noise; only owned / partly owned are marked
 }
@@ -357,7 +378,9 @@ export function Segmented<T extends string>({
   after,
 }: {
   value: T;
-  options: Array<{ value: T; label: string }>;
+  /** `count`: a number after the name; `urgent`: what needs doing at once, in red */
+  options: Array<{ value: T; label: string; count?: number | null; urgent?: boolean }>;
+  /** called with the tapped choice, the chosen one too (a filter that a second tap takes off) */
   onChange: (v: T) => void;
   label: string;
   /** one more thing in the row, after the choices (it scrolls with them) */
@@ -374,10 +397,13 @@ export function Segmented<T extends string>({
           onClick={() => onChange(o.value)}
           className={cx(
             'min-h-9 shrink-0 rounded-full px-4 text-sm transition',
-            value === o.value ? 'bg-accent font-semibold text-on-accent' : 'bg-raised text-fg hover:bg-hover',
+            value === o.value
+              ? o.urgent ? 'bg-danger font-semibold text-white' : 'bg-accent font-semibold text-on-accent'
+              : o.urgent ? 'bg-danger/15 text-danger' : 'bg-raised text-fg hover:bg-hover',
           )}
         >
           {o.label}
+          {o.count != null && <span className={cx('pl-1.5 tabular-nums', value === o.value || o.urgent ? 'opacity-75' : 'text-dim')}>{o.count}</span>}
         </button>
       ))}
       {after}

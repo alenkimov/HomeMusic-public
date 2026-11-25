@@ -1,3 +1,4 @@
+import { Chip } from '../components/Chip';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useFollowedCount, useUnseenReleases } from '../lib/releases';
 import { api } from '../api/client';
@@ -70,15 +71,11 @@ export function LibraryPage() {
       <Title>Подборки по тегам</Title>
       <div className="flex flex-wrap gap-2">
         {(sels.data ?? []).map((x) => (
-          <Link key={x.id} to={`/selection/${x.id}`} className="flex h-11 items-center gap-2 rounded-full bg-surface pl-3 pr-4 text-[15px] font-medium hover:bg-raised">
-            <Icon name="filter" size={18} className="text-accent" />
-            <span className="max-w-56 truncate">{x.name}</span>
-          </Link>
+          <Chip key={x.id} size="lg" icon="filter" iconClass="text-accent" to={`/selection/${x.id}`} className="max-w-64">{x.name}</Chip>
         ))}
-        <Link to="/tags" className="flex h-11 items-center gap-2 rounded-full bg-surface pl-3 pr-4 text-[15px] font-medium text-muted hover:bg-raised hover:text-fg">
-          <Icon name="tag" size={18} />
+        <Chip size="lg" icon="tag" to="/tags">
           Все теги
-        </Link>
+        </Chip>
       </div>
     </div>
   );

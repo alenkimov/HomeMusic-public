@@ -242,7 +242,7 @@ function DownloadCandidates({ candidates, attach, ready, busy, onPick }: { candi
   }));
   return (
     <section aria-labelledby="download-file-selection">
-      <h2 id="download-file-selection" className="px-4 pb-2 pt-4 text-lg font-bold">Выберите файл</h2>
+      <SectionTitle id="download-file-selection">Выберите файл</SectionTitle>
       <TrackTableHeader numbered album />
       <ul>
         {tracks.map((track, i) => (

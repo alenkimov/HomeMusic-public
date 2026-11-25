@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { QualityRow } from '../api/types';
 import { Icon } from '../components/Icon';
-import { Button, Empty, ErrorState, PageHeader, ProgressBar, SkeletonRows, cx } from '../components/ui';
+import { Button, Empty, ErrorState, PageHeader, ProgressBar, SkeletonRows, cx , Segmented } from '../components/ui';
 import { fmtDuration, tracksWord } from '../lib/format';
 import { ServiceBadge, ServiceText, serviceName } from '../components/ServiceBadge';
 import { SourceStatuses } from '../components/SourceStatuses';
@@ -164,13 +164,8 @@ export function QualityPage() {
           ) : (
             <>
               <div className="flex flex-wrap items-center gap-2 px-4 pb-3 lg:px-6">
-                <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto" role="group" aria-label="Раздел" style={{ scrollbarWidth: 'none' }}>
-                  {TABS.map(([id, label]) => (
-                    <button key={id} type="button" aria-pressed={at === id} onClick={() => setTab(id)} className={cx('shrink-0 rounded-full px-3 py-1.5 text-sm transition', at === id ? 'bg-fg font-semibold text-bg' : 'bg-fg/10 text-muted hover:text-fg')}>
-                      {label}
-                      <span className={cx('pl-1.5 tabular-nums', at === id ? 'opacity-70' : 'text-dim')}>{byTab[id].length}</span>
-                    </button>
-                  ))}
+                <div className="min-w-0 flex-1">
+                  <Segmented<Tab> label="Раздел" value={at} onChange={setTab} options={TABS.map(([id, label]) => ({ value: id, label, count: byTab[id].length }))} />
                 </div>
                 {at === 'found' && shown.length > 1 && (
                   <Button small busy={busy === 'all'} onClick={takeAll}>

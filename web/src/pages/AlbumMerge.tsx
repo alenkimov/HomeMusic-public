@@ -4,7 +4,7 @@ import type { SplitAlbums, TrackOut } from '../api/types';
 import { TrackRow, TrackTableHeader } from '../components/catalog';
 import { Icon } from '../components/Icon';
 import { TrackTable } from '../components/TrackTable';
-import { Button, Cover, Empty, ErrorState, Loading, PageHeader, cx } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, Loading, PageHeader, cx, Segmented } from '../components/ui';
 import { AlbumCard, AlbumHero } from '../components/Album';
 import { ServiceIcon, serviceName } from '../components/ServiceBadge';
 import { fmtLength, tracksWord } from '../lib/format';
@@ -48,9 +48,9 @@ export function AlbumMergePage() {
       <p className="max-w-3xl px-4 text-[15px] leading-relaxed text-muted lg:px-6">
         Альбом попал в библиотеку несколькими частями: треки с гостями записались отдельно. Проверьте части и объедините их. Если это разные релизы, отметьте это.
       </p>
-      <div className="flex gap-2 px-4 pt-4 lg:px-6">
-        <button type="button" onClick={() => { setTab('pending'); setPicked(null); }} className={chip(tab === 'pending')}>Ждут решения · {waiting}</button>
-        <button type="button" onClick={() => { setTab('separate'); setPicked(null); }} className={chip(tab === 'separate')}>Разные релизы · {separate.length}</button>
+      <div className="px-4 pt-4 lg:px-6">
+        <Segmented<'pending' | 'separate'> label="Раздел" value={tab} onChange={(t) => { setTab(t); setPicked(null); }}
+          options={[{ value: 'pending', label: 'Ждут решения', count: waiting }, { value: 'separate', label: 'Разные релизы', count: separate.length }]} />
       </div>
 
       {!group ? (

@@ -21,7 +21,7 @@ import { listChanged, patch, useCardUpdates } from '../lib/cards';
 import { SaveSelection, TagFilterChips } from '../components/Tags';
 import { ArtistLooksWindow } from '../components/ArtistLooks';
 import { ArtistProjects, ArtistWindow, artistHint, useArtistCard } from '../components/ArtistNames';
-import { Button, Cover, Empty, ErrorState, HeroSkeleton, IconButton, PageHeader, SkeletonRows, Spinner, cx } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, HeroSkeleton, IconButton, PageHeader, SkeletonRows, Spinner, cx , SectionTitle, buttonClass } from '../components/ui';
 import { fmtLength, tracksWord } from '../lib/format';
 import { playCount, usePlayCounts } from '../lib/stats';
 import { useDesktop } from '../lib/desktop';
@@ -551,7 +551,7 @@ export function NdArtistPage({ id }: { id: string }) {
           onClick={() => void follow()}
           disabled={busy}
           aria-pressed={followed}
-          className={cx('flex h-9 items-center gap-1.5 rounded-full border px-4 text-sm font-semibold transition active:scale-95', followed ? 'border-accent text-accent' : 'border-fg/40 text-fg hover:border-fg')}
+          className={buttonClass('outline', true, cx('gap-1.5', followed && '!border-accent !text-accent'))}
         >
           {busy ? <Spinner size={14} /> : followed && <Icon name="check" size={15} stroke={3} />}
           {followed ? 'Вы подписаны' : 'Подписаться'}
@@ -561,7 +561,7 @@ export function NdArtistPage({ id }: { id: string }) {
             type="button"
             disabled={starting === seedKey({ nd_artist_id: artist.id })}
             onClick={() => void startWave({ nd_artist_id: artist.id }, 'radio')}
-            className="flex h-9 items-center gap-1.5 rounded-full border border-fg/40 px-4 text-sm font-semibold text-fg transition hover:border-fg active:scale-95 disabled:opacity-60"
+            className={buttonClass('outline', true, 'gap-1.5 disabled:opacity-60')}
           >
             <Icon name="wave" size={16} className="text-accent" />
             Волна по исполнителю
@@ -598,10 +598,7 @@ export function NdArtistPage({ id }: { id: string }) {
 
       {tracks.length > 0 && (
         <section aria-label="Треки">
-          <h2 className="flex items-baseline gap-2 px-4 pb-1 pt-3 text-lg font-bold lg:px-6">
-            Треки
-            <span className="text-xs font-normal text-dim">в медиатеке</span>
-          </h2>
+          <SectionTitle page note="в медиатеке">Треки</SectionTitle>
           <TrackTable tracks={tracks} numbered>
             <TrackTableHeader numbered />
             {tracks.map((t, i) => (
@@ -612,7 +609,7 @@ export function NdArtistPage({ id }: { id: string }) {
       )}
       {albums.length > 0 && (
         <section aria-label="Альбомы" className="pb-4">
-          <h2 className="px-4 pb-2 pt-5 text-lg font-bold lg:px-6">Альбомы</h2>
+          <SectionTitle page>Альбомы</SectionTitle>
           <div ref={row} className="no-scrollbar flex gap-4 overflow-x-auto px-4 pb-1 lg:px-6">
             {albums.map((a) => (
               <div key={a.id} className="w-36 shrink-0 lg:w-44">

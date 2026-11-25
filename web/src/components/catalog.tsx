@@ -39,6 +39,7 @@ import { menuPressProps, useContextMenu } from './ContextMenu';
 import { AlbumMenu, ArtistMenu } from './EntityMenus';
 import { AlbumCard, AlbumLink, catalogLook } from './Album';
 import { ArtistCard } from './Artist';
+import { Chip } from './Chip';
 import { useTrackTable } from './TrackTable';
 import { Checkbox, Cover, IconButton, OwnedBadge, PlayingBars, Spinner, cx } from './ui';
 
@@ -494,10 +495,8 @@ export function TrackRow({
         const list = myTags.filter((t) => t.group === group);
         return (
           <span className="flex min-w-0 items-center gap-1 overflow-hidden" title={list.map((t) => t.name).join(', ') || undefined}>
-            {list.slice(0, max).map((t) => (
-              <span key={t.id} className="truncate rounded-full bg-fg/10 px-2 py-0.5 text-[11px] text-muted">{t.name}</span>
-            ))}
-            {list.length > max && <span className="shrink-0 rounded-full bg-fg/10 px-1.5 py-0.5 text-[11px] text-muted">+{list.length - max}</span>}
+            {list.slice(0, max).map((t) => <Chip key={t.id} size="xs" className="shrink">{t.name}</Chip>)}
+            {list.length > max && <Chip size="xs">+{list.length - max}</Chip>}
           </span>
         );
       };

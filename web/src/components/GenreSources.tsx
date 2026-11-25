@@ -1,3 +1,4 @@
+import { Chip } from './Chip';
 import { useState } from 'react';
 import { GENRE_SOURCES, type GenreSource, type Tag, type TrackGenreSources } from '../lib/tags';
 import { Icon } from './Icon';
@@ -87,7 +88,7 @@ export function GenreCell({ genres, sources, title }: { genres: Tag[]; sources: 
         className="flex h-8 w-full min-w-0 items-center gap-1 rounded-md text-left text-xs text-muted hover:text-fg focus-visible:text-fg">
         {origins.slice(0, 2).map((source) => <GenreIcon key={source} source={source} size={12} />)}
         <span className="min-w-0 truncate">{first.name}</span>
-        {list.length > 1 && <span className="shrink-0 rounded-full bg-fg/10 px-1 py-0.5 text-[10px]">+{list.length - 1}</span>}
+        {list.length > 1 && <Chip size="xs">+{list.length - 1}</Chip>}
       </button>
       {open && <Sheet open onClose={() => setOpen(false)} title="Источники жанров">
         <p className="pb-1 text-sm text-muted">{title}</p>

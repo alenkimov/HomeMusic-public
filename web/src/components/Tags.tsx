@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import { tracksWord } from '../lib/format';
 import { UNTAGGED, closeTagsSheet, filterActive, filterWords, genreSourcesFor, selectionsChanged, setTagsData, useTags, useTagsSheet, type GenreSource, type Tag, type TagFilter, type TagSelection } from '../lib/tags';
 import { attempt, toast } from '../lib/ui';
+import { Chip } from './Chip';
 import { Icon } from './Icon';
 import { GenreSourceFilter } from './GenreSources';
 import { Button, Field, Loading, Sheet, cx } from './ui';
@@ -123,18 +124,16 @@ function Body({ songIds, title, pick }: { songIds: string[]; title: string; pick
                   {shown.map((t) => {
                     const at = now(t);
                     return (
-                      <button
+                      <Chip
                         key={t.id}
-                        type="button"
-                        role="checkbox"
-                        aria-checked={at === 'all' ? true : at === 'some' ? 'mixed' : false}
+                        tone={at === 'all' ? 'on' : at === 'some' ? 'some' : 'plain'}
+                        icon={at === 'all' ? 'check' : at === 'some' ? 'minus' : undefined}
                         onClick={() => tap(t)}
-                        className={cx('flex items-center gap-1 rounded-full px-3 py-1 text-sm transition', at === 'all' ? 'bg-accent text-on-accent' : at === 'some' ? 'bg-warn/20 text-warn' : 'bg-fg/10 text-muted hover:text-fg')}
+                        button={{ role: 'checkbox', 'aria-checked': at === 'all' ? true : at === 'some' ? 'mixed' : false }}
+                        after={at === 'some' && n > 1 && <span className="text-xs">· {counts.get(t.id)} из {n}</span>}
                       >
-                        {at !== 'none' && <Icon name={at === 'all' ? 'check' : 'minus'} size={13} stroke={3} />}
                         {t.name}
-                        {at === 'some' && n > 1 && <span className="text-xs">· {counts.get(t.id)} из {n}</span>}
-                      </button>
+                      </Chip>
                     );
                   })}
                   {!shown.length && <span className="text-xs text-dim">{genre ? 'Нет подходящих жанров' : 'Своих тегов пока нет — впишите название выше.'}</span>}
@@ -274,20 +273,20 @@ export function TagFilterChips({ filter, onChange, count }: { filter: TagFilter;
         {keys.map((k) => {
           const name = k === UNTAGGED ? 'без своих тегов' : (tags.byId.get(Number(k))?.name ?? '?');
           return (
-            <button
+            <Chip
               key={k}
-              type="button"
+              size="sm"
+              tone={filter[k] === 'no' ? 'no' : 'plain'}
               title={`Убрать «${name}» из отбора`}
               onClick={() => {
                 const next = { ...filter };
                 delete next[k];
                 onChange(next);
               }}
-              className={cx('flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full pl-2.5 pr-1.5 text-xs', filter[k] === 'no' ? 'bg-danger/20 text-danger line-through' : 'bg-fg/10 text-fg')}
+              after={<Icon name="x" size={12} className="opacity-60" />}
             >
               {name}
-              <Icon name="x" size={12} className="opacity-60" />
-            </button>
+            </Chip>
           );
         })}
       </div>

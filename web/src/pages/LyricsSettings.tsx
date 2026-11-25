@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api/client';
-import { Button, ErrorState, IconButton, Loading, PageHeader, cx } from '../components/ui';
+import { Button, ErrorState, IconButton, Loading, PageHeader, cx, Badge } from '../components/ui';
 import { useAsync, useInterval } from '../lib/hooks';
 import type { LyricsSettings, LyricsTranslators } from '../lib/lyrics';
 import { attempt, toast } from '../lib/ui';
@@ -163,7 +163,7 @@ function Translators() {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2 font-semibold">
                 <ServiceBadge service={p.id} label={p.title} />
-                {p.id === 'llm' && !v.llm && <span className="rounded-full bg-warn/15 px-2 py-0.5 text-[11px] font-normal text-warn">ИИ не настроен</span>}
+                {p.id === 'llm' && !v.llm && <Badge tone="warn">ИИ не настроен</Badge>}
               </div>
               <div className="text-xs text-muted">{TRANSLATOR_HINTS[p.id]}</div>
             </div>

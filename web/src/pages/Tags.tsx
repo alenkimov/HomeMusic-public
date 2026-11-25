@@ -1,8 +1,9 @@
+import { Chip } from '../components/Chip';
 import { useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { Icon } from '../components/Icon';
 import { GenreSourceFilter } from '../components/GenreSources';
-import { Button, ErrorState, Field, IconButton, Loading, PageHeader, Sheet, cx } from '../components/ui';
+import { Button, ErrorState, Field, IconButton, Loading, PageHeader, Sheet } from '../components/ui';
 import { tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { Link } from '../lib/router';
@@ -204,10 +205,7 @@ function EditTag({ tag, others, onClose, onDone }: { tag: Tag; others: Tag[]; on
           <div className="pb-1.5 text-xs text-muted">Слить с другим тегом — его получат все треки «{tag.name}»</div>
           <div className="flex flex-wrap gap-1.5">
             {others.map((t) => (
-              <button key={t.id} type="button" disabled={busy} onClick={() => void merge(t)} className={cx('flex items-center gap-1 rounded-full bg-fg/10 px-3 py-1 text-sm text-muted hover:text-fg')}>
-                <Icon name="merge" size={13} />
-                {t.name}
-              </button>
+              <Chip key={t.id} icon="merge" onClick={() => void merge(t)} button={{ disabled: busy }}>{t.name}</Chip>
             ))}
           </div>
         </div>

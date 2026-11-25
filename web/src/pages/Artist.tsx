@@ -10,7 +10,7 @@ import { ArtistLooksWindow } from '../components/ArtistLooks';
 import { ArtistServiceButtons } from '../components/ArtistSources';
 import { SourceStatuses } from '../components/SourceStatuses';
 import { ArtistProjects, ArtistWindow, artistHint, useArtistCard } from '../components/ArtistNames';
-import { Button, Cover, Empty, ErrorState, HeroSkeleton, PageHeader, Spinner, cx } from '../components/ui';
+import { Button, Cover, Empty, ErrorState, HeroSkeleton, PageHeader, Spinner, cx , SectionTitle, Segmented, buttonClass } from '../components/ui';
 import { ContextMenu, useContextMenu } from '../components/ContextMenu';
 import { startDownload } from '../lib/actions';
 import { setDisliked, useDisliked } from '../lib/dislikes';
@@ -211,11 +211,11 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
               onClick={() => void follow()}
               disabled={busy === 'follow' || followed}
               title="Подписаться: новые релизы появятся в «Релизах»"
-              className={cx(
-                'flex h-9 items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-full border text-sm font-semibold transition-all duration-300 ease-out active:scale-95',
-                followed ? 'border-accent text-accent' : 'border-fg/40 text-fg hover:border-fg',
-                leaving === 'folding' ? '-mr-2 max-w-0 border-transparent px-0 opacity-0' : 'max-w-56 px-4',
-              )}
+              className={buttonClass('outline', true, cx(
+                'gap-1.5 overflow-hidden whitespace-nowrap transition-all duration-300 ease-out',
+                followed && '!border-accent !text-accent',
+                leaving === 'folding' ? '-mr-2 max-w-0 !border-transparent !px-0 opacity-0' : 'max-w-56',
+              ))}
             >
               {busy === 'follow' ? <Spinner size={14} /> : followed && <Icon name="check" size={15} stroke={3} />}
               {followed ? 'Вы подписаны' : 'Подписаться'}
@@ -225,7 +225,7 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
             <Link
               to={`/liked?artist=${enc(artist.name)}&ref=${enc(artist.ref)}`}
               title={`Вам нравится: ${tracksWord(likedBy)} этого исполнителя в «Любимом»`}
-              className="flex h-9 items-center gap-1.5 rounded-full border border-fg/40 px-4 text-sm font-semibold text-fg transition hover:border-fg active:scale-95"
+              className={buttonClass('outline', true, 'gap-1.5')}
             >
               <Icon name="heart" size={15} filled className="text-accent" />
               <span className="hidden lg:inline">Вам нравится ·</span>
@@ -252,7 +252,7 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
           {/* the rest of what they made: every track of theirs as one list, the most listened first */}
           {releases.length > 0 && (
             <div className="flex justify-center px-4 pt-2 lg:px-6">
-              <Link to={`${artistPath(artist)}/discography?view=tracks`} className="inline-flex h-9 items-center rounded-full border border-fg/40 px-4 text-sm font-semibold text-fg transition hover:border-fg active:scale-95">
+              <Link to={`${artistPath(artist)}/discography?view=tracks`} className={buttonClass('outline', true)}>
                 Все треки
               </Link>
             </div>
@@ -419,15 +419,14 @@ function Alike({ artistRef }: { artistRef: string }) {
   if (!list.data?.length) return null;
   return (
     <section aria-label="Похожие" className="pb-4">
-      <h2 className="flex items-center justify-between gap-3 px-4 pb-2 pt-5 text-lg font-bold lg:px-6">
+      <SectionTitle page right={canMap && (
+        <Link to={`/map/${enc(artistRef)}`} className="inline-flex h-8 items-center gap-1.5 rounded-full bg-raised px-3.5 text-[13px] font-normal text-fg transition hover:bg-hover">
+          <Icon name="nodes" size={15} />
+          На карте
+        </Link>
+      )}>
         Похожие
-        {canMap && (
-          <Link to={`/map/${enc(artistRef)}`} className="inline-flex h-8 items-center gap-1.5 rounded-full bg-raised px-3.5 text-[13px] font-normal text-fg transition hover:bg-hover">
-            <Icon name="nodes" size={15} />
-            На карте
-          </Link>
-        )}
-      </h2>
+      </SectionTitle>
       <div ref={row} className="no-scrollbar flex gap-3 overflow-x-auto px-4 lg:px-6">
         {list.data.map((a) => (
           <ArtistBubble key={a.ref} artist={a} />
@@ -447,21 +446,14 @@ function Discography({ artistRef, releases }: { artistRef: string; releases: Alb
   const to = `/artist/${enc(artistRef)}/discography`;
   return (
     <section aria-label="Дискография" className="pb-4">
-      <h2 className="px-4 pb-2 pt-5 text-lg font-bold lg:px-6">
-        {/* the heading itself leads to all the releases with their tracks */}
-        <Link to={to} className="hover:underline">
-          Дискография
-        </Link>
-        {/* how many there are in all — every release of every record a catalog keeps of the artist, each once */}
-        <span className="ml-2 text-xs font-normal text-dim">{releases.length} {plural(releases.length, ['релиз', 'релиза', 'релизов'])}</span>
-      </h2>
+      {/* the heading itself leads to all the releases with their tracks; the note: how many there are in all — every
+          release of every record a catalog keeps of the artist, each once */}
+      <SectionTitle page note={`${releases.length} ${plural(releases.length, ['релиз', 'релиза', 'релизов'])}`}>
+        <Link to={to} className="hover:underline">Дискография</Link>
+      </SectionTitle>
       {kinds.length > 2 && (
-        <div className="flex gap-2 px-4 pb-3 lg:px-6">
-          {kinds.map((k) => (
-            <button key={k.value} type="button" aria-pressed={kind === k.value} onClick={() => setKind(k.value)} className={cx('h-8 rounded-full px-3.5 text-sm transition', kind === k.value ? 'bg-fg font-semibold text-bg' : 'bg-fg/10 text-fg hover:bg-fg/15')}>
-              {k.label}
-            </button>
-          ))}
+        <div className="px-4 pb-3 lg:px-6">
+          <Segmented<Kind> label="Какие релизы" value={kind} onChange={setKind} options={kinds} />
         </div>
       )}
       <div ref={row} className="no-scrollbar flex gap-4 overflow-x-auto px-4 pb-1 lg:px-6">

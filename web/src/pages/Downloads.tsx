@@ -202,10 +202,10 @@ export function DownloadsPage() {
       : undefined,
   });
 
-  const tabs: Array<{ value: Tab; label: string }> = TABS.map((t) => {
+  const tabs: Array<{ value: Tab; label: string; count: number | null }> = TABS.map((t) => {
     const n = count(t);
     const label = { now: 'Сейчас', review: 'Нужен выбор', done: 'Готовые' }[t];
-    return { value: t, label: n ? `${label} · ${n.toLocaleString('ru')}` : label };
+    return { value: t, label, count: n || null };
   });
   const empty: Record<Tab, [string, string]> = {
     now: ['Сейчас ничего не качается', 'Найдите трек или альбом в поиске и нажмите «Скачать».'],

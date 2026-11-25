@@ -10,7 +10,7 @@ import { useKeptLists } from '../lib/offline';
 import { BrandIcon } from '../components/BrandIcon';
 import { Icon, type IconName } from '../components/Icon';
 import { ServiceBadge } from '../components/ServiceBadge';
-import { PageHeader, cx } from '../components/ui';
+import { PageHeader, cx, Badge } from '../components/ui';
 import { notifyPermission, requestNotifyPermission, useActiveDownloads, type NotifyPermission } from '../lib/notify';
 import { Link } from '../lib/router';
 import { confirmDialog, toast } from '../lib/ui';
@@ -201,7 +201,7 @@ function Item({
       <span className="flex min-h-12 min-w-0 flex-1 items-center gap-2 border-b border-fg/[0.07] pr-3.5 group-last/item:border-0">
         <span className="min-w-0 flex-1 truncate">{title}</span>
         {value && <span className="max-w-[55%] shrink-0 truncate text-sm text-muted">{value}</span>}
-        {badge && <span className={cx('flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full px-2 text-[13px] font-bold', badgeTone === 'warn' ? 'bg-warn text-bg' : 'bg-accent text-on-accent')}>{badge}</span>}
+        {badge && <Badge solid size="md" tone={badgeTone}>{badge}</Badge>}
         <Icon name={href ? 'external' : 'chevron'} size={16} className="shrink-0 text-dim" />
       </span>
     </>

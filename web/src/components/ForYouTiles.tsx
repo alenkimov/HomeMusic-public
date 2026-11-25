@@ -4,7 +4,7 @@ import { Link } from '../lib/router';
 import { tastePath, useNewcomer } from '../lib/taste';
 import { AUTO_PLAYLISTS } from '../lib/stats';
 import { Icon, type IconName } from './Icon';
-import { cx } from './ui';
+import { cx, Badge } from './ui';
 
 const TINTS = ['bg-accent/15 text-accent', 'bg-[#2ba6bc]/15 text-[#5fcfe2]', 'bg-[#f2b705]/15 text-[#f5cd4d]', 'bg-[#fb923c]/15 text-[#fda766]'];
 
@@ -42,7 +42,7 @@ function Tile({ to, icon, tint, title, sub, fresh }: { to: string; icon: IconNam
           <Icon name={icon} size={18} />
         </span>
         {/* made since it was last opened */}
-        {fresh && <span className="rounded-full bg-accent px-2 py-0.5 text-[11px] font-bold text-on-accent">новый</span>}
+        {fresh && <Badge solid>новый</Badge>}
       </span>
       <span className="min-w-0">
         <span className="block truncate text-[15px] font-semibold">{title}</span>
