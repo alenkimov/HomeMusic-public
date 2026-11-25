@@ -244,18 +244,6 @@ export function PlayingBars({ on, className }: { on: boolean; className?: string
   );
 }
 
-export function ExplicitBadge() {
-  return (
-    <span
-      className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[3px] bg-muted/80 px-1 text-[10px] font-bold leading-none text-bg"
-      title="Explicit"
-      aria-label="Explicit"
-    >
-      E
-    </span>
-  );
-}
-
 /** A small word or count in a pill: «новый», «в библиотеке», «ИИ не настроен», the counter of a menu's line. `tone`:
  * accent (good, new), warn (wants a look), danger, muted; `solid`: filled with it (what calls to be looked at, a
  * count), else a tint; `size`: `sm` beside a name, `md` a menu's counter. */

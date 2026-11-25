@@ -3,7 +3,7 @@ import type { AlbumOut, TrackOut } from '../api/types';
 import { recordTypeLabel, yearOf } from '../lib/format';
 import { Link, albumPath } from '../lib/router';
 import { menuPressProps, useContextMenu, type MenuAt } from './ContextMenu';
-import { IconButton, Cover, ExplicitBadge, cx } from './ui';
+import { IconButton, Cover, cx } from './ui';
 import { Hero } from '../pages/MediaLibrary';
 
 /** An album the way every view of it draws one, whatever it came as (the catalog's, the library's, a part of
@@ -18,7 +18,6 @@ export interface AlbumLook {
   type?: string | null;
   artist?: string | null;
   year?: number | null;
-  explicit?: boolean;
 }
 
 /** the menu of a right click, a held finger or ⋯ */
@@ -31,15 +30,8 @@ export function albumLine(a: AlbumLook, showArtist = true): string {
 
 export const catalogLook = (a: AlbumOut): AlbumLook => ({
   title: a.title, to: albumPath(a), cover: a.cover_small_url || a.cover_url, type: a.record_type, artist: a.artist,
-  year: yearOf(a), explicit: !!a.explicit,
+  year: yearOf(a),
 });
-
-const name = (a: AlbumLook) => (
-  <>
-    {a.explicit && <span className="mr-1 inline-block align-[-2px]"><ExplicitBadge /></span>}
-    {a.title}
-  </>
-);
 
 /** A cover over the album's name and line. `overlay` lies on the cover (a tick, a download button), `extra` goes
  * under the line (what the library has of it, where it came from). */
@@ -56,9 +48,9 @@ export function AlbumCard({ album, showArtist = true, overlay, extra, menu, clas
           {overlay}
         </div>
         {album.to ? (
-          <Link to={album.to} className="mt-2 line-clamp-2 text-sm font-medium leading-tight hover:underline">{name(album)}</Link>
+          <Link to={album.to} className="mt-2 line-clamp-2 text-sm font-medium leading-tight hover:underline">{album.title}</Link>
         ) : (
-          <div className="mt-2 line-clamp-2 text-sm font-medium leading-tight">{name(album)}</div>
+          <div className="mt-2 line-clamp-2 text-sm font-medium leading-tight">{album.title}</div>
         )}
         <div className="mt-0.5 truncate text-xs text-muted">{albumLine(album, showArtist)}</div>
         {extra}
@@ -79,7 +71,7 @@ export function AlbumRow({ album, showArtist = true, lead, actions, below, menu,
     <>
       <Cover src={album.cover} size={48} icon="disc" alt="" />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[15px] font-medium group-hover/album:underline">{name(album)}</span>
+        <span className="block truncate text-[15px] font-medium group-hover/album:underline">{album.title}</span>
         <span className="block truncate text-[13px] text-muted">{albumLine(album, showArtist)}</span>
       </span>
     </>
@@ -137,7 +129,6 @@ export function AlbumHero({ album, artists, facts, onCover, tracks, context = 'a
       right={right}
       sub={
         <span className="flex flex-wrap items-center gap-x-1.5">
-          {album.explicit && <ExplicitBadge />}
           {artists.map((a, i) => (
             <span key={`${a.name}:${i}`} className="font-semibold text-fg">
               {i > 0 && <span className="pr-1.5 font-normal text-muted">,</span>}
