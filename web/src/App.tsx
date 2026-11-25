@@ -46,6 +46,7 @@ import { HomePage } from './pages/Home';
 import { ImportPage, ImportsPage } from './pages/Import';
 import { FilesPage } from './pages/Files';
 import { TidyJournalPage, TidyPage } from './pages/Tidy';
+import { BackupPage } from './pages/Backup';
 import { QualityPage } from './pages/Quality';
 import { LibraryPage, LibrarySearchPage } from './pages/Library';
 import { LibraryAlbumPage } from './pages/LibraryAlbum';
@@ -142,6 +143,7 @@ const ROUTES: RouteDef[] = [
   ['/import/:id', 'more', (p) => <ImportPage key={p.id} id={Number(p.id)} />, 'text'],
   ['/more', 'more', () => <MorePage />, 'text'],
   ['/admin', 'more', () => <AdminPage />, 'text'],
+  ['/admin/backup', 'more', () => <BackupPage />, 'text'],
   ['/lyrics-sources', 'more', () => <LyricsSettingsPage />, 'text'],
   ['/admin/user/:id', 'more', (p) => <AdminUserPage key={p.id} id={Number(p.id)} />, 'wide'],
   ['/admin/insights', 'more', () => <InsightsOverviewPage />, 'wide'],

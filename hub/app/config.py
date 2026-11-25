@@ -168,6 +168,10 @@ class Settings(BaseSettings):
     # OAuth client id ("Web application" type) of the Google Cloud project for "Sign in with Google" in the app;
     # empty — no Google sign-in (README, «Вход через Google»)
     google_client_id: str = ""
+    # OAuth client ("TV and Limited Input devices" type) the Hub signs in to Google Drive with, to keep its backups
+    # there (app/backup; README, «Резервные копии»); empty — the backups stay on the server's disk only
+    google_drive_client_id: str = ""
+    google_drive_client_secret: str = ""
     invite_days: int = 7
     # Registration by email, without an invite: a code in a letter, sent over SMTP of any mailbox (Gmail with an
     # app password is free; README, «Регистрация по email»). Empty host — no email registration

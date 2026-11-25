@@ -382,8 +382,9 @@ async def _handle_download_item(job: Job, prepared: Path | None) -> None:
 
     # 1. catalog record (needed for tags; without it only a user-picked candidate may be downloaded). A picked
     # re-upload is looked up too: names from its title ("Трек – Исполнитель (без цензуры)") make poor tags.
-    if not meta and not chosen and not pick_only:
-        meta = await resolve_catalog_meta(q) or {}
+    if not (meta.keys() - {"track_id"}) and not chosen and not pick_only:
+        # nothing of the catalog yet (a file wanted for a known track, as after a restore: its `track_id` only)
+        meta = {**(await resolve_catalog_meta(q) or {}), **{k: v for k, v in meta.items() if k == "track_id"}}
     elif chosen and not meta and not pick_only and (chosen.get("extra") or {}).get("reupload"):
         if t := await resolve_catalog_track(q):
             q, meta = query_from_track(t), meta_from_catalog(t)
@@ -398,7 +399,7 @@ async def _handle_download_item(job: Job, prepared: Path | None) -> None:
         qj["meta"] = meta
         qj["query"] = q.model_dump()
         await update_item(item_id, query_json=qj)
-    elif not chosen and not pick_only:
+    if not (meta.keys() - {"track_id"}) and not chosen and not pick_only:
         await step(item_id, "warn", "Записи в каталоге нет: без неё файл можно взять только по вашему выбору")
 
     # 2. already in the library?

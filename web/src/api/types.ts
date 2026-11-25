@@ -1876,3 +1876,25 @@ export interface TidyProposalOut {
   decided_at: string | null;
   decided_by: string | null;
 }
+
+// --- «Резервные копии» (hub/app/api/backup.py) -----------------------------------------------------------------
+
+export interface BackupOut {
+  /** GOOGLE_DRIVE_CLIENT_ID and _SECRET are in the server's .env */
+  configured: boolean;
+  connected: boolean;
+  email: string | null;
+  running: boolean;
+  last_ok: string | null;
+  last_try: string | null;
+  error: string | null;
+  /** connected, and nothing sent for two days */
+  stale: boolean;
+  copies: { day: string; size: number }[];
+  files_count: number;
+  files_size: number;
+  drive_used: number | null;
+  drive_limit: number | null;
+  /** a sign-in waiting for its code to be typed at google.com/device */
+  pending: { user_code: string; url: string } | null;
+}

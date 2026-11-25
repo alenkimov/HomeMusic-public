@@ -6,9 +6,9 @@ import asyncio
 import logging
 import os
 import subprocess
-from tempfile import NamedTemporaryFile
 from datetime import datetime, timedelta
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from app.config import get_settings
 from app.db import get_database_url
@@ -16,6 +16,9 @@ from app.db import get_database_url
 log = logging.getLogger(__name__)
 
 KEEP_BACKUPS = 7
+# what a dump leaves out, the tables themselves kept: the sign-ins (after a restore everybody signs in again — a
+# copy that leaks lets nobody in), the codes in letters, the catalogs' cache and the queue of jobs (both made anew)
+NOT_KEPT = ("sessions", "email_codes", "catalog_cache", "jobs", "integration_auth_attempts")
 
 
 def backup_hub_db() -> Path:
@@ -28,7 +31,8 @@ def backup_hub_db() -> Path:
     with NamedTemporaryFile(dir=dest_dir, prefix=".hub-backup-", suffix=".part", delete=False) as file:
         tmp = Path(file.name)
     try:
-        subprocess.run(["pg_dump", "--format=custom", f"--dbname={target}", f"--file={tmp}"],
+        subprocess.run(["pg_dump", "--format=custom", f"--dbname={target}", f"--file={tmp}",
+                        *(f"--exclude-table-data={t}" for t in NOT_KEPT)],
                        env=env, check=True, timeout=3600)
         tmp.replace(dest)
     finally:
@@ -66,6 +70,14 @@ async def run_daily() -> None:
     try:
         path = await asyncio.to_thread(backup_hub_db)
         log.info("hub db backup: %s", path)
+        from app.backup import service as backup
+        from app.db import session_scope
+        from app.jobs.queue import notify
+
+        async with session_scope() as s:  # and off the server, where Google Drive is connected
+            if (await backup.state(s)).get("token"):
+                await backup.request(s)
+        notify()
     except Exception:
         log.exception("hub db backup failed")
     try:

@@ -37,6 +37,9 @@ export function MorePage() {
   // what «Наведение порядка» found and waits for an answer: a count draws the eye to it
   const tidy = useAsync((s) => (STANDALONE ? api.tidy(s) : Promise.resolve(null)), [], true, 'menu:tidy');
   const tidyWaiting = tidy.data?.total ?? 0;
+  // the backups, for an admin: a red word when they are not going off the server
+  const backup = useAsync((s) => (me.is_admin ? api.backup(s) : Promise.resolve(null)), [], true, 'menu:backup').data;
+  const backupWord = !backup ? undefined : !backup.connected ? 'не настроены' : backup.stale || backup.error ? 'не отправляются' : undefined;
   // what waits for the user in «Загрузки»: files to choose, failed ones — a transfer's too
   const review = useAsync((s) => (STANDALONE ? api.downloadsOverview(s) : Promise.resolve(null)), [], true, 'menu:downloads')?.data?.review ?? 0;
   const telegram = useAsync(api.telegram, []);
@@ -125,6 +128,7 @@ export function MorePage() {
         <div className="space-y-5">
           <Group title="Администрирование">
             {me.is_admin && <Item icon="user" tint="bg-[#3d8ef0]" to="/admin" title="Пользователи и приглашения" />}
+            {me.is_admin && <Item icon="install" tint="bg-[#6b7a8f]" to="/admin/backup" title="Резервные копии" badge={backupWord} badgeTone="warn" />}
             <Item icon="link" tint="bg-[#537fe2]" to="/integrations" title="Сторонние сервисы" />
             {me.is_admin && <Item icon="lyrics" tint="bg-[#c2528b]" to="/lyrics-sources" title="Тексты и перевод" />}
             <Item icon="send" brand="telegram" title="Telegram бот" value={telegramLabel} onClick={() => openTelegramSetup()} />

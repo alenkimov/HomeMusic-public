@@ -26,6 +26,8 @@ def _import_handlers() -> None:
     import app.mixes.discover
     import app.playlists_mirror
     import app.tidy.scan
+    import app.backup.service
+    import app.backup.restore
 
 
 @asynccontextmanager
@@ -149,6 +151,7 @@ def create_app() -> FastAPI:
         admin,
         artists,
         auth,
+        backup,
         catalog,
         discoveries,
         downloads,
@@ -188,7 +191,7 @@ def create_app() -> FastAPI:
                   redoc_url=None)
     for r in (auth.router, search.router, catalog.router, downloads.router, listen.router, library.router, medialib.router, file_picker.router,
               uploads.router, playlists.router, plays.router, playback_queue.router, playback_devices.router, mixes.router, wave.router, smart_shuffle.router, imports.router, events.router, system.router, admin.router,
-              artists.router, insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, quality.router, discoveries.router, listenbrainz.router, for_you.router, subsonic.router, integrations.router, tidy.router):
+              artists.router, insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, quality.router, discoveries.router, listenbrainz.router, for_you.router, subsonic.router, integrations.router, tidy.router, backup.router):
         app.include_router(r)
     app.include_router(integrations.callback_router)
 

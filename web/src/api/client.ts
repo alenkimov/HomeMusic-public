@@ -104,6 +104,7 @@ import type {
   QualityOut,
   TrackFileOut,
   SplitAlbums,
+  BackupOut,
   TidyOverviewOut,
   TidyProposalOut,
   TidyProposalSection,
@@ -573,6 +574,12 @@ export const api = {
   /** The tracks that are one recording twice, told by the sound: groups of `library_track_id`s. */
   fileDoubles: (signal?: AbortSignal) => request<number[][]>('GET', '/api/library/files/doubles', { signal }),
   /** Albums that are one album in pieces (the same name, artists that differ by a guest). */
+  /** «Резервные копии» (admins): Google Drive, the last copy, the copies kept. */
+  backup: (signal?: AbortSignal) => request<BackupOut>('GET', '/api/backup', { signal }),
+  backupConnect: () => request<{ user_code: string; url: string; interval: number }>('POST', '/api/backup/connect'),
+  backupPoll: () => request<{ state: 'pending' | 'connected' | 'failed'; error: string | null; backup: BackupOut }>('POST', '/api/backup/connect/poll'),
+  backupDisconnect: () => request<BackupOut>('DELETE', '/api/backup/connect'),
+  backupRun: () => request<BackupOut>('POST', '/api/backup/run'),
   /** «Наведение порядка»: the sections and what waits in each, the last look-through, the AI's month. */
   tidy: (signal?: AbortSignal) => request<TidyOverviewOut>('GET', '/api/tidy', { signal }),
   tidyProposals: (section: TidyProposalSection, signal?: AbortSignal) =>

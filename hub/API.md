@@ -427,6 +427,22 @@ paid by the month (`TIDY_AI_USD_MONTH`, spent as `ai_usage` of kind `tidy`), a q
 | GET | `/api/tidy/journal?section=&before=&limit=50` | accepted and taken back, the latest decided first; `before` — a proposal id |
 | POST | `/api/tidy/scan` | admin: queue a look-through → the overview |
 
+## Backups (app/backup; admins only)
+Google Drive is connected by a code (OAuth for limited-input devices, scope `drive.file`): the copies go to
+«HomeMusic backups» (`database/hub-YYYY-MM-DD.dump`, `files/`, `config.yaml`) every night after the local dump.
+`BackupOut`: `{configured, connected, email, running, last_ok, last_try, error, stale, copies: [{day, size}],
+files_count, files_size, drive_used, drive_limit, pending: {user_code, url} | null}`.
+
+| Method | Path | Body → Response |
+|---|---|---|
+| GET | `/api/backup` | `BackupOut` |
+| POST | `/api/backup/connect` | → `{user_code, url, interval}`; `400` — no client in `.env` |
+| POST | `/api/backup/connect/poll` | → `{state: pending/connected/failed, error, backup}` |
+| DELETE | `/api/backup/connect` | → `BackupOut` (access given back to Google; the copies stay) |
+| POST | `/api/backup/run` | → `BackupOut` (a fresh dump, sent with what is not on the Drive yet) |
+
+Restore: `python -m app.backup restore [--day YYYY-MM-DD] [--yes]` with the Hub stopped (scripts/restore-server.ps1).
+
 ## Uploads (FR-5)
 | Method | Path | Body → Response |
 |---|---|---|

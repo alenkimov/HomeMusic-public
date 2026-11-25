@@ -1242,6 +1242,22 @@ class TidyAsked(Base):
     at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class BackupFile(Base):
+    """A file of the library kept in the backups on Google Drive (app/backup): an uploaded track (`upload:<file
+    uid>`) or an album's cover set by hand (`cover:<album uid>`). `stamp` — what it was when sent (size and time):
+    changed, it is sent again. `gone_at` — no longer in the library; kept as long as the trash keeps things, so that
+    an older copy of the database still finds it."""
+
+    __tablename__ = "backup_files"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    drive_id: Mapped[str] = mapped_column(String(128))
+    size: Mapped[int] = mapped_column(BigInteger, default=0)
+    stamp: Mapped[str] = mapped_column(String(64))
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    gone_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class AppSetting(Base):
     """A setting of the whole server that the admin changes in the app (the order of lyrics sources)."""
 
