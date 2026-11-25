@@ -98,7 +98,7 @@ export function ErrorState({ text, onRetry }: { text: string; onRetry?: () => vo
   return (
     <div className="flex flex-col items-center gap-4 px-6 py-14 text-center" role="alert">
       <Icon name="alert" size={36} className="text-danger" />
-      <p className="text-muted"><ServiceText text={text} /></p>
+      <p className="max-w-full text-muted [overflow-wrap:anywhere]"><ServiceText text={text} /></p>
       {onRetry && (
         <Button small icon="refresh" onClick={onRetry}>
           Повторить
@@ -114,8 +114,8 @@ export function Empty({ icon = 'note', title, text, children }: { icon?: IconNam
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-surface text-dim">
         <Icon name={icon} size={30} />
       </div>
-      <p className="font-semibold">{title}</p>
-      {text && <p className="max-w-xs text-sm text-muted">{text}</p>}
+      <p className="max-w-full font-semibold [overflow-wrap:anywhere]">{title}</p>
+      {text && <p className="max-w-xs text-sm text-muted [overflow-wrap:anywhere]">{text}</p>}
       {children}
     </div>
   );
