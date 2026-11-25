@@ -1,5 +1,6 @@
 import { titleWithVersion } from '../lib/versionLabels';
 import { TrackTitle } from '../components/TrackTitle';
+import { TrackCell } from '../components/Track';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { DownloadGroupOut, DownloadItemOut } from '../api/types';
@@ -532,8 +533,7 @@ function TableRow(p: RowProps) {
       <div className={GRID}>
         {p.onPick ? <Checkbox checked={!!p.picked} onChange={p.onPick} label={`Выбрать «${item.title}»`} /> : <span />}
         <Link to={`/downloads/${item.id}`} className="flex min-w-0 items-center gap-3" aria-label={`Подробности: ${item.artist} — ${item.title}`}>
-          <Cover src={item.chosen?.cover_url} size={40} alt="" />
-          <span className="min-w-0">{name(item)}</span>
+          <TrackCell track={{ title: item.title, artist: item.artist, cover: item.chosen?.cover_url, identity: { ...item, page_url: item.chosen?.page_url } }} size={40} />
         </Link>
         <span className="truncate text-sm text-muted">{item.album}</span>
         <span className="truncate text-xs text-muted">{item.provider ? <ServiceBadge service={item.provider} /> : '—'}</span>
@@ -562,7 +562,7 @@ function Card(p: RowProps & { flat?: boolean }) {
     <li className={cx('rounded-2xl p-3', p.flat ? 'bg-fg/[0.04]' : 'bg-surface', p.picked && 'ring-1 ring-accent')}>
       <div className="flex items-center gap-3">
         <Link to={`/downloads/${item.id}`} className="flex min-w-0 flex-1 items-center gap-3" aria-label={`Подробности: ${item.artist} — ${item.title}`}>
-          <Cover src={item.chosen?.cover_url} size={44} alt="" />
+          <Cover src={item.chosen?.cover_url} size={48} alt="" />
           <span className="min-w-0">
             {name(item)}
             <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-dim">

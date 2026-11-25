@@ -1,10 +1,11 @@
 import { TrackTitle } from '../components/TrackTitle';
+import { TrackCell } from '../components/Track';
 import { titleWithVersion } from '../lib/versionLabels';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { QualityRow } from '../api/types';
 import { Icon } from '../components/Icon';
-import { Button, Cover, Empty, ErrorState, PageHeader, ProgressBar, SkeletonRows, cx } from '../components/ui';
+import { Button, Empty, ErrorState, PageHeader, ProgressBar, SkeletonRows, cx } from '../components/ui';
 import { fmtDuration, tracksWord } from '../lib/format';
 import { ServiceBadge, ServiceText, serviceName } from '../components/ServiceBadge';
 import { SourceStatuses } from '../components/SourceStatuses';
@@ -187,12 +188,10 @@ export function QualityPage() {
                   {shown.map((r) => (
                     <li key={r.id} className="border-b border-line/60 px-4 py-3 last:border-0">
                       <div className="relative flex items-center gap-3">
-                        <Cover src={r.cover_url} size={40} alt="" />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[15px]"><TrackTitle title={r.title} track={r} /></span>
-                          <span className="block truncate text-[13px] text-muted">{r.artist}</span>
-                          {r.kind === 'identify' && r.record && r.state !== 'replaced' && <span className="block truncate text-[11px] text-dim">та ли это запись: <RecordTitle row={r} /></span>}
-                        </span>
+                        <TrackCell
+                          track={{ title: r.title, artist: r.artist, cover: r.cover_url, identity: r }}
+                          sub={<>{r.artist}{r.kind === 'identify' && r.record && r.state !== 'replaced' && <span className="block truncate text-[11px] text-dim">та ли это запись: <RecordTitle row={r} /></span>}</>}
+                        />
                         <RowState r={r} />
                         {r.can_revert && (
                           <Button small onClick={() => { listening.stop(); setOpen(open === r.id ? null : r.id); }}>

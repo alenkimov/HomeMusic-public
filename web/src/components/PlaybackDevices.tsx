@@ -4,8 +4,8 @@ import { isUpload, useListen } from '../lib/listen';
 import { OFFLINE_WAVE } from '../lib/offlineWave';
 import { answerPlaybackTransfer, transferPlayback, usePlaybackDevices } from '../lib/playbackDevices';
 import { Icon } from './Icon';
-import { TrackTitle } from './TrackTitle';
-import { Cover, IconButton, Sheet, Spinner } from './ui';
+import { TrackCell } from './Track';
+import { IconButton, Sheet, Spinner } from './ui';
 
 export function PlaybackDevicesButton() {
   const [open, setOpen] = useState(false);
@@ -59,12 +59,8 @@ export function PlaybackTransferOffer() {
         </div>
       )}>
       {track && (
-        <div className="flex items-center gap-3 px-5 py-4">
-          <Cover src={track.cover_small_url || track.cover_url} size={48} alt="" />
-          <div className="min-w-0">
-            <div className="truncate font-medium"><TrackTitle title={track.title} track={track} /></div>
-            <div className="truncate text-sm text-muted">{track.artist} · {incoming?.sourceName}</div>
-          </div>
+        <div className="flex items-center px-5 py-4">
+          <TrackCell track={{ title: track.title, cover: track.cover_small_url || track.cover_url, identity: track }} sub={`${track.artist} · ${incoming?.sourceName ?? ''}`} />
         </div>
       )}
       {receiving && <div className="flex items-center gap-2 px-5 py-4 text-muted"><Spinner size={17} /> Подготавливаем воспроизведение</div>}

@@ -1,10 +1,10 @@
-import { TrackTitle } from '../components/TrackTitle';
+import { TrackCell } from '../components/Track';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { AssistantRowIn, AssistantRowOut, AssistantTaskOut, AssistantTargetIn, TrackOut } from '../api/types';
 import { Icon } from '../components/Icon';
 import { PlaylistsPick } from '../components/PlaylistsButton';
-import { Button, Checkbox, Cover, ErrorState, Field, Loading, Notice, PageHeader, Radio, Spinner, cx } from '../components/ui';
+import { Button, Checkbox, ErrorState, Field, Loading, Notice, PageHeader, Radio, Spinner, cx } from '../components/ui';
 import { useHubEvent } from '../lib/events';
 import { fmtDuration, fmtWhen, inputKindLabel, todayRu, tracksWord } from '../lib/format';
 import { useAsync, useInterval } from '../lib/hooks';
@@ -109,12 +109,8 @@ function Confirmed({ task }: { task: AssistantTaskOut }) {
       {task.rows.length > 0 && (
         <ul className="mt-4 divide-y divide-line/60">
           {task.rows.map((r) => (
-            <li key={r.index} className="flex items-center gap-3 py-2">
-              <Cover src={r.best?.cover_url} size={40} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm"><TrackTitle title={r.best?.title ?? r.title_raw} track={r.best} /></span>
-                <span className="block truncate text-xs text-muted">{r.best?.artist ?? r.artist_raw}</span>
-              </span>
+            <li key={r.index} className="flex items-center py-2">
+              <TrackCell track={{ title: r.best?.title ?? r.title_raw, artist: r.best?.artist ?? r.artist_raw, cover: r.best?.cover_url, identity: r.best }} />
             </li>
           ))}
         </ul>
@@ -332,16 +328,12 @@ function TargetOption({ checked, onClick, label, sub, right }: { checked: boolea
 
 function TrackLine({ t, dim }: { t: TrackOut; dim?: boolean }) {
   return (
-    <span className={cx('flex min-w-0 flex-1 items-center gap-3', dim && 'opacity-60')}>
-      <Cover src={t.cover_small_url || t.cover_url} size={44} />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[15px]"><TrackTitle title={t.title} track={t} /></span>
-        <span className="block truncate text-[13px] text-muted">
-          {[t.artist, t.album_title, fmtDuration(t.duration_s)].filter(Boolean).join(' · ')}
-        </span>
-      </span>
-      {t.owned && <span className="shrink-0 text-xs text-accent">есть</span>}
-    </span>
+    <TrackCell
+      track={{ title: t.title, cover: t.cover_small_url || t.cover_url, identity: t }}
+      sub={[t.artist, t.album_title, fmtDuration(t.duration_s)].filter(Boolean).join(' · ')}
+      dim={dim}
+      after={t.owned && <span className="shrink-0 text-xs text-accent">есть</span>}
+    />
   );
 }
 

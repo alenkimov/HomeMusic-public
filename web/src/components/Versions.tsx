@@ -1,4 +1,5 @@
 import { TrackTitle } from './TrackTitle';
+import { TrackCell } from './Track';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import type { VersionOut, VersionsOut } from '../api/types';
@@ -53,11 +54,7 @@ export function OtherVersions({ trackId, songId }: { trackId?: number | null; so
                 onClick={() => ref && playVersion(v, ref)}
                 className="flex min-h-14 w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left enabled:hover:bg-fg/5 focus-visible:bg-fg/10"
               >
-                <Cover src={v.cover_url} size={40} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[15px]"><TrackTitle title={v.title} label={v.label ?? null} /></span>
-                  <span className="block truncate text-[13px] text-muted">{[v.artist, fmtDuration(v.duration_s)].filter(Boolean).join(' · ')}</span>
-                </span>
+                <TrackCell track={{ title: v.title, cover: v.cover_url, label: v.label ?? null }} sub={[v.artist, fmtDuration(v.duration_s)].filter(Boolean).join(' · ')} />
                 {ref && (
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-fg/30" aria-hidden="true">
                     <Icon name="play" size={14} filled />

@@ -1,4 +1,4 @@
-import { TrackTitle } from '../components/TrackTitle';
+import { TrackCell } from '../components/Track';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { HistoryItem, HistoryOut } from '../api/types';
@@ -9,7 +9,7 @@ import { openTrackMenu } from '../lib/trackMenu';
 import { SaveButton } from '../components/PlaylistsButton';
 import { ListBar } from '../components/ListBar';
 import { useSearchField } from '../components/ListSearch';
-import { Cover, Empty, ErrorState, IconButton, Segmented, SkeletonRows, Spinner, cx } from '../components/ui';
+import { Empty, ErrorState, IconButton, Segmented, SkeletonRows, Spinner, cx } from '../components/ui';
 import { useDesktop } from '../lib/desktop';
 import { fmtDuration, fmtLength, tracksWord } from '../lib/format';
 import { useDebounced } from '../lib/hooks';
@@ -140,16 +140,12 @@ export function HistoryPage() {
               )
             ) : null;
             const name = (
-              <span className="flex min-w-0 items-center gap-3">
-                <Cover src={x.track?.cover_small_url || x.track?.cover_url} size={desktop ? 36 : 44} alt="" />
-                <span className="min-w-0">
-                  <span className={cx('block truncate', desktop ? 'text-sm' : 'text-[15px]', on && 'text-accent')}><TrackTitle title={x.title} track={x.track ?? x} /></span>
-                  <span className="block truncate text-xs text-muted">
-                    {x.artist}
-                    {!desktop && from && <> · {from}</>}
-                  </span>
-                </span>
-              </span>
+              <TrackCell
+                track={{ title: x.title, cover: x.track?.cover_small_url || x.track?.cover_url, identity: x.track ?? x }}
+                size={desktop ? 40 : 48}
+                playing={on}
+                sub={<>{x.artist}{!desktop && from && <> · {from}</>}</>}
+              />
             );
             // the track's own menu, with «Убрать из истории» among its lines
             const menu = x.track ? menuTrackOfOut(x.track) : t ? menuTrackOf(t) : null;

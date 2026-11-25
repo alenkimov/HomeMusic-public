@@ -1,10 +1,10 @@
-import { TrackTitle } from '../components/TrackTitle';
 import { useEffect, useMemo } from 'react';
 import { api } from '../api/client';
 import type { NamesakeOut } from '../api/types';
 import { Icon } from '../components/Icon';
 import { AlbumRow } from '../components/Album';
-import { Button, Cover, Empty, PageHeader } from '../components/ui';
+import { TrackItem } from '../components/Track';
+import { Button, Empty, PageHeader } from '../components/ui';
 import { refreshDislikes, setDisliked, useDislikes } from '../lib/dislikes';
 import { useAsync } from '../lib/hooks';
 import { Link, enc } from '../lib/router';
@@ -93,16 +93,17 @@ export function HiddenPage() {
             <h2 className="px-1 pb-2 text-[13px] font-semibold uppercase tracking-wide text-muted">Треки · {tracks.length}</h2>
             <ul className="overflow-hidden rounded-2xl bg-surface">
               {tracks.map((d) => (
-                <li key={`t:${d.id}:${d.ref ?? d.nd_song_id}`} className="flex min-h-14 items-center gap-3 border-b border-fg/5 pl-3 pr-2 last:border-0">
+                <li key={`t:${d.id}:${d.ref ?? d.nd_song_id}`} className="border-b border-fg/5 last:border-0">
                   {/* a track of the library has its cover by its id; one known by the catalog alone has none kept */}
-                  <Cover src={d.nd_song_id ? `/api/nd/cover/${enc(d.nd_song_id)}?size=96` : null} size={40} alt="" />
-                  <span className="min-w-0 flex-1 py-2">
-                    <span className="block truncate"><TrackTitle title={d.title || 'Трек'} track={d} /></span>
-                    {d.artist && <span className="block truncate text-[13px] text-muted">{d.artist}</span>}
-                  </span>
-                  <Button small variant="ghost" onClick={() => void setDisliked({ track_id: d.track_id, ref: d.ref, nd_song_id: d.nd_song_id, artist: d.artist, title: d.title }, false)}>
-                    Вернуть
-                  </Button>
+                  <TrackItem
+                    track={{ title: d.title || 'Трек', artist: d.artist, cover: d.nd_song_id ? `/api/nd/cover/${enc(d.nd_song_id)}?size=96` : null, identity: d }}
+                    className="[&>div]:pl-3 [&>div]:pr-2"
+                    actions={
+                      <Button small variant="ghost" onClick={() => void setDisliked({ track_id: d.track_id, ref: d.ref, nd_song_id: d.nd_song_id, artist: d.artist, title: d.title }, false)}>
+                        Вернуть
+                      </Button>
+                    }
+                  />
                 </li>
               ))}
             </ul>

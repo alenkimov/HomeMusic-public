@@ -15,6 +15,7 @@ import { trackMenuAt } from '../lib/trackMenu';
 import { OtherVersions } from '../components/Versions';
 import { ServiceBadge } from '../components/ServiceBadge';
 import { ArtistRow } from '../components/Artist';
+import { TrackCell } from '../components/Track';
 import { Cover, Empty, IconButton, Sheet, Spinner, cx } from '../components/ui';
 import { fmtDuration, fmtNum, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
@@ -529,18 +530,14 @@ function QueueList({ queue, index, onWave, shuffle }: { queue: readonly ListenTr
     return (
       <li key={key} data-i={i} data-manual={manualId} data-k={key} onContextMenu={menu ? trackMenuAt(menu, extra, true) : undefined} className={cx('flex min-h-14 items-center gap-1 rounded-lg', dragged === key && 'bg-fg/10')}>
         <button type="button" onClick={() => manualId != null ? playManualQueueAt(manualId) : i != null && playQueueAt(i)} className="flex min-w-0 flex-1 items-center gap-3 py-1.5 text-left" aria-label={`Слушать «${t.title}»`}>
-          <Cover src={t.cover_small_url || t.cover_url} size={40} alt="" />
-          <span className="min-w-0 flex-1">
-            <span className={cx('block truncate text-[15px]', current && 'font-semibold text-accent')}><TrackTitle title={t.title} track={t} /></span>
-            <span className="flex items-center gap-1 text-[13px] text-muted">
-              {t.rec && (
-                <span title="Рекомендация" className="shrink-0 text-accent">
-                  <Icon name="sparkle" size={12} />
-                </span>
-              )}
+          <TrackCell
+            track={{ title: t.title, cover: t.cover_small_url || t.cover_url, identity: t }}
+            playing={current}
+            sub={<span className="flex items-center gap-1">
+              {t.rec && <span title="Рекомендация" className="shrink-0 text-accent"><Icon name="sparkle" size={12} /></span>}
               <span className="truncate">{t.artist}</span>
-            </span>
-          </span>
+            </span>}
+          />
         </button>
         {menu && <TrackMenuButton track={menu} extra={extra} inPlayer className="w-9" />}
         {!current && (
