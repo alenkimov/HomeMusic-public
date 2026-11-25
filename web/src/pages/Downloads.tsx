@@ -9,6 +9,7 @@ import { ListBar } from '../components/ListBar';
 import { useSearchField } from '../components/ListSearch';
 import { Button, Checkbox, Cover, Empty, ErrorState, IconButton, ProgressBar, Segmented, SkeletonRows, StatusChip, cx } from '../components/ui';
 import { useDesktop } from '../lib/desktop';
+import { SOURCES } from './Import';
 import { useHubConnected, useHubEvent } from '../lib/events';
 import { DOWNLOAD_ACTIVE, fmtWhen, plural, warningText } from '../lib/format';
 import { useAsync, useInterval } from '../lib/hooks';
@@ -176,9 +177,9 @@ export function DownloadsPage() {
       {!connected && !res.error && !res.loading && <p className="px-4 pb-2 text-xs text-muted lg:px-6">Нет связи с сервером — переподключаюсь, список может отставать.</p>}
       {running.map((imp) => (
         <Link key={imp.id} to={`/import/${imp.id}`} className="card mx-4 mb-3 flex items-center gap-3 p-3 hover:bg-hover">
-          <ServiceIcon service="yandex" size={22} />
+          <ServiceIcon service={imp.source} size={22} />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-semibold">Перенос из Яндекс Музыки</span>
+            <span className="block truncate text-sm font-semibold">{SOURCES[imp.source]?.page ?? 'Перенос музыки'}</span>
             <span className="block truncate text-xs text-muted">
               {imp.stats.pending ? `сопоставляем · осталось ${imp.stats.pending}` : `скачано ${imp.stats.done} · качается ${imp.stats.downloading}`}
             </span>

@@ -53,7 +53,7 @@ function statusLine(imp: ImportOut): string {
   }
 }
 
-const SOURCES: Record<ImportSource, { name: string; page: string; waits: string }> = {
+export const SOURCES: Record<ImportSource, { name: string; page: string; waits: string }> = {
   yandex: { name: 'Яндекс Музыка', page: 'Перенос из Яндекс Музыки', waits: 'Ждём входа в Яндекс' },
   vk: { name: 'ВКонтакте', page: 'Перенос из ВКонтакте', waits: 'Ждём код для входа в ВК' },
   spotify: { name: 'Spotify', page: 'Перенос из Spotify', waits: 'Ждём входа в Spotify' },
