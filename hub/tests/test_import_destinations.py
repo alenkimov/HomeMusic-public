@@ -168,3 +168,51 @@ async def test_activity_shows_current_downloads_and_indexing_for_this_transfer(e
     assert data["more"] == 2
     assert len(data["items"]) == ACTIVITY_LIMIT
     assert data["items"][0]["title"] == "Download"
+
+
+async def test_downloads_overview_groups_a_transfer_and_retries_it_whole(env):
+    """«Загрузки» by group: a transfer's downloads are one group, a mix's show only while under way, the user's own
+    (an asked-for one of a transfer too) are «own»; a group's list goes by pages and «Повторить все» retries it."""
+    from app.db import session_scope
+    from app.models import DownloadBatch, DownloadItem, Import
+
+    client = env["client"]
+    import_id = (await prepared(client))["id"]
+    async with session_scope() as s:
+        imp = await s.get(Import, import_id)
+        batch = DownloadBatch(user_id=imp.user_id, origin="import")
+        s.add(batch)
+        await s.flush()
+
+        def make(title, status, transfer=import_id, **qj):
+            extra = {"import": {"id": transfer}} if transfer else {}
+            return DownloadItem(batch_id=batch.id, user_id=imp.user_id, status=status, import_id=transfer,
+                                query_json={"query": {"title": title, "artist": "A"}, **extra, **qj})
+
+        s.add_all([
+            make("t1", "failed"), make("t2", "needs_review"), make("t3", "done"), make("t4", "queued"),
+            make("asked", "needs_review", requested=True),
+            make("mix-q", "queued", transfer=None, mix={"id": 1}), make("mix-f", "failed", transfer=None, mix={"id": 1}),
+            make("own", "failed", transfer=None),
+        ])
+    r = await client.get("/api/downloads/overview")
+    assert r.status_code == 200, r.text
+    o = r.json()
+    groups = {g["key"]: (g["now"], g["review"], g["done"]) for g in o["groups"]}
+    assert groups == {f"import:{import_id}": (1, 2, 1), "mix": (1, 0, 0), "own": (0, 2, 0)}
+    assert (o["now"], o["review"], o["done"]) == (2, 4, 1)
+    first = o["groups"][0]
+    assert (first["key"], first["source"], first["import_status"]) == (f"import:{import_id}", "yandex", "preview")
+
+    page = (await client.get("/api/downloads", params={"group": f"import:{import_id}", "status": "failed,needs_review", "limit": 1})).json()
+    assert [(x["title"], x["origin"]) for x in page] == [("t2", "import")]
+    rest = (await client.get("/api/downloads", params={"group": f"import:{import_id}", "status": "failed,needs_review", "before": page[0]["id"]})).json()
+    assert [x["title"] for x in rest] == ["t1"]
+    own = (await client.get("/api/downloads", params={"group": "own"})).json()
+    assert sorted((x["title"], x["origin"]) for x in own) == [("asked", None), ("own", None)]
+    assert (await client.get("/api/downloads", params={"group": "nope"})).status_code == 400
+
+    r = await client.post("/api/downloads/retry-group", json={"group": f"import:{import_id}"})
+    assert r.status_code == 200 and r.json() == {"queued": 2}
+    o = (await client.get("/api/downloads/overview")).json()
+    assert {g["key"]: g["review"] for g in o["groups"]}[f"import:{import_id}"] == 0

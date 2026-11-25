@@ -710,6 +710,7 @@ class DownloadItemOut(BaseModel):
     # track is downloaded explicitly too
     quiet: bool = False
     import_id: int | None = None  # queued by this import (`/api/imports`)
+    origin: str | None = None  # who queued a quiet one: import / mix / wave / upgrade (`owned.origin`)
     candidates: list[Candidate] | None = None  # only in detail view
     # the journal, only in detail view: the steps in order — {t, kind: info/ok/warn/bad, text, failed_provider?, cand?: the file
     # the step is about ({artist, title, provider, bitrate_kbps, duration_s, page_url})}
@@ -718,6 +719,30 @@ class DownloadItemOut(BaseModel):
     hidden: bool = False  # taken off the list by the user (comes with an event: other open pages drop it too)
     created_at: datetime
     updated_at: datetime
+
+
+class DownloadGroupOut(BaseModel):
+    """A group of «Загрузки»: a transfer's downloads, a mix's, the wave's, the better files' — or the user's own."""
+    key: str  # own / import:<id> / mix / wave / upgrade
+    origin: str | None = None
+    import_id: int | None = None
+    source: str | None = None  # the transfer's service
+    title: str | None = None  # the transfer's collection or account
+    import_status: str | None = None
+    now: int = 0  # under way
+    review: int = 0  # need the user: failed / a file to choose
+    done: int = 0  # done or cancelled
+
+
+class DownloadsOverviewOut(BaseModel):
+    now: int = 0
+    review: int = 0
+    done: int = 0
+    groups: list[DownloadGroupOut] = []
+
+
+class DownloadGroupIn(BaseModel):
+    group: str = Field(min_length=1, max_length=40)
 
 
 class DownloadIdsIn(BaseModel):

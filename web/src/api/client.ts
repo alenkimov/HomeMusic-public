@@ -34,6 +34,7 @@ import type {
   RecentPlaceOut,
   ReleasesOut,
   DownloadItemOut,
+  DownloadsOverviewOut,
   ImportActivityOut,
   ImportIn,
   ImportSource,
@@ -525,6 +526,11 @@ export const api = {
    * not a transfer's thousands). */
   downloads: (status?: string, limit = 100, signal?: AbortSignal, asked = false) =>
     request<DownloadItemOut[]>('GET', withQuery('/api/downloads', { status, limit, quiet: asked ? false : undefined }), { signal }),
+  /** One group of the overview (`own`, `import:<id>`, `mix`…), by pages: `before` — older than this id. */
+  downloadGroup: (group: string, status: string, limit: number, before?: number, signal?: AbortSignal) =>
+    request<DownloadItemOut[]>('GET', withQuery('/api/downloads', { group, status, limit, before }), { signal }),
+  downloadsOverview: (signal?: AbortSignal) => request<DownloadsOverviewOut>('GET', '/api/downloads/overview', { signal }),
+  retryDownloadGroup: (group: string) => request<{ queued: number }>('POST', '/api/downloads/retry-group', { json: { group } }),
   downloadItem: (id: number, signal?: AbortSignal) =>
     request<DownloadItemOut>('GET', `/api/downloads/${id}`, { signal }),
   checkDownloadLink: (id: number, url: string) =>

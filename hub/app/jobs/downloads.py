@@ -31,7 +31,7 @@ from app.jobs.queue import PermanentError, enqueue, handler, notify, on_final_fa
 from app.library import probe, upgrade
 from app.library.importer import ImportSpec, cleanup_dir, import_file, staging_dir_for
 from app.library.navidrome import admin_client
-from app.library.owned import find_owned, quiet
+from app.library.owned import find_owned, origin, quiet
 from app.library.tracks import current_file, has_file
 from app.matching.select import (
     classify,
@@ -96,6 +96,7 @@ def item_out(item: DownloadItem, *, detail: bool = False,
         playlist_id=links[1],
         track_ref=item_ref(item),
         quiet=quiet(item.query_json),
+        origin=origin(item.query_json),
         import_id=item.import_id,
         candidates=[Candidate(**c) for c in item.candidates_json or []] if detail else None,
         log=list(item.log_json or []) if detail else None,

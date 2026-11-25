@@ -1,9 +1,9 @@
 import { titleWithVersion } from '../lib/versionLabels';
 import { TrackTitle } from '../components/TrackTitle';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
-import type { DownloadItemOut } from '../api/types';
-import { Icon } from '../components/Icon';
+import type { DownloadGroupOut, DownloadItemOut } from '../api/types';
+import { Icon, type IconName } from '../components/Icon';
 import { ServiceBadge, ServiceIcon, ServiceText } from '../components/ServiceBadge';
 import { ListBar } from '../components/ListBar';
 import { useSearchField } from '../components/ListSearch';
@@ -14,40 +14,62 @@ import { useHubConnected, useHubEvent } from '../lib/events';
 import { DOWNLOAD_ACTIVE, fmtWhen, plural, warningText } from '../lib/format';
 import { useAsync, useInterval } from '../lib/hooks';
 import { canPlay, playList } from '../lib/player';
-import { Link, navigate } from '../lib/router';
+import { Link, navigate, useRoute } from '../lib/router';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 
-type Tab = 'now' | 'problems' | 'done';
+type Tab = 'now' | 'review' | 'done';
 
 const isProblem = (x: DownloadItemOut) => x.status === 'failed' || x.status === 'needs_review';
-const tabOf = (x: DownloadItemOut): Tab => (DOWNLOAD_ACTIVE.includes(x.status) ? 'now' : isProblem(x) ? 'problems' : 'done');
+const tabOf = (x: DownloadItemOut): Tab => (DOWNLOAD_ACTIVE.includes(x.status) ? 'now' : isProblem(x) ? 'review' : 'done');
+const TAB_STATUS: Record<Tab, string> = { now: DOWNLOAD_ACTIVE.join(','), review: 'failed,needs_review', done: 'done,cancelled' };
+const TABS: Tab[] = ['now', 'review', 'done'];
+const GROUP_PAGE = 5; // a group opens with so many of its downloads; «Показать ещё» brings more
+const MORE_PAGE = 50;
 const downloadsWord = (n: number) => `${n} ${plural(n, ['загрузку', 'загрузки', 'загрузок'])}`;
+const tracksWord = (n: number) => `${n.toLocaleString('ru')} ${plural(n, ['трек', 'трека', 'треков'])}`;
 
 /** What went wrong, in a line that says what to do; the source's own words are a click away (`item.error`). */
 function reason(item: DownloadItemOut): string {
   const e = item.error ?? '';
-  if (!e) return item.status === 'needs_review' ? 'Нужно выбрать файл вручную' : 'Не удалось скачать';
+  if (!e) return item.status === 'needs_review' ? 'Хаб не уверен в найденном — выберите файл' : 'Не удалось скачать';
   if (/HTTP Error 403/i.test(e)) return 'Источник не отдал файл — обычно проходит при повторе';
-  if (/не совпадает с ожидаемой/i.test(e)) return 'Длительность найденного файла не совпала — выберите файл вручную';
+  if (/не совпадает с ожидаемой/i.test(e)) return 'Длительность найденного файла не совпала — выберите файл';
   if (/^Не найдено ни в одном источнике/i.test(e)) return 'Не нашлось ни в одном источнике — нужна своя ссылка';
-  if (/^(Ни один кандидат не подошёл|Файл не подошёл)/i.test(e)) return 'Найденные файлы не подошли — выберите вручную или вставьте ссылку';
+  if (/^(Ни один кандидат не подошёл|Файл не подошёл)/i.test(e)) return 'Найденные файлы не подошли — выберите файл или вставьте ссылку';
+  if (/все источники недоступны/i.test(e)) return 'Источники не отвечали — повторите позже';
   return e.length > 90 ? `${e.slice(0, 90)}…` : e;
 }
 
-/** «Загрузки»: what is being downloaded now, what needs the user (a file to choose, a link to give), and what is
- * done. A table on a computer, cards on a phone. A download is taken off the list by 🗑 — one that is not finished
- * is cancelled by that; several at once through the ticks. */
+const HINTS: Record<Tab, string> = {
+  now: 'Всё, что хаб качает прямо сейчас: ваши загрузки, переносы и миксы. Делать ничего не нужно.',
+  review: 'Без вас это не скачается: выберите файл, вставьте ссылку или повторите позже.',
+  done: 'Что скачалось. Строки можно убрать — треки останутся в медиатеке.',
+};
+
+/** «Загрузки»: one place for everything the Hub downloads. Three sections — under way, waiting for the user, done.
+ * A transfer, a mix, the wave and the better files are a group each (a transfer alone has thousands of downloads:
+ * the group shows its counts and opens on a few, by pages); the user's own downloads are a list under them, a table
+ * on a computer and cards on a phone, with ticks for several at once. `?import=<id>` shows one transfer's group
+ * alone (its page links here), `?tab=` opens a section. */
 export function DownloadsPage() {
   const desktop = useDesktop();
+  const route = useRoute();
+  const onlyImport = Number(route.query.get('import')) || null;
+  const asked = route.query.get('tab');
   const res = useAsync((s) => api.downloads(undefined, 5000, s, true), []);
+  const overview = useAsync((s) => api.downloadsOverview(s), []);
   const connected = useHubConnected();
-  const [tab, setTab] = useState<Tab | null>(null);
+  const [tab, setTab] = useState<Tab | null>(TABS.includes(asked as Tab) ? (asked as Tab) : null);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<number>>(new Set()); // rows whose full error is shown
 
   // Live updates: upsert the item; unknown items (new batches) are prepended; one taken off the list is dropped.
+  // The groups' counts follow by a fresh overview, at most once a second and a half.
+  const dirty = useRef(false);
   useHubEvent('download', (d) => {
+    dirty.current = true;
+    if (d.quiet) return;
     res.setData((prev) => {
       if (!prev) return prev;
       if (d.hidden) return prev.filter((x) => x.id !== d.id);
@@ -58,15 +80,18 @@ export function DownloadsPage() {
       return next;
     });
   });
-  useHubEvent('reconnect', () => res.reload(true));
+  useHubEvent('import', () => (dirty.current = true));
+  useHubEvent('reconnect', () => {
+    res.reload(true);
+    dirty.current = true;
+  });
+  useInterval(() => {
+    if (!dirty.current || overview.loading || document.visibilityState === 'hidden') return;
+    dirty.current = false;
+    overview.reload(true);
+  }, 1500);
 
-  // downloads queued only for ♥ or by an import are the Hub's own business: not shown (an import has its card); a ♥
-  // download that failed comes with `star` false and is shown
-  const imports = useAsync((s) => api.imports(s), []);
-  useHubEvent('import', () => imports.reload(true));
-  const running = (imports.data ?? []).filter((x) => x.status === 'running');
-  useInterval(() => imports.reload(true), running.length ? 15_000 : null);
-  // the bar's search: by the track's name, its artist and its album, through all three sections
+  // the bar's search: by the track's name, its artist and its album — the user's own downloads
   const sf = useSearchField('Название, исполнитель или альбом');
   const needle = sf.q.trim().toLocaleLowerCase('ru');
   const items = useMemo(
@@ -74,17 +99,24 @@ export function DownloadsPage() {
     [res.data, needle],
   );
   const byTab = useMemo(() => {
-    const out: Record<Tab, DownloadItemOut[]> = { now: [], problems: [], done: [] };
-    for (const x of items) out[tabOf(x)].push(x);
+    const out: Record<Tab, DownloadItemOut[]> = { now: [], review: [], done: [] };
+    for (const x of onlyImport ? [] : items) out[tabOf(x)].push(x);
     return out;
-  }, [items]);
-  // the first look: what is going on now, else what needs the user, else the finished ones
-  const first: Tab = byTab.now.length ? 'now' : byTab.problems.length ? 'problems' : 'done';
+  }, [items, onlyImport]);
+  const groups = useMemo(
+    () => (overview.data?.groups ?? []).filter((g) => g.key !== 'own' && (!onlyImport || g.import_id === onlyImport)),
+    [overview.data, onlyImport],
+  );
+  const count = (t: Tab) => byTab[t].length + (needle ? 0 : groups.reduce((n, g) => n + g[t], 0));
+  // the first look: what needs the user, else what is going on now, else the finished ones
+  const loaded = !!res.data && !!overview.data;
+  const first: Tab = count('review') ? 'review' : count('now') ? 'now' : 'done';
   useEffect(() => {
-    if (tab === null && res.data) setTab(first); // kept from then on: the page does not jump as downloads finish
-  }, [tab, res.data, first]);
+    if (tab === null && loaded) setTab(first); // kept from then on: the page does not jump as downloads finish
+  }, [tab, loaded, first]);
   const at: Tab = tab ?? first;
   const shown = byTab[at];
+  const shownGroups = needle ? [] : groups.filter((g) => g[at] > 0);
   const chosen = shown.filter((x) => picked.has(x.id));
 
   const choose = (next: Tab) => {
@@ -92,11 +124,11 @@ export function DownloadsPage() {
     setPicked(new Set());
   };
   const merge = (r: DownloadItemOut) => res.setData((prev) => prev?.map((x) => (x.id === r.id ? { ...x, ...r, candidates: x.candidates } : x)));
-  const one = async (item: DownloadItemOut, kind: 'retry' | 'cancel') => {
+  const one = async (item: DownloadItemOut, kind: 'retry' | 'cancel', done: (r: DownloadItemOut) => void) => {
     setBusy(`${kind}:${item.id}`);
     const r = await attempt(() => (kind === 'retry' ? api.retry(item.id) : api.cancel(item.id)));
     setBusy(null);
-    if (r) merge(r);
+    if (r) done(r);
   };
   const retry = async (list: DownloadItemOut[], key: string) => {
     if (!list.length) return;
@@ -107,6 +139,14 @@ export function DownloadsPage() {
     toast(`Ищу заново: ${downloadsWord(r.queued)}`, 'success');
     setPicked(new Set());
     res.reload(true);
+  };
+  const retryGroup = async (key: string) => {
+    setBusy(`group:${key}`);
+    const r = await attempt(() => api.retryDownloadGroup(key));
+    setBusy(null);
+    if (!r) return;
+    toast(`Ищу заново: ${downloadsWord(r.queued)}`, 'success');
+    overview.reload(true);
   };
   const remove = async (list: DownloadItemOut[], key: string) => {
     if (!list.length) return;
@@ -144,71 +184,63 @@ export function DownloadsPage() {
       if (!next.delete(id)) next.add(id);
       return next;
     });
-  const play = (item: DownloadItemOut) => playList(byTab.done.filter((x) => x.status === 'done' && x.nd_song_id), (x) => x.nd_song_id, item);
 
-  const row = (item: DownloadItemOut): RowProps => ({
+  /** A row's props; `among`: the list it plays with, `update`: where the answer of its action goes. */
+  const rowFor = (item: DownloadItemOut, among: DownloadItemOut[], update: (r: DownloadItemOut) => void, pickable: boolean): RowProps => ({
     item,
-    picked: picked.has(item.id),
-    onPick: (v) => pick(item.id, v),
+    picked: pickable ? picked.has(item.id) : undefined,
+    onPick: pickable ? (v) => pick(item.id, v) : undefined,
     busy: busy?.endsWith(`:${item.id}`) ? busy.split(':')[0] : null,
     open: open.has(item.id),
     onOpen: () => toggleOpen(item.id),
-    onRetry: () => void one(item, 'retry'),
-    onCancel: () => void one(item, 'cancel'),
+    onRetry: () => void one(item, 'retry', update),
+    onCancel: () => void one(item, 'cancel', update),
     onRemove: () => void remove([item], `remove:${item.id}`),
-    onPlay: canPlay() && item.status === 'done' && item.nd_song_id ? () => play(item) : undefined,
+    onPlay: canPlay() && item.status === 'done' && item.nd_song_id
+      ? () => playList(among.filter((x) => x.status === 'done' && x.nd_song_id), (x) => x.nd_song_id, item)
+      : undefined,
   });
 
-  const tabs: Array<{ value: Tab; label: string }> = [
-    { value: 'now', label: `Сейчас${byTab.now.length ? ` · ${byTab.now.length}` : ''}` },
-    { value: 'problems', label: `Проблемы${byTab.problems.length ? ` · ${byTab.problems.length}` : ''}` },
-    { value: 'done', label: `Готовые${byTab.done.length ? ` · ${byTab.done.length}` : ''}` },
-  ];
+  const tabs: Array<{ value: Tab; label: string }> = TABS.map((t) => {
+    const n = count(t);
+    const label = { now: 'Сейчас', review: 'Нужен выбор', done: 'Готовые' }[t];
+    return { value: t, label: n ? `${label} · ${n.toLocaleString('ru')}` : label };
+  });
   const empty: Record<Tab, [string, string]> = {
     now: ['Сейчас ничего не качается', 'Найдите трек или альбом в поиске и нажмите «Скачать».'],
-    problems: ['Проблем нет', 'Здесь появляются загрузки, которым нужен ваш выбор: файл или ссылка.'],
+    review: ['Ничего не ждёт вашего выбора', 'Здесь появляются загрузки, которым нужен ваш выбор: файл или ссылка.'],
     done: ['Готовых загрузок нет', 'Скачанные треки остаются здесь, пока вы их не уберёте из списка.'],
   };
+  const filteredGroup = onlyImport ? (overview.data?.groups ?? []).find((g) => g.import_id === onlyImport) : null;
 
   return (
     <div className="pb-6">
       <ListBar plain title="Загрузки" back="/more" search={{ found: null, open: sf.open, alone: sf.alone, show: sf.show, close: sf.close, field: sf.field(needle ? items.length : null) }} />
       {/* the list keeps itself up to date over a live line; said only when the line is down */}
       {!connected && !res.error && !res.loading && <p className="px-4 pb-2 text-xs text-muted lg:px-6">Нет связи с сервером — переподключаюсь, список может отставать.</p>}
-      {running.map((imp) => (
-        <Link key={imp.id} to={`/import/${imp.id}`} className="card mx-4 mb-3 flex items-center gap-3 p-3 hover:bg-hover">
-          <ServiceIcon service={imp.source} size={22} />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-semibold">{SOURCES[imp.source]?.page ?? 'Перенос музыки'}</span>
-            <span className="block truncate text-xs text-muted">
-              {imp.stats.pending ? `сопоставляем · осталось ${imp.stats.pending}` : `скачано ${imp.stats.done} · качается ${imp.stats.downloading}`}
-            </span>
-          </span>
-          <Icon name="chevron" size={18} className="text-dim" />
-        </Link>
-      ))}
-      <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+      <div className="flex flex-wrap items-center gap-2 px-4 pb-1">
         <Segmented<Tab> label="Раздел" value={at} onChange={choose} options={tabs} />
-        <span className="flex-1" />
-        {shown.length > 0 && at === 'problems' && (
-          <Button small icon="refresh" busy={busy === 'retry:all'} onClick={() => void retry(shown, 'retry:all')}>
-            Повторить все
-          </Button>
-        )}
-        {shown.length > 0 && at !== 'now' && (
-          <Button small icon="trash" busy={busy === 'remove:all'} onClick={() => void remove(shown, 'remove:all')}>
-            Убрать все
-          </Button>
+        {onlyImport && (
+          <button
+            type="button"
+            onClick={() => navigate(`/downloads?tab=${at}`, { replace: true })}
+            className="flex min-h-9 items-center gap-1.5 rounded-full border border-line px-3.5 text-sm hover:bg-hover"
+            title="Показать все загрузки"
+          >
+            Только {groupTitle(filteredGroup ?? null).toLocaleLowerCase('ru')}
+            <Icon name="x" size={16} />
+          </button>
         )}
       </div>
+      <p className="px-4 pb-3 pt-1 text-xs text-muted">{HINTS[at]}</p>
 
-      {res.loading ? (
+      {res.loading || overview.loading ? (
         <SkeletonRows />
-      ) : res.error ? (
-        <ErrorState text={res.error} onRetry={() => res.reload()} />
-      ) : shown.length === 0 && needle ? (
+      ) : res.error || overview.error ? (
+        <ErrorState text={res.error ?? overview.error ?? ''} onRetry={() => { res.reload(); overview.reload(); }} />
+      ) : shown.length === 0 && !shownGroups.length && needle ? (
         <Empty icon="search" title="Ничего не найдено" text="В этом разделе таких загрузок нет — посмотрите в соседних." />
-      ) : shown.length === 0 ? (
+      ) : shown.length === 0 && !shownGroups.length ? (
         <Empty icon="download" title={empty[at][0]} text={empty[at][1]}>
           {at === 'now' && !items.length && (
             <Link to="/search" className="mt-2 rounded-full bg-fg px-5 py-2.5 font-semibold text-bg">
@@ -216,26 +248,59 @@ export function DownloadsPage() {
             </Link>
           )}
         </Empty>
-      ) : desktop ? (
-        <div className="mx-4 overflow-hidden rounded-2xl bg-surface" role="table" aria-label="Загрузки">
-          <div role="row" className={cx(GRID, 'h-9 border-b border-line/60 text-xs text-dim')}>
-            <Checkbox checked={chosen.length === shown.length} onChange={(v) => setPicked(v ? new Set(shown.map((x) => x.id)) : new Set())} label="Выбрать все" />
-            <span>Трек</span>
-            <span>Альбом</span>
-            <span>Источник</span>
-            <span>{at === 'now' ? 'Состояние' : 'Когда'}</span>
-            <span />
-          </div>
-          {shown.map((item) => (
-            <TableRow key={item.id} {...row(item)} />
-          ))}
-        </div>
       ) : (
-        <ul className="space-y-2 px-4">
-          {shown.map((item) => (
-            <Card key={item.id} {...row(item)} />
+        <div className="space-y-3">
+          {shownGroups.map((g) => (
+            <Group
+              key={`${at}:${g.key}`}
+              group={g}
+              tab={at}
+              desktop={desktop}
+              rowFor={rowFor}
+              retrying={busy === `group:${g.key}`}
+              onRetryAll={() => void retryGroup(g.key)}
+            />
           ))}
-        </ul>
+          {shown.length > 0 && (
+            <section aria-label="Вы скачивали сами">
+              <div className="flex flex-wrap items-center gap-2 px-4 pb-2">
+                {shownGroups.length > 0 && <h2 className="font-semibold">Вы скачивали сами</h2>}
+                <span className="flex-1" />
+                {at === 'review' && (
+                  <Button small icon="refresh" busy={busy === 'retry:all'} onClick={() => void retry(shown, 'retry:all')}>
+                    Повторить все
+                  </Button>
+                )}
+                {at !== 'now' && (
+                  <Button small icon="trash" busy={busy === 'remove:all'} onClick={() => void remove(shown, 'remove:all')}>
+                    Убрать все
+                  </Button>
+                )}
+              </div>
+              {desktop ? (
+                <div className="mx-4 overflow-hidden rounded-2xl bg-surface" role="table" aria-label="Ваши загрузки">
+                  <div role="row" className={cx(GRID, 'h-9 border-b border-line/60 text-xs text-dim')}>
+                    <Checkbox checked={chosen.length === shown.length} onChange={(v) => setPicked(v ? new Set(shown.map((x) => x.id)) : new Set())} label="Выбрать все" />
+                    <span>Трек</span>
+                    <span>Альбом</span>
+                    <span>Источник</span>
+                    <span>{at === 'now' ? 'Состояние' : 'Когда'}</span>
+                    <span />
+                  </div>
+                  {shown.map((item) => (
+                    <TableRow key={item.id} {...rowFor(item, shown, merge, true)} />
+                  ))}
+                </div>
+              ) : (
+                <ul className="space-y-2 px-4">
+                  {shown.map((item) => (
+                    <Card key={item.id} {...rowFor(item, shown, merge, true)} />
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+        </div>
       )}
 
       {chosen.length > 0 && (
@@ -257,12 +322,143 @@ export function DownloadsPage() {
   );
 }
 
+function groupTitle(g: DownloadGroupOut | null): string {
+  if (!g || g.origin === 'import') {
+    const page = g?.source ? SOURCES[g.source]?.page : null;
+    return page ? `${page}${g?.title ? ` · ${g.title}` : ''}` : 'Перенос музыки';
+  }
+  return { mix: 'Микс дня', wave: 'Моя волна', upgrade: 'Замена файлов на лучшие' }[g.origin ?? 'mix'] ?? 'Загрузки хаба';
+}
+
+const GROUP_ICON: Record<string, IconName> = { import: 'transfer', mix: 'sparkle', wave: 'wave', upgrade: 'refresh' };
+
+/** A group of «Загрузки» in one section: its counts in the head, its downloads under it by pages. Kept up to date
+ * by the live line: a row changes in place and leaves when it leaves the section; a new count brings the first page
+ * again (as many as are open). */
+function Group({ group, tab, desktop, rowFor, retrying, onRetryAll }: {
+  group: DownloadGroupOut;
+  tab: Tab;
+  desktop: boolean;
+  rowFor: (item: DownloadItemOut, among: DownloadItemOut[], update: (r: DownloadItemOut) => void, pickable: boolean) => RowProps;
+  retrying: boolean;
+  onRetryAll: () => void;
+}) {
+  const [open, setOpen] = useState(tab !== 'done');
+  const [rows, setRows] = useState<DownloadItemOut[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const total = group[tab];
+  const want = useRef(GROUP_PAGE);
+
+  useEffect(() => {
+    if (!open) return;
+    const ctl = new AbortController();
+    setLoading(true);
+    api.downloadGroup(group.key, TAB_STATUS[tab], want.current, undefined, ctl.signal)
+      .then((list) => setRows(list))
+      .catch(() => undefined)
+      .finally(() => !ctl.signal.aborted && setLoading(false));
+    return () => ctl.abort();
+  }, [open, group.key, tab, total]);
+
+  useHubEvent('download', (d) => {
+    setRows((prev) => {
+      if (!prev) return prev;
+      const i = prev.findIndex((x) => x.id === d.id);
+      if (i < 0) return prev;
+      if (d.hidden || tabOf(d) !== tab) return prev.filter((x) => x.id !== d.id);
+      const next = prev.slice();
+      next[i] = { ...prev[i], ...d };
+      return next;
+    });
+  });
+
+  const more = async () => {
+    if (!rows?.length) return;
+    setLoading(true);
+    const next = await attempt(() => api.downloadGroup(group.key, TAB_STATUS[tab], MORE_PAGE, rows[rows.length - 1].id));
+    setLoading(false);
+    if (!next) return;
+    setRows((prev) => [...(prev ?? []), ...next]);
+    want.current += next.length;
+  };
+  const update = (r: DownloadItemOut) => setRows((prev) => prev?.map((x) => (x.id === r.id ? { ...x, ...r } : x)) ?? prev);
+
+  const all = group.now + group.review + group.done;
+  const sub = group.origin === 'import'
+    ? tab === 'now'
+      ? `скачано ${group.done.toLocaleString('ru')} из ${all.toLocaleString('ru')} · качается и ждёт очереди ${group.now.toLocaleString('ru')}`
+      : tab === 'review'
+        ? `скачано ${group.done.toLocaleString('ru')} из ${all.toLocaleString('ru')}`
+        : tracksWord(group.done)
+    : `${tracksWord(total)}${tab === 'now' ? ' в работе' : ''}`;
+  const left = total - (rows?.length ?? 0);
+
+  return (
+    <section aria-label={groupTitle(group)} className="mx-4 overflow-hidden rounded-2xl bg-surface max-sm:mx-2">
+      <div className="flex flex-wrap items-center gap-3 p-3 sm:px-4">
+        <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex min-w-0 flex-1 basis-60 items-center gap-3 text-left">
+          <span className={cx('flex h-11 w-11 shrink-0 items-center justify-center rounded-xl', group.origin === 'import' ? 'bg-accent/15 text-accent' : 'bg-fg/10 text-muted')}>
+            {group.origin === 'import' && group.source ? <ServiceIcon service={group.source} size={22} /> : <Icon name={GROUP_ICON[group.origin ?? 'mix'] ?? 'download'} size={22} />}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-semibold">{groupTitle(group)}</span>
+            <span className="block text-sm text-muted">
+              {sub}
+              {tab === 'review' && <span className="text-warn"> · не скачалось {group.review.toLocaleString('ru')}</span>}
+            </span>
+            {group.origin === 'import' && tab === 'now' && all > 0 && <ProgressBar label={`Перенос: скачано ${group.done} из ${all}`} value={group.done / all} className="mt-2 max-w-md" />}
+          </span>
+          <Icon name="down" size={18} className={cx('shrink-0 text-dim transition-transform', open && 'rotate-180')} />
+        </button>
+        {(tab === 'review' || group.import_id) && (
+          <span className="flex items-center gap-2 max-sm:w-full">
+            {tab === 'review' && (
+              <Button small icon="refresh" busy={retrying} onClick={onRetryAll} className="max-sm:flex-1">
+                Повторить все
+              </Button>
+            )}
+            {group.import_id && (
+              <Link to={`/import/${group.import_id}`} className="flex min-h-9 items-center rounded-full px-3 text-sm text-muted hover:bg-hover hover:text-fg">
+                К переносу
+              </Link>
+            )}
+          </span>
+        )}
+      </div>
+      {open && (
+        <div className="border-t border-line/60">
+          {rows === null ? (
+            <SkeletonRows />
+          ) : desktop ? (
+            <div role="table" aria-label={groupTitle(group)}>
+              {rows.map((item) => <TableRow key={item.id} {...rowFor(item, rows, update, false)} />)}
+            </div>
+          ) : (
+            <ul className="space-y-1.5 p-1.5">
+              {rows.map((item) => <Card key={item.id} flat {...rowFor(item, rows, update, false)} />)}
+            </ul>
+          )}
+          {rows !== null && left > 0 && (
+            <div className="flex items-center gap-3 px-4 pb-3 pt-1 text-sm text-muted">
+              <span>Ещё {left.toLocaleString('ru')}{tab === 'now' && group.origin === 'import' ? ' — пойдут по порядку' : ''}</span>
+              <Button small busy={loading} onClick={() => void more()}>
+                Показать ещё
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 const GRID = 'grid grid-cols-[2.75rem_minmax(0,2.4fr)_minmax(0,1.4fr)_6rem_9rem_8.5rem] items-center gap-3 pr-2';
 
 interface RowProps {
   item: DownloadItemOut;
-  picked: boolean;
-  onPick: (v: boolean) => void;
+  /** a row of the user's own list can be ticked; a group's cannot */
+  picked?: boolean;
+  onPick?: (v: boolean) => void;
   /** which of its actions is under way: retry / cancel / remove */
   busy: string | null;
   open: boolean;
@@ -334,7 +530,7 @@ function TableRow(p: RowProps) {
   return (
     <div role="row" className={cx('border-b border-line/60 py-1.5 last:border-0', p.picked && 'bg-accent/10')}>
       <div className={GRID}>
-        <Checkbox checked={p.picked} onChange={p.onPick} label={`Выбрать «${item.title}»`} />
+        {p.onPick ? <Checkbox checked={!!p.picked} onChange={p.onPick} label={`Выбрать «${item.title}»`} /> : <span />}
         <Link to={`/downloads/${item.id}`} className="flex min-w-0 items-center gap-3" aria-label={`Подробности: ${item.artist} — ${item.title}`}>
           <Cover src={item.chosen?.cover_url} size={40} alt="" />
           <span className="min-w-0">{name(item)}</span>
@@ -359,11 +555,11 @@ function TableRow(p: RowProps) {
   );
 }
 
-function Card(p: RowProps) {
+function Card(p: RowProps & { flat?: boolean }) {
   const { item } = p;
   const active = DOWNLOAD_ACTIVE.includes(item.status);
   return (
-    <li className={cx('rounded-2xl bg-surface p-3', p.picked && 'ring-1 ring-accent')}>
+    <li className={cx('rounded-2xl p-3', p.flat ? 'bg-fg/[0.04]' : 'bg-surface', p.picked && 'ring-1 ring-accent')}>
       <div className="flex items-center gap-3">
         <Link to={`/downloads/${item.id}`} className="flex min-w-0 flex-1 items-center gap-3" aria-label={`Подробности: ${item.artist} — ${item.title}`}>
           <Cover src={item.chosen?.cover_url} size={44} alt="" />
@@ -376,7 +572,7 @@ function Card(p: RowProps) {
             </span>
           </span>
         </Link>
-        <Checkbox checked={p.picked} onChange={p.onPick} label={`Выбрать «${item.title}»`} />
+        {p.onPick && <Checkbox checked={!!p.picked} onChange={p.onPick} label={`Выбрать «${item.title}»`} />}
       </div>
       {item.status === 'downloading' && <ProgressBar value={item.progress} className="mt-2" />}
       <div className="mt-1 space-y-1 empty:hidden">
@@ -401,7 +597,7 @@ function Card(p: RowProps) {
               </Button>
             )}
             {isProblem(item) && (
-              <Button small className="flex-1" icon="search" onClick={() => navigate(`/downloads/${item.id}`)}>
+              <Button small className="flex-1 whitespace-nowrap" icon="search" onClick={() => navigate(`/downloads/${item.id}`)}>
                 Выбрать файл
               </Button>
             )}

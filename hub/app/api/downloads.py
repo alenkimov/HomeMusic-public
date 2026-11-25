@@ -7,11 +7,12 @@ from pathlib import Path
 from tempfile import mkdtemp
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import not_, or_, select, update
+from sqlalchemy import and_, func, not_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import listen
-from app.api.schemas import DownloadBatchOut, DownloadIdsIn, DownloadIn, DownloadItemOut, DownloadLinkIn, DownloadTrackIn, RetryIn
+from app.api.schemas import (DownloadBatchOut, DownloadGroupIn, DownloadGroupOut, DownloadIdsIn, DownloadIn, DownloadItemOut,
+                             DownloadLinkIn, DownloadsOverviewOut, DownloadTrackIn, RetryIn)
 from app.auth import current_user
 from app.catalog.models import split_ref
 from app.config import get_settings
@@ -20,9 +21,9 @@ from app.events import bus
 from app.jobs.downloads import create_items, item_links, item_out, item_ref
 from app.jobs.queue import enqueue, notify
 from app.library.importer import cleanup_dir
-from app.library.owned import ACTIVE_STATUSES, find_owned, quiet
+from app.library.owned import ACTIVE_STATUSES, ORIGINS, find_owned, quiet
 from app.library.tracks import current_file
-from app.models import DownloadBatch, DownloadItem, Job, User
+from app.models import DownloadBatch, DownloadItem, Import, ImportCollection, Job, User
 from app.providers.base import Candidate, TrackQuery, file_ref
 from app.services import svc
 
@@ -155,21 +156,88 @@ async def create(body: DownloadIn, user: User = Depends(current_user), s: AsyncS
     return out
 
 
+TAB_STATUSES = {"now": ACTIVE_STATUSES, "review": ("failed", "needs_review"), "done": ("done", "cancelled")}
+# the Hub's own groups that are only shown while under way: a mix that missed a track or the wave's done ones are
+# nobody's business
+UNDER_WAY_ONLY = ("mix", "wave", "upgrade")
+
+
+def _group_where(group: str):
+    """The downloads of a group of «Загрузки» (`DownloadGroupOut.key`): the order of `owned.origin`."""
+    qj = DownloadItem.query_json
+    asked = func.coalesce(qj["requested"].as_boolean(), False)
+    if group == "own":
+        return or_(asked, and_(DownloadItem.import_id.is_(None), *(not_(qj.has_key(k)) for k in ORIGINS)))
+    if group.startswith("import:") and group[7:].isdigit():
+        return and_(not_(asked), DownloadItem.import_id == int(group[7:]))
+    if group in UNDER_WAY_ONLY:
+        before = ORIGINS[1:ORIGINS.index(group)]
+        return and_(not_(asked), DownloadItem.import_id.is_(None), qj.has_key(group), *(not_(qj.has_key(k)) for k in before))
+    raise HTTPException(400, "Нет такой группы загрузок")
+
+
 @router.get("", response_model=list[DownloadItemOut])
 async def list_items(status: str | None = None, limit: int = Query(100, le=5000), quiet: bool = True,
+                     group: str | None = None, before: int | None = None,
                      user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     """The user's downloads, the newest first. `quiet` false: without the ones nobody asked for (`owned.quiet`: a
-    transfer's, a mix's, the wave's, a better file's) — what «Загрузки» shows; a transfer alone has thousands."""
+    transfer's, a mix's, the wave's, a better file's) — what «Загрузки» shows; a transfer alone has thousands.
+    `group`: only one group of the overview; `before`: the ones older than this id (the next page)."""
     stmt = select(DownloadItem).where(DownloadItem.user_id == user.id, DownloadItem.hidden.is_(False))
     if not quiet:
-        qj = DownloadItem.query_json
-        unasked = or_(DownloadItem.import_id.is_not(None), qj.has_key("mix"), qj.has_key("wave"), qj.has_key("upgrade"))
-        stmt = stmt.where(or_(not_(unasked), qj["requested"].as_boolean().is_(True)))
+        stmt = stmt.where(_group_where("own"))
+    if group:
+        stmt = stmt.where(_group_where(group))
+    if before is not None:
+        stmt = stmt.where(DownloadItem.id < before)
     if status:
         stmt = stmt.where(DownloadItem.status.in_([x.strip() for x in status.split(",") if x.strip()]))
     rows = (await s.execute(stmt.order_by(DownloadItem.id.desc()).limit(limit))).scalars().all()
     links = await item_links(s, list(rows))
     return [item_out(r, links=links[r.id]) for r in rows]
+
+
+@router.get("/overview", response_model=DownloadsOverviewOut)
+async def overview(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    """«Загрузки» by group and section: how many of each are under way, need the user, are done. A transfer, a mix,
+    the wave and the better files are groups of their own; the counts of a section leave out what is shown only
+    while under way (`UNDER_WAY_ONLY`)."""
+    qj = DownloadItem.query_json
+    keys = (DownloadItem.status, DownloadItem.import_id, func.coalesce(qj["requested"].as_boolean(), False),
+            *(qj.has_key(k) for k in ORIGINS[1:]))
+    rows = (await s.execute(select(*keys, func.count()).where(
+        DownloadItem.user_id == user.id, DownloadItem.hidden.is_(False)).group_by(*keys))).all()
+    tab_of = {st: tab for tab, sts in TAB_STATUSES.items() for st in sts}
+    groups: dict[str, DownloadGroupOut] = {}
+    for status, import_id, asked, *flags, n in rows:
+        tab = tab_of.get(status)
+        if tab is None:
+            continue
+        if asked:
+            key = "own"
+        elif import_id is not None:
+            key = f"import:{import_id}"
+        else:
+            key = next((k for k, on in zip(ORIGINS[1:], flags, strict=True) if on), "own")
+        if key in UNDER_WAY_ONLY and tab != "now":
+            continue
+        g = groups.setdefault(key, DownloadGroupOut(key=key, origin=None if key == "own" else key.split(":")[0],
+                                                    import_id=import_id if key.startswith("import:") else None))
+        setattr(g, tab, getattr(g, tab) + n)
+    ids = [g.import_id for g in groups.values() if g.import_id is not None]
+    if ids:
+        colls: dict[int, list[ImportCollection]] = {}
+        for c in (await s.execute(select(ImportCollection).where(ImportCollection.import_id.in_(ids)))).scalars():
+            colls.setdefault(c.import_id, []).append(c)
+        from app.imports.core import display_title
+
+        for imp in (await s.execute(select(Import).where(Import.id.in_(ids)))).scalars():
+            g = groups[f"import:{imp.id}"]
+            g.source, g.title, g.import_status = imp.source, display_title(imp, colls.get(imp.id, [])), imp.status
+    order = {"mix": 1, "wave": 2, "upgrade": 3, "own": 4}
+    out = sorted(groups.values(), key=lambda g: (order.get(g.key, 0), -(g.import_id or 0)))
+    return DownloadsOverviewOut(now=sum(g.now for g in out), review=sum(g.review for g in out),
+                                done=sum(g.done for g in out), groups=out)
 
 
 async def _own_item(s: AsyncSession, user: User, item_id: int) -> DownloadItem:
@@ -392,6 +460,18 @@ async def retry_many(body: DownloadIdsIn, user: User = Depends(current_user),
     for item in items:
         bus.publish(user.id, "download", item_out(item).model_dump(mode="json"))
     return {"queued": len(items)}
+
+
+@router.post("/retry-group")
+async def retry_group(body: DownloadGroupIn, user: User = Depends(current_user),
+                      s: AsyncSession = Depends(get_session, scope="function")):
+    """«Повторить все» of a group: each of its downloads that failed or waits for a file is looked for again."""
+    ids = list((await s.execute(select(DownloadItem.id).where(
+        DownloadItem.user_id == user.id, DownloadItem.hidden.is_(False), DownloadItem.status.in_(RETRIABLE[:2]),
+        _group_where(body.group)))).scalars())
+    if not ids:
+        return {"queued": 0}
+    return await retry_many(DownloadIdsIn(ids=ids[:5000]), user, s)
 
 
 @router.post("/clear")

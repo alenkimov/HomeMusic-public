@@ -635,6 +635,8 @@ export interface DownloadItemOut {
   quiet?: boolean;
   /** queued by this import (`/api/imports`) */
   import_id?: number | null;
+  /** who queued a quiet one: a transfer, a mix, the wave, a better file; null: the user's own */
+  origin?: 'import' | 'mix' | 'wave' | 'upgrade' | null;
   candidates?: Candidate[] | null;
   /** the journal (the detail view only): the steps of the download in order */
   log?: DownloadStep[] | null;
@@ -1912,4 +1914,25 @@ export interface WaveOut {
   /** sources still answer: an empty `tracks` — ask again in a few seconds */
   pending: boolean;
   recorded?: PlayEventsOut | null;
+}
+
+/** A group of «Загрузки» (`GET /api/downloads/overview`): a transfer's downloads, a mix's, the wave's, the better
+ * files' — or the user's own («own»). */
+export interface DownloadGroupOut {
+  key: string;
+  origin: 'import' | 'mix' | 'wave' | 'upgrade' | null;
+  import_id: number | null;
+  source: ImportSource | null;
+  title: string | null;
+  import_status: string | null;
+  now: number;
+  review: number;
+  done: number;
+}
+
+export interface DownloadsOverviewOut {
+  now: number;
+  review: number;
+  done: number;
+  groups: DownloadGroupOut[];
 }

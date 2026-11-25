@@ -136,6 +136,14 @@ async def _destinations(s: AsyncSession, imp: Import, colls: list[ImportCollecti
     return targets
 
 
+def display_title(imp: Import, colls: list[ImportCollection]) -> str | None:
+    """What a transfer is called after its service: the account, or the collection a link or Spotify gave."""
+    if imp.method == "link" or (imp.source == "spotify" and imp.method == "saved"):
+        return next((c.title for c in sorted(colls, key=lambda c: c.position) if c.kind in TRACK_KINDS and c.title),
+                    imp.account)
+    return imp.account
+
+
 async def import_out(s: AsyncSession, imp: Import) -> ImportOut:
     colls = (await s.execute(select(ImportCollection).where(ImportCollection.import_id == imp.id)
                              .order_by(ImportCollection.position))).scalars().all()
@@ -154,9 +162,7 @@ async def import_out(s: AsyncSession, imp: Import) -> ImportOut:
     elif imp.status == "auth" and a.get("kind"):
         auth = ImportAuthOut(kind=a["kind"], hint=a.get("hint"), wrong=bool(a.get("wrong")),
                              verification_url=a.get("verification_url") or "", expires_at=a["expires_at"])
-    title = imp.account
-    if imp.method == "link" or (imp.source == "spotify" and imp.method == "saved"):
-        title = next((c.title for c in colls if c.kind in TRACK_KINDS and c.title), title)
+    title = display_title(imp, list(colls))
     has_token = imp.connection_id is not None
     return ImportOut(
         id=imp.id, source=imp.source, title=title, status=imp.status, mode=imp.mode, account=imp.account,

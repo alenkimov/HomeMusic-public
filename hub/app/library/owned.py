@@ -32,6 +32,17 @@ def quiet(query_json: dict[str, Any] | None) -> bool:
     return bool(qj.get("import") or qj.get("mix") or qj.get("wave") or qj.get("upgrade")) and not qj.get("requested")
 
 
+ORIGINS = ("import", "mix", "wave", "upgrade")
+
+
+def origin(query_json: dict[str, Any] | None) -> str | None:
+    """Who queued a quiet download (`quiet`): «Загрузки» show them by it, one group each; None: the user's own."""
+    qj = query_json or {}
+    if qj.get("requested"):
+        return None
+    return next((k for k in ORIGINS if qj.get(k)), None)
+
+
 # the remark of a file made of a poorer one (`jobs.downloads.try_candidates`)
 _BLOWN_RE = re.compile(r"по звуку около (\d+)")
 
