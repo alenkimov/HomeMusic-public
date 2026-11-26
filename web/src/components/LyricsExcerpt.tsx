@@ -125,10 +125,10 @@ export function LyricsExcerpt({ p, track, actions }: { p: TidyProposalOut; track
         </div>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <span className="min-w-0 flex-1 basis-52 text-[12px] text-dim">
-          {fixes.size === 0 ? 'Текст изменился с тех пор, как это предложено' : timed ? 'Нажмите на строку — трек заиграет с неё' : 'Нажмите на строку — откроется плеер с текстом'}
-        </span>
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        {fixes.size === 0 && data && (
+          <span className="min-w-0 flex-1 basis-52 text-[12px] text-dim">Текст изменился с тех пор, как это предложено</span>
+        )}
         {actions}
       </div>
     </div>
