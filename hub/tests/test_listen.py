@@ -1333,3 +1333,45 @@ async def test_a_track_stopped_at_its_start_plays_whole_when_it_is_reached(env, 
     assert r.status_code == 200 and r.content == AUDIO
     assert seen == ["bytes=0-", "bytes=1000-"]
     gate.set()
+
+
+async def test_a_tap_does_not_wait_for_the_names_before_it_searches(env, monkeypatch):
+    """A Cyrillic name is searched at once; a Latin one is searched while its Cyrillic original is looked for."""
+    import time
+
+    from app import listen
+    from app.services import svc
+
+    c, hm = env["client"], env["hm"]
+    hm.cands = [cand("1", "https://cdn.test/good.mp3")]
+    started: list[float] = []
+    real_search = listen.search_provider
+
+    async def search(*a, **kw):
+        started.append(time.monotonic())
+        return await real_search(*a, **kw)
+
+    async def slow_meta(meta):
+        await asyncio.sleep(1.2)
+        return meta
+
+    async def slow_names(q, upc=None):
+        await asyncio.sleep(1.2)
+        return q, q  # no original: the catalog's names stand
+
+    monkeypatch.setattr(listen, "search_provider", search)
+    monkeypatch.setattr(listen, "complete_meta", slow_meta)
+    monkeypatch.setattr(listen, "russian_original", slow_names)
+
+    t0 = time.monotonic()
+    r = await c.get("/api/listen", params={"ref": "dz:100"})  # «Кино — Группа крови»
+    assert r.status_code == 200 and r.json()["kind"] == "full"
+    assert time.monotonic() - t0 < 1.0 and started[0] - t0 < 0.5  # the names were not waited for
+
+    svc.deezer.track = svc.deezer.track.model_copy(update={"id": "101", "ref": "dz:101", "artist": "Kino", "title": "Gruppa krovi"})
+    started.clear()
+    t0 = time.monotonic()
+    r = await c.get("/api/listen", params={"ref": "dz:101"})
+    assert r.status_code == 200 and r.json()["kind"] == "full"
+    assert started and started[0] - t0 < 0.5  # searched before the original was known
+    assert hm.searched == 2  # and that search was the one kept: the original changed nothing

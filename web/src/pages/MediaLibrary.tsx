@@ -30,7 +30,7 @@ import { useHubEvent } from '../lib/events';
 import { needsTrackFile, withRecordingAvailability } from '../lib/findFile';
 import { useListSort } from '../lib/listSort';
 import { cyclePageShuffle, useListen } from '../lib/listen';
-import { useAsync, useRememberScrollX } from '../lib/hooks';
+import { useAsync, useRememberScrollX, useCoalesced } from '../lib/hooks';
 import { enc, navigate, useCanonicalPath, useRoute } from '../lib/router';
 import { filterActive, filterOfQuery, filterWords, passes, selectionsChanged, tagKey, useTags, type TagFilter } from '../lib/tags';
 import { attempt, confirmDialog } from '../lib/ui';
@@ -219,8 +219,10 @@ export function LikedPage() {
   const res = useAsync((s) => api.ndLiked(s), [], true, 'liked');
   useSmartPage('liked', null);
   // what only changes cards comes as their own event (`lib/cards.ts`): the list is not read again for it
-  useHubEvent('library', (e) => listChanged(e) && res.reload(true));
-  useHubEvent('import', () => res.reload(true));
+  // a transfer sends an event per track: the list of thousands is read again once for a burst of them
+  const later = useCoalesced(() => res.reload(true));
+  useHubEvent('library', (e) => listChanged(e) && later());
+  useHubEvent('import', later);
   useCardUpdates(res.data?.songs, (cards) => res.setData((prev) => {
     if (!prev) return prev;
     const songs = patch(prev.songs, cards);
@@ -318,7 +320,8 @@ export function SelectionPage({ id }: { id: string }) {
     const tracks = withRecordingAvailability(prev.tracks, event);
     return tracks === prev.tracks ? prev : { ...prev, tracks };
   }));
-  useHubEvent('library', () => src.reload(true));
+  const laterSrc = useCoalesced(() => src.reload(true));
+  useHubEvent('library', laterSrc);
   useHubEvent('reconnect', () => src.reload(true));
   const [filter, setFilter] = useState<TagFilter>({});
   const [sort, setSort] = useListSort(`selection:${id}`);
@@ -398,13 +401,14 @@ export function PlaylistPage({ id }: { id: string }) {
   const closeCover = useCallback(() => setViewing(false), []);
   // its name or its picture changed (the playlist's menu, the picture's window), or it is gone: the Hub says so;
   // what only changes the cards of its tracks comes as their own event (`lib/cards.ts`)
-  useHubEvent('library', (e) => listChanged(e) && res.reload(true));
+  const later = useCoalesced(() => res.reload(true));
+  useHubEvent('library', (e) => listChanged(e) && later());
   useCardUpdates(res.data?.tracks, (cards) => res.setData((prev) => {
     if (!prev) return prev;
     const tracks = patch(prev.tracks, cards);
     return tracks === prev.tracks ? prev : { ...prev, tracks: [...tracks] };
   }));
-  useHubEvent('import', () => res.reload(true)); // a transfer settled its playlists
+  useHubEvent('import', later); // a transfer settled its playlists
   useHubEvent('recording', (event) => res.setData((prev) => {
     if (!prev) return prev;
     const tracks = withRecordingAvailability(prev.tracks, event);

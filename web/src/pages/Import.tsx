@@ -11,7 +11,7 @@ import { useSession } from '../lib/session';
 import { EMBEDDED } from '../lib/embedded';
 import { useHubEvent } from '../lib/events';
 import { fmtDuration, fmtSize, fmtWhen, plural, tracksWord } from '../lib/format';
-import { useAsync, useInterval, useWindowEvent } from '../lib/hooks';
+import { useAsync, useInterval, useWindowEvent, useCoalesced } from '../lib/hooks';
 import { enc, Link, navigate } from '../lib/router';
 import { copyText } from '../lib/share';
 import { attempt, confirmDialog, toast } from '../lib/ui';
@@ -120,7 +120,8 @@ function SavedAccounts({ source, disabled }: { source: ImportSource; disabled: b
 export function ImportsPage({ from = null }: { from?: ImportSource | null }) {
   const res = useAsync((s) => api.imports(s), []);
   const past = (res.data ?? []).filter((imp) => !from || imp.source === from);
-  useHubEvent('import', () => res.reload(true));
+  const laterList = useCoalesced(() => res.reload(true), 1500);
+  useHubEvent('import', laterList);
   const [busy, setBusy] = useState<'device' | 'profile' | 'token' | 'vk' | 'vk-token' | 'spotify-link' | null>(null);
   const [vkLogin, setVkLogin] = useState('');
   const [vkPassword, setVkPassword] = useState('');

@@ -13,7 +13,7 @@ import { Button, Empty, ErrorState, IconButton, Segmented, SkeletonRows, cx } fr
 import { useDesktop } from '../lib/desktop';
 import { useHubEvent } from '../lib/events';
 import { fmtAdded, parseTime, plural, tracksWord } from '../lib/format';
-import { useAsync } from '../lib/hooks';
+import { useAsync, useCoalesced } from '../lib/hooks';
 import { Link, navigate } from '../lib/router';
 import { EDITED_EVENT } from '../lib/trackEdit';
 import { attempt } from '../lib/ui';
@@ -122,11 +122,12 @@ export function FilesPage({ trash = false }: { trash?: boolean }) {
   };
   const [only, setOnly] = useState<Only>(trash ? 'trash' : 'all');
 
-  useHubEvent('library', () => {
+  const later = useCoalesced(() => {
     res.reload(true);
     twice.reload(true);
     gone.reload(true);
   });
+  useHubEvent('library', later);
 
   const all = useMemo(() => res.data ?? [], [res.data]);
   // the group of doubles a track is in (its place among the groups)

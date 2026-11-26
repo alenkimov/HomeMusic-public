@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import type { NdSongOut } from '../api/types';
 import { useHubEvent } from '../lib/events';
 import { tracksWord } from '../lib/format';
-import { useAsync } from '../lib/hooks';
+import { useAsync, useCoalesced } from '../lib/hooks';
 import { useActiveDownloads } from '../lib/notify';
 import { useUnseenReleases } from '../lib/releases';
 import { AUTO_PLAYLISTS } from '../lib/stats';
@@ -34,8 +34,10 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
   const lists = useAsync((s) => api.playlists(s), [], true, 'playlists');
   const counts = useForYouCounts();
   const fresh = useUnseenReleases();
-  useHubEvent('library', () => lists.reload(true));
-  useHubEvent('import', () => lists.reload(true));
+  // always on screen: a transfer's burst of events reads the lists again once, not per track
+  const laterLists = useCoalesced(() => lists.reload(true));
+  useHubEvent('library', laterLists);
+  useHubEvent('import', laterLists);
   useHubEvent('reconnect', () => lists.reload(true));
   // the saved filters by tags (lib/tags.ts)
   const sels = useAsync((s) => api.tagSelections(s), [], true, 'selections');
@@ -46,7 +48,8 @@ export function Sidebar({ active, last }: { active: Tab | null; last: Partial<Re
   }, [sels.reload]);
   // «Любимое» is a playlist too: its number of tracks, kept fresh as ♥ are set
   const liked = useAsync((s) => api.ndLiked(s), [], true, 'liked');
-  useHubEvent('library', () => liked.reload(true));
+  const laterLiked = useCoalesced(() => liked.reload(true));
+  useHubEvent('library', laterLiked);
   useEffect(() => {
     let timer: number | undefined;
     const changed = () => {

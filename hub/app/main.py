@@ -208,6 +208,9 @@ def create_app() -> FastAPI:
         app.include_router(r)
     app.include_router(integrations.callback_router)
 
+    from app.etag import ETagMiddleware
+
+    app.add_middleware(ETagMiddleware)  # a list read again unchanged does not cross the network again
     app.add_middleware(HubMark)
 
     @app.exception_handler(Exception)

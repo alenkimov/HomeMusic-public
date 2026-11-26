@@ -241,3 +241,34 @@ export function useRememberScrollX(key: string) {
     [key],
   );
 }
+
+/** A reload asked for by the Hub's events, which come in bursts (a transfer: one per downloaded track, its progress):
+ * the first asks for it in `ms`, the ones until then join it; a page not on screen reloads when it comes back. One
+ * reload of a list of thousands of tracks instead of one per event. */
+export function useCoalesced(fn: () => void, ms = 3000): () => void {
+  const ref = useRef(fn);
+  ref.current = fn;
+  const timer = useRef<number | undefined>(undefined);
+  const owed = useRef(false);
+  useEffect(() => {
+    const shown = () => {
+      if (document.visibilityState === 'visible' && owed.current && timer.current === undefined) {
+        owed.current = false;
+        ref.current();
+      }
+    };
+    document.addEventListener('visibilitychange', shown);
+    return () => {
+      document.removeEventListener('visibilitychange', shown);
+      window.clearTimeout(timer.current);
+    };
+  }, []);
+  return useCallback(() => {
+    if (timer.current !== undefined) return;
+    timer.current = window.setTimeout(() => {
+      timer.current = undefined;
+      if (document.visibilityState === 'hidden') owed.current = true;
+      else ref.current();
+    }, ms);
+  }, [ms]);
+}

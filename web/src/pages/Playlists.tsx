@@ -5,7 +5,7 @@ import { ServiceIcon, ServiceText } from '../components/ServiceBadge';
 import { Button, Empty, ErrorState, PageHeader, SkeletonRows } from '../components/ui';
 import { useHubEvent } from '../lib/events';
 import { STANDALONE } from '../lib/embedded';
-import { useAsync } from '../lib/hooks';
+import { useAsync, useCoalesced } from '../lib/hooks';
 import { openPlaylistMenu } from '../lib/playlistMenu';
 import { PlaylistRow, playlistLook } from '../components/Playlist';
 import { enc, navigate } from '../lib/router';
@@ -15,7 +15,8 @@ import { spotifyURL } from '../lib/spotify';
 export function PlaylistsPage() {
   const res = useAsync((s) => api.playlists(s), [], true, 'playlists');
   // made, changed or deleted anywhere: the Hub says so
-  useHubEvent('library', () => res.reload(true));
+  const later = useCoalesced(() => res.reload(true));
+  useHubEvent('library', later);
   useHubEvent('reconnect', () => res.reload(true));
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);

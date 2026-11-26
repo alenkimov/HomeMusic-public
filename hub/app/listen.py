@@ -879,6 +879,7 @@ async def _resolve_song(ref: str, song_id: str | None = None, *, track_id: int |
 
 async def _resolve_catalog(ref: str, probe: bool, *, strict: bool = False) -> Choice:
     """A track of a catalog (Deezer, Yandex): the catalog says what the song is, the Hub's sources have the file."""
+    t0 = time.monotonic()
     async with session_scope() as s:
         track = await by_ref(s, ref)
         path = get_settings().library_dir / track.path if track and track.path else None
@@ -913,18 +914,36 @@ async def _resolve_catalog(ref: str, probe: bool, *, strict: bool = False) -> Ch
     if path:
         return Choice(ref, "library", q.artist, q.title, q.duration_s, path=path, nd_song_id=nd_song_id, query=query)
 
-    # the same steps as handle_download_item: Cyrillic original, source order, ranking
-    try:
-        meta = meta_from_catalog(t)
-        if not ref.startswith("lib:"):
-            meta = await asyncio.wait_for(complete_meta(meta), META_TIMEOUT_S)
-    except TimeoutError:
-        meta = {}
-    try:
-        q, pq = await asyncio.wait_for(russian_original(q, meta.get("upc")), NAME_TIMEOUT_S)
-    except TimeoutError:
-        from app.catalog.yandex import cis_release
-        pq = q.model_copy(update={"lang": "ru"}) if cis_release(meta.get("upc"), q.isrc) else q
+    # the same steps as handle_download_item: Cyrillic original, source order, ranking. A tap does not wait for
+    # them before it searches: a name in Cyrillic already is searched as it is (the album's barcode the catalog is
+    # asked for only tells a Latin name's country), and a Latin one is searched at once with the catalog's names
+    # while its Cyrillic original is looked for — the search is kept if the original changes nothing
+    steps = {"catalog": time.monotonic() - t0}
+    spec: asyncio.Task[list[Candidate]] | None = None
+    spec_trouble: list[str] = []
+    from app.matching.normalize import is_russian_query
+
+    if is_russian_query(q):
+        pq = q
+    else:
+        if not probe:
+            spec = asyncio.create_task(_search_all(ref, recording, svc.provider_order(q), q, spec_trouble))
+        q0 = q
+        try:
+            meta = meta_from_catalog(t)
+            if not ref.startswith("lib:"):
+                meta = await asyncio.wait_for(complete_meta(meta), META_TIMEOUT_S)
+        except TimeoutError:
+            meta = {}
+        try:
+            q, pq = await asyncio.wait_for(russian_original(q, meta.get("upc")), NAME_TIMEOUT_S)
+        except TimeoutError:
+            from app.catalog.yandex import cis_release
+            pq = q.model_copy(update={"lang": "ru"}) if cis_release(meta.get("upc"), q.isrc) else q
+        steps["names"] = time.monotonic() - t0
+        if spec is not None and not (q == q0 and pq == q0):
+            spec.cancel()  # the original changed the search: it is made again with it
+            spec = None
     providers = svc.provider_order(pq)
     regular = {p.name for p in providers}
     fallback = [p for p in svc.provider_order(pq, for_download=True) if p.name not in regular]
@@ -947,8 +966,16 @@ async def _resolve_catalog(ref: str, probe: bool, *, strict: bool = False) -> Ch
                 if await _opens_bounded(choice):
                     return choice
                 trouble.append(f"{p.name}: файлы не открываются")
-    elif cands := await _search_all(ref, recording, providers, pq, trouble):
-        return full(cands)
+    else:
+        if spec is not None:
+            cands = await spec
+            trouble.extend(spec_trouble)
+        else:
+            cands = await _search_all(ref, recording, providers, pq, trouble)
+        steps["search"] = time.monotonic() - t0
+        log.info("listen %s: picked in %s", ref, ", ".join(f"{k} {v:.1f} s" for k, v in steps.items()))
+        if cands:
+            return full(cands)
 
     # The download fallback may have a full recording even when the regular sources fail.
     for p in fallback:
