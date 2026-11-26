@@ -33,6 +33,16 @@ const KIND_ICON: Record<ImportCollectionOut['kind'], IconName> = {
 
 const ACTIVE = ['auth', 'fetching', 'running'];
 
+/** The Yandex Music app's own sign-in (`hub/app/imports/sources/yandex.py` CLIENT_ID): the token comes back in the
+ * address it opens. */
+const YANDEX_TOKEN_URL = 'https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d';
+
+/** What was pasted: the token, or the whole address it came in (`…#access_token=…&…`). */
+function pastedToken(text: string): string {
+  const t = text.trim();
+  return /[#?&]access_token=([^&\s]+)/.exec(t)?.[1] ?? t;
+}
+
 function statusLine(imp: ImportOut): string {
   const st = imp.stats;
   switch (imp.status) {
@@ -133,7 +143,7 @@ export function ImportsPage({ from = null }: { from?: ImportSource | null }) {
   const start = async (method: 'device' | 'profile' | 'token') => {
     setBusy(method);
     const r = await attempt(() =>
-      api.createImport(method === 'profile' ? { method, url: profile.trim() } : method === 'token' ? { method, token: token.trim() } : { method }),
+      api.createImport(method === 'profile' ? { method, url: profile.trim() } : method === 'token' ? { method, token: pastedToken(token) } : { method }),
     );
     setBusy(null);
     if (r) navigate(`/import/${r.id}`);
@@ -141,7 +151,7 @@ export function ImportsPage({ from = null }: { from?: ImportSource | null }) {
 
   const startVk = async (how: 'vk' | 'vk-token') => {
     setBusy(how);
-    const r = await attempt(() => api.createImport(how === 'vk' ? { source: 'vk', method: 'password', login: vkLogin.trim(), password: vkPassword } : { source: 'vk', method: 'token', token: vkToken.trim() }));
+    const r = await attempt(() => api.createImport(how === 'vk' ? { source: 'vk', method: 'password', login: vkLogin.trim(), password: vkPassword } : { source: 'vk', method: 'token', token: pastedToken(vkToken) }));
     setBusy(null);
     if (!r) return;
     setVkPassword('');
@@ -203,6 +213,22 @@ export function ImportsPage({ from = null }: { from?: ImportSource | null }) {
       <details className="card mx-4 lg:mx-6 mt-3 p-4">
         <summary className="cursor-pointer text-sm text-muted"><ServiceText text="Вставить токен Яндекс Музыки вручную" /></summary>
         <div className="mt-3 space-y-2">
+          <p className="text-xs text-dim">Нужен, только если не получается войти кодом. Это тот же вход, только руками:</p>
+          <ol className="list-decimal space-y-1 pl-5 text-xs text-muted">
+            <li>
+              На компьютере откройте{' '}
+              <a className="text-accent" href={YANDEX_TOKEN_URL} target="_blank" rel="noreferrer">эту ссылку</a> и войдите в Яндекс
+              (если спросит — «Разрешить»).
+            </li>
+            <li>
+              Откроется Яндекс Музыка, а в адресной строке будет{' '}
+              <span className="font-mono text-fg">…#access_token=y0_…&amp;…</span>. Скопируйте весь адрес и вставьте сюда — токен Хаб найдёт в нём сам.
+            </li>
+            <li>
+              Если адрес успел смениться: нажмите F12 → вкладка «Сеть» (Network), отметьте «Сохранять журнал» (Preserve log) и
+              откройте ссылку ещё раз — адрес с <span className="font-mono text-fg">access_token</span> будет в первых строках.
+            </li>
+          </ol>
           <input className="input" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Токен" autoComplete="off" />
           <Button block busy={busy === 'token'} disabled={!!busy || !token.trim()} onClick={() => start('token')}>
             Продолжить с токеном
@@ -238,7 +264,18 @@ export function ImportsPage({ from = null }: { from?: ImportSource | null }) {
       <details className="card mx-4 lg:mx-6 mt-3 p-4">
         <summary className="cursor-pointer text-sm text-muted"><ServiceText text="Вставить токен ВКонтакте вручную" /></summary>
         <div className="mt-3 space-y-2">
-          <p className="text-xs text-dim">Подойдёт токен приложения ВК для Android с доступом к аудио (его выдаёт, например, vkpymusic).</p>
+          <p className="text-xs text-dim">
+            Нужен, только если вход формой выше не проходит. В браузере такой токен не получить: ВК отдаёт музыку только своему
+            приложению для Android. Его выдаёт программа vkpymusic, на своём компьютере:
+          </p>
+          <ol className="list-decimal space-y-1 pl-5 text-xs text-muted">
+            <li>Установите Python 3 (python.org), в терминале: <span className="font-mono text-fg">pip install vkpymusic</span></li>
+            <li>
+              Запустите: <span className="break-all font-mono text-fg">python -c "from vkpymusic import TokenReceiver as T; t=T(input('Логин: '), input('Пароль: ')); t.auth() and print(t.get_token())"</span>
+            </li>
+            <li>Введите логин и пароль ВК, код из SMS, если спросит. Последняя строка — токен: вставьте её сюда.</li>
+          </ol>
+          <p className="text-xs text-dim">Токен — это доступ к аккаунту: никому его не показывайте. Отозвать: ВК → Настройки → Безопасность → «Завершить другие сеансы».</p>
           <input className="input" type="password" value={vkToken} onChange={(e) => setVkToken(e.target.value)} placeholder="Токен" autoComplete="off" />
           <Button block busy={busy === 'vk-token'} disabled={!!busy || !vkToken.trim()} onClick={() => startVk('vk-token')}>
             Продолжить с токеном
