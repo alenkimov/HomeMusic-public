@@ -13,7 +13,7 @@ loop), the account or key, the proxy, the answer's status or the error, how long
 
 The ways out, each of them here:
 - httpx (most services: `app.net.make_client`) — `RoutingTransport` picks the proxy of every request and writes it;
-- `requests` (the Yandex Music client, in this process) — `install_requests_hook`;
+- `requests` (yt-dlp) — `install_requests_hook`; `wreq` (spotapi, the Spotify catalog) — `install_spotapi_hook`;
 - yt-dlp, the Spotify session (another process), Telegram — the proxy from `proxy_url`, one row a call (`record`).
 Requests to the Hub's own services (Navidrome, the embedder, the PO-token server) are none of this.
 """
@@ -52,12 +52,14 @@ SERVICES: dict[str, tuple[str, ...]] = {
     "musicbrainz": ("*.musicbrainz.org", "musicbrainz.org", "coverartarchive.org", "*.coverartarchive.org", "*.archive.org"),
     "listenbrainz": ("*.listenbrainz.org",),
     "vk": ("*.vk.com", "vk.com", "*.vk.ru", "*.userapi.com", "*.vkuser.net"),
-    "youtube": ("*.youtube.com", "youtube.com", "youtu.be", "*.googlevideo.com", "*.ytimg.com", "*.ggpht.com"),
-    "soundcloud": ("*.soundcloud.com", "soundcloud.com", "*.sndcdn.com"),
+    # yt3.googleusercontent.com: YouTube's channel pictures
+    "youtube": ("*.youtube.com", "youtube.com", "youtu.be", "*.googlevideo.com", "*.ytimg.com", "*.ggpht.com",
+                "*.googleusercontent.com"),
+    "soundcloud": ("*.soundcloud.com", "soundcloud.com", "*.sndcdn.com", "*.soundcloud.cloud"),
     "hitmos_fm": ("*.hitmos.fm",),
-    "hitmoz": ("*.hitmoz.org", "*.hitmotop.com", "hitmos.me", "*.hitmos.me"),
+    "hitmoz": ("*.hitmoz.org", "*.hitmoz.com", "hitmoz.com", "*.hitmotop.com", "hitmos.me", "*.hitmos.me"),
     "ai": ("openrouter.ai", "*.openrouter.ai", "api.openai.com", "api.anthropic.com", "generativelanguage.googleapis.com"),
-    "google": ("*.googleapis.com", "accounts.google.com", "*.google.com", "*.googleusercontent.com"),
+    "google": ("*.googleapis.com", "accounts.google.com", "*.google.com"),
     "telegram": ("api.telegram.org",),
     "lyrics": ("lrclib.net", "*.lrclib.net", "lrc.red", "*.lrc.red", "music.163.com", "*.music.163.com",
                "api.lyrics.ovh", "lyricsplus.prjktla.my.id", "api.mymemory.translated.net"),
@@ -332,6 +334,46 @@ def install_requests_hook() -> None:
     _requests_hooked = True
 
 
+_spotapi_hooked = False
+
+
+def install_spotapi_hook() -> None:
+    """spotapi (the Spotify catalog) sends its requests by `wreq`, not by httpx: each of them — one row for its
+    attempts together — is journaled here. Its proxy is the one its session was opened with (`SpotifyCatalog`)."""
+    global _spotapi_hooked
+    if _spotapi_hooked:
+        return
+    try:
+        from spotapi.connection.http import HTTPClient
+    except ImportError:
+        return
+    request = HTTPClient.request
+
+    async def journaled(self, method, url, *args, **kwargs):
+        u = urlsplit(url)
+        service = service_of(u.hostname)
+        if service is None:
+            return await request(self, method, url, *args, **kwargs)
+        pid, _ = proxy_url(service, None)
+        t0 = time.monotonic()
+        common = {"service": service, "method": str(method), "host": u.hostname or "", "path": clean_path(url),
+                  "proxy_id": pid, "auth": None}
+        try:
+            response = await request(self, method, url, *args, **kwargs)
+        except Exception as e:
+            record(**common, elapsed_s=time.monotonic() - t0, error=f"{type(e).__name__}: {e}"[:300])
+            raise
+        try:
+            status = response.status_code.as_int()
+        except Exception:
+            status = None
+        record(**common, elapsed_s=time.monotonic() - t0, status=status, size=len(getattr(response, "body", b"") or b"") or None)
+        return response
+
+    HTTPClient.request = journaled
+    _spotapi_hooked = True
+
+
 async def flush() -> int:
     if not _buffer:
         return 0
@@ -386,6 +428,7 @@ async def _loop(sweeping: bool) -> None:
 
 async def start(*, sweeping: bool) -> None:
     install_requests_hook()
+    install_spotapi_hook()
     try:
         await refresh()
     except Exception as e:

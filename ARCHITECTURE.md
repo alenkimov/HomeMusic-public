@@ -96,8 +96,9 @@ Every request to an outside service goes through `app/outbound.py`: through the 
 with, else of its service, else direct (set on the admin's page «Прокси и запросы»), and into the journal
 (`outbound_requests`, 14 days): service, path with the names of the query (never the values — tokens travel there),
 what it was for (the job, the API route, the loop), account or key, proxy, status or error, time. The ways out:
-httpx (`app.net.make_client` — every new client goes through it, or through `RoutingTransport`), `requests` (the
-Yandex Music client, yt-dlp) by a hook, the Spotify session (another process) and Telegram by their proxy setting.
+httpx (`app.net.make_client` — every new client goes through it, or through `RoutingTransport`; Yandex Music is the
+Hub's own client on it, `app/catalog/ym.py`), `requests` (yt-dlp) and `wreq` (spotapi, the Spotify catalog — given
+its proxy when its session opens) by hooks, the Spotify session (another process) and Telegram by their proxy setting.
 «The requests that follow are an account's» is set when its secret is read (`integrations.credential`).
 
 ## The app and the Hub talking

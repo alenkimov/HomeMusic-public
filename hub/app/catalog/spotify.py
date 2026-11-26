@@ -282,13 +282,19 @@ class SpotifyCatalog:
     def __init__(self) -> None:
         self._client: Catalogue | None = None
         self._opening: asyncio.Task[Catalogue] | None = None
+        self._proxy: str | None = None  # the proxy the guest session was opened through (`app.outbound`)
         self._gate = asyncio.Semaphore(8)
         self._release_gate = asyncio.Semaphore(2)
         self._discographies: dict[str, asyncio.Task[dict]] = {}
         self._reads: dict[str, asyncio.Task[tuple[dict, bool]]] = {}
 
     async def _open(self) -> Catalogue:
-        client = Catalogue()
+        from app.outbound import proxy_url
+
+        # spotapi sends its requests itself (`wreq`, posing as a browser): the proxy set for Spotify is given to
+        # it here, and its requests are journaled by `outbound.install_spotapi_hook`
+        _, self._proxy = proxy_url("spotify", None)
+        client = Catalogue(proxy=self._proxy) if self._proxy else Catalogue()
         async with asyncio.timeout(50):
             self._client = await client.__aenter__()
         return self._client
@@ -304,6 +310,15 @@ class SpotifyCatalog:
             self._opening.add_done_callback(self._log_open)
 
     async def _get(self) -> Catalogue:
+        from app.outbound import proxy_url
+
+        if self._client is not None and proxy_url("spotify", None)[1] != self._proxy:
+            # the proxy of Spotify was changed: the session is opened anew through the new one
+            old, self._client = self._client, None
+            try:
+                await old.__aexit__(None, None, None)
+            except Exception as e:
+                log.info("Spotify guest session not closed: %r", e)
         self.warm()
         if self._client is not None:
             return self._client

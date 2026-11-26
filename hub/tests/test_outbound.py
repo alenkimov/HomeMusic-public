@@ -99,3 +99,51 @@ async def test_not_for_everyone(env):
         u.is_admin = False
     assert (await env["client"].get("/api/admin/proxies")).status_code == 403
     assert (await env["client"].get("/api/admin/outbound/summary")).status_code == 403
+
+
+async def test_spotapi_requests_are_journaled(env, monkeypatch):
+    from types import SimpleNamespace
+
+    from spotapi.connection.http import HTTPClient
+
+    async def answer(self, method, url, **kwargs):
+        return SimpleNamespace(status_code=SimpleNamespace(as_int=lambda: 200), body=b"{}")
+
+    monkeypatch.setattr(HTTPClient, "request", answer)
+    monkeypatch.setattr(outbound, "_spotapi_hooked", False)
+    outbound.install_spotapi_hook()
+    with outbound.purpose("spotapi-test"):
+        await HTTPClient.request(object(), "POST", "https://api-partner.spotify.com/pathfinder/v2/query?operationName=x")
+    await outbound.flush()
+    async with session_scope() as s:
+        row = await s.scalar(select(OutboundRequest).where(OutboundRequest.purpose == "spotapi-test"))
+    assert (row.service, row.method, row.path, row.status, row.bytes) == (
+        "spotify", "POST", "/pathfinder/v2/query?operationName", 200, 2)
+
+
+async def test_the_spotify_session_is_opened_anew_through_a_new_proxy(monkeypatch):
+    from app.catalog import spotify
+
+    closed = []
+
+    class Old:
+        async def __aexit__(self, *exc):
+            closed.append(True)
+
+    catalog = spotify.SpotifyCatalog()
+    catalog._client, catalog._proxy = Old(), None
+    monkeypatch.setattr(outbound, "proxy_url", lambda service, connection_id=None: (1, "http://1.2.3.4:3128"))
+    opened = []
+
+    def warm():
+        opened.append(True)
+        catalog._client = "new"
+
+    monkeypatch.setattr(catalog, "warm", warm)
+    assert await catalog._get() == "new" and closed == [True] and opened == [True]
+
+
+def test_more_hosts_are_of_their_services():
+    assert outbound.service_of("playback.media-streaming.soundcloud.cloud") == "soundcloud"
+    assert outbound.service_of("eu.hitmoz.com") == "hitmoz"
+    assert outbound.service_of("yt3.googleusercontent.com") == "youtube"
