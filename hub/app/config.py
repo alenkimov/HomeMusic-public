@@ -145,6 +145,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
 
     music_root: Path = Path("/music")
+    # Where the Hub works on files (downloads under way, its copies of what is listened to, the light copies, the
+    # covers it keeps, uploads): on a disk of its own. Unset: MUSIC_ROOT/staging. On Windows MUSIC_ROOT is a Windows
+    # folder that the containers read through WSL2's 9P — many times slower than the Linux disk of a Docker volume,
+    # where docker-compose.yml puts this (`/data/staging`). Files reach the library from here by a copy.
+    staging_root: Path | None = None
     database_url: str = ""
     database_password: str = ""
     data_dir: Path = Path("/data")
@@ -226,7 +231,7 @@ class Settings(BaseSettings):
 
     @property
     def staging_dir(self) -> Path:
-        return self.music_root / "staging"
+        return self.staging_root or self.music_root / "staging"
 
     @property
     def trash_dir(self) -> Path:

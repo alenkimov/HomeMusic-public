@@ -78,6 +78,9 @@ services:
     env_file: .env
     environment:
       MUSIC_ROOT: /music
+      # the Hub's working files on the Linux disk of the hub-data volume, not on the Windows music folder (9P is many
+      # times slower): downloads under way, its copies of what is listened to, light copies (hub/app/staging.py)
+      STAGING_ROOT: /data/staging
       DATABASE_PASSWORD: ${HUB_DB_PASSWORD:?set HUB_DB_PASSWORD in .env}
       DATA_DIR: /data
       CONFIG_FILE: /config/config.yaml

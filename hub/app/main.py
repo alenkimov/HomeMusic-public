@@ -36,6 +36,9 @@ async def lifespan(app: FastAPI):
     setup_logging(s.log_level)
     for d in (s.library_dir, s.staging_dir, s.trash_dir, s.backups_dir):
         d.mkdir(parents=True, exist_ok=True)
+    from app import staging
+
+    await asyncio.to_thread(staging.move_old)  # the working folder moved off the music folder: what was there comes
     await asyncio.to_thread(db.run_migrations)
     db.init_engine()
     from app.watchdog import watchdog
