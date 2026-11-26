@@ -368,13 +368,6 @@ export interface LibAlbumOut {
   tracks?: LibTrackOut[] | null;
 }
 
-export interface AlbumPatchIn {
-  title?: string | null;
-  album_artist?: string | null;
-  year?: number | null;
-  genre?: string | null;
-  release_type?: ReleaseType | null;
-}
 
 export interface AlbumCreateIn {
   title: string;
@@ -393,10 +386,6 @@ export interface AlbumMergeIn {
   cover_from?: number;
 }
 
-export interface TracksMoveIn {
-  track_ids: number[];
-  album_id: number;
-}
 
 export interface TrackPatchIn {
   title?: string | null;

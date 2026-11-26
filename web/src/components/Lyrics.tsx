@@ -7,7 +7,7 @@ import { KIND_LABEL, activeLine, breakAt, setLyricsLook, setTranslatePrefs, useL
 import { attempt, confirmDialog, toast } from '../lib/ui';
 import { navigate } from '../lib/router';
 import { dropMark, tidyPath, useTidyMarks } from '../lib/tidyMarks';
-import type { TidyProposalOut } from '../api/types';
+import { fixesOf, type Fix } from '../lib/lyricsFixes';
 import { TidyMarkButton } from './TidyMark';
 import { Icon } from './Icon';
 import { ServiceBadge } from './ServiceBadge';
@@ -101,18 +101,9 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
   const lines = useMemo<LyricsLine[]>(() => data?.lines ?? [], [data]);
   // what «Наведение порядка» offers for the text: each line it is about, by its place (while it still reads so)
   const proposals = useTidyMarks(data?.track_id ? { track: data.track_id } : null, true);
-  const fixes = useMemo(() => {
-    const text = data?.lines?.length ? data.lines.map((x) => x.text) : (data?.plain ?? '').split('\n');
-    const out = new Map<number, Fix>();
-    for (const p of proposals) {
-      const at = p.kind === 'lyrics' ? p.show.drop_at : p.show.fix_at;
-      at?.forEach((i, k) => {
-        const was = p.kind === 'lyrics' ? p.show.lines?.[k] : p.show.pairs?.[k]?.was;
-        if (was !== undefined && text[i] === was) out.set(i, { p, to: p.kind === 'lyrics' ? null : (p.show.pairs?.[k]?.to ?? null) });
-      });
-    }
-    return out;
-  }, [proposals, data]);
+  const fixes = useMemo(
+    () => fixesOf(data?.lines?.length ? data.lines.map((x) => x.text) : (data?.plain ?? '').split('\n'), proposals),
+    [proposals, data]);
   const [preview, setPreview] = useState(false); // «Как будет»: the text as it would be, put right
   const shownPreview = preview && fixes.size > 0;
   const fixedBy = [...new Map([...fixes.values()].map((f) => [f.p.id, f.p])).values()];
@@ -386,16 +377,9 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
   );
 }
 
-/** A line «Наведение порядка» offers to put right, and how. */
-interface Fix {
-  p: TidyProposalOut;
-  /** the line as it would be; null: it goes */
-  to: string | null;
-}
-
 /** That line: as it is, the hidden words underlined; «Как будет» — as it would be, the words put back lit (a line that
  * goes, said so and struck through). */
-function FixedLine({ text, fix, preview }: { text: string; fix: Fix; preview: boolean }) {
+export function FixedLine({ text, fix, preview }: { text: string; fix: Fix; preview: boolean }) {
   if (fix.to === null)
     return preview ? (
       <span className="flex items-center gap-2 text-base font-medium text-fg/60">

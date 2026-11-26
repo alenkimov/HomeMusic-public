@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
-import type { TidyOverviewOut, TidyProposalOut, TidyProposalSection, TidySectionId } from '../api/types';
+import type { TidyOverviewOut, TidyProposalOut, TidyProposalSection, TidySectionId, TrackOut } from '../api/types';
+import { TrackRow } from '../components/catalog';
+import { LyricsExcerpt } from '../components/LyricsExcerpt';
 import { Icon } from '../components/Icon';
 import { ByMark } from '../components/TidyMark';
 import { Button, Cover, Empty, ErrorState, IconButton, PageHeader, SkeletonRows, Segmented, cx } from '../components/ui';
 import { useHubEvent } from '../lib/events';
 import { fmtWhen, plural } from '../lib/format';
 import { useAsync } from '../lib/hooks';
-import { Link, artistPath, goBack, navigate, useRoute } from '../lib/router';
+import { Link, albumPath, artistPath, goBack, navigate, useRoute } from '../lib/router';
 import { dropMark } from '../lib/tidyMarks';
 import { attempt, toast } from '../lib/ui';
 import { AlbumMergeSection } from './AlbumMerge';
@@ -128,6 +130,14 @@ export function TidyPage() {
 
 /** A section's proposals. A decided one stays where it was, dimmed, with «Отменить», until the list is asked anew
  * (another tab, a look-through done). */
+/** The tracks the proposals are about, as every list shows them: their cards, asked in one request. */
+function useTrackCards(rows: readonly TidyProposalOut[] | null | undefined): Map<number, TrackOut> {
+  const ids = [...new Set((rows ?? []).filter((p) => p.subject_type === 'track').map((p) => p.subject_id))].sort((a, b) => a - b);
+  const key = ids.join(',');
+  const res = useAsync(() => (ids.length ? api.trackCards(ids) : Promise.resolve([])), [key], true, `tidy:cards:${key}`);
+  return new Map((res.data ?? []).filter((t) => t.library_track_id != null).map((t) => [t.library_track_id as number, t]));
+}
+
 function Proposals({ section, sure, focus, checked, onChange }: { section: TidyProposalSection; sure: number; focus: number | null; checked: string | null; onChange: () => void }) {
   const res = useAsync((s) => api.tidyProposals(section, s), [section]);
   const [rows, setRows] = useState<TidyProposalOut[] | null>(null);
@@ -171,6 +181,7 @@ function Proposals({ section, sure, focus, checked, onChange }: { section: TidyP
   };
 
   const shown = rows ?? res.data;
+  const tracks = useTrackCards(shown);
   const waiting = (shown ?? []).filter((p) => p.state === 'open' && p.sure).length;
   return (
     <div className="max-w-4xl">
@@ -190,7 +201,8 @@ function Proposals({ section, sure, focus, checked, onChange }: { section: TidyP
         <ul className="mt-3 space-y-2 px-2 lg:px-4">
           {shown.map((p) => (
             <li key={p.id} ref={p.id === focus ? lit : undefined}>
-              <ProposalCard p={p} lit={p.id === focus} busy={busy === p.id} onDecide={(what) => decide(p, what)} />
+              <ProposalCard p={p} lit={p.id === focus} busy={busy === p.id} onDecide={(what) => decide(p, what)}
+                track={p.subject_type === 'track' ? tracks.get(p.subject_id) : undefined} />
             </li>
           ))}
         </ul>
@@ -202,16 +214,18 @@ function Proposals({ section, sure, focus, checked, onChange }: { section: TidyP
 /** Where the subject leads: a track and an album — to their album, an artist — to their page. */
 function subjectLink(p: TidyProposalOut): string | null {
   if (p.subject_type === 'artist') return artistPath({ ref: '', hub_artist_id: p.show.artist_id ?? p.subject_id });
-  return p.show.album_id ? `/library/album/${p.show.album_id}` : null;
+  return p.show.album_id ? albumPath({ ref: `lib:${p.show.album_id}` }) : null;
 }
 
 const WHAT: Record<TidyProposalOut['subject_type'], string> = { track: 'Трек', album: 'Альбом', artist: 'Исполнитель' };
 
 /** The subject as the proposal names it: its picture, what it is and whose; then «было → станет» in the kind's words. */
-export function ProposalCard({ p, busy, onDecide, journal, lit }: {
+export function ProposalCard({ p, busy, onDecide, journal, lit, track }: {
   p: TidyProposalOut; busy: boolean; onDecide: (what: 'accept' | 'reject' | 'reopen' | 'revert') => void; journal?: boolean;
   /** the one a mark on a page led to */
   lit?: boolean;
+  /** the track it is about, as every list shows a track (`useTrackCards`): its row heads the card */
+  track?: TrackOut;
 }) {
   const to = subjectLink(p);
   const head = [WHAT[p.subject_type], p.show.line].filter(Boolean).join(' · ');
@@ -265,6 +279,31 @@ export function ProposalCard({ p, busy, onDecide, journal, lit }: {
     );
   }
 
+  // what changes, without the track's name: under the track's own row
+  const change: ReactNode = p.kind === 'lyrics' ? (
+    <>
+      {(p.show.lines ?? []).map((line, i) => <s key={i} className="block truncate text-[13px] text-muted decoration-danger/70">{line}</s>)}
+      <span className="mt-0.5 block text-[13px] font-semibold">{p.to}</span>
+    </>
+  ) : p.kind === 'uncensor' ? (
+    (p.show.pairs ?? []).map((x, i) => (
+      <span key={i} className="block">
+        <s className="block break-words text-[13px] text-muted decoration-danger/70">{x.was}</s>
+        <span className="block break-words text-[13px] font-semibold"><span className="text-dim">→ </span>{x.to}</span>
+      </span>
+    ))
+  ) : p.kind === 'double' ? (
+    <>
+      <span className="line-clamp-2 block break-words text-[13px] text-muted line-through decoration-danger/70">Удалить копию: {p.was}</span>
+      <span className="line-clamp-2 block break-words text-[13px] font-semibold">Оставить: {p.to}</span>
+    </>
+  ) : (
+    <>
+      <span className="line-clamp-2 block break-words text-[14px] text-muted line-through decoration-danger/70">{p.was}</span>
+      <span className="line-clamp-2 block break-words text-[15px] font-semibold"><span className="text-dim">→ </span>{p.to}</span>
+    </>
+  );
+
   const stateWord = p.state === 'accepted' ? 'Принято' : p.state === 'rejected' ? 'Отклонено' : p.state === 'reverted' ? 'Откачено' : '';
   const actions = journal ? (
     p.state === 'accepted' && (
@@ -283,6 +322,37 @@ export function ProposalCard({ p, busy, onDecide, journal, lit }: {
       <Button small variant="primary" busy={busy} onClick={() => onDecide('accept')} className="max-sm:flex-1">Принять</Button>
     </span>
   );
+
+  if (track) {
+    // the track's own row, as in a playlist or an album; under it what changes
+    const text = p.kind === 'lyrics' || p.kind === 'uncensor';
+    return (
+      <div className={cx('rounded-xl bg-raised/60 pb-2 pt-1 transition', lit && 'bg-ai/10 ring-2 ring-ai', decided && !journal && 'opacity-60')}>
+        <TrackRow track={track} showAlbum />
+        <div className="px-2 sm:px-3">
+          {text && !journal ? (
+            <LyricsExcerpt p={p} track={track} actions={actions} />
+          ) : (
+            <div className="flex flex-wrap items-center gap-3 rounded-xl bg-raised px-3 py-2.5 sm:px-4">
+              <div className="min-w-0 flex-1 basis-60">
+                {change}
+                <span className="mt-1 flex min-w-0 items-center gap-2">
+                  <ByMark p={p} />
+                  {p.why && <span className={cx('truncate text-[12px]', p.by === 'ai' && !p.sure ? 'text-warn' : 'text-dim')}>{p.why}</span>}
+                </span>
+                {journal && (
+                  <span className="mt-1 block text-[12px] text-dim">
+                    {stateWord}{p.decided_by ? ` · ${p.decided_by}` : ''}{p.decided_at ? ` · ${fmtWhen(p.decided_at)}` : ''}
+                  </span>
+                )}
+              </div>
+              {actions && <div className="shrink-0 max-sm:w-full">{actions}</div>}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={cx('flex items-start gap-3 rounded-xl bg-raised/60 p-3 transition max-sm:flex-wrap sm:items-center', lit && 'bg-ai/10 ring-2 ring-ai', decided && !journal && 'opacity-60')}>
@@ -313,6 +383,7 @@ export function TidyJournalPage() {
   const [rows, setRows] = useState<TidyProposalOut[] | null>(null);
   const [more, setMore] = useState(true);
   const [busy, setBusy] = useState<number | 'more' | null>(null);
+  const tracks = useTrackCards(rows);
   useEffect(() => {
     if (first.data) {
       setRows(first.data);
@@ -351,7 +422,8 @@ export function TidyJournalPage() {
           <p className="px-4 text-[13px] text-muted lg:px-6">{rows.length} {plural(rows.length, ['изменение', 'изменения', 'изменений'])}{more ? ' и раньше' : ''}</p>
           <ul className="mt-3 space-y-2 px-2 lg:px-4">
             {rows.map((p) => (
-              <li key={p.id}><ProposalCard p={p} journal busy={busy === p.id} onDecide={() => revert(p)} /></li>
+              <li key={p.id}><ProposalCard p={p} journal busy={busy === p.id} onDecide={() => revert(p)}
+                track={p.subject_type === 'track' ? tracks.get(p.subject_id) : undefined} /></li>
             ))}
           </ul>
           {more && (

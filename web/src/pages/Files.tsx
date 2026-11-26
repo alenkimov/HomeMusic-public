@@ -2,7 +2,7 @@ import { TrackTitle } from '../components/TrackTitle';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSession } from '../lib/session';
 import { api } from '../api/client';
-import type { FileRowOut, ReleaseType, TrashedOut } from '../api/types';
+import type { FileRowOut, TrashedOut } from '../api/types';
 import { TrackRow, TrackTableHeader } from '../components/catalog';
 import { TrackTable } from '../components/TrackTable';
 import { Icon, type IconName } from '../components/Icon';
@@ -408,13 +408,3 @@ function TrashList({ items, searching, onBack }: { items: TrashedOut[]; searchin
   );
 }
 
-export function ReleaseTypeSelect({ value, onChange }: { value: ReleaseType; onChange: (v: ReleaseType) => void }) {
-  return (
-    <select className="input" value={value} onChange={(e) => onChange(e.target.value as ReleaseType)}>
-      <option value="album">Альбом</option>
-      <option value="single">Сингл</option>
-      <option value="ep">EP</option>
-      <option value="compilation">Сборник</option>
-    </select>
-  );
-}

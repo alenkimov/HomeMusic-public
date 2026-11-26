@@ -53,7 +53,6 @@ import { AboutPage, WhatsNewPage } from './pages/WhatsNew';
 import { PlayerLightPage } from './pages/PlayerLightPage';
 import { QualityPage } from './pages/Quality';
 import { LibraryPage, LibrarySearchPage } from './pages/Library';
-import { LibraryAlbumPage } from './pages/LibraryAlbum';
 import { LoginPage } from './pages/Login';
 import { LyricsSettingsPage } from './pages/LyricsSettings';
 import { ArtistsPage, LikedPage, NdAlbumPage, NdAlbumsPage, NdArtistPage, PlaylistPage, SelectionPage } from './pages/MediaLibrary';
@@ -140,7 +139,6 @@ const ROUTES: RouteDef[] = [
   ['/tidy/journal', 'more', () => <TidyJournalPage />],
   ['/tidy', 'more', () => <TidyPage />],
   ['/quality', 'more', () => <QualityPage />],
-  ['/library/album/:id', 'more', (p) => <LibraryAlbumPage key={p.id} id={Number(p.id)} />, 'text'],
   ['/upload', 'more', () => <UploadPage />],
   ['/playlists', STANDALONE ? 'library' : 'more', () => <PlaylistsPage />],
   ['/file/:id', 'library', (p) => <FileJournalPage key={p.id} id={Number(p.id)} />, 'text'],

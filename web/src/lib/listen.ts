@@ -1440,6 +1440,18 @@ export function prev() {
   }
 }
 
+/** `track` from `seconds` in: the one playing is taken there (and plays on), another starts there — a line of a text
+ * tapped where the text is not the player's (`components/LyricsExcerpt.tsx`). */
+export function listenFrom(track: ListenTrack, seconds: number) {
+  if (state.track?.ref === track.ref && state.phase !== 'error') {
+    seek(seconds);
+    if (state.phase === 'paused' || state.phase === 'ended') resume();
+    return;
+  }
+  startList(track, [track]);
+  seek(seconds); // the element has nothing yet: the position waits for it (`pendingSeek`)
+}
+
 export function toggle() {
   if (state.phase === 'playing' || state.phase === 'loading' || state.phase === 'resolving') pause();
   else resume();

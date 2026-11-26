@@ -23,7 +23,6 @@ import type {
   AlbumEditTarget,
   AlbumMergeIn,
   AlbumOut,
-  AlbumPatchIn,
   ArtistPageOut,
   Candidate,
   ClearOut,
@@ -121,7 +120,6 @@ import type {
   TrackEditOut,
   TrashedOut,
   TrackPatchIn,
-  TracksMoveIn,
   UploadCommitIn,
   UploadCommitOut,
   UploadOut,
@@ -554,12 +552,7 @@ export const api = {
   retryDownloads: (ids: number[]) => request<{ queued: number }>('POST', '/api/downloads/retry', { json: { ids } }),
 
   // library
-  libAlbums: (q: string, offset = 0, limit = 50, signal?: AbortSignal) =>
-    request<LibAlbumOut[]>('GET', withQuery('/api/library/albums', { q, offset, limit }), { signal }),
-  libAlbum: (id: number, signal?: AbortSignal) => request<LibAlbumOut>('GET', `/api/library/albums/${id}`, { signal }),
   createAlbum: (body: AlbumCreateIn) => request<LibAlbumOut>('POST', '/api/library/albums', { json: body }),
-  patchAlbum: (id: number, body: AlbumPatchIn) =>
-    request<LibAlbumOut>('PATCH', `/api/library/albums/${id}`, { json: body }),
   albumEdit: (target: AlbumEditTarget, signal?: AbortSignal) =>
     request<AlbumEditOut>('GET', withQuery('/api/library/album-edit', target), { signal }),
   renameAlbum: (target: AlbumEditTarget, title: string, album_artist: string) =>
@@ -620,7 +613,6 @@ export const api = {
   /** «Это разные альбомы» / and back: the group is (not) offered for joining. */
   splitDismiss: (album_ids: number[]) => request<{ ok: boolean }>('POST', '/api/library/albums/split/dismiss', { json: { album_ids } }),
   splitRestore: (album_ids: number[]) => request<{ ok: boolean }>('POST', '/api/library/albums/split/restore', { json: { album_ids } }),
-  moveTracks: (body: TracksMoveIn) => request<LibAlbumOut>('POST', '/api/library/tracks/move', { json: body }),
   patchTrack: (id: number, body: TrackPatchIn) =>
     request<LibTrackOut>('PATCH', `/api/library/tracks/${id}`, { json: body }),
   deleteTrack: (id: number) => request<OkOut>('DELETE', `/api/library/tracks/${id}`),

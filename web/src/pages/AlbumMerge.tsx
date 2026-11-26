@@ -9,7 +9,7 @@ import { AlbumCard, AlbumHero } from '../components/Album';
 import { ServiceIcon, serviceName } from '../components/ServiceBadge';
 import { fmtLength, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
-import { Link, artistPath } from '../lib/router';
+import { Link, albumPath, artistPath } from '../lib/router';
 import { attempt } from '../lib/ui';
 
 type Group = SplitAlbums;
@@ -263,7 +263,7 @@ function GroupView({ group, mergedInto, onMerged, onDismissed }: { group: Group;
       {/* the preview's light stays inside it: it does not reach up over the choices */}
       <section aria-label="Так будет выглядеть альбом" className="relative isolate mt-6 overflow-hidden pt-2">
         <p className="px-4 pb-2 text-xs font-bold uppercase tracking-wider text-dim lg:px-6">
-          {done ? <>Готово — <Link to={`/library/album/${mergedInto}`} className="text-accent normal-case tracking-normal hover:underline">открыть альбом</Link></> : '3. Так будет выглядеть альбом'}
+          {done ? <>Готово — <Link to={albumPath({ ref: `lib:${mergedInto}` })} className="text-accent normal-case tracking-normal hover:underline">открыть альбом</Link></> : '3. Так будет выглядеть альбом'}
         </p>
         <AlbumHero
           album={{ title: finalTitle, cover: cover !== null ? libraryCoverUrl(cover, 600) : null }}
