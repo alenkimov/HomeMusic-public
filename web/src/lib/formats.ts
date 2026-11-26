@@ -47,3 +47,10 @@ export function formats(): Formats {
 /** A file in any format the Hub can serve another way, and in a format every browser plays (AAC). */
 export const ANY_FORMAT: Formats = { cant: CANT_ANY, can: '' };
 export const AS_IT_IS: Formats = { cant: '', can: '' };
+
+/** A copy kept on the device (its `Content-Type`) is in a format this browser does not play: one fetched before the
+ * browser was told so — an Ogg Opus file kept on an iPhone before Safari was given Opus in MP4 or AAC. */
+export function cantPlayType(contentType: string | null | undefined): boolean {
+  const m = /^audio\/(ogg|webm)\b/i.exec((contentType ?? '').trim());
+  return !!m && formats().cant.split(',').includes(m[1].toLowerCase());
+}

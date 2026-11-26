@@ -130,7 +130,12 @@ async function audio(req, url) {
   const wave = url.searchParams.get('wave');
   const reserved = wave ? await caches.match(url.href, { cacheName: WAVE_AUDIO }) : null;
   const kept = reserved || (ref ? await (await caches.open(AUDIO)).match(audioKey(ref)) : null);
-  const hit = kept || (ref && url.searchParams.get('heard') === '1' ? await (await caches.open(HEARD)).match(audioKey(ref)) : null);
+  // fetched to be kept (a list, the heard, the wave): from the Hub, not the copy it is to replace
+  if (req.headers.get('x-homemusic-prefetch') === '1') return fetch(req);
+  const found = kept || (ref && url.searchParams.get('heard') === '1' ? await (await caches.open(HEARD)).match(audioKey(ref)) : null);
+  // a copy in a format the page says it cannot play (`cant`: Ogg Opus kept on an iPhone before the Hub served it
+  // otherwise) is not played: the Hub's answer is, in a format it plays
+  const hit = found && !cantPlay(found, url) ? found : null;
   if (!hit) return fetch(req);
   const blob = await hit.blob();
   const size = blob.size;
@@ -145,6 +150,11 @@ async function audio(req, url) {
     status: 206,
     headers: { ...base, 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': String(end - start + 1) },
   });
+}
+
+function cantPlay(copy, url) {
+  const m = /^audio\/(ogg|webm)\b/i.exec(copy.headers.get('content-type') || '');
+  return !!m && (url.searchParams.get('cant') || '').split(',').includes(m[1].toLowerCase());
 }
 
 /* The copy, said to be one (`x-homemusic-kept`): the page learns from it that the Hub did not answer

@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { api, listenStreamUrl } from '../api/client';
 import type { ListenOut, TrackOut } from '../api/types';
-import { AS_IT_IS } from './formats';
+import { AS_IT_IS, cantPlayType } from './formats';
 import { hubEvents } from './events';
 import { needsTrackFile } from './findFile';
 import { hubFetch, hubReachable, onHubBack } from './reach';
@@ -21,7 +21,10 @@ import { hubFetch, hubReachable, onHubBack } from './reach';
  * A track is kept while some kept list has it; a list opened again is brought up to date (`syncList`) — and so is a
  * kept track whose file was put another in its place (another file picked, an upgrade: `FileOut.uid` is not the one
  * kept): it is fetched anew, and until then plays from the Hub where the Hub is reached (`keptPlays`). Needs a
- * service worker, so a secure address (https or localhost). */
+ * service worker, so a secure address (https or localhost).
+ *
+ * A copy in a format this browser does not play (`cantPlayType`: Ogg Opus kept on an iPhone before the Hub served it
+ * Opus in MP4 or AAC) is fetched anew as well, in the format the Hub serves it now; until then it is not played. */
 
 export interface KeptTrack {
   ref: string;
@@ -29,6 +32,8 @@ export interface KeptTrack {
   track: TrackOut;
   size: number;
   at: number;
+  /** the copy's `Content-Type` (missing in what was kept before it was written down: read from the cache once) */
+  type?: string;
 }
 export interface KeptList {
   key: string; // "playlist:12", "liked", "foryou:mix"
@@ -108,8 +113,33 @@ export function initOffline(): Promise<void> {
       console.warn('offline: what is kept could not be read', e);
     }
     emit();
+    void refetchUnplayable();
   })();
   return ready;
+}
+
+/** Copies in a format this browser does not play are fetched anew. What was kept without its type said, its type
+ * is read from the cache and written down (once). */
+async function refetchUnplayable() {
+  try {
+    const cache = await caches.open(AUDIO);
+    for (const kept of [...tracks.values()]) {
+      if (kept.type === undefined) {
+        const hit = await cache.match(audioKey(kept.ref));
+        if (!hit) continue;
+        kept.type = hit.headers.get('content-type') || 'audio/mpeg';
+        await tx('tracks', 'readwrite', (s) => s.put(kept));
+      }
+      if (!cantPlayType(kept.type)) continue;
+      stale.add(kept.ref);
+      if (!wanted.has(kept.ref)) wanted.set(kept.ref, kept.track);
+      if (!busy.has(kept.ref) && !waiting.includes(kept.ref)) waiting.push(kept.ref);
+    }
+  } catch (e) {
+    console.warn('offline: the kept copies could not be checked', e);
+  }
+  emit();
+  pump();
 }
 
 // --- fetching -----------------------------------------------------------------------------------------------
@@ -132,7 +162,7 @@ async function fetchOne(ref: string): Promise<void> {
   if (!needed().has(ref)) return; // its list was let go meanwhile
   const type = res.headers.get('content-type') || 'audio/mpeg';
   await (await caches.open(AUDIO)).put(audioKey(ref), new Response(blob, { headers: { 'content-type': type, 'content-length': String(blob.size) } }));
-  const kept: KeptTrack = { ref, info, track, size: blob.size, at: Date.now() };
+  const kept: KeptTrack = { ref, info, track, size: blob.size, at: Date.now(), type };
   await tx('tracks', 'readwrite', (s) => s.put(kept));
   tracks.set(ref, kept);
   stale.delete(ref);
@@ -191,10 +221,10 @@ export function fileReplaced(track: { ref?: string | null; library_track_id?: nu
 }
 
 /** The kept copy is what plays this track: it is the track's file — or the Hub cannot be reached (the old file is
- * better than none). */
+ * better than none). Never a copy this browser does not play. */
 export function keptPlays(t: { ref: string; file?: { uid?: string | null } | null }): boolean {
   const kept = tracks.get(t.ref);
-  if (!kept) return false;
+  if (!kept || cantPlayType(kept.type)) return false;
   return !hubReachable() || !(stale.has(t.ref) || outdated(kept, t.file));
 }
 
@@ -324,7 +354,7 @@ export function useKeptLists(): { lists: KeptList[]; bytes: number; tracks: numb
 
 // the Hub is reachable again: what was waiting is fetched
 onHubBack(() => {
-  for (const ref of needed()) if (!tracks.has(ref) && !waiting.includes(ref) && wanted.has(ref)) waiting.push(ref);
+  for (const ref of needed()) if ((!tracks.has(ref) || stale.has(ref)) && !waiting.includes(ref) && wanted.has(ref)) waiting.push(ref);
   pump();
 });
 
