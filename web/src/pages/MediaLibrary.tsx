@@ -1,6 +1,7 @@
 import { titleWithVersion } from '../lib/versionLabels';
 import { Children, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { imageUrl } from '../lib/img';
+import { useSoftCover } from '../lib/softCover';
 import { ArtistBanner, ArtistPage, BannerPicture } from './Artist';
 import { api } from '../api/client';
 import type { NdAlbumOut, NdArtistOut, NdSongOut, TrackOut } from '../api/types';
@@ -163,6 +164,8 @@ export function SongList<T extends TrackOut>({ tracks, extra, found, sort, onSor
  * own in place of the cover («Любимое»: the heart). `onCover`: a tap on the picture (it opens large). */
 export function Hero({ cover, round, title, mark, sub, right, kicker, art, tracks, context, onCover }: { cover?: string | null; round?: boolean; title: string; /** after the name: the mark of «Наведение порядка» */ mark?: ReactNode; sub?: ReactNode; right?: ReactNode; kicker?: string; art?: ReactNode; tracks?: readonly TrackOut[]; context?: string; onCover?: () => void }) {
   const desktop = useDesktop();
+  // the cover as a soft light, blurred once into a tiny picture (`lib/softCover.ts`): no filter while drawn
+  const soft = useSoftCover(cover ? imageUrl(cover) : null);
   const play = tracks?.length ? <PlayPair tracks={tracks} context={context} /> : null;
   const picture = (size: string) =>
     art ? (
@@ -176,8 +179,10 @@ export function Hero({ cover, round, title, mark, sub, right, kicker, art, track
     );
   // it reaches up under the bar with «back»
   const light = (
-    <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-[calc(-5rem_-_var(--hm-page-pull,0px))] bottom-0 -z-10 overflow-hidden [mask-image:linear-gradient(black_35%,transparent)]">
-      {cover ? <img key={cover} src={imageUrl(cover)} alt="" referrerPolicy="no-referrer" className="h-full w-full scale-150 object-cover opacity-50 blur-3xl" /> : <div className="h-full w-full bg-accent/25" />}
+    <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-[calc(-5rem_-_var(--hm-page-pull,0px))] bottom-0 -z-10 overflow-hidden">
+      {soft ? <div className="absolute inset-0 bg-cover bg-center opacity-50" style={{ backgroundImage: `url(${soft})` }} /> : !cover && <div className="absolute inset-0 bg-accent/25" />}
+      {/* it fades into the page below (a gradient over it: a mask is work for Safari as the filter was) */}
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent from-35% to-bg" />
     </div>
   );
   if (desktop)

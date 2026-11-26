@@ -19,6 +19,7 @@ import { plural, tracksWord } from '../lib/format';
 import { useAsync, useRememberScrollX, useSourceRequest } from '../lib/hooks';
 import { useHubEvent } from '../lib/events';
 import { imageUrl } from '../lib/img';
+import { useSoftCover } from '../lib/softCover';
 import { Link, RouteBackground, artistPath, enc, navigate, useCanonicalPath } from '../lib/router';
 import { copyText } from '../lib/share';
 import { useSession } from '../lib/session';
@@ -324,6 +325,9 @@ const BANNER_H = 'h-[clamp(15rem,34vw,26rem)]';
  * not seen. */
 export function BannerPicture({ src, blurred }: { src: string; /** not a wide picture but the artist's photo: shown out of focus, as a ground */ blurred?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
+  // out of focus: blurred once into a tiny picture, the colors a half stronger (`lib/softCover.ts`) — a CSS blur of
+  // the whole width was worked out again at every frame of the shade, and held an iPhone
+  const soft = useSoftCover(blurred ? imageUrl(src) : null, { vivid: true });
   useEffect(() => {
     const el = box.current;
     if (!el) return;
@@ -346,7 +350,11 @@ export function BannerPicture({ src, blurred }: { src: string; /** not a wide pi
   return (
     <div aria-hidden="true" className="pointer-events-none sticky top-(--page-top) z-0 h-0">
       <div ref={box} className={cx('absolute inset-x-0 top-0 overflow-hidden', BANNER_H)}>
-        <img src={imageUrl(src)} alt="" className={cx('h-full w-full object-cover', blurred ? 'scale-150 blur-3xl brightness-[0.55] saturate-150' : 'object-[center_25%]')} />
+        {blurred ? (
+          soft && <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${soft})` }}><div className="absolute inset-0 bg-black/45" /></div>
+        ) : (
+          <img src={imageUrl(src)} alt="" className="h-full w-full object-cover object-[center_25%]" />
+        )}
         <div style={{ opacity: 'var(--shade, 0)' }} className="absolute inset-0 bg-bg" />
       </div>
     </div>

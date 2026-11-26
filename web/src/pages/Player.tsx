@@ -1,5 +1,6 @@
 import { tagKey } from '../lib/tags';
 import { imageUrl } from '../lib/img';
+import { useSoftCover } from '../lib/softCover';
 import { FileCard, PlayLine } from '../components/FileInfo';
 import { ChoosePlaybackFile } from '../components/FindFile';
 import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
@@ -179,6 +180,9 @@ export function PlayerPage() {
     }
   };
 
+  const cover = track?.cover_small_url || track?.cover_url;
+  const blob = useSoftCover(cover ? imageUrl(cover) : null, { vivid: true, blob: true }); // the drifting light
+
   if (!track)
     return (
       <div className="pt-safe">
@@ -211,15 +215,15 @@ export function PlayerPage() {
 
   return (
     <div className={cx('pt-safe relative isolate mx-auto flex min-h-dvh max-w-2xl flex-col pb-[calc(24px+env(safe-area-inset-bottom))]', side && 'lg:max-w-6xl')}>
-      {(track.cover_small_url || track.cover_url) && (
-        // the page's own light — the cover's colours in slow motion: three soft copies of it, each drifting its own way
+      {blob && (
+        // the page's own light — the cover's colours in slow motion: three soft blobs of it, each drifting its own way.
+        // A blob is blurred once into a tiny picture (`lib/softCover.ts`): what moves has no filter, and an iPhone
+        // moves it on its own, without working a blur out at every frame
         <div aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-          <div className="absolute inset-0 saturate-150">
-            {(['hm-drift-a', 'hm-drift-b', 'hm-drift-c'] as const).map((name, i) => (
-              <img key={name} src={imageUrl(track.cover_small_url || track.cover_url || '')} alt="" className="absolute h-[85%] w-[85%] rounded-full object-cover opacity-45 blur-3xl motion-reduce:!animate-none"
-                style={{ left: ['-20%', '35%', '10%'][i], top: ['-15%', '5%', '40%'][i], animation: `${name} ${[34, 41, 47][i]}s ease-in-out infinite alternate` }} />
-            ))}
-          </div>
+          {(['hm-drift-a', 'hm-drift-b', 'hm-drift-c'] as const).map((name, i) => (
+            <div key={name} className="absolute h-[85%] w-[85%] bg-cover bg-center opacity-60 motion-reduce:!animate-none"
+              style={{ backgroundImage: `url(${blob})`, left: ['-20%', '35%', '10%'][i], top: ['-15%', '5%', '40%'][i], animation: `${name} ${[34, 41, 47][i]}s ease-in-out infinite alternate` }} />
+          ))}
           <div className="absolute inset-0 bg-bg/40" />
         </div>
       )}
