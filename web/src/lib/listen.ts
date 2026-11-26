@@ -13,7 +13,7 @@ import { hubEvents } from './events';
 import { NATIVE_PLAYING_EVENT, canPlayAll, pauseNative, webPlayerShown } from './player';
 import { listeningAccount, newEventId, newLaunch, playEvent, routeContext, type Launch } from './plays';
 import { toast } from './ui';
-import { hubReachable, onHubBack } from './reach';
+import { hubReachable, onHubBack, recheckHub } from './reach';
 import { dropQueue, loadQueue, saveQueue } from './listenStore';
 
 /** Listening to catalog tracks before downloading them, in the page itself (one `<audio>`): the Hub picks the
@@ -751,7 +751,10 @@ export function touchTrack(ref: string) {
  * pauses/resumes it if it is the current one. `origin` — where the list was launched (by default by `context`). */
 export function listen(track: ListenTrack, queue?: readonly ListenTrack[], context?: string, origin?: LaunchOrigin) {
   if (state.track?.ref === track.ref && state.phase !== 'error') return toggle();
-  if (!playableNow(track, context ?? routeContext())) return notOnDevice();
+  // taken to be offline: the Hub is asked once more before the track is refused (it may have been busy a moment)
+  if (!playableNow(track, context ?? routeContext())) {
+    return void recheckHub().then((back) => (back ? startList(track, queue, context, origin) : notOnDevice()));
+  }
   startList(track, queue, context, origin);
 }
 

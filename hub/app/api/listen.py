@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from starlette.background import BackgroundTask
 
-from app import listen
+from app import activity, listen
 from app.api.schemas import ListenOut, ListenPrefetchIn, ListenPrefetchOut
 from app.auth import current_user
 from app.db import session_scope
@@ -105,6 +105,7 @@ async def stream(ref: str, request: Request, q: str | None = None, cant: str | N
     which variant it is in `X-HomeMusic-Variant`.
     `cant=ogg,webm,flac`: the formats the player cannot play — a file in one of them comes as its copy (m4a): Opus put
     into MP4 as it is if the player says `can=opus-mp4`, else AAC."""
+    activity.note()  # played, or fetched to a device: background work gives way (`app.activity`)
     rng = request.headers.get("range") or ""
     # the app loads the next tracks of its queue ahead (`X-HomeMusic-Prefetch`): that is no listen yet, its
     # `start` event is (app/api/plays.py), and its server copy waits for those of played tracks

@@ -14,7 +14,9 @@ import { useSyncExternalStore } from 'react';
  * Nothing is asked while the Hub answers: the requests the app makes anyway tell. */
 
 const PING = '/api/ping';
-const PING_TIMEOUT_MS = 5000;
+/** A Hub busy with somebody's transfer may answer late; it is there all the same. Not answering this long twice in a
+ * row is not being there: only then does the app go over to what is on the device. */
+const PING_TIMEOUT_MS = 8000;
 /** A request without an answer this long: the Hub is asked whether it is there at all. */
 const SLOW_MS = 4000;
 const RETRY_FIRST_MS = 2000;
@@ -52,16 +54,29 @@ function scheduleRetry() {
   retryDelay = Math.min(RETRY_MAX_MS, retryDelay * 2);
 }
 
-/** Asks the Hub whether it is there; one question at a time. */
+const askOnce = (): Promise<boolean> =>
+  fetch(PING, { cache: 'no-store', credentials: 'include', signal: AbortSignal.timeout(PING_TIMEOUT_MS) })
+    .then((res) => res.ok, () => false);
+
+/** Asks the Hub whether it is there; one question at a time. A question left without an answer is asked once more
+ * before the Hub is taken to be gone: a busy moment is not a lost connection. */
 function ping(): Promise<void> {
   if (!navigator.onLine) {
     set(false);
     return Promise.resolve();
   }
-  pinging ??= fetch(PING, { cache: 'no-store', credentials: 'include', signal: AbortSignal.timeout(PING_TIMEOUT_MS) })
-    .then((res) => set(res.ok), () => set(false))
-    .finally(() => (pinging = null));
+  pinging ??= (async () => {
+    let ok = await askOnce();
+    if (!ok && navigator.onLine && reachable) ok = await askOnce();
+    set(ok);
+  })().finally(() => (pinging = null));
   return pinging;
+}
+
+/** The Hub asked now (a tap on what is not on the device while it was taken to be gone): whether it answers. */
+export async function recheckHub(): Promise<boolean> {
+  await ping();
+  return reachable;
 }
 
 /** Something answered a request to the Hub (`header` reads the answer's headers): reachable, unless it was the

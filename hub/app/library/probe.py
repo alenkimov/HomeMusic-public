@@ -8,9 +8,12 @@ import logging
 import math
 import os
 import re
+import shutil
 from pathlib import Path
 
 from pydantic import BaseModel
+
+from app.net import in_background
 
 log = logging.getLogger(__name__)
 
@@ -53,10 +56,24 @@ def ffmpeg_bin() -> str:
     return os.environ.get("FFMPEG_BIN") or "ffmpeg"
 
 
+def yielding(*args: str) -> list[str]:
+    """The command as background work runs it (a transfer's downloads, `app.net.in_background`): below everything
+    else in the CPU and the disk (`nice`, `ionice`), so that the Hub and what the listener does stay quick while
+    files are analysed four at a time. Work the user waits for runs as it is."""
+    if not in_background():
+        return list(args)
+    out = list(args)
+    if ionice := shutil.which("ionice"):
+        out = [ionice, "-c2", "-n7", *out]
+    if nice := shutil.which("nice"):
+        out = [nice, "-n", "15", *out]
+    return out
+
+
 async def _run(*args: str, timeout: float) -> tuple[int, bytes, bytes]:
     try:
         proc = await asyncio.create_subprocess_exec(
-            *args,
+            *yielding(*args),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

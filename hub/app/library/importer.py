@@ -261,11 +261,12 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec, *, require_m
         if spec.album_artist:
             spec.album_artist, album_by = await artists.credits(s, spec.album_artist, refs)
         album = await get_or_create_album(s, spec)
-        cover = tagger.prepare_cover(spec.cover) if spec.cover else None
+        # decoding, scaling and encoding a picture holds the loop for a while (more so on a weak CPU): not on it
+        cover = await asyncio.to_thread(tagger.prepare_cover, spec.cover) if spec.cover else None
         album_dir_rel = album_reldir(album)
         album_dir = library_abs(album_dir_rel)
         if cover is None and (album_dir / "cover.jpg").is_file():
-            cover = (album_dir / "cover.jpg").read_bytes()
+            cover = await asyncio.to_thread((album_dir / "cover.jpg").read_bytes)
         if cover is None:
             cover = fallback_cover
 

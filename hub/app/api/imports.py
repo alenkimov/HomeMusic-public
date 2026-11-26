@@ -23,7 +23,7 @@ from app.events import bus
 from app.imports import apply, core, review
 from app.imports.sources.base import SourceError
 from app.jobs.downloads import IN_WORK
-from app.jobs.queue import PRIORITY_IMPORT, PermanentError, enqueue, notify
+from app.jobs.queue import PermanentError, enqueue, notify
 from app.models import DownloadItem, Import, ImportCollection, ImportItem, IntegrationConnection, Job, Track, User
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
@@ -206,7 +206,7 @@ async def sync(import_id: int, user: User = Depends(current_user),
     if imp.method not in ("profile", "link") and not await integrations.import_connection(s, imp):
         raise HTTPException(409, "Вход в сервис удалён — начните новый перенос")
     imp.status = "fetching"
-    await enqueue(s, "import_fetch", {"import_id": imp.id}, priority=PRIORITY_IMPORT)
+    await enqueue(s, "import_fetch", {"import_id": imp.id}, priority=core.PRIORITY_ASKED)
     await s.flush()
     out = await core.import_out(s, imp)
     await s.commit()

@@ -27,6 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
+from app.library.probe import yielding
 from app.models import Track, TrackFile
 
 log = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ async def of_file(path: Path) -> tuple[bytes, float] | None:
         return None
     try:
         proc = await asyncio.create_subprocess_exec(
-            "fpcalc", "-raw", "-json", "-length", str(LENGTH_S), str(path),
+            *yielding("fpcalc", "-raw", "-json", "-length", str(LENGTH_S), str(path)),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         out, _ = await asyncio.wait_for(proc.communicate(), TIMEOUT_S)
         body = json.loads(out or b"{}")
@@ -94,7 +95,7 @@ async def of_whole(path: Path) -> tuple[list[int], float] | None:
         if key in _whole:
             return _whole[key]
         proc = await asyncio.create_subprocess_exec(
-            "fpcalc", "-raw", "-json", "-length", str(WHOLE_S), str(path),
+            *yielding("fpcalc", "-raw", "-json", "-length", str(WHOLE_S), str(path)),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         out, _ = await asyncio.wait_for(proc.communicate(), TIMEOUT_S * 3)
         body = json.loads(out or b"{}")
@@ -171,8 +172,8 @@ async def loudness(path: Path, at: float, to: float) -> float | None:
     silent at a place where they part."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-v", "error", "-ss", f"{max(0.0, at):.2f}", "-t", f"{max(0.3, to - at):.2f}", "-i", str(path),
-            "-ac", "1", "-ar", "8000", "-f", "s16le", "-", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            *yielding("ffmpeg", "-v", "error", "-ss", f"{max(0.0, at):.2f}", "-t", f"{max(0.3, to - at):.2f}", "-i",
+                      str(path), "-ac", "1", "-ar", "8000", "-f", "s16le", "-"), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         raw, _ = await asyncio.wait_for(proc.communicate(), TIMEOUT_S)
         samples = array("h")
         samples.frombytes(raw[: len(raw) // 2 * 2])

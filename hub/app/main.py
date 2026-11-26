@@ -38,6 +38,9 @@ async def lifespan(app: FastAPI):
         d.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(db.run_migrations)
     db.init_engine()
+    from app.watchdog import watchdog
+
+    watchdog.start()  # a loop held up is said in the log, with where
 
     from app import listen, telegram_chats
     from app.for_you import loop as for_you_loop
@@ -112,6 +115,7 @@ async def lifespan(app: FastAPI):
         await smart.reset()
         await svc.stop()
         await db.dispose()
+        await watchdog.close()
 
 
 async def _sync_tags() -> None:

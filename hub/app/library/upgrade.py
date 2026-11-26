@@ -275,7 +275,7 @@ async def adopt(s: AsyncSession, track: Track, meta: dict[str, Any]) -> None:
             if cover:
                 from app.library import tagger
 
-                await asyncio.to_thread(_write_cover_file, folder, tagger.prepare_cover(cover))
+                await asyncio.to_thread(lambda: _write_cover_file(folder, tagger.prepare_cover(cover)))
                 album.cover_path = (album_reldir(album) / "cover.jpg").as_posix()
     # a name the catalog only writes in other letters' case stays as the file has it
     if spec.title.casefold() != track.title.casefold():

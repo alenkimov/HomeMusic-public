@@ -94,9 +94,17 @@ async def recover_stale() -> int:
         return res.rowcount or 0
 
 
+LISTENING_BACKGROUND_SLOTS = 2
+
+
 def background_slots() -> int:
-    """Workers background jobs may hold at once: all but one."""
-    return max(1, get_settings().cfg.jobs.workers - 1)
+    """Workers background jobs may hold at once: all but one; while somebody listens (`app.activity`), no more than
+    `LISTENING_BACKGROUND_SLOTS` — a transfer's downloads (each a source, a file, ffmpeg and fpcalc) then leave the
+    home server's network and CPU to the listener. What runs is not stopped: the rest wait for a free one."""
+    from app import activity
+
+    slots = max(1, get_settings().cfg.jobs.workers - 1)
+    return min(slots, LISTENING_BACKGROUND_SLOTS) if activity.listening() else slots
 
 
 _IMPORT_KINDS = "('import_resolve', 'import_playlists')"
