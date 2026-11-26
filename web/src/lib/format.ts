@@ -109,6 +109,8 @@ export function providerLabel(p?: string | null): string {
       return 'hitmoz';
     case 'hitmos_fm':
       return 'hitmos.fm';
+    case 'yandex':
+      return 'Яндекс Музыка';
     case 'ytdlp':
       return 'YouTube';
     case 'yt_reupload':

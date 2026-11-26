@@ -7,6 +7,10 @@ sources:
   ru: [hitmoz, hitmos_fm, soundcloud, yt_reupload, ytdlp]
   # hitmoz first: a YouTube file opens only after the ad before the video (seconds of waiting)
   default: [hitmoz, ytdlp]
+  # Yandex Music before both lists (unless a list names `yandex` itself, where it is put): the official file, FLAC or
+  # MP3 320, through a Yandex account with Plus connected in «Интеграции». Without one it finds nothing. An explicit
+  # Russian track takes it only when no copy known to be uncensored is found (Yandex edits its files in place).
+  yandex_first: true
   # A source's files uploaded on or after the date aren't taken by downloads and listening (the Files tab shows them).
   uploaded_before: {soundcloud: 2026-05-01}
   # Full-file fallback after regular sources fail (e.g. YouTube asks to sign in). Downloads and playback;

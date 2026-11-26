@@ -20,6 +20,7 @@ class TrackQuery(BaseModel):
     explicit: bool | None = None
     version: str | None = None  # remix/live/... only if explicitly requested
     lang: str | None = None  # "ru" forces the Russian source order
+    yandex_id: str | None = None  # the track's id on Yandex Music, where it is known: the source takes it by it
 
 
 class Candidate(BaseModel):

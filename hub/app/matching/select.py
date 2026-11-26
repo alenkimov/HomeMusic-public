@@ -53,19 +53,30 @@ def _explicit(c: Candidate) -> bool | None:
     return c.explicit if c.explicit is not None else explicit_marker(c.title)
 
 
+# not of Russia: the law is not theirs (their tracks go by the Russian source order still — they are found there)
+_NOT_RUSSIA_ISRC = ("UA", "BY", "KZ")
+_UKRAINIAN = re.compile(r"[іїєґІЇЄҐ]")
+
+
 def needs_uncensored(q: TrackQuery) -> bool:
     """An explicit Russian track: since the 2026 law its new uploads and the official copies may be edited (PLAN 3.2),
-    so a download takes a copy known to be the original before a possibly censored one."""
-    return q.explicit is True and is_russian_query(q)
+    so a download takes a copy known to be the original before a possibly censored one. A track registered in
+    Ukraine, Belarus or Kazakhstan (its ISRC), or named in Ukrainian, is not Russia's: no copy of it is held back."""
+    if q.explicit is not True or not is_russian_query(q):
+        return False
+    if (q.isrc or "")[:2].upper() in _NOT_RUSSIA_ISRC:
+        return False
+    return not _UKRAINIAN.search(f"{q.artist} {q.title}")
 
 
 def trusted_original(c: Candidate, cfg: MatchingCfg) -> bool:
     """A copy that is not censored: a re-upload titled "(без цензуры)", or a file uploaded before the law that isn't
-    a clean version. Official YouTube Music copies don't count by date: labels replace their audio in place."""
+    a clean version. Official YouTube Music and Yandex Music copies don't count by date: their audio is replaced in
+    place."""
     marker = c.extra.get("uncensored")
     if marker is not None:
         return bool(marker)
-    if _explicit(c) is False or c.extra.get("source") == "ytmusic":
+    if _explicit(c) is False or c.extra.get("source") in ("ytmusic", "yandex"):
         return False
     return c.upload_date is not None and c.upload_date < cfg.original_before
 

@@ -123,6 +123,18 @@ what plays now and next; a first or old page), then the library's artists whose 
 one every 15 s (30 s while somebody listens, longer each time a catalog fails). Each put-together is in the log with
 its steps and the slowest catalogs (`artist 12 (Кино): 2.4 s — records 1.6 s, …; slowest: Spotify 1.5 s, …`).
 
+## Where a file comes from
+
+A track to download or to listen to is looked for in the sources one after another (`Services.provider_order`):
+Yandex Music first — the official file, FLAC or MP3 320, through a Yandex account with Plus connected in
+«Интеграции» (`app/providers/yandex.py`; a track of Yandex taken by its id, any other by its names; without such an
+account it finds nothing) — then the Russian order (hitmoz, hitmos.fm, SoundCloud, re-uploads, YouTube) or the
+default one (hitmoz, YouTube). A track is Russian by its names in Cyrillic, its Cyrillic original on Yandex, a CIS
+barcode or ISRC, or its artist (`app/matching/russian.py`: two titles in Cyrillic among what the Hub knows of them, or
+an ISRC of Russia). An explicit track of Russia (not one of Ukraine, Belarus, Kazakhstan) takes first the copies known
+to be uncensored — uploaded before the 2026 law, or re-uploads said «без цензуры»; Yandex's and YouTube Music's own
+copies never count as such, their audio is replaced in place — and a possibly censored copy only when there is none.
+
 ## Modules
 
 - `app/library/tracks.py` — the registry: find or make a Track by a catalog ref or by names; its links; its files.

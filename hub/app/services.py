@@ -48,6 +48,10 @@ class Services:
             "yt_reupload": YtReuploadProvider(cfg.ytdlp, access=youtube),
             "soundcloud": SoundcloudProvider(cfg.ytdlp),
         }
+        if get_settings().yandex_catalog:
+            from app.providers.yandex import YandexProvider
+
+            self.providers["yandex"] = YandexProvider()  # finds nothing without an account with Plus
         self.deezer = DeezerClient(cfg.catalog) if get_settings().deezer_catalog else None
         self.hitmoz_catalog = HitmozCatalog(hitmoz)
         from app.catalog.yandex_catalog import YandexCatalog
@@ -125,6 +129,8 @@ class Services:
 
         sources = get_settings().cfg.sources
         names = sources.ru if is_russian_query(q) else sources.default
+        if sources.yandex_first and "yandex" not in names:
+            names = ["yandex", *names]
         if for_download:
             names = [*names, *sources.download_fallback]
         return [self.providers[n] for n in dict.fromkeys(names) if n in self.providers]

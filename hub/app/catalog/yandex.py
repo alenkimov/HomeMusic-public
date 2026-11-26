@@ -83,6 +83,7 @@ def yandex_track_row(t: Any) -> dict[str, Any] | None:
     artists = [a.name for a in (t.artists or []) if getattr(a, "name", None)]
     ms = getattr(t, "duration_ms", None)
     return {
+        "id": str(t.id) if getattr(t, "id", None) else None,
         "artist": ", ".join(artists),
         "artists": artists,
         "title": f"{base} ({version})" if version else base,  # full, for matching
@@ -141,12 +142,15 @@ async def russian_original(q: TrackQuery, upc: str | None = None) -> tuple[Track
     if is_russian_query(q):
         return q, q
     found = await original_names(q.artist, q.title, q.duration_s)
+    same = {"yandex_id": q.yandex_id or found.get("id")} if found else {}
     if found and has_cyrillic(found["artist"] + found["title"]):
         log.info("russian original for %s - %s: %s - %s", q.artist, q.title, found["artist"], found["title"])
         artist = (found.get("artists") or found["artist"].split(", "))[0]
         title = (found.get("base") or found["title"]) + split_suffix(q.title)[1]
         tag_q = q.model_copy(update={"title": title}) if has_cyrillic(title) else q
-        return tag_q, q.model_copy(update={"artist": artist, "title": title, "lang": "ru"})
-    if cis_release(upc, q.isrc):
-        return q, q.model_copy(update={"lang": "ru"})
-    return q, q
+        return tag_q, q.model_copy(update={"artist": artist, "title": title, "lang": "ru", **same})
+    from app.matching.russian import russian_artist
+
+    if cis_release(upc, q.isrc) or await russian_artist(q.artist):
+        return q, q.model_copy(update={"lang": "ru", **same})
+    return q, q.model_copy(update=same) if same.get("yandex_id") != q.yandex_id else q

@@ -18,6 +18,10 @@ class SourcesCfg(BaseModel):
     ru: list[str] = ["hitmoz", "hitmos_fm", "soundcloud", "yt_reupload", "ytdlp"]
     # hitmoz first: a YouTube file opens only after the ad before the video (`ytdlp.MAX_AD_WAIT_S`)
     default: list[str] = ["hitmoz", "ytdlp"]
+    # Yandex Music before the lists above (unless they name it themselves): the official file, FLAC or MP3 320,
+    # through a connected account with Plus (`app/providers/yandex.py`) — without one it finds nothing. An explicit
+    # Russian track takes it only when no copy known to be uncensored is found
+    yandex_first: bool = True
     # Tried only by downloads, after regular sources fail; never part of page prefetch.
     download_fallback: list[str] = ["soundcloud"]
     # re-uploads by small channels: an explicit Russian track takes one when no copy above is known to be uncensored

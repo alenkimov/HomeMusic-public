@@ -1044,7 +1044,7 @@ async def create_items(
 
 def query_from_track(t: CatalogTrack) -> TrackQuery:
     return TrackQuery(artist=t.artist, title=t.title, album=t.album_title, duration_s=t.duration_s, isrc=t.isrc,
-                      explicit=t.explicit)
+                      explicit=t.explicit, yandex_id=t.id if t.source == "ym" else None)
 
 
 async def get_catalog_album(ref: str) -> CatalogAlbum:
