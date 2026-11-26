@@ -2,9 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { TidyProposalOut, TrackOut } from '../api/types';
 import { activeLine, type LyricsOut } from '../lib/lyrics';
 import { fixesOf } from '../lib/lyricsFixes';
-import { listen, listenFrom, useListen } from '../lib/listen';
-import { askForLyrics } from '../lib/playerQueue';
-import { navigate } from '../lib/router';
+import { listenFrom, useListen } from '../lib/listen';
+import { toast } from '../lib/ui';
 import { knownLyrics, loadLyrics } from '../lib/trackLyrics';
 import { fmtDuration, plural } from '../lib/format';
 import { listenTrack } from './catalog';
@@ -19,8 +18,8 @@ type View = 'after' | 'before';
 
 /** What a proposal of «Наведение порядка» does to a song's text, shown on the text itself (`pages/Tidy.tsx`): the
  * lines it changes with two lines around them, as it will be — a line that goes struck through, the words put back
- * lit — or as it was. A line plays the song from it, as a line of the player's text does (an untimed text opens the
- * player with the text). The decision's buttons stand under the text: read first, then decide. */
+ * lit — or as it was. A line plays the song from it, as a line of the player's text does (an untimed text only says it
+ * cannot). The decision's buttons stand under the text: read first, then decide. */
 export function LyricsExcerpt({ p, track, actions }: { p: TidyProposalOut; track: TrackOut; actions?: ReactNode }) {
   const [data, setData] = useState<LyricsOut | null>(() => knownLyrics(track.ref, track.nd_song_id) ?? null);
   const [view, setView] = useState<View>('after');
@@ -55,9 +54,7 @@ export function LyricsExcerpt({ p, track, actions }: { p: TidyProposalOut; track
   const play = (i: number) => {
     const ln = data?.lines?.[i];
     if (ln) return listenFrom(listenTrack(track), Math.max(0, (ln.t + offset) / 1000));
-    if (!current) listen(listenTrack(track));
-    askForLyrics();
-    navigate('/player');
+    toast('У этого текста нет разметки по времени — включить трек с нужной строки нельзя');
   };
 
   const n = p.kind === 'lyrics' ? (p.show.drop_at?.length ?? 0) : (p.show.fix_at?.length ?? 0);
@@ -111,8 +108,8 @@ export function LyricsExcerpt({ p, track, actions }: { p: TidyProposalOut; track
                 const lit = i === playingLine;
                 return (
                   <button key={i} type="button" onClick={() => play(i)}
-                    title={ln ? `Слушать с ${fmtDuration((ln.t + offset) / 1000)}` : 'Открыть плеер с текстом'}
-                    className="flex w-full items-baseline gap-3 rounded-lg px-2.5 py-1 text-left hover:bg-fg/5">
+                    title={ln ? `Слушать с ${fmtDuration((ln.t + offset) / 1000)}` : undefined}
+                    className={cx('flex w-full items-baseline gap-3 rounded-lg px-2.5 py-1 text-left', ln ? 'hover:bg-fg/5' : 'cursor-default')}>
                     <span className={cx('min-w-0 flex-1 text-[15px] font-bold leading-snug sm:text-[17px]',
                       lit ? 'text-fg' : fix ? 'text-fg/90' : 'text-fg/50')}>
                       {fix && fix.to === null

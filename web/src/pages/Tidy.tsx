@@ -329,7 +329,7 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track }: {
     return (
       <div className={cx('rounded-xl bg-raised/60 pb-2 pt-1 transition', lit && 'bg-ai/10 ring-2 ring-ai', decided && !journal && 'opacity-60')}>
         <TrackRow track={track} showAlbum />
-        <div className="px-2 sm:px-3">
+        <div className="mt-2 px-2 sm:px-3">
           {text && !journal ? (
             <LyricsExcerpt p={p} track={track} actions={actions} />
           ) : (
