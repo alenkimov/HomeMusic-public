@@ -516,6 +516,8 @@ export const api = {
   listen: (ref: string, signal?: AbortSignal, ahead?: 'whole' | 'head') =>
     request<ListenOut>('GET', withQuery('/api/listen', ahead ? { ref, ahead, ...formats() } : { ref }), { signal }),
   // the catalog tracks on screen, top first: the Hub picks their files in the background (replaces the last list)
+  /** these artists' pages are likely opened soon (of what plays now and next): the Hub puts them together beforehand */
+  warmArtists: (refs: string[]) => request<void>('POST', '/api/catalog/artists/warm', { json: { refs } }),
   listenPrefetch: (refs: string[]) => request<{ queued: number }>('POST', '/api/listen/prefetch', { json: { refs } }),
 
   // downloads

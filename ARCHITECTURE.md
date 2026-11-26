@@ -112,6 +112,17 @@ and tests run one process doing both (`HUB_ROLE=all`).
 Of the downloads waiting at one priority, the next is of whoever has the fewest running now: one person's transfer
 does not hold every hand.
 
+## Artist pages
+
+An artist's page is put together of what the catalogs say — some seconds of their answers. It is kept, the same for
+everyone (`app/artist_pages.py`, `catalog_cache` key `artistpage:<artist>`); what is of a listener (♥, the library's
+copies) and the Hub's own choices (photo, wide picture) are put on it when shown, from the database only. An opening
+shows the kept page at once and puts an old one (6 h) together again behind it — the apps get an `artist` event. The
+worker keeps the pages warm, one artist after another: first what is asked (the web player asks for the artists of
+what plays now and next; a first or old page), then the library's artists whose page is missing or older than 3 days,
+one every 15 s (30 s while somebody listens, longer each time a catalog fails). Each put-together is in the log with
+its steps and the slowest catalogs (`artist 12 (Кино): 2.4 s — records 1.6 s, …; slowest: Spotify 1.5 s, …`).
+
 ## Modules
 
 - `app/library/tracks.py` — the registry: find or make a Track by a catalog ref or by names; its links; its files.

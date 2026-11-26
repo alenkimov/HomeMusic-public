@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,8 +29,17 @@ from app.api.schemas import (
 )
 from app.auth import current_user
 from app.catalog import banners, lookup, namesakes, popular, registry, release_matches
-from app.catalog.models import CATALOG_SERVICES, ArtistPage, CatalogAlbum, CatalogArtist, CatalogNotFound, SearchResults, split_ref
 from app.catalog.identity import matched_track
+from app.catalog.models import (
+    CATALOG_SERVICES,
+    ArtistPage,
+    CatalogAlbum,
+    CatalogArtist,
+    CatalogNotFound,
+    CatalogTrack,
+    SearchResults,
+    split_ref,
+)
 from app.catalog.yandex import split_suffix
 from app.db import get_session, session_scope
 from app.library import tagger
@@ -178,10 +188,15 @@ async def _tie_deezer(s: AsyncSession, who: Any, page: ArtistPage, progress: Sou
 
 
 async def whole_artist(s: AsyncSession, ref: str, *, include_sources: bool = True,
-                       progress: SourceProgress | None = None) -> tuple[CatalogArtist, list[str], list[ArtistSourceOut], list[ArtistPage]]:
+                       progress: SourceProgress | None = None, tie: bool = True,
+                       ) -> tuple[CatalogArtist, list[str], list[ArtistSourceOut], list[ArtistPage]]:
     """The artist a record of the catalog is of, as one page: a catalog may keep several records of one artist (old
     releases under one spelling, new under another), and the Hub knows which are theirs (app/library/artists.py).
-    Returns the artist, record references, service links and the individual catalog pages."""
+    Returns the artist, record references, service links and the individual catalog pages.
+
+    `tie`: the artist's records in the catalogs that have none of theirs yet are looked for (by the name, checked by
+    the music) and tied to them. Without it the page is of the records known: an artist's first page does not wait
+    for that search — the warming (`app.artist_pages`) does it right after."""
     from app.library import artists
 
     ident = registry.numeric_id(ref)
@@ -227,7 +242,7 @@ async def whole_artist(s: AsyncSession, ref: str, *, include_sources: bool = Tru
         return order.get(p.artist.source, 2), p.artist.nb_fans or 0
 
     page = max(live.values(), key=priority, default=None)
-    if page is not None:
+    if page is not None and tie:
         await _tie_yandex(s, who, page, progress)
         if page.artist.source != "dz":
             await _tie_deezer(s, who, page, progress)
@@ -236,7 +251,8 @@ async def whole_artist(s: AsyncSession, ref: str, *, include_sources: bool = Tru
             if spotify := await spotify_profile(page, progress):
                 await artists.tie_profile(s, who.id, spotify.artist.ref)
                 await s.commit()
-    await read_profiles()
+    if tie:
+        await read_profiles()
     rows = list(await s.scalars(select(ArtistRef).where(ArtistRef.artist_id == who.id)
                                 .order_by(ArtistRef.tied_at, ArtistRef.ref)))
     saved = []
@@ -415,37 +431,167 @@ async def artist(ref: str, request: Request, user: User = Depends(current_user),
 
 async def _artist_response(s: AsyncSession, ref: str, user_id: int,
                            progress: SourceProgress | None = None) -> ArtistPageOut:
-    profile, records, sources, pages = await whole_artist(s, ref, progress=progress)
-    await s.commit()  # who the record is of is known from now on
-    groups = await _artist_albums(s, [a for page in pages for a in page.albums], progress)
-    albums = await annotate_albums(s, [group[0].model_copy(update={"tracks": None}) for group in groups.values()], user_id)
-    for album in albums:
-        album.found_in = _album_sources(groups[album.ref])
-    # how the artist looks, where the listeners chose: the photo, the wide picture — or none over the page
-    from app.library import artists, looks, versions
+    """The page kept (`app.artist_pages`) at once — brought up to date behind it when it is old; the first one is
+    put together here, of the records known, and completed by the warming."""
+    from app import artist_pages
+    from app.library import artists
 
+    ident = registry.numeric_id(ref)
+    who = await artists.by_id(s, ident) if ident is not None else await artists.by_ref(s, ref)
+    if who is not None and (kept := await artist_pages.read(who.id)) is not None:
+        try:
+            page = ArtistAssembly.model_validate(kept.data)
+        except ValidationError:
+            page = None
+        if page is not None and await _still_theirs(s, who, page):
+            if kept.stale:
+                artist_pages.ask([who.id])
+            return await present_artist(s, who, page, user_id)
+    warming = artist_pages.warming()
+    page = await assemble_artist(s, ref, progress=progress, tie=not warming)
+    await artist_pages.write(page.who_id, page.model_dump(mode="json"), complete=not warming)
+    if warming:
+        artist_pages.ask([page.who_id])
+    who = await artists.by_id(s, page.who_id)
+    return await present_artist(s, who, page, user_id)
+
+
+class RankedTrack(BaseModel):
+    track: CatalogTrack
+    source: str
+
+
+class ArtistAssembly(BaseModel):
+    """An artist's page as the catalogs give it, the same for everyone: what is kept (`app.artist_pages`). What is
+    of a listener (♥, the library's copies) and what the Hub's own choices are (the photo, the wide picture, the
+    library's own releases) is put on it when it is shown (`present_artist`)."""
+
+    who_id: int
+    # who the artist is called here and the records tied to them, when it was put together: a page of another name
+    # or of other records is not theirs any more (`_still_theirs`), nor one of other releases left out as a namesake's
+    name: str
+    profile_refs: list[str]
+    excluded: int
+    artist: CatalogArtist
+    records: list[str]
+    sources: list[ArtistSourceOut]
+    albums: list[CatalogAlbum]  # one of each release, without its tracks
+    found_in: dict[str, list[str]]  # of a release: the catalogs that have it
+    ranked: list[RankedTrack]
+    has_pages: bool
+    heard: int | None
+    banner: str | None  # the wide picture found (the Hub's own choice is put over it when shown)
+    by_song: dict[str, int]
+
+
+def _excluded(records: list[str]) -> int:
+    return sum(len(namesakes.of(r)) for r in records)
+
+
+async def _still_theirs(s: AsyncSession, who: Any, page: ArtistAssembly) -> bool:
+    from app.library import artists
+
+    return (page.name == who.name and page.profile_refs == sorted(await artists.profiles(s, who.id))
+            and page.excluded == _excluded(page.records))
+
+
+async def assemble_artist(s: AsyncSession, ref: str, *, progress: SourceProgress | None = None,
+                          tie: bool = True, timer: _SourceTimer | None = None) -> ArtistAssembly:
+    """What the catalogs say of the artist, put together: their records, releases (one of each), the most listened
+    tracks, the wide picture. How long each step and each catalog took goes to the log."""
+    from app.library import artists, looks
+
+    t0 = time.monotonic()
+    steps: list[str] = []
+
+    def step(name: str, since: float) -> float:
+        now = time.monotonic()
+        steps.append(f"{name} {now - since:.1f} s")
+        return now
+
+    timer = timer or _SourceTimer(progress)
+    profile, records, sources, pages = await whole_artist(s, ref, progress=timer, tie=tie)
+    await s.commit()  # who the record is of is known from now on
+    t = step("records", t0)
+    groups = await _artist_albums(s, [a for page in pages for a in page.albums], timer)
+    t = step("releases", t)
     who = await artists.by_id(s, profile.hub_artist_id)
+    heads = [group[0].model_copy(update={"tracks": None}) for group in groups.values()]
+    said, _ = looks.banner(who.id, await looks.of(s, who.id))
+
+    async def found_banner() -> str | None:
+        if said:
+            return None
+        return profile.banner_url or (await banners.url_of(
+            profile, [t.title for p in pages for t in p.top_tracks] + [a.title for a in heads]) if pages else None)
+
+    heard, ranked, banner, by_song = await asyncio.gather(
+        popular.listeners(profile.name), popular.ranked(profile, pages), found_banner(), popular.heard(profile.name))
+    step("listeners and picture", t)
+    log.info("artist %s (%s)%s: %.1f s — %s; %s", who.id, who.name, "" if tie else " without the search of records",
+             time.monotonic() - t0, ", ".join(steps), timer.said())
+    return ArtistAssembly(
+        who_id=who.id, name=who.name, profile_refs=sorted(await artists.profiles(s, who.id)),
+        excluded=_excluded(records), artist=profile, records=records, sources=sources, albums=heads,
+        found_in={key: _album_sources(group) for key, group in groups.items()},
+        ranked=[RankedTrack(track=t, source=src) for t, src in ranked], has_pages=bool(pages),
+        heard=heard, banner=banner, by_song=by_song)
+
+
+class _SourceTimer(SourceProgress):
+    """The progress the page reports (if it does), and how long each catalog took, for the log; `errors`: the
+    catalogs that failed (the warming waits longer then)."""
+
+    def __init__(self, inner: SourceProgress | None = None):
+        super().__init__(inner.emit if inner is not None else (lambda kind, data: None))
+        self.inner = inner
+        self.took: dict[str, float] = {}
+        self.errors: set[str] = set()
+
+    async def follow[T](self, service: str, work: Awaitable[T], outcome: Callable[[T], SourceState]) -> T:
+        t0 = time.monotonic()
+        try:
+            if self.inner is not None:
+                return await self.inner.follow(service, work, outcome)
+            return await super().follow(service, work, outcome)
+        except HTTPException as e:
+            if e.status_code != 404:
+                self.errors.add(service)
+            raise
+        except Exception:
+            self.errors.add(service)
+            raise
+        finally:
+            self.took[service] = max(self.took.get(service, 0.0), time.monotonic() - t0)
+
+    def said(self) -> str:
+        took = ", ".join(f"{k} {v:.1f} s" for k, v in sorted(self.took.items(), key=lambda kv: -kv[1]))
+        return f"slowest: {took or 'nothing asked'}" + (f"; failed: {', '.join(sorted(self.errors))}" if self.errors else "")
+
+
+async def present_artist(s: AsyncSession, who: Any, page: ArtistAssembly, user_id: int) -> ArtistPageOut:
+    """`page` as this listener sees it: ♥ and the library's copies, the library's own releases, the photo and the
+    wide picture the listeners chose. Only the database is asked."""
+    from app.library import looks, versions
+
+    profile = page.artist
+    albums = await annotate_albums(s, page.albums, user_id)
+    for album in albums:
+        album.found_in = page.found_in.get(album.ref, [])
     represented = {a.library_album_id for a in albums}
     local = [a for a in await _library_artist_albums(s, who.id) if int(a.id) not in represented]
     albums.extend(await annotate_albums(s, local, user_id))
     albums.sort(key=lambda a: (a.release_date.year if a.release_date else a.year or 0,
                                a.release_date.month if a.release_date else 0,
                                a.release_date.day if a.release_date else 0), reverse=True)
-    look = await looks.of(s, who.id) if who is not None else None
-    chosen = await looks.photo(s, who, look, chosen_only=True) if who is not None else None
+    look = await looks.of(s, who.id)
+    chosen = await looks.photo(s, who, look, chosen_only=True)
     if chosen:
         profile = profile.model_copy(update={"picture_url": chosen[0], "picture_small_url": chosen[1]})
-    said, own_banner = looks.banner(who.id, look) if who is not None else (False, None)
-
-    async def found_banner() -> str | None:
-        return own_banner if said else profile.banner_url or (await banners.url_of(
-            profile, [t.title for p in pages for t in p.top_tracks] + [a.title for a in albums])
-            if pages else None)
-
-    heard, ranked, banner, by_song = await asyncio.gather(
-        popular.listeners(profile.name), popular.ranked(profile, pages), found_banner(),
-        popular.heard(profile.name))
-    if not pages:
+    said, own_banner = looks.banner(who.id, look)
+    banner = own_banner if said else page.banner
+    ranked = [(r.track, r.source) for r in page.ranked]
+    if not page.has_pages:
         local_tracks = list(await s.scalars(select(Track).join(TrackArtist).where(
             TrackArtist.artist_id == who.id, Track.path.is_not(None),
         ).order_by(Track.id.desc()).limit(popular.WANT)))
@@ -455,7 +601,8 @@ async def _artist_response(s: AsyncSession, ref: str, user_id: int,
     top = await versions.once(s, [(t, source) for t, (_, source) in zip(tracks, ranked, strict=True)],
                               lambda row: row[0].library_track_id, replace=lambda first, preferred: (preferred[0], first[1]))
     for t, _ in top:
-        t.lastfm_listeners = by_song.get(popular.song(t.title))
+        t.lastfm_listeners = page.by_song.get(popular.song(t.title))
+    heard = page.heard
     return ArtistPageOut(
         artist=profile,
         top_tracks=[t for t, _ in top], top_track_sources=[source for _, source in top],
@@ -463,11 +610,24 @@ async def _artist_response(s: AsyncSession, ref: str, user_id: int,
         albums=[a for a in albums if a.record_type == "album"],
         singles=[a for a in albums if a.record_type in ("single", "ep")],
         compilations=[a for a in albums if a.record_type == "compile"],
-        excluded=sum(len(namesakes.of(r)) for r in records), profiles=records,
+        excluded=page.excluded, profiles=page.records,
         # where the artist is known: the catalog's records of them, and Last.fm — which knows an artist by the name
-        sources=[*sources, *([ArtistSourceOut(service="lastfm", name=profile.name, listeners=heard,
-                                              url=f"https://www.last.fm/music/{quote(profile.name, safe='')}")] if heard else [])],
+        sources=[*page.sources, *([ArtistSourceOut(service="lastfm", name=profile.name, listeners=heard,
+                                                   url=f"https://www.last.fm/music/{quote(profile.name, safe='')}")] if heard else [])],
     )
+
+
+class WarmIn(BaseModel):
+    refs: list[str] = Field(max_length=20)
+
+
+@router.post("/artists/warm", status_code=204)
+async def warm_artists(body: WarmIn, user: User = Depends(current_user)) -> Response:
+    """These artists' pages are likely to be opened soon (of what plays now and next): put together beforehand."""
+    from app import artist_pages
+
+    artist_pages.ask([r for r in body.refs if 0 < len(r) <= 64])
+    return Response(status_code=204)
 
 
 @router.get("/artist/{ref}/banner")

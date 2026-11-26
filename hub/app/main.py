@@ -110,6 +110,9 @@ async def lifespan(app: FastAPI):
         from app.genres import loop as genres_loop
 
         tasks.append(asyncio.create_task(genres_loop(), name="genres"))
+        from app.artist_pages import loop as artist_pages_loop
+
+        tasks.append(asyncio.create_task(artist_pages_loop(), name="artist-pages"))
     log.info("hub started (%s)", s.hub_role)
     try:
         yield

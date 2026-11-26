@@ -31,6 +31,10 @@ KINDS = ("artist", "album", "track", "playlist")
 SHORT_HOSTS = {"spotify.link", "spotify.app.link"}
 HOSTS = {"open.spotify.com", "play.spotify.com"}
 TRACK_TTL_S = 24 * 60 * 60
+# an artist's page and a release: a day (they were an hour; the plays counted change little in a day, and an artist's
+# page waited for Spotify on nearly every opening)
+ARTIST_TTL_S = 24 * 60 * 60
+ALBUM_TTL_S = 24 * 60 * 60
 PLAYLIST_TTL_S = 15 * 60
 
 
@@ -343,7 +347,7 @@ class SpotifyCatalog:
             albums = {_id(a): _album(a, artist) for a in releases}
             return ArtistPage(artist=artist, top_tracks=list(top_rows.values()), albums=list(albums.values())).model_dump(mode="json")
 
-        return ArtistPage.model_validate(await cached(f"sp:artist:{id_}", 3600, read))
+        return ArtistPage.model_validate(await cached(f"sp:artist:{id_}", ARTIST_TTL_S, read))
 
     async def discography(self, id_: str) -> tuple[list[CatalogAlbum], bool, bool]:
         page = await self.artist_page(id_)
@@ -401,7 +405,7 @@ class SpotifyCatalog:
             album.tracks = [_track(t, album=album) for t in tracks]
             return album.model_dump(mode="json")
 
-        return CatalogAlbum.model_validate(await cached(f"sp:album:{id_}", 3600, read))
+        return CatalogAlbum.model_validate(await cached(f"sp:album:{id_}", ALBUM_TTL_S, read))
 
     async def track(self, id_: str) -> CatalogTrack:
         async def read() -> dict:

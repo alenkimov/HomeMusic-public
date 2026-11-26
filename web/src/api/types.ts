@@ -1456,6 +1456,9 @@ export interface HubEventMap {
   ping: Record<string, never>;
   /** «Наведение порядка» looked through the library, or somebody answered it: its counts are new */
   tidy: { kind: 'checked' | 'decided' };
+  /** an artist's page was put together anew (`hub/app/artist_pages.py`): a page of theirs open takes it, quietly —
+   * `id` the Hub's artist, `refs` their records in the catalogs */
+  artist: { id: number; refs: string[] };
   /** Pseudo event: the stream (re)connected after a drop; refetch state. */
   reconnect: Record<string, never>;
 }

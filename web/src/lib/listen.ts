@@ -339,6 +339,20 @@ function metadata() {
     isrc: t.isrc, year: t.year, ...(t.artists?.length ? { artists: t.artists } : {}) } : undefined;
 }
 
+const warmedArtists = new Set<string>();
+
+/** The artists of what plays and of the next two: their pages put together on the Hub beforehand — the player's
+ * artist is what is tapped most. Each once a session (the Hub keeps the page for hours after). */
+function warmArtists() {
+  const refs: string[] = [];
+  for (const t of state.queue.slice(Math.max(0, state.index), state.index + 3)) {
+    const credited = t.artists?.length ? t.artists.map((a) => (a.id != null ? String(a.id) : a.ref)) : [t.hub_artist_id != null ? String(t.hub_artist_id) : t.artist_ref];
+    for (const r of credited) if (r && !warmedArtists.has(r)) { warmedArtists.add(r); refs.push(r); }
+  }
+  if (warmedArtists.size > 2000) warmedArtists.clear();
+  if (refs.length) api.warmArtists(refs.slice(0, 20)).catch(() => undefined);
+}
+
 /** Sends `start` once the track sounds and the Hub has said what plays. */
 function reportStart() {
   const p = played;
@@ -348,6 +362,7 @@ function reportStart() {
   p.ndSongId = state.info.nd_song_id;
   p.trackId = state.info.track_id ?? state.track?.library_track_id ?? null;
   p.anchor = performance.now();
+  warmArtists();
   playEvent('start', { ref: p.ref, nd_song_id: p.ndSongId, track_id: p.trackId }, { context: p.context, page: p.page, playback_id: p.playbackId, device_id: deviceId, listened_ms: 0, track_metadata: metadata(), account: p.account, launch_id: p.launch.id, launch_origin: p.launch.origin,
     ...(p.manual ? { queue_entry_id: p.manual.id, queue_claim: p.manual.token } : {}) });
   checkpoint();

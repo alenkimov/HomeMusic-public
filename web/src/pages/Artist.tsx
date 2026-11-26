@@ -17,6 +17,7 @@ import { startDownload } from '../lib/actions';
 import { setDisliked, useDisliked } from '../lib/dislikes';
 import { plural, tracksWord } from '../lib/format';
 import { useAsync, useRememberScrollX, useSourceRequest } from '../lib/hooks';
+import { useHubEvent } from '../lib/events';
 import { imageUrl } from '../lib/img';
 import { Link, RouteBackground, artistPath, enc, navigate, useCanonicalPath } from '../lib/router';
 import { copyText } from '../lib/share';
@@ -90,6 +91,11 @@ export function ArtistNamedPage({ name }: { name: string }) {
 
 export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?: string }) {
   const { res, sources } = useSourceRequest(`artist:${refId}`, (s, update) => api.artist(refId, s, false, update));
+  // the Hub put this page together anew (it was old, or the first one lacked a catalog): taken without a spinner
+  useHubEvent('artist', (e) => {
+    const d = res.data;
+    if (String(e.id) === refId || e.refs.includes(refId) || (d && (d.artist.hub_artist_id === e.id || (d.profiles ?? []).some((r) => e.refs.includes(r))))) res.reload(true);
+  });
   const status = sources.length > 0 && <SourceStatuses sources={sources} label="Статусы источников исполнителя" />;
   const canMap = !!useSession().me.artist_map; // «Карта похожих» is there
   const menu = useContextMenu();
