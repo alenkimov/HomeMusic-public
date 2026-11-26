@@ -170,6 +170,66 @@ def _playlist(row: Any) -> CatalogPlaylist:
                            total_tracks=getattr(getattr(row, "content", None), "total_count", None))
 
 
+
+_PATH = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)\]|\[('[^']*'|\"[^\"]*\")\]")
+
+
+def _camel(name: str) -> str:
+    head, *rest = name.split("_")
+    return head + "".join(w[:1].upper() + w[1:] for w in rest)
+
+
+def _drop(data: Any, path: str) -> bool:
+    """Leaves out of `data` what `path` («ArtistDetails.profile.biography», «X.items[3]») names; False: not found."""
+    steps = [(m.group(1), m.group(2), m.group(3)) for m in _PATH.finditer(path[path.find("."):] if "." in path else "")]
+    if not steps:
+        return False
+    node = data
+    for name, index, key in steps[:-1]:
+        if index is not None:
+            if not isinstance(node, list) or int(index) >= len(node):
+                return False
+            node = node[int(index)]
+        else:
+            k = key[1:-1] if key else name
+            if not isinstance(node, dict):
+                return False
+            k = k if k in node else _camel(k)
+            if k not in node:
+                return False
+            node = node[k]
+    name, index, key = steps[-1]
+    if index is not None:
+        if isinstance(node, list) and int(index) < len(node):
+            node.pop(int(index))
+            return True
+        return False
+    k = key[1:-1] if key else name
+    if isinstance(node, dict):
+        for cand in (k, _camel(k)):
+            if cand in node:
+                del node[cand]
+                return True
+    return False
+
+
+def lenient[T](cls: type[T], raw: Any, tries: int = 20) -> T:
+    """`from_dict` of spotapi, which refuses the whole answer for one field of a shape it does not expect (an
+    artist's biography of another form): such a field is left out — the optional ones only — and it is read again."""
+    import copy
+
+    data = copy.deepcopy(raw)
+    for _ in range(tries):
+        try:
+            return from_dict(cls, data)
+        except (TypeError, ValueError) as e:
+            said = str(e)
+            path = said.split(":", 1)[0]
+            if "required field is missing" in said or not _drop(data, path):
+                raise
+            log.info("spotify: %s left out of the answer (%s)", path, said[len(path) + 2:][:120])
+    return from_dict(cls, data)
+
 class SpotifyLocalTrack(BaseModel):
     uri: str
     title: str
@@ -188,7 +248,7 @@ def _playlist_track(entry: dict) -> CatalogTrack | SpotifyLocalTrack | None:
     if not isinstance(uri, str):
         return None
     if uri.startswith("spotify:track:"):
-        return _track(from_dict(PlaylistTrack, data))
+        return _track(lenient(PlaylistTrack, data))
     if uri.startswith("spotify:local:") and (title := data.get("name")):
         ms = (data.get("localTrackDuration") or {}).get("totalMilliseconds")
         return SpotifyLocalTrack(uri=uri, title=title, artist=data.get("artistName") or "", album=data.get("albumName") or None,
@@ -321,7 +381,7 @@ class SpotifyCatalog:
                 response = await c.queries.query(op.value, {"uri": uri, "locale": "", "preReleaseV2": False,
                                                             "includeMusicVideoPreviews": False})
             raw = Queries.resource_data(response, op, ArtistDetails, uri)
-            row = from_dict(ArtistDetails, raw)
+            row = lenient(ArtistDetails, raw)
             artist = _artist(row)
             visuals = raw.get("visuals") or {}
             wide = (raw.get("visualIdentity") or {}).get("wideFullBleedImage") or {}
