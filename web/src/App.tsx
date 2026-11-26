@@ -50,6 +50,7 @@ import { TidyJournalPage, TidyPage } from './pages/Tidy';
 import { BackupPage } from './pages/Backup';
 import { OutboundPage } from './pages/Outbound';
 import { AboutPage, WhatsNewPage } from './pages/WhatsNew';
+import { PlayerLightPage } from './pages/PlayerLightPage';
 import { QualityPage } from './pages/Quality';
 import { LibraryPage, LibrarySearchPage } from './pages/Library';
 import { LibraryAlbumPage } from './pages/LibraryAlbum';
@@ -151,6 +152,7 @@ const ROUTES: RouteDef[] = [
   ['/admin/outbound', 'more', () => <OutboundPage />, 'wide'],
   ['/admin/about', 'more', () => <AboutPage />, 'text'],
   ['/whats-new', 'more', () => <WhatsNewPage />, 'text'],
+  ['/settings/player-light', 'more', () => <PlayerLightPage />, 'text'],
   ['/lyrics-sources', 'more', () => <LyricsSettingsPage />, 'text'],
   ['/admin/user/:id', 'more', (p) => <AdminUserPage key={p.id} id={Number(p.id)} />, 'wide'],
   ['/admin/insights', 'more', () => <InsightsOverviewPage />, 'wide'],
