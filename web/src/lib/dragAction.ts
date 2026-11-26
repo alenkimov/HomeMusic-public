@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { tracksWord } from './format';
 import { addToQueue, manualQueueKey, queuedRefs, unqueue } from './listen';
 import { openPlaylistsSheet } from './playlistsSheet';
-import type { SelTrack } from './selection';
+import { playable, selData, type SelTrack } from './selection';
 import { openShare } from './shareTrack';
 import { inPlaylists } from './inPlaylists';
 import { isLiked, setLikes } from './stars';
@@ -50,7 +50,7 @@ function emit() {
   subs.forEach((f) => f());
 }
 
-const likeTarget = (t: SelTrack) => ({ trackId: t.tag_key ? Number(t.tag_key) : null, songId: t.nd_song_id, ref: t.ref, data: { ...t.listen } });
+const likeTarget = (t: SelTrack) => ({ trackId: t.tag_key ? Number(t.tag_key) : null, songId: t.nd_song_id, ref: t.ref, data: selData(t) });
 /** In «Любимое» or in some playlist: the row's button shows ♥ or ✓. */
 const kept = (t: SelTrack) => isLiked(likeTarget(t)) || inPlaylists(t.nd_song_id);
 
@@ -62,17 +62,17 @@ async function apply(kind: DragKind, tracks: SelTrack[]) {
   }
   if (kind === 'queue') {
     const have = queuedRefs();
-    const add = tracks.filter((t) => !have.has(manualQueueKey(t.listen)));
+    const add = playable(tracks).filter((t) => !have.has(manualQueueKey(t)));
     if (!add.length) return toast('Эти треки уже в очереди', 'info');
-    const n = await addToQueue(add.map((t) => t.listen));
+    const n = await addToQueue(add);
     if (n) toast(`В очереди: ${tracksWord(n)}`, 'success');
     return;
   }
   if (kind === 'unqueue') {
-    const n = await unqueue(tracks.map((t) => t.listen));
+    const n = await unqueue(playable(tracks));
     return toast(n ? `Убрано из очереди: ${tracksWord(n)}` : 'Этих треков в очереди нет', n ? 'success' : 'info');
   }
-  if (kind === 'lists') return openPlaylistsSheet(tracks.map((t) => ({ ref: t.ref, nd_song_id: t.nd_song_id, key: t.tag_key, data: { ...t.listen } })));
+  if (kind === 'lists') return openPlaylistsSheet(tracks.map((t) => ({ ref: t.ref, nd_song_id: t.nd_song_id, key: t.tag_key, data: selData(t) })));
   const n = await setLikes(tracks.filter((t) => !kept(t)).map(likeTarget), true); // one request: the buttons fill together
   toast(n ? `Добавлено в «Любимое»: ${tracksWord(n)}` : 'Все эти треки уже где-то лежат', n ? 'success' : 'info');
 }
@@ -105,7 +105,7 @@ function key(e: KeyboardEvent) {
 /** The mouse went down on a row's button. */
 export function beginDragAction(kind: 'like' | 'queue' | 'share' | 'tags', list: readonly SelTrack[], t: SelTrack) {
   cancelDragAction();
-  const real: DragKind = kind === 'like' && kept(t) ? 'lists' : kind === 'queue' && queuedRefs().has(manualQueueKey(t.listen)) ? 'unqueue' : kind;
+  const real: DragKind = kind === 'like' && kept(t) ? 'lists' : kind === 'queue' && !!t.listen && queuedRefs().has(manualQueueKey(t.listen)) ? 'unqueue' : kind;
   drag = { kind: real, list, from: t.ref, to: t.ref };
   document.body.style.userSelect = 'none';
   window.addEventListener('mouseup', up, true);

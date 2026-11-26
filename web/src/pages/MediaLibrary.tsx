@@ -144,7 +144,7 @@ export function SongList<T extends TrackOut>({ tracks, extra, found, sort, onSor
         rowKey={songRowKey}
         render={({ t, i, line }, at) => (
           <>
-            <TrackRow track={t} queue={queue} link={false} showAlbum showTags showPlays playsOf={period ? (period.of[t.nd_song_id ?? ''] ?? 0) : undefined} showAdded={dated} menuExtra={extra?.(t, i)} index={sort ? at + 1 : i + 1} />
+            <TrackRow track={t} queue={queue} rows={displayed} link={false} showAlbum showTags showPlays playsOf={period ? (period.of[t.nd_song_id ?? ''] ?? 0) : undefined} showAdded={dated} menuExtra={extra?.(t, i)} index={sort ? at + 1 : i + 1} />
             {line !== undefined && (
               <div className="-mt-1 flex items-center gap-1.5 truncate pb-2 pl-16 pr-4 text-xs text-muted">
                 <Icon name="lyrics" size={13} className="shrink-0 text-accent" />

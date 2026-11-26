@@ -11,8 +11,16 @@ export interface SelTrack {
   nd_song_id?: string | null;
   /** what the track is called for tags (`lib/tags.ts` `tagKey`) */
   tag_key?: string | null;
-  listen: ListenTrack;
+  /** how it is played; none: a grey track (no file yet) — picked, liked, put in a playlist, but not queued */
+  listen?: ListenTrack;
+  /** the track as the list has it */
+  data?: Record<string, unknown>;
 }
+
+/** What the Hub is told of a picked track when it is liked or put in a playlist. */
+export const selData = (t: SelTrack): Record<string, unknown> => ({ ...(t.listen ?? t.data) });
+/** The picked tracks that play (a grey one, without a file yet, is not queued). */
+export const playable = (list: readonly SelTrack[]): ListenTrack[] => list.flatMap((t) => (t.listen ? [t.listen] : []));
 
 let picked = new Map<string, SelTrack>();
 let anchor: string | null = null;

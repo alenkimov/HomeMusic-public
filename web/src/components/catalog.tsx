@@ -176,6 +176,7 @@ export function TrackRow({
   link = true,
   onPlay,
   queue,
+  rows,
   menuExtra,
   note,
   primaryAction,
@@ -201,6 +202,9 @@ export function TrackRow({
   onPlay?: () => void;
   /** The list this row is in: the page player plays on through it. */
   queue?: readonly TrackOut[];
+  /** Every row of the list as shown, the grey ones (no file yet) too, where `queue` leaves them out: what a pick
+   * (Ctrl+A, Shift+click, a drag of ⋯) and a button dragged over the rows go through. By default `queue`. */
+  rows?: readonly TrackOut[];
   /** More actions of the row's ⋯ menu (a playlist's «Убрать из плейлиста»). */
   menuExtra?: MenuExtra[];
   note?: ReactNode;
@@ -393,7 +397,8 @@ export function TrackRow({
   const dragMark = useDragMark(track.ref); // this row is among the rows a button is being dragged over
   const selecting = useSelectionCount() > 0;
   // the row is of this list: Ctrl+A picks all of it (`lib/selection.ts`)
-  useEffect(() => (queue?.length ? showList(queue, () => queue.map(asSel)) : undefined), [queue]);
+  const shownList = rows ?? queue;
+  useEffect(() => (shownList?.length ? showList(shownList, () => shownList.map(asSel)) : undefined), [shownList]);
   const onPick = (e: MouseEvent) => {
     // the row's menu is drawn outside the row (a portal), yet its clicks pass through here: they are not the row's
     if (!(e.currentTarget as HTMLElement).contains(e.target as Node)) return;
@@ -463,7 +468,7 @@ export function TrackRow({
     );
     const shown = 'opacity-0 focus-visible:opacity-100 group-hover/track:opacity-100';
     const marked = '!opacity-100'; // shown on every row the drag passes, in the accent colour
-    const dragList = () => (queue?.length ? queue : [track]).map(asSel);
+    const dragList = () => (shownList?.length ? shownList : [track]).map(asSel);
     // Each credited artist opens its own catalog or library page.
     const artistLinks = () => {
       const credited = track.artists?.length ? track.artists : [track.artist];

@@ -5,7 +5,7 @@ import { deleteFiles } from '../lib/deleteFile';
 import { addToQueue } from '../lib/listen';
 import { canPlayAll } from '../lib/player';
 import { useRoute } from '../lib/router';
-import { clearSelection, selectAll, selectedTracks, useSelectionCount } from '../lib/selection';
+import { clearSelection, playable, selData, selectAll, selectedTracks, useSelectionCount } from '../lib/selection';
 import { openShare } from '../lib/shareTrack';
 import { openTagsSheet } from '../lib/tags';
 import { toast } from '../lib/ui';
@@ -64,7 +64,7 @@ export function SelectionBar() {
           type="button"
           aria-label="В «Любимое» и плейлисты: добавить или убрать"
           title="В «Любимое» и плейлисты"
-          onClick={() => setLists(picked.map((t) => ({ ref: t.ref, nd_song_id: t.nd_song_id, key: t.tag_key, data: { ...t.listen } })))}
+          onClick={() => setLists(picked.map((t) => ({ ref: t.ref, nd_song_id: t.nd_song_id, key: t.tag_key, data: selData(t) })))}
           className={cx('flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition hover:scale-110', kept === 'none' ? 'text-muted hover:text-fg' : 'text-accent')}
         >
           <SaveMark state={kept} size={18} />
@@ -83,7 +83,7 @@ export function SelectionBar() {
             label="В очередь"
             onClick={async () => {
               const list = take();
-              const n = await addToQueue(list.map((t) => t.listen));
+              const n = await addToQueue(playable(list));
               if (n) toast(`В очереди: ${tracksWord(n)}`, 'success');
             }}
             className={cx(btn, 'text-muted hover:text-fg')}

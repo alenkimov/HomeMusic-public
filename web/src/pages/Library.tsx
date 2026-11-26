@@ -145,7 +145,7 @@ export function LibrarySearchPage() {
                 <TrackTable tracks={tracks} numbered album>
                   <TrackTableHeader numbered album />
                   {tracks.map((t, i) => (
-                    <TrackRow key={`${t.ref}:${i}`} track={t} showAlbum queue={tracks.filter((x) => !x.unknown)} index={i + 1} />
+                    <TrackRow key={`${t.ref}:${i}`} track={t} showAlbum queue={tracks.filter((x) => !x.unknown)} rows={tracks} index={i + 1} />
                   ))}
                 </TrackTable>
               </section>
