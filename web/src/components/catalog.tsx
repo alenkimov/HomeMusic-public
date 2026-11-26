@@ -151,7 +151,6 @@ export function ListenButton({ track, onListen }: { track: { ref: string; title:
     <IconButton
       icon={on ? 'pause' : 'play'}
       label={on ? 'Пауза' : `Послушать «${track.title}»`}
-      busy={waiting}
       onClick={onListen}
       className={phase ? '!text-accent' : 'text-muted hover:text-fg'}
     />
@@ -332,7 +331,7 @@ export function TrackRow({
               showCover ? 'bg-black/60 text-white' : 'text-fg',
               current ? 'opacity-100' : 'opacity-0',
             )}>
-              {waiting ? <Spinner size={22} /> : <Icon name={playing ? 'pause' : 'play'} size={22} filled />}
+              <Icon name={playing ? 'pause' : 'play'} size={22} filled />
             </span>
           )}
         </span>
@@ -416,7 +415,7 @@ export function TrackRow({
     const downloading = !needsFile && (track.downloading || dl === 'queued');
     // over the cover (or in place of the number): the wheel while the file is being got — the one mark of that in
     // the row — else ▶ / ‖ under the mouse; a track that plays is told by its bars and its name, not by a ‖ left on it
-    const playMark = waiting ? <Spinner size={18} /> : <Icon name={playing ? 'pause' : 'play'} size={18} filled />;
+    const playMark = <Icon name={playing ? 'pause' : 'play'} size={18} filled />;
     const lead = (hover: boolean): ReactNode =>
       showCover ? (
         <>
@@ -525,7 +524,7 @@ export function TrackRow({
             <span data-row-actions className="contents" onMouseDown={(e) => e.button === 0 && !e.shiftKey && !e.ctrlKey && !e.metaKey && beginDragAction('queue', dragList(), asSel(track))}>
               <QueueButton
                 track={menuTrack.listen as ListenTrack}
-                instead={current ? (waiting && !showCover ? <Spinner size={16} /> : <PlayingBars on={phase === 'playing'} />) : <span>{rowNumber}</span>}
+                instead={current ? <PlayingBars on={phase === 'playing'} /> : <span>{rowNumber}</span>}
                 marked={dragMark === 'queue' || dragMark === 'unqueue'}
                 className={cx(dragMark === 'queue' ? cx(marked, '!text-accent') : dragMark === 'unqueue' && cx(marked, '!text-muted'))}
               />

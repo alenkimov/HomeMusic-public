@@ -319,8 +319,6 @@ export function PlayerPage() {
         >
           {phase === 'error' ? (
             <Icon name="refresh" size={28} stroke={2.4} />
-          ) : waiting ? (
-            <Spinner size={28} />
           ) : playing ? (
             <Icon name="pause" size={28} stroke={3} />
           ) : (

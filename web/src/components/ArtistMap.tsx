@@ -360,7 +360,7 @@ export function ArtistMapPanel({ artist, action }: { artist: CatalogArtist; acti
         disabled={busy}
         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition hover:scale-105 active:scale-95"
       >
-        {busy ? <Spinner size={18} /> : <Icon name="play" size={20} filled className="translate-x-0.5" />}
+        <Icon name="play" size={20} filled className="translate-x-0.5" />
       </button>
     </div>
   );

@@ -15,7 +15,7 @@ import { SaveButton } from './PlaylistsButton';
 import { SeekLine } from './SeekLine';
 import { TrackMenuButton, menuTrackOf, type MenuTrack } from './TrackMenu';
 import { trackMenuAt } from '../lib/trackMenu';
-import { Cover, IconButton, Marquee, Spinner, cx } from './ui';
+import { Cover, IconButton, Marquee, cx } from './ui';
 
 /** The player of a computer: a bar along the bottom of the window (where a phone has its tab bar), always there —
  * empty and inactive until something plays. On the left the track (a click opens the full player with the queue)
@@ -116,7 +116,7 @@ export function DesktopPlayer() {
               aria-label={phase === 'error' ? 'Повторить' : playing ? 'Пауза' : 'Слушать'}
               className="mx-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-fg text-bg transition hover:scale-110 active:scale-95 disabled:opacity-40"
             >
-              {phase === 'error' ? <Icon name="refresh" size={18} stroke={2.4} /> : waiting ? <Spinner size={18} /> : playing ? <Icon name="pause" size={18} stroke={3} /> : <Icon name="play" size={18} filled className="translate-x-px" />}
+              {phase === 'error' ? <Icon name="refresh" size={18} stroke={2.4} /> : playing ? <Icon name="pause" size={18} stroke={3} /> : <Icon name="play" size={18} filled className="translate-x-px" />}
             </button>
             <IconButton icon="next" filled size={20} label="Следующий трек" disabled={!track || !canNext} onClick={() => void next()} className="!h-9 !w-9 text-muted hover:text-fg" />
             <IconButton

@@ -15,7 +15,7 @@ import { playAll } from './catalog';
 import { Link, enc, useRoute } from '../lib/router';
 import { Icon, type IconName } from './Icon';
 import type { Tab } from './TabBar';
-import { Cover, Spinner, cx } from './ui';
+import { Cover, cx } from './ui';
 
 const NAV: Array<{ id: Tab; to: string; label: string; icon: IconName }> = [
   { id: 'home', to: '/home', label: 'Главная', icon: 'home' },
@@ -205,7 +205,7 @@ function PlayOver({ name, context, page, load }: { name: string; context: string
       title={`Слушать: ${name}`}
       className={cx('absolute left-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md bg-black/60 text-white transition focus-visible:opacity-100', busy ? 'opacity-100' : 'opacity-0 group-hover:opacity-100')}
     >
-      {busy ? <Spinner size={16} /> : <Icon name="play" size={20} filled className="translate-x-px" />}
+      <Icon name="play" size={20} filled className="translate-x-px" />
     </button>
   );
 }

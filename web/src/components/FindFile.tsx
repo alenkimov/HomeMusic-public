@@ -456,7 +456,7 @@ function FilePicker({ track }: { track: FileSought & { library_track_id: number 
                       <Cover src={row.cover_url || track.cover_url || mine.data?.cover_url} size={40} />
                       <span className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white',
                         desktop && !playing && !wait && 'opacity-0 group-hover/cover:opacity-100 group-focus-visible/cover:opacity-100')}>
-                        {wait ? <Spinner size={16} /> : <Icon name={playing ? 'pause' : 'play'} size={16} filled />}
+                        <Icon name={playing || wait ? 'pause' : 'play'} size={16} filled />
                       </span>
                     </button>
                     <div className="min-w-0">

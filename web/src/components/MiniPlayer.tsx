@@ -12,7 +12,7 @@ import { Link, albumPath } from '../lib/router';
 import { Icon } from './Icon';
 import { tracksWord } from '../lib/format';
 import { SaveButton } from './PlaylistsButton';
-import { Cover, Spinner } from './ui';
+import { Cover } from './ui';
 
 /** What plays, above the tabs of a phone (inside the app: at the bottom of the Hub page, which the app keeps above
  * its own player): the cover, the name, the artist — and two buttons, ♥ (a track that isn't downloaded is downloaded
@@ -118,8 +118,6 @@ export function MiniPlayer() {
           >
             {phase === 'error' ? (
               <Icon name="refresh" size={24} stroke={2.4} />
-            ) : waiting ? (
-              <Spinner size={22} />
             ) : playing ? (
               <Icon name="pause" size={24} stroke={3} />
             ) : (

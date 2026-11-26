@@ -1287,7 +1287,7 @@ function FileRow({ u, r, desktop, cols, inAlbum, number, picture, picked, menu, 
     <button type="button" data-own aria-label={playing ? 'Пауза' : `Слушать «${title}»`} onClick={onPlay} className="group/c relative flex h-10 w-10 shrink-0 items-center justify-center">
       <Cover src={picture} size={40} alt="" />
       <span aria-hidden="true" className={cx('absolute inset-0 flex items-center justify-center rounded-md bg-black/60 text-white', !phase && 'opacity-0 group-hover/c:opacity-100')}>
-        {phase === 'resolving' || phase === 'loading' ? <Spinner size={16} /> : <Icon name={playing ? 'pause' : 'play'} size={16} filled />}
+        <Icon name={playing ? 'pause' : 'play'} size={16} filled />
       </span>
     </button>
   );

@@ -5,7 +5,6 @@ import { Link, navigate } from '../lib/router';
 import { tastePath, useNewcomer } from '../lib/taste';
 import { canWave, startWave, useWave } from '../lib/wave';
 import { Icon } from './Icon';
-import { Spinner } from './ui';
 import { WaveGlow } from './WaveGlow';
 
 /** «Моя волна» as the hero of «Главная», on a phone and on a computer alike: no card, a living soft blob glows right
@@ -82,7 +81,7 @@ export function WaveHero() {
           aria-label={label}
           className="absolute left-1/2 top-1/2 inline-flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-fg text-bg shadow-lg transition hover:scale-105 active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white disabled:opacity-90"
         >
-          {busy ? <Spinner size={24} /> : running ? <Icon name="pause" size={24} stroke={3} /> : <Icon name="play" size={24} stroke={2.4} className="translate-x-px" />}
+          {busy || running ? <Icon name="pause" size={24} stroke={3} /> : <Icon name="play" size={24} stroke={2.4} className="translate-x-px" />}
         </button>
       {/* whom the wave starts from can be looked at and changed (a newcomer is led there by the button itself) */}
       {(!newcomer || !online) && (

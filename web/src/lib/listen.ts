@@ -1421,7 +1421,10 @@ function resume() {
   if (!a || !track) return;
   if (state.phase === 'error') return start(state.queue, state.index);
   if (state.phase === 'ended') return start(state.queue, state.index);
-  set({ phase: state.info || state.position ? 'loading' : 'resolving' });
+  // what the browser holds from here on plays at once: the player says «играет» now, not «загрузка» until the
+  // element's own word comes. What it lacks is loading, and the element says so (`waiting`)
+  const ready = a.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
+  set({ phase: ready ? 'playing' : state.info || state.position ? 'loading' : 'resolving' });
   play(a, true);
 }
 
