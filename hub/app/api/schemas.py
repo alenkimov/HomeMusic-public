@@ -1123,6 +1123,18 @@ class ImportActivityOut(BaseModel):
     more: int = 0
 
 
+class ImportFetchOut(BaseModel):
+    """How the reading of the collection goes (`status` «fetching»): `queued` — waiting for a free hand, `running` —
+    being read now (since `since`), `retrying` — an attempt failed (`last_error`), the next is at `next_at`."""
+
+    state: Literal["queued", "running", "retrying"]
+    attempt: int
+    max_attempts: int
+    since: datetime
+    last_error: str | None = None
+    next_at: datetime | None = None
+
+
 class ImportOut(BaseModel):
     id: int
     source: ImportSource
@@ -1136,6 +1148,7 @@ class ImportOut(BaseModel):
     can_sync: bool = False
     download_albums: bool = False
     auth: ImportAuthOut | None = None
+    fetch: ImportFetchOut | None = None
     error: str | None = None
     stats: ImportStatsOut = Field(default_factory=ImportStatsOut)
     collections: list[ImportCollectionOut] = []

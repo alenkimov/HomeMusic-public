@@ -1184,8 +1184,19 @@ export interface ImportActivityOut {
   more: number;
 }
 
+/** How the reading of a collection goes (`status` «fetching»). */
+export interface ImportFetchOut {
+  state: 'queued' | 'running' | 'retrying';
+  attempt: number;
+  max_attempts: number;
+  since: string;
+  last_error: string | null;
+  next_at: string | null;
+}
+
 export interface ImportOut {
   id: number;
+  fetch?: ImportFetchOut | null;
   source: ImportSource;
   title: string | null;
   status: ImportStatus | string;

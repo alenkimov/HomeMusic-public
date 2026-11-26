@@ -31,15 +31,16 @@ from app.api.schemas import (
     ImportAuthOut,
     ImportCollectionOut,
     ImportDestinationOut,
+    ImportFetchOut,
     ImportItemOut,
     ImportOut,
     ImportStatsOut,
 )
+from app.catalog.lookup import CatalogUnavailable
 from app.config import get_settings
 from app.db import session_scope
 from app.events import bus
 from app.imports import apply
-from app.catalog.lookup import CatalogUnavailable
 from app.imports.resolve import Resolution, resolve_album, resolve_artist, resolve_track
 from app.imports.sources import spotify, vk, yandex
 from app.imports.sources.base import ITEM_KIND, AuthPending, Snapshot, SourceError
@@ -168,10 +169,11 @@ async def import_out(s: AsyncSession, imp: Import) -> ImportOut:
                              verification_url=a.get("verification_url") or "", expires_at=a["expires_at"])
     title = display_title(imp, list(colls))
     has_token = imp.connection_id is not None
+    fetch = await _fetch_state(s, imp) if imp.status == "fetching" else None
     return ImportOut(
         id=imp.id, source=imp.source, title=title, status=imp.status, mode=imp.mode, account=imp.account,
         has_token=has_token, keep_token=imp.keep_token, can_sync=has_token or imp.method in ("profile", "link"),
-        download_albums=bool((imp.options_json or {}).get("download_albums")), auth=auth, error=imp.error,
+        download_albums=bool((imp.options_json or {}).get("download_albums")), auth=auth, fetch=fetch, error=imp.error,
         stats=await stats(s, imp, list(colls)),
         collections=[ImportCollectionOut(id=c.id, kind=c.kind, title=c.title, selected=c.selected,
                                          count=counts.get(c.id, (0, 0))[0], owned=counts.get(c.id, (0, 0))[1],
@@ -179,6 +181,22 @@ async def import_out(s: AsyncSession, imp: Import) -> ImportOut:
         destinations=await _destinations(s, imp, colls),
         created_at=imp.created_at, started_at=imp.started_at, finished_at=imp.finished_at,
     )
+
+
+async def _fetch_state(s: AsyncSession, imp: Import) -> ImportFetchOut | None:
+    """The job reading the collection: waiting, being read, or waiting to try again after a failure."""
+    job = await s.scalar(select(Job).where(Job.kind == "import_fetch", Job.status.in_(("queued", "running")),
+                                           Job.payload_json["import_id"].as_integer() == imp.id)
+                         .order_by(Job.id.desc()).limit(1))
+    if job is None:
+        return None
+    error = (job.last_error or "").split("\n", 1)[0] or None
+    if job.status == "running":
+        return ImportFetchOut(state="running", attempt=job.attempts, max_attempts=job.max_attempts,
+                              since=job.locked_at or job.updated_at, last_error=error)
+    return ImportFetchOut(state="retrying" if job.attempts else "queued", attempt=job.attempts,
+                          max_attempts=job.max_attempts, since=job.updated_at if job.attempts else job.created_at,
+                          last_error=error, next_at=job.run_after if job.attempts else None)
 
 
 def item_out(it: ImportItem, kind: str, nd_song_id: str | None = None, dl: DownloadItem | None = None) -> ImportItemOut:
@@ -267,6 +285,11 @@ async def recovery_loop() -> None:
                 log.info("resumed %s interrupted transfers", n)
         except Exception:
             log.exception("checking for interrupted transfers failed")
+        try:
+            if n := await drop_failed_attempts():
+                log.info("let go %s transfers that failed before they started", n)
+        except Exception:
+            log.exception("letting go failed transfers failed")
 
 
 # --- creating an import ------------------------------------------------------------------------------------
@@ -505,6 +528,22 @@ async def store_snapshot(s: AsyncSession, imp: Import, snap: Snapshot) -> int:
     return fresh
 
 
+FETCH_LIMIT_S = 10 * 60
+FAILED_KEPT_S = 15 * 60  # a sign-in or a reading that failed before anything was moved: shown so long, then gone
+
+
+async def drop_failed_attempts() -> int:
+    """Imports that failed before they started (a sign-in refused or expired, a collection not read) leave: they
+    moved nothing, and «Начать заново» is the service's own page."""
+    async with session_scope() as s:
+        old = list(await s.scalars(select(Import).where(
+            Import.status == "failed", Import.started_at.is_(None),
+            Import.updated_at < utcnow() - timedelta(seconds=FAILED_KEPT_S))))
+        for imp in old:
+            await remove(s, imp)
+    return len(old)
+
+
 @handler("import_fetch")
 async def handle_fetch(job: Job) -> None:
     import_id = int(job.payload_json["import_id"])
@@ -513,7 +552,12 @@ async def handle_fetch(job: Job) -> None:
         if imp is None or imp.status not in ("fetching", "running", "done"):
             return
     try:
-        snap = await fetch_snapshot(imp)
+        # a collection read for longer than this is not waited for: the import says so and can be begun again
+        snap = await asyncio.wait_for(fetch_snapshot(imp), FETCH_LIMIT_S)
+    except TimeoutError:
+        await set_status(import_id, "failed" if imp.started_at is None else imp.status,
+                         error=f"Коллекцию не удалось прочитать за {FETCH_LIMIT_S // 60} минут — попробуйте ещё раз")
+        return
     except SourceError as e:
         await set_status(import_id, "failed" if imp.started_at is None else imp.status, error=str(e))
         return

@@ -5,7 +5,7 @@ import { ServiceBadge, ServiceIcon, ServiceText } from '../components/ServiceBad
 import { PlaylistsPick } from '../components/PlaylistsButton';
 import { AfterImport } from './Upload';
 import { Icon, type IconName } from '../components/Icon';
-import { Button, Checkbox, ErrorState, Loading, Notice, PageHeader, ProgressBar, Radio, SectionTitle, SkeletonRows, Spinner, cx, Badge } from '../components/ui';
+import { Button, Checkbox, ErrorState, IconButton, Loading, Notice, PageHeader, ProgressBar, Radio, SectionTitle, SkeletonRows, Spinner, cx, Badge } from '../components/ui';
 import { LIKED_MARK, PlaylistRow, playlistLook } from '../components/Playlist';
 import { useSession } from '../lib/session';
 import { EMBEDDED } from '../lib/embedded';
@@ -40,13 +40,34 @@ function pastedToken(text: string): string {
   return /[#?&]access_token=([^&\s]+)/.exec(t)?.[1] ?? t;
 }
 
+const ago = (iso: string) => {
+  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso.endsWith('Z') ? iso : `${iso}Z`)) / 1000));
+  return s < 60 ? `${s} с` : `${Math.floor(s / 60)} мин`;
+};
+
+/** Where the reading of the collection is: waiting for a hand, being read (for how long), or an attempt failed. */
+function fetchLine(imp: ImportOut): string {
+  const f = imp.fetch;
+  if (!f) return 'Читаем коллекцию…';
+  if (f.state === 'queued') return 'Ждёт очереди на чтение…';
+  if (f.state === 'running') return `Читаем коллекцию… ${ago(f.since)}${f.attempt > 1 ? ` · попытка ${f.attempt} из ${f.max_attempts}` : ''}`;
+  return `Не прочиталось${f.last_error ? ` (${f.last_error.slice(0, 120)})` : ''} — попытка ${f.attempt + 1} из ${f.max_attempts} скоро`;
+}
+
+/** A transfer that never began (a sign-in waited for, a collection being read, one that failed so) goes: nothing of
+ * it is kept, the service's page begins anew. */
+async function dropAttempt(imp: ImportOut, then: string, said?: string) {
+  const ok = await attempt(() => api.importDelete(imp.id), said);
+  if (ok) navigate(then, { replace: true });
+}
+
 function statusLine(imp: ImportOut): string {
   const st = imp.stats;
   switch (imp.status) {
     case 'auth':
       return SOURCES[imp.source]?.waits ?? 'Ждём входа';
     case 'fetching':
-      return 'Читаем коллекцию…';
+      return fetchLine(imp);
     case 'preview':
       return `Найдено ${tracksWord(st.tracks)} — выберите, что перенести`;
     case 'running':
@@ -179,8 +200,8 @@ export function ImportsPage({ from = null, token = false }: { from?: ImportSourc
       ) : past.length ? (
         <ul className="mx-4 lg:mx-6 mb-2 overflow-hidden rounded-2xl bg-surface">
           {past.map((imp) => (
-            <li key={imp.id} className="border-b border-line/60 last:border-0">
-              <Link to={`/import/${imp.id}`} className="flex min-h-16 items-center gap-3 px-4 py-2 hover:bg-fg/5">
+            <li key={imp.id} className="flex items-center border-b border-line/60 last:border-0">
+              <Link to={`/import/${imp.id}`} className="flex min-h-16 min-w-0 flex-1 items-center gap-3 px-4 py-2 hover:bg-fg/5">
                 <ServiceIcon service={imp.source} size={22} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{sourceTitle(imp)}</span>
@@ -188,6 +209,11 @@ export function ImportsPage({ from = null, token = false }: { from?: ImportSourc
                 </span>
                 {ACTIVE.includes(imp.status) ? <Spinner size={16} className="text-accent" /> : <Icon name="chevron" size={18} className="text-dim" />}
               </Link>
+              {/* a transfer that never began — a sign-in or a reading under way, or one that failed so — goes at once */}
+              {!imp.started_at && ['auth', 'fetching', 'failed'].includes(imp.status) && (
+                <IconButton icon="x" size={18} label={imp.status === 'failed' ? 'Убрать' : 'Отменить'} className="mr-2 text-muted hover:text-fg"
+                  onClick={async () => { if (await attempt(() => api.importDelete(imp.id))) res.reload(true); }} />
+              )}
             </li>
           ))}
         </ul>
@@ -314,20 +340,28 @@ export function ImportPage({ id }: { id: number }) {
       ) : imp.status === 'auth' ? (
         imp.auth && imp.auth.kind !== 'device' ? <VkAuthStep imp={imp} onChange={(r) => res.setData(r)} /> : <AuthStep imp={imp} />
       ) : imp.status === 'fetching' ? (
-        <Loading text={<>Читаем коллекцию <ServiceBadge service={imp.source} /></>} />
+        <div className="space-y-4">
+          <Loading text={<>Читаем коллекцию <ServiceBadge service={imp.source} /></>} />
+          <p className="px-4 text-center text-sm text-muted lg:px-6">{fetchLine(imp)}</p>
+          <div className="px-4 lg:px-6">
+            <Button block onClick={() => void dropAttempt(imp, sourcePage(imp.source), 'Перенос отменён')}>Отменить</Button>
+          </div>
+        </div>
       ) : imp.status === 'preview' ? (
         <Preview imp={imp} onStarted={(r) => res.setData(r)} />
       ) : imp.status === 'failed' && !imp.started_at ? (
         <div className="space-y-4 px-4 lg:px-6 pt-2">
           <Notice kind="error">{imp.error || 'Не получилось'}</Notice>
-          <Button block variant="primary" onClick={() => navigate(sourcePage(imp.source), { replace: true })}>
+          {/* nothing was moved: the attempt goes, and the service's page begins anew */}
+          <Button block variant="primary" onClick={() => void dropAttempt(imp, sourcePage(imp.source))}>
             Начать заново
           </Button>
           {imp.source === 'vk' && (
-            <Button block onClick={() => navigate(`${sourcePage('vk')}&token=1`, { replace: true })}>
+            <Button block onClick={() => void dropAttempt(imp, `${sourcePage('vk')}&token=1`)}>
               Войти с токеном
             </Button>
           )}
+          <p className="text-center text-xs text-dim">Эта попытка исчезнет из списка сама через несколько минут.</p>
         </div>
       ) : (
         <Progress imp={imp} onChange={(r) => res.setData(r)} />
@@ -374,6 +408,9 @@ function AuthStep({ imp }: { imp: ImportOut }) {
         <Spinner size={16} />
         {left > 0 ? `Ждём подтверждения · код действует ${fmtDuration(left)}` : 'Код устарел — начните заново'}
       </div>
+      <Button block onClick={() => void dropAttempt(imp, sourcePage(imp.source), left > 0 ? 'Вход отменён' : undefined)}>
+        {left > 0 ? 'Отменить' : 'Начать заново'}
+      </Button>
     </div>
   );
 }
