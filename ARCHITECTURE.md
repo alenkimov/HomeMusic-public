@@ -1,180 +1,125 @@
-# HomeMusic 2.0 — how the Hub is put together
+# How the Hub is put together
 
-This is the model the code is being moved to. Where the code still differs, the code is behind, not the document.
-Backward compatibility is not a goal: the database and the library may be wiped at the cut-over.
+A map for whoever changes the code: the ideas the code is built on, the ways the main flows go, and why they go so.
+Not a list of tables or modules — those are in the code (`hub/app/models.py`, the docstrings of each module). A
+change to something described here changes this file in the same commit.
 
-## Why
+## The parts
 
-In 1.x a *track* was a *file*: a row of `tracks` appeared when a file landed in the library. Everything that was
-not downloaded lived as something else, each with its own way to name the same song — a row of an import with a
-catalog ref, a favorite with «aliases», a «add to the playlist when it arrives», a play event with a ref *or* a
-Navidrome id. Tags and lyrics hang on `tracks.id`, so a song without a file could have neither. Playlists lived in
-Navidrome, which knows only files, so the songs without one were appended after the rest and lost their places.
+- **Hub** (`hub/`, FastAPI + PostgreSQL) — everything the user does: the library, playlists, search, listening,
+  downloads, transfers, mixes, the admin's pages. It also answers as a Subsonic server (`/rest`).
+- **Web app** (`web/`, React PWA) — built into the Hub's image and served by it.
+- **Navidrome** — only a player of files: it scans the library folder and streams. It owns nothing the Hub cares
+  about; the Hub mirrors to it what third-party Subsonic apps should see (playlists, ♥ as stars).
+- **Caddy** (`gateway/direct/`) — HTTPS on the home's public address, and the audio itself (below).
+- **Embedder** — the sound embeddings mixes are built of.
 
-## Three layers
+## A track is not a file
 
-| Layer | What it is | Who owns it |
-|---|---|---|
-| **Catalog** | The outside world: Deezer, YouTube Music, the providers of files. Read-only; the Hub keeps a cache. | nobody here |
-| **Track** | A song the Hub knows: names, length, ISRC. Independent of any file. | the Hub |
-| **File** | A file on disk that plays a track: path, codec, where it came from, its id in Navidrome. | the Hub |
+| | What it is |
+|---|---|
+| **Catalog** | The outside world — Spotify, Deezer, Yandex Music, the sources of files. Read only, kept in `catalog_cache`. |
+| **Track** | A song the Hub knows: names, length, ISRC, its catalog ref. Exists without any file. |
+| **File** | A file on disk that plays a track (`track_files`). A track has none, one or several; the newest plays. |
 
-A catalog track becomes a **Track** the moment it matters to someone: it is put into a playlist (so also liked),
-tagged, downloaded, or listened to for a counted listen (30 s and longer). A search result nobody touched stays a
-catalog object and has no row.
+A catalog track becomes a Track the moment it matters to someone: put into a playlist (a ♥ too: «Любимое» is a
+playlist), tagged, downloaded, listened to for a counted listen. A search result nobody touched stays a catalog
+object. So a playlist, a tag, a ♥, lyrics hold songs with no file yet; «downloaded» is only «the track has a file».
 
-A Track has zero, one or several Files. «Downloaded» is not a separate world, it is `track has a file`. The file
-that plays is the newest one.
+The web names a track by the Hub's `id` where the Hub knows it, else by its catalog `ref` (`dz:…`, `sp:…`, `ym:…`);
+every action takes either and makes the Track first. Navidrome's ids stay on the server. An artist is the Hub's
+`artists.id` with several records in the catalogs (`artist_refs`); a release opened is a `catalog_releases.id`.
 
-Navidrome is a *player of files*: it scans the library folder, streams, and serves the Subsonic API to third-party
-apps. It owns nothing the Hub cares about. The Hub mirrors to it what such apps should see (below).
+The mirror to Navidrome reads back before it writes: a song added or removed in another app is merged into the
+Hub's playlist, then the Hub's order is written. The Hub wins a conflict, but nothing done elsewhere is lost.
 
-## Tables
+## Two processes
 
-**`tracks`** — the song. `id`, `ref` (what the catalog calls it, `dz:3135556`; one track per ref, none if the
-catalog does not know the song), `artist`, `title`, `album`, `album_artist`, `track_no`, `disc_no`, `year`,
-`genre`, `duration_s`, `isrc`, `explicit`, `fingerprint` (normalised «artist|title»), `album_id` (the library
-album its file is filed under, if any), `catalog` (what the catalog said of it when the track was made — its
-cover, its album and artists there: a track without a file is drawn from this), `created_at`, `created_by`.
-Nothing about files.
+`docker-compose.yml` runs one image twice (`HUB_ROLE`): **hub** («api») answers — the API, the event stream, the
+audio; **hub-worker** («worker») does the background — the job queue (downloads, ffmpeg, fpcalc, yt-dlp), mixes,
+the scheduled loops, the warming of artist pages. Busy as the worker is, an answer never waits for it. Between them
+— PostgreSQL's LISTEN/NOTIFY (`app/relay.py`): events published by the worker reach the apps through the api; a job
+queued by the api wakes the worker; «somebody is listening» makes the worker's background give way; the proxies
+changed. Development and tests run one process doing both (`HUB_ROLE=all`): the relay is then not used at all.
 
-**`track_files`** — a file of a track. `id`, `track_id`, `path` (unique, relative to `library/`), `uid` (written
-into the file as `HOMEMUSIC_TRACK_ID`), `nd_song_id` (the song Navidrome made of it; set after a scan), `codec`,
-`bitrate_kbps`, `source`, `source_url`, `source_upload_date`, `locked`, `warnings`, `acquired_at`, `added_by`.
+Why: a transfer of thousands of tracks once took the Hub from its listeners — a track did not start, the apps lost
+the connection. Also against that: the job queue gives a user's own requests priority over background jobs, the
+next job is of whoever has the fewest running, background subprocesses run `nice`d (`probe.yielding`), and only
+two background slots work while somebody listens (`app/activity.py`). A loop held up for a second or more is logged
+with its stack (`app/watchdog.py`): the first thing to look at when the Hub «freezes».
 
-**`track_links`** — what the track is called on music services (`spotify`, `yandex`, `ytm`): `track_id`,
-`service`, `external_id`. Share links are made of them, and an import knows by them a song it has seen.
-The catalog ref is not one of these: it is the track's own name (`tracks.ref`), the links are its names abroad.
+## Listening
 
-**`playlists`** — `id`, `user_id`, `kind` (`liked` — «Любимое», one per user; `user` — made by hand or by an
-import; `mix` — «Микс дня», which the mix builder writes in Navidrome and the Hub's row only follows), `name`,
-`created_at`, `updated_at`, and what the mirror needs: `nd_playlist_id`, `mirrored` (the song ids Navidrome was
-last given), `nd_cover` (the picture Navidrome makes of the mirror's albums).
+`GET /api/listen?ref=` picks what plays (`app/listen.py`): the library's file; else a file of the sources, found as
+a download would find it and streamed through the Hub while it is fetched; the pick is remembered, and the file is
+kept on the server 30 days / 30 GB (`stream.json` next to it, so the other process and a restart find it). The
+audio is sent by **Caddy**, not by Python: the Hub checks who asks and answers with the file's place only
+(`X-Accel-Redirect`, `accel_path`); Caddy reads it from the folders mounted under `/srv/_files` with the ranges a
+seek asks for. A browser that does not play a file's format gets a copy (`light.py`): Safari gets Opus put into MP4
+as it is (iOS 17+), else AAC — Safari is never trusted with Ogg.
 
-**`playlist_items`** — `playlist_id`, `track_id`, `position`, `added_at`. The order and the dates are the Hub's.
-A track without a file stands in its own place like any other.
-
-**Tags, lyrics, translations** — as before, by `track_id`; now any track can have them.
-
-**Listening** — `play_events.track_id`. An event names a Track; the raw catalog ref it came with is kept only as
-`origin` for analytics. Dislikes name a `track_id` or an artist.
-
-**Imports** — an import item, once matched, names a `track_id` and its tracks go into playlists at once. There is
-no «pending» list: whether a track has a file yet is seen on the track.
-
-**Downloads** — a download item names the `track_id` it is getting a file for; done, it adds a `track_files` row.
-
-## What a track is called in the API
-
-The web addresses a track by **`id`** (the Hub's) when the Hub knows it, else by its catalog **`ref`**. Every
-action that takes a track (put into a playlist, tag, play, download) accepts either; given a ref it makes the
-Track first. Navidrome ids never leave the server.
-
-Artist pages use `artists.id`. Catalog profile references are kept in `artist_refs` and can still open the same
-page. Each release opened in the Hub has a `catalog_releases.id` independent of the current source or file
-availability. `catalog_release_refs` links confirmed catalog records to that release. A release may point to the
-library's album, whose UUID stays in the audio tags used by Navidrome. In ordinary search, unopened results
-keep their external references until opened.
-
-## «Любимое»
-
-A playlist of `kind = liked`. Liking is adding to it, the ♥ of a track is «is in it». A like and an unlike are
-also written to `play_events` — the taste profile reads them as signals — but the *state* is the playlist.
-Albums and artists are not tracks: «в коллекцию» and following an artist stay typed favorites of their own.
-
-## The mirror to Navidrome
-
-For third-party Subsonic apps. One job per playlist: the tracks of the playlist that have a file, in the Hub's
-order, written to the Navidrome playlist named in `nd_playlist_id`; for «Любимое» — as stars.
-
-Coming back: before it writes, the job reads what Navidrome has now and compares it with `mirrored`. A song that
-appeared there was added in another app — it is added to the Hub's playlist; one that disappeared is removed. Then
-the Hub's state is written. The Hub wins a conflict; an edit made elsewhere is never lost silently, it is merged.
-
-## Gone with 1.x
-
-`pending_playlist_adds`; the «pending» lists of playlists; `favorite_subjects` for tracks and the alias index;
-«после переноса» as a deferred order; `playlist_dates`; `find_existing` answering two questions at once (it
-becomes `tracks.find` — «does the Hub know this song» — and `has a file`); `nd_song_id` and `ref` side by side in
-events, dislikes and the items of mixes.
-
-## Processes
-
-In `docker-compose.yml` the Hub is two containers of one image (`HUB_ROLE`): **hub** («api») answers the apps —
-the API, the event streams, the audio; **hub-worker** («worker») does the background work — the job queue
-(downloads, a transfer's thousands of them, ffmpeg and fpcalc, yt-dlp), mixes and the scheduled loops. However busy
-the worker is, the answers do not wait for it. What passes between them goes through PostgreSQL's LISTEN/NOTIFY
-(`app/relay.py`): the events the worker publishes, reaching the apps through the api; a job the api queues, waking
-the worker; somebody listening, which makes the worker's background jobs give way; a pick the api must forget. The
-working files are on the Linux disk of the hub-data volume (`STAGING_ROOT`), the library on MUSIC_ROOT. Development
-and tests run one process doing both (`HUB_ROLE=all`).
-
-Of the downloads waiting at one priority, the next is of whoever has the fewest running now: one person's transfer
-does not hold every hand.
-
-## Artist pages
-
-An artist's page is put together of what the catalogs say — some seconds of their answers. It is kept, the same for
-everyone (`app/artist_pages.py`, `catalog_cache` key `artistpage:<artist>`); what is of a listener (♥, the library's
-copies) and the Hub's own choices (photo, wide picture) are put on it when shown, from the database only. An opening
-shows the kept page at once and puts an old one (6 h) together again behind it — the apps get an `artist` event. The
-worker keeps the pages warm, one artist after another: first what is asked (the web player asks for the artists of
-what plays now and next; a first or old page), then the library's artists whose page is missing or older than 3 days,
-one every 15 s (30 s while somebody listens, longer each time a catalog fails). Each put-together is in the log with
-its steps and the slowest catalogs (`artist 12 (Кино): 2.4 s — records 1.6 s, …; slowest: Spotify 1.5 s, …`).
-
-## Outside requests
-
-Every request of the Hub to an outside service goes through `app/outbound.py`: through the proxy of the account it is
-made with (`integration_connections.proxy_id`), else of its service (`service_proxies`), else direct — and into the
-journal (`outbound_requests`, 14 days): the service, the path with the names of its query (never the values), what
-it was for (the job, the API route, the loop), the account or key, the proxy, the status or the error, the time.
-httpx clients (`app.net.make_client`) by their transport, `requests` (the Yandex Music client, yt-dlp) by a hook,
-the Spotify session and Telegram by their proxy setting. The admin page «Прокси и запросы» sets the proxies and
-reads the journal: by service, proxy and purpose, how many requests failed or hit a limit (429), how long they took.
+On the device (`web/src/lib/offline.ts`, `heard.ts`, `public/sw.js`): lists kept for offline (`hm-audio-v1`, kept
+up to date by themselves, as subscriptions) and what was heard lately (`hm-heard-v1`, LRU within a size the user
+sets). The service worker answers the stream address from them; a copy of another file than the track's now
+(`file_uid`), or in a format this browser does not play, is fetched anew.
 
 ## Where a file comes from
 
-A track to download or to listen to is looked for in the sources one after another (`Services.provider_order`):
-Yandex Music first — the official file, FLAC or MP3 320, through a Yandex account with Plus connected in
-«Интеграции» (`app/providers/yandex.py`; a track of Yandex taken by its id, any other by its names; without such an
-account it finds nothing) — then the Russian order (hitmoz, hitmos.fm, SoundCloud, re-uploads, YouTube) or the
-default one (hitmoz, YouTube). A track is Russian by its names in Cyrillic, its Cyrillic original on Yandex, a CIS
-barcode or ISRC, or its artist (`app/matching/russian.py`: two titles in Cyrillic among what the Hub knows of them, or
-an ISRC of Russia). An explicit track of Russia (not one of Ukraine, Belarus, Kazakhstan) takes first the copies known
-to be uncensored — uploaded before the 2026 law, or re-uploads said «без цензуры»; Yandex's and YouTube Music's own
-copies never count as such, their audio is replaced in place — and a possibly censored copy only when there is none.
+The sources are asked one after another (`Services.provider_order`): **Yandex Music** first — the official file,
+FLAC or MP3 320, through a connected Yandex account with Plus (`app/providers/yandex.py`; a track of Yandex by its
+id, any other by its names; without such an account it finds nothing) — then the Russian order (hitmoz, hitmos.fm,
+SoundCloud, re-uploads, YouTube) or the default one (hitmoz, YouTube). In every source the files are ranked by the
+names and the length (`app/matching/select.py`); a file is checked after the download (its length, silences in the
+middle — a censor's cut).
 
-## Modules
+A track is Russian by Cyrillic in its names, its Cyrillic original on Yandex (Deezer gives Russian names
+transliterated), a CIS barcode or ISRC, or its artist (`app/matching/russian.py`: two titles in Cyrillic among what
+the Hub knows of them — a count, not a share: Russian artists named in Latin have from 7 % of such titles). An
+explicit track of Russia — not of Ukraine, Belarus, Kazakhstan: the 2026 law is Russia's — takes first the copies
+known to be uncensored: uploaded before the law, or re-uploads said «без цензуры». Yandex's and YouTube Music's own
+copies never count as such: their audio is replaced in place, with the same id and date. A possibly censored copy
+is taken only when there is none, and says so.
 
-- `app/library/tracks.py` — the registry: find or make a Track by a catalog ref or by names; its links; its files.
-- `app/library/importer.py` — puts a file into the library and attaches it to a Track.
-- `app/playlists.py` — playlists and their items; «Любимое»; the mirror job.
-- `app/api/*` — speak `id`/`ref` only.
-- `app/catalog/*`, `app/providers/*` — the outside world; unchanged in shape.
+## Artist pages
 
-## Order of work
+Put together of what the catalogs say — seconds of their answers — so kept, the same for everyone
+(`app/artist_pages.py`, `catalog_cache` key `artistpage:<artist>`); what is of a listener and the Hub's own choices
+(♥, the library's copies, the photo chosen) are put on it when shown, from the database only. An opening shows the
+kept page at once; one older than 6 h is put together again behind it and the apps take it quietly (`artist`
+event). A first page does not wait for the search of the artist's records in the other catalogs: the warming does
+that right after. The worker warms pages one artist after another, slowly — the artists of what plays now and next
+first (the web player asks), then the library's — far below the catalogs' limits, longer when a catalog fails.
 
-One release, built in passes that each leave the tests green:
+## Outside requests
 
-1. `track_files` split off `tracks`; a track named by its catalog ref. *(done)*
-2. Playlists in the Hub, the mirror, tags on any track; «Любимое» shown as a playlist made of the journal of
-   likes. *(done; the journal still decides, and `favorite_subjects` is still there)*
-3. Events on `track_id`. *(done: an event names its track for good — `plays.attach_tracks` — and the statistics
-   and the journal of likes go by it. Not done, on purpose: taste, mixes, the wave and their analytics keep their
-   own keys — they reason about catalog tracks, most of which the Hub never keeps, so those are not Tracks and
-   have no `track_id` to go by; the same holds for a dislike of a catalog track)*
-4. Imports and downloads on top of it. *(done: a download knows its track before there is a file and puts it into
-   its playlists at once; a ♥ knows nothing of downloads — the song is starred in Navidrome when a scan finds its
-   file)*
-5. The API and the web on `id`/`ref`. *(done: a page names a track by the Hub's id — to tags, playlists, ♥, the
-   listening history and «Не нравится» — and by its catalog ref only where the Hub does not know the track. What
-   stays Navidrome's is the file: a library file is streamed by the Navidrome song of that file, and a library
-   song with no catalog record is still listed under the ref "nd:<song>", which the recommendations keep as its
-   key. Albums and artists of the library are Navidrome's objects and are named by its ids)*
-6. Hub persistence is PostgreSQL. Revision `30a000000001` creates the schema on a fresh database. Navidrome, the
-   embedder and the music files keep their own storage.
+Every request to an outside service goes through `app/outbound.py`: through the proxy of the account it is made
+with, else of its service, else direct (set on the admin's page «Прокси и запросы»), and into the journal
+(`outbound_requests`, 14 days): service, path with the names of the query (never the values — tokens travel there),
+what it was for (the job, the API route, the loop), account or key, proxy, status or error, time. The ways out:
+httpx (`app.net.make_client` — every new client goes through it, or through `RoutingTransport`), `requests` (the
+Yandex Music client, yt-dlp) by a hook, the Spotify session (another process) and Telegram by their proxy setting.
+«The requests that follow are an account's» is set when its secret is read (`integrations.credential`).
 
-After the passes: `favorite_subjects` keeps only albums and artists (a catalog ref and a Navidrome id seen to be
-one). What a track is called — its id, its ref, the song of each of its files — is read from the library
-(`favorites.subjects_of`); the journal of likes still decides, and «Любимое» is the list it comes to.
+## The app and the Hub talking
+
+Events go over one SSE stream (`/api/events`, `app/events.py`); a page reads a list again on them, at most once per
+burst (`useCoalesced`). A JSON GET carries an ETag, and a list asked again unchanged is a bare 304. A page shows
+what it showed last time at once and the fresh answer after (`useAsync` with a key, kept on the device too). The web
+app reloads itself when the Hub serves a newer build (`lib/update.ts`).
+
+## Versions
+
+`VERSION` (CalVer: `2026.11.2` — the second release of November 2026) and `CHANGELOG.md` at the root; the Hub reads
+both (`app/version.py`) and the app shows them («Меню» → «Что нового», the admin's «О сервере»). What a listener or
+the admin would notice goes under «Не выпущено» in words for them; a push is a release: the section gets the next
+number and a date, `VERSION` follows, a tag `v<version>`.
+
+## Easy to get wrong
+
+- `main._import_handlers` imports modules only for their side effects (job handlers); `ruff --fix` of F401 strips
+  them — fix imports with `--select I001` or by hand.
+- A new outside HTTP client made with `httpx.AsyncClient(...)` directly bypasses the proxies and the journal.
+- A long computation or a blocking call on the event loop holds up every request: `asyncio.to_thread`, or the
+  worker.
+- `web/tsconfig.tsbuildinfo` changes with every type check: not committed.
+- The server updates itself from `origin/master` (`scripts/update-server.ps1`): a push deploys.
