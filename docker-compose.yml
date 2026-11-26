@@ -62,6 +62,8 @@ services:
     build:
       context: .
       dockerfile: hub/Dockerfile
+      args:
+        HM_COMMIT: ${HM_COMMIT:-}  # the commit built (scripts/update-server.ps1 sets it): «О сервере»
     image: homemusic-hub:local
     container_name: homemusic_hub
     restart: unless-stopped

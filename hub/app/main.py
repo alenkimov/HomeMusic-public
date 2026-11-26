@@ -116,7 +116,9 @@ async def lifespan(app: FastAPI):
         from app.artist_pages import loop as artist_pages_loop
 
         tasks.append(_loop_task(artist_pages_loop(), "artist-pages"))
-    log.info("hub started (%s)", s.hub_role)
+    from app.version import build, version
+
+    log.info("hub %s (%s) started (%s)", version(), build()["commit"] or "?", s.hub_role)
     try:
         yield
     finally:
@@ -219,13 +221,18 @@ def create_app() -> FastAPI:
     from app.api import (
         outbound as outbound_api,
     )
+    from app.api import (
+        version as version_api,
+    )
 
     # no page that lists the Hub's commands: it is reached from the internet, and nobody but a guesser reads it
-    app = FastAPI(title="HomeMusic Hub", version="0.1.0", lifespan=lifespan, docs_url=None, openapi_url=None,
+    from app.version import version as hub_version
+
+    app = FastAPI(title="HomeMusic Hub", version=hub_version(), lifespan=lifespan, docs_url=None, openapi_url=None,
                   redoc_url=None)
     for r in (auth.router, search.router, catalog.router, downloads.router, listen.router, library.router, medialib.router, file_picker.router,
               uploads.router, playlists.router, plays.router, playback_queue.router, playback_devices.router, mixes.router, wave.router, smart_shuffle.router, imports.router, events.router, system.router, admin.router,
-              artists.router, insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, quality.router, discoveries.router, listenbrainz.router, for_you.router, subsonic.router, integrations.router, tidy.router, backup.router, outbound_api.router):
+              artists.router, insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, quality.router, discoveries.router, listenbrainz.router, for_you.router, subsonic.router, integrations.router, tidy.router, backup.router, outbound_api.router, version_api.router):
         app.include_router(r)
     app.include_router(integrations.callback_router)
 

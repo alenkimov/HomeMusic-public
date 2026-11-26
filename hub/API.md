@@ -21,11 +21,18 @@ Errors: `{"detail": "<Russian message>"}` with 4xx/5xx.
 `MeOut` also has `public_hub_url` and `google_email`. ID tokens are verified against Google's keys
 (`app/google_auth.py`): RS256, `aud` = `GOOGLE_CLIENT_ID`, issuer, expiry, verified email.
 
+## Version
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/version` | → `{version, releases: [{version, date, intro, sections: [{title, items}]}]}` — the version (`VERSION`) and «Что нового» (`CHANGELOG.md`, newest first, without «Не выпущено») |
+
 ## Admin (only `is_admin`, otherwise `403`)
 | Method | Path | Body → Response |
 |---|---|---|
 | GET | `/api/admin/users` | → `AdminUsersOut {users: [AdminUserOut], ai_cost_usd, ai_cost_30d_usd, library_tracks}` — every Navidrome user (`id` null, `in_hub` false for those who never opened the Hub): AI spending (all time, 30 days, requests), downloads, tracks added, uploads, ♥ and playlists from Navidrome (null if it did not answer), last seen in the Hub and in the player, invite note |
 | GET | `/api/admin/users/{id}` | → `AdminUserDetailOut` (+ `ai_months`, `ai_recent`, `recent_downloads`) |
+| GET | `/api/admin/about` | → `{version, commit, built_at, role, components: [{name, version}]}` — «О сервере»: Navidrome, PostgreSQL, yt-dlp, ffmpeg, Python, Deno (`app/version.py`) |
 | GET | `/api/admin/proxies` | → `{proxies: [ProxyOut], services: [{service, name, proxy_id}], accounts: [{id, provider, account, owner, plan, proxy_id}]}` — the proxies of outside requests (`app/outbound.py`); a password is never returned (`has_password`) |
 | POST | `/api/admin/proxies` | `{url: "socks5://login:password@host:port", name?}` → `ProxyOut` (protocols http, https, socks5, socks5h; http by default); 409: the same proxy is there |
 | PATCH / DELETE | `/api/admin/proxies/{id}` | change (the same body; no password: kept) / delete (its services and accounts go direct) |

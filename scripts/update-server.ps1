@@ -13,7 +13,7 @@
 Порядок: Docker жив → git fetch → в рабочей папке нет изменённых отслеживаемых файлов → master догоняет
 origin/master без слияния → идут загрузки? тогда обновление откладывается (до часа, потом всё равно) →
 git merge --ff-only → docker compose build того, что изменилось с последнего удачного обновления (hub — при
-правках в hub/ и web/, embedder — в embedder/, tunnel — в gateway/tunnel/; -Force — ещё и hub) →
+правках в hub/, web/, VERSION и CHANGELOG.md, embedder — в embedder/, tunnel — в gateway/tunnel/; -Force — ещё и hub) →
 docker compose up -d → ждёт /healthz Хаба → запоминает развёрнутый коммит → docker image prune -f.
 Журнал — update.log в корне проекта (в git не попадает). Код выхода 0 — обновлено или нечего обновлять,
 1 — ошибка (подробности в журнале).
@@ -142,11 +142,13 @@ try {
 
     # что пересобрать: по путям изменённых файлов; -Force — ещё и Хаб (embedder долгий — только когда он менялся)
     $build = @()
-    if ($Force -or ($changed | Where-Object { $_ -match '^(hub|web)/' })) { $build += 'hub' }
+    if ($Force -or ($changed | Where-Object { $_ -match '^(hub|web)/|^VERSION$|^CHANGELOG\.md$' })) { $build += 'hub' }
     if ($changed | Where-Object { $_ -match '^embedder/' }) { $build += 'embedder' }
     if ($changed | Where-Object { $_ -match '^gateway/tunnel/' }) { $build += 'tunnel' }
     if ($build.Count) {
         Write-Log ('Сборка: ' + ($build -join ', '))
+        # the commit built goes into the image: «Меню» → «О сервере» says it
+        $env:HM_COMMIT = (git rev-parse --short HEAD).Trim()
         Invoke-Native 'docker compose build' { docker compose build @build } | Out-Null
     }
     # up -d применяет и новые образы, и правки docker-compose.yml/.env; чужие контейнеры не трогает

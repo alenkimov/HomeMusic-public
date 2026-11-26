@@ -7,6 +7,8 @@ import { hubFetch, noteAnswer, suspect } from '../lib/reach';
 import type { Tag, TagSelection, TagsData } from '../lib/tags';
 import type { TelegramChat, TelegramStatus } from '../lib/telegram';
 import type {
+  AboutOut,
+  HubVersionOut,
   OutboundFilter,
   OutboundRequestOut,
   OutboundSummaryOut,
@@ -584,6 +586,8 @@ export const api = {
   /** Albums that are one album in pieces (the same name, artists that differ by a guest). */
   /** «Резервные копии» (admins): Google Drive, the last copy, the copies kept. */
   backup: (signal?: AbortSignal) => request<BackupOut>('GET', '/api/backup', { signal }),
+  version: (signal?: AbortSignal) => request<HubVersionOut>('GET', '/api/version', { signal }),
+  about: (signal?: AbortSignal) => request<AboutOut>('GET', '/api/admin/about', { signal }),
   proxies: (signal?: AbortSignal) => request<ProxiesOut>('GET', '/api/admin/proxies', { signal }),
   addProxy: (url: string, name: string | null) => request<ProxyOut>('POST', '/api/admin/proxies', { json: { url, name } }),
   changeProxy: (id: number, url: string, name: string | null) => request<ProxyOut>('PATCH', `/api/admin/proxies/${id}`, { json: { url, name } }),

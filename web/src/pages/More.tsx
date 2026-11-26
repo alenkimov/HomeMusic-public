@@ -13,6 +13,7 @@ import { ServiceBadge } from '../components/ServiceBadge';
 import { PageHeader, cx, Badge } from '../components/ui';
 import { notifyPermission, requestNotifyPermission, useActiveDownloads, type NotifyPermission } from '../lib/notify';
 import { Link } from '../lib/router';
+import { WEB_VERSION, useVersion } from '../lib/version';
 import { confirmDialog, toast } from '../lib/ui';
 
 interface InstallPromptEvent extends Event {
@@ -38,6 +39,7 @@ export function MorePage() {
   const tidy = useAsync((s) => (STANDALONE ? api.tidy(s) : Promise.resolve(null)), [], true, 'menu:tidy');
   const tidyWaiting = tidy.data?.total ?? 0;
   // the backups, for an admin: a red word when they are not going off the server
+  const version = useVersion(); // the number at the bottom, and a dot while a release is not opened yet
   const backup = useAsync((s) => (me.is_admin ? api.backup(s) : Promise.resolve(null)), [], true, 'menu:backup').data;
   const backupWord = !backup ? undefined : !backup.connected ? 'не настроены' : backup.stale || backup.error ? 'не отправляются' : undefined;
   // what waits for the user in «Загрузки»: files to choose, failed ones — a transfer's too
@@ -130,6 +132,7 @@ export function MorePage() {
             {me.is_admin && <Item icon="user" tint="bg-[#3d8ef0]" to="/admin" title="Пользователи и приглашения" />}
             {me.is_admin && <Item icon="install" tint="bg-[#6b7a8f]" to="/admin/backup" title="Резервные копии" badge={backupWord} badgeTone="warn" />}
             {me.is_admin && <Item icon="chart" tint="bg-[#7a5af0]" to="/admin/outbound" title="Прокси и запросы" />}
+            {me.is_admin && <Item icon="help" tint="bg-[#6b7a8f]" to="/admin/about" title="О сервере" />}
             <Item icon="link" tint="bg-[#537fe2]" to="/integrations" title="Сторонние сервисы" />
             {me.is_admin && <Item icon="lyrics" tint="bg-[#c2528b]" to="/lyrics-sources" title="Тексты и перевод" />}
             <Item icon="send" brand="telegram" title="Telegram бот" value={telegramLabel} onClick={() => openTelegramSetup()} />
@@ -153,7 +156,12 @@ export function MorePage() {
         </div>
       </div>
 
-      <p className="px-6 pt-6 text-center text-xs text-dim">HomeMusic · личный музыкальный сервис</p>
+      <p className="px-6 pt-6 text-center text-xs text-dim">
+        <Link to="/whats-new" className="inline-flex items-center gap-1.5 hover:text-fg">
+          HomeMusic {version.data?.version ?? WEB_VERSION} · <span className="text-accent">Что нового</span>
+          {version.fresh && <span className="size-2 rounded-full bg-accent" aria-label="есть новое" />}
+        </Link>
+      </p>
     </div>
   );
 }

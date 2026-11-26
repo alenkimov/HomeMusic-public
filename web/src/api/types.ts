@@ -1979,3 +1979,25 @@ export interface OutboundFilter {
   purpose?: string;
   before?: number;
 }
+
+// --- the version and «Что нового» (`hub/app/version.py`) ----------------------------------------------------------
+
+export interface ReleaseOut {
+  version: string;
+  date: string | null;
+  intro: string;
+  sections: { title: string; items: string[] }[];
+}
+
+export interface HubVersionOut {
+  version: string;
+  releases: ReleaseOut[];
+}
+
+export interface AboutOut {
+  version: string;
+  commit: string | null;
+  built_at: string | null;
+  role: string;
+  components: { name: string; version: string | null }[];
+}

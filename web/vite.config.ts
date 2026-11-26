@@ -12,6 +12,8 @@ const outDir = resolve(here, '../hub/app/static');
 /** One id per build: the service worker cache, `<meta name="hm-build">` in index.html (the Hub reports it in
  * /healthz) and `__HM_BUILD__` in the bundle (lib/update.ts reloads the page when the Hub serves another one). */
 const BUILD_ID = new Date().toISOString().replace(/[-:.TZ]/g, '');
+/** The version (`VERSION` at the root of the repository; CHANGELOG.md says what it brought): «Меню» shows it. */
+const VERSION = existsSync(resolve(here, '../VERSION')) ? readFileSync(resolve(here, '../VERSION'), 'utf8').trim() : 'dev';
 
 function buildId(): Plugin {
   return {
@@ -30,7 +32,7 @@ const backend = 'http://localhost:8080';
 
 export default defineConfig(({ command, mode }) => ({
   plugins: [react(), tailwindcss(), buildId(), ...(mode === 'mock' ? [mockApi()] : [])],
-  define: { __HM_BUILD__: JSON.stringify(command === 'build' ? BUILD_ID : 'dev') },
+  define: { __HM_BUILD__: JSON.stringify(command === 'build' ? BUILD_ID : 'dev'), __HM_VERSION__: JSON.stringify(VERSION) },
   build: {
     outDir,
     emptyOutDir: true,

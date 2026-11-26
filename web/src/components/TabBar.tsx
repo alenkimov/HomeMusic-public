@@ -1,6 +1,7 @@
 import { EMBEDDED } from '../lib/embedded';
 import { Link } from '../lib/router';
 import { useActiveDownloads } from '../lib/notify';
+import { useVersion } from '../lib/version';
 import { Icon, type IconName } from './Icon';
 import { cx } from './ui';
 
@@ -24,6 +25,7 @@ const shownTab = (t: Tab | null): Tab | null => (t && !TABS.some((x) => x.id ===
 
 export function TabBar({ active: routeTab, last }: { active: Tab | null; last: Partial<Record<Tab, string>> }) {
   const activeDownloads = useActiveDownloads();
+  const fresh = useVersion().fresh; // a release not opened yet: a dot on «Меню»
   if (EMBEDDED) return null; // the Android app shows its own navigation
   const active = shownTab(routeTab);
 
@@ -51,6 +53,7 @@ export function TabBar({ active: routeTab, last }: { active: Tab | null; last: P
                       {activeDownloads > 99 ? '99+' : activeDownloads}
                     </span>
                   )}
+                  {t.id === 'more' && !activeDownloads && fresh && <span className="absolute -right-1 -top-0.5 size-2 rounded-full bg-accent" aria-label="Что нового" />}
                 </span>
                 <span className={on ? 'font-semibold' : ''}>{t.label}</span>
               </Link>
