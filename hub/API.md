@@ -423,6 +423,7 @@ paid by the month (`TIDY_AI_USD_MONTH`, spent as `ai_usage` of kind `tidy`), a q
 |---|---|---|
 | GET | `/api/tidy` | `{checked_at, running, can_scan, ai: {state: ok/limit/off, spent_usd, limit_usd}, sections: [{id, title, count, sure}], total}` |
 | GET | `/api/tidy/proposals?section=` | the open proposals, the sure first |
+| GET | `/api/tidy/marks` | the open proposals of every section, for the marks of the pages: a text's carry `show.drop_at` / `show.fix_at` (the places of their lines), an artist joined `show.into_id` |
 | POST | `/api/tidy/proposals/{id}/accept` · `/reject` · `/reopen` · `/revert` | → the proposal. `409` — changed since; `403` — a file somebody else keeps |
 | POST | `/api/tidy/accept-sure` | `{section}` → `{accepted, failed}` |
 | GET | `/api/tidy/journal?section=&before=&limit=50` | accepted and taken back, the latest decided first; `before` — a proposal id |

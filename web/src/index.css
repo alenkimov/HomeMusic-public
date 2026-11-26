@@ -13,6 +13,7 @@
   --color-danger: #f26b63;
   --color-warn: #f2b84b;
   --color-info: #5aa9f0;
+  --color-ai: #b98cff; /* what «Наведение порядка» offers to put right: its mark on the pages */
   --color-hover: #2a2a2a; /* hover / pressed surface of buttons and chips */
   --color-on-accent: #000000; /* text on accent backgrounds */
   /* taste facets and chart series (admin insights): apart from each other and from the background */
@@ -49,6 +50,7 @@
   --color-danger: #ba1a1a;
   --color-warn: #845400;
   --color-info: #00629d;
+  --color-ai: #7a3fd1;
   --color-hover: #d9e0d7;
   --color-on-accent: #ffffff;
   --color-facet-1: #0b6bcb;

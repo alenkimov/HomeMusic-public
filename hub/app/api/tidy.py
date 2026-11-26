@@ -113,6 +113,13 @@ async def _out(s: AsyncSession, rows: list[TidyProposal]) -> list[TidyProposalOu
         show = dict(p.show_json or {})
         if p.subject_type == "track":
             show["title_now"] = titles.get(p.subject_id) or show.get("title") or ""
+        # where it is in the text, by the places of its lines; who an artist joins
+        if p.kind == "lyrics":
+            show["drop_at"] = list(p.to_json.get("drop") or [])
+        elif p.kind == "uncensor":
+            show["fix_at"] = sorted(int(k) for k in (p.to_json.get("replace") or {}))
+        elif p.kind == "artist":
+            show["into_id"] = p.to_json.get("into")
         was, to = _words(p, show)
         out.append(TidyProposalOut(
             id=p.id, kind=p.kind, section=p.section, subject_type=p.subject_type, subject_id=p.subject_id, was=was,
@@ -164,6 +171,15 @@ async def proposals(section: Section, user: User = Depends(current_user),
                     s: AsyncSession = Depends(get_session, scope="function")):
     """What waits for an answer in the section: the sure ones first, then as they were found."""
     rows = list((await s.execute(select(TidyProposal).where(TidyProposal.section == section, TidyProposal.state == "open")
+                                 .order_by(TidyProposal.sure.desc(), TidyProposal.id))).scalars())
+    return await _out(s, rows)
+
+
+@router.get("/marks", response_model=list[TidyProposalOut])
+async def marks(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    """Everything that waits for an answer, of every section: the pages mark what it is about (a track's row, an
+    album's or an artist's name, the lines of a text) and lead from the mark to it."""
+    rows = list((await s.execute(select(TidyProposal).where(TidyProposal.state == "open")
                                  .order_by(TidyProposal.sure.desc(), TidyProposal.id))).scalars())
     return await _out(s, rows)
 

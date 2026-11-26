@@ -13,10 +13,12 @@ import { useSession } from '../lib/session';
 import { openShare } from '../lib/shareTrack';
 import { toggleLike, useLiked, type LikeTarget } from '../lib/stars';
 import { openTagsSheet, tagKey } from '../lib/tags';
+import { tidyPath, useTidyMarks } from '../lib/tidyMarks';
 import { closeTrackMenu, openTrackMenu, useTrackMenu, type TrackMenuState } from '../lib/trackMenu';
 import { artistSeed, canWave, startWave, trackSeed } from '../lib/wave';
 import { ContextMenu, menuAtButton, type MenuEntry } from './ContextMenu';
 import { type IconName } from './Icon';
+import { KIND_TITLE } from './TidyMark';
 import { PlaylistsSubmenu, TrackPlaylists } from './PlaylistsButton';
 import { Cover, IconButton, cx } from './ui';
 
@@ -126,6 +128,11 @@ function TrackMenu({ track, extra, at, inPlayer, onPlaylists }: TrackMenuState &
   const artistTo = track.artist_ref || track.hub_artist_id ? artistPath({ ref: track.artist_ref ?? '', hub_artist_id: track.hub_artist_id })
     : STANDALONE && track.nd_artist_id ? `/lib/artist/${enc(track.nd_artist_id)}` : null;
   const fileId = track.has_file && track.library_track_id != null ? track.library_track_id : null;
+  // what «Наведение порядка» offers for it, its name first, then its text: the line that leads there
+  const marked = track.library_track_id ? { track: track.library_track_id } : null;
+  const nameMarks = useTidyMarks(marked);
+  const textMarks = useTidyMarks(marked, true);
+  const tidy = nameMarks[0] ?? textMarks[0];
 
   const dislike = (t: DislikeTarget, on: boolean) =>
     void setDisliked(t, !on).then((ok) => {
@@ -145,6 +152,7 @@ function TrackMenu({ track, extra, at, inPlayer, onPlaylists }: TrackMenuState &
     canMap && track.artist_ref?.startsWith('dz:') && { icon: 'nodes', label: 'Карта похожих', onSelect: () => navigate(`/map/${enc(track.artist_ref!)}`) },
     'sep',
     key && { icon: 'tag', label: 'Теги', shortcut: 'T', onSelect: () => openTagsSheet([key], track.title) },
+    tidy && { icon: 'sparkle', label: `Исправить: ${KIND_TITLE[tidy.kind].toLowerCase()}`, onSelect: () => navigate(tidyPath(tidy)) },
     known && { icon: 'edit', label: 'Переименовать', shortcut: 'F2', onSelect: () => openTrackEdit({ title: track.title, artist: track.artist, library_track_id: track.library_track_id, ref: track.ref, nd_song_id: track.nd_song_id }) },
     (track.library_track_id || track.nd_song_id || /^(dz|ym):/.test(track.ref ?? '')) && { icon: 'image', label: 'Сменить обложку', onSelect: () => editTrackArtwork({ ...track, src: track.listen?.cover_url ?? track.cover }) },
     known && { icon: 'disc', label: 'Версии песни', shortcut: 'V', onSelect: () => openVersions({ title: track.title, library_track_id: track.library_track_id, ref: track.ref, nd_song_id: track.nd_song_id }) },

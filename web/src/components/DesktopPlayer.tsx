@@ -71,7 +71,7 @@ export function DesktopPlayer() {
               {/* the name leads to the album, each artist to their page; a long line runs under the mouse (`Marquee`) */}
               <span className="ml-2 min-w-0">
                 <Marquee className="text-sm font-medium leading-5">
-                  <PlayingTitle track={track} info={info} />
+                  <PlayingTitle track={track} info={info} mark />
                 </Marquee>
                 <span className="flex items-center gap-1.5 text-xs text-muted">
                   <PlayingMarks track={track} onWave={onWave} size={13} />

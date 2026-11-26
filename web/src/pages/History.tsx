@@ -141,7 +141,7 @@ export function HistoryPage() {
             ) : null;
             const name = (
               <TrackCell
-                track={{ title: x.title, cover: x.track?.cover_small_url || x.track?.cover_url, identity: x.track ?? x }}
+                track={{ title: x.title, cover: x.track?.cover_small_url || x.track?.cover_url, identity: x.track ?? x, mark: x.track?.owned ? x.track.library_track_id : null }}
                 size={desktop ? 40 : 48}
                 playing={on}
                 sub={<>{x.artist}{!desktop && from && <> · {from}</>}</>}

@@ -144,9 +144,10 @@ export function AlbumPage({ refId }: { refId: string }) {
       />
       <AlbumHero
         album={{ ...catalogLook(album), cover: album.cover_url }}
+        mark={album.library_album_id ? { album: album.library_album_id } : null}
         /* everyone the release is credited to, each with their page */
         artists={(album.artists?.length ? album.artists.map((name, i) => ({ name, ref: album.artist_refs?.[i], id: album.hub_artist_ids?.[i] })) : [{ name: album.artist, ref: album.artist_ref, id: album.hub_artist_id }])
-          .map((a) => ({ name: a.name, to: a.ref || a.id ? artistPath({ ref: a.ref ?? '', hub_artist_id: a.id }) : null }))}
+          .map((a) => ({ name: a.name, to: a.ref || a.id ? artistPath({ ref: a.ref ?? '', hub_artist_id: a.id }) : null, id: a.id }))}
         facts={facts}
         onCover={() => openAlbumArtwork(artwork)}
         tracks={playableTracks}

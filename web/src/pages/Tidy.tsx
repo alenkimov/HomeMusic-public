@@ -1,12 +1,14 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { TidyOverviewOut, TidyProposalOut, TidyProposalSection, TidySectionId } from '../api/types';
 import { Icon } from '../components/Icon';
-import { Badge, Button, Cover, Empty, ErrorState, IconButton, PageHeader, SkeletonRows, Segmented, cx } from '../components/ui';
+import { ByMark } from '../components/TidyMark';
+import { Button, Cover, Empty, ErrorState, IconButton, PageHeader, SkeletonRows, Segmented, cx } from '../components/ui';
 import { useHubEvent } from '../lib/events';
 import { fmtWhen, plural } from '../lib/format';
 import { useAsync } from '../lib/hooks';
-import { Link, artistPath, navigate, useRoute } from '../lib/router';
+import { Link, artistPath, goBack, navigate, useRoute } from '../lib/router';
+import { dropMark } from '../lib/tidyMarks';
 import { attempt, toast } from '../lib/ui';
 import { AlbumMergeSection } from './AlbumMerge';
 
@@ -40,11 +42,13 @@ function statusLine(o: TidyOverviewOut): string {
 export function TidyPage() {
   const route = useRoute();
   const asked = route.query.get('tab');
+  // come from a mark on a page (`lib/tidyMarks`): that proposal, lit, and the way back
+  const focus = Number(route.query.get('p')) || null;
   const overview = useAsync((s) => api.tidy(s), [], true, 'tidy');
   const o = overview.data;
   // the tab asked for, else the first with something in it
   const section: TidySectionId = isSection(asked) ? asked : (o?.sections.find((x) => x.count > 0)?.id ?? 'names');
-  const pick = (id: TidySectionId) => navigate(`/tidy?tab=${id}`, { replace: true });
+  const pick = (id: TidySectionId) => navigate(`/tidy?tab=${id}${focus ? `&p=${focus}` : ''}`, { replace: true });
   const [scanning, setScanning] = useState(false);
 
   useHubEvent('tidy', () => overview.reload(true));
@@ -90,6 +94,12 @@ export function TidyPage() {
               options={o.sections.map((x) => ({ value: x.id, label: x.title, count: x.count || null }))}
             />
           </div>
+          {focus && (
+            <button type="button" onClick={() => goBack('/tidy')} className="mx-4 mt-3 flex min-h-9 items-center gap-1 text-[13px] font-semibold text-ai hover:underline lg:mx-6">
+              <Icon name="chevron" size={16} className="rotate-180" />
+              Вернуться
+            </button>
+          )}
           {section === 'albums' ? (
             <AlbumMergeSection onChange={() => overview.reload(true)} />
           ) : (
@@ -97,6 +107,7 @@ export function TidyPage() {
               key={section}
               section={section}
               sure={o.sections.find((x) => x.id === section)?.sure ?? 0}
+              focus={focus}
               checked={o.checked_at}
               onChange={() => overview.reload(true)}
             />
@@ -117,17 +128,27 @@ export function TidyPage() {
 
 /** A section's proposals. A decided one stays where it was, dimmed, with «Отменить», until the list is asked anew
  * (another tab, a look-through done). */
-function Proposals({ section, sure, checked, onChange }: { section: TidyProposalSection; sure: number; checked: string | null; onChange: () => void }) {
+function Proposals({ section, sure, focus, checked, onChange }: { section: TidyProposalSection; sure: number; focus: number | null; checked: string | null; onChange: () => void }) {
   const res = useAsync((s) => api.tidyProposals(section, s), [section]);
   const [rows, setRows] = useState<TidyProposalOut[] | null>(null);
   const [busy, setBusy] = useState<number | 'sure' | null>(null);
   useEffect(() => { if (res.data) setRows(res.data); }, [res.data]);
   useHubEvent('tidy', (d) => { if (d.kind === 'checked') res.reload(true); });
 
+  // the proposal a mark led to is brought into view once the list is there
+  const lit = useRef<HTMLLIElement>(null);
+  const seen = useRef<number | null>(null);
+  useEffect(() => {
+    if (!focus || seen.current === focus || !lit.current) return;
+    seen.current = focus;
+    lit.current.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  });
+
   const decide = async (p: TidyProposalOut, what: 'accept' | 'reject' | 'reopen' | 'revert') => {
     setBusy(p.id);
     try {
       const next = await api.tidyDecide(p.id, what);
+      if (what === 'accept' || what === 'reject') dropMark(p.id);
       setRows((xs) => (xs ?? []).map((x) => (x.id === p.id ? next : x)));
     } catch (e) {
       // what changed since is gone from the list: the Hub said why
@@ -168,20 +189,14 @@ function Proposals({ section, sure, checked, onChange }: { section: TidyProposal
       ) : (
         <ul className="mt-3 space-y-2 px-2 lg:px-4">
           {shown.map((p) => (
-            <li key={p.id}>
-              <ProposalCard p={p} busy={busy === p.id} onDecide={(what) => decide(p, what)} />
+            <li key={p.id} ref={p.id === focus ? lit : undefined}>
+              <ProposalCard p={p} lit={p.id === focus} busy={busy === p.id} onDecide={(what) => decide(p, what)} />
             </li>
           ))}
         </ul>
       )}
     </div>
   );
-}
-
-/** Who says so: a rule, the AI, the AI unsure (in yellow — a person decides). */
-function ByMark({ p }: { p: TidyProposalOut }) {
-  if (p.by === 'rule') return <Badge tone="muted">Правило</Badge>;
-  return p.sure ? <Badge tone="accent">ИИ уверен</Badge> : <Badge tone="warn">ИИ сомневается</Badge>;
 }
 
 /** Where the subject leads: a track and an album — to their album, an artist — to their page. */
@@ -193,8 +208,10 @@ function subjectLink(p: TidyProposalOut): string | null {
 const WHAT: Record<TidyProposalOut['subject_type'], string> = { track: 'Трек', album: 'Альбом', artist: 'Исполнитель' };
 
 /** The subject as the proposal names it: its picture, what it is and whose; then «было → станет» in the kind's words. */
-export function ProposalCard({ p, busy, onDecide, journal }: {
+export function ProposalCard({ p, busy, onDecide, journal, lit }: {
   p: TidyProposalOut; busy: boolean; onDecide: (what: 'accept' | 'reject' | 'reopen' | 'revert') => void; journal?: boolean;
+  /** the one a mark on a page led to */
+  lit?: boolean;
 }) {
   const to = subjectLink(p);
   const head = [WHAT[p.subject_type], p.show.line].filter(Boolean).join(' · ');
@@ -268,7 +285,7 @@ export function ProposalCard({ p, busy, onDecide, journal }: {
   );
 
   return (
-    <div className={cx('flex items-start gap-3 rounded-xl bg-raised/60 p-3 transition max-sm:flex-wrap sm:items-center', decided && !journal && 'opacity-60')}>
+    <div className={cx('flex items-start gap-3 rounded-xl bg-raised/60 p-3 transition max-sm:flex-wrap sm:items-center', lit && 'bg-ai/10 ring-2 ring-ai', decided && !journal && 'opacity-60')}>
       {to ? <Link to={to} className="shrink-0">{picture}</Link> : picture}
       <div className="min-w-0 flex-1">
         <span className="block truncate text-[12px] text-dim">{head}</span>

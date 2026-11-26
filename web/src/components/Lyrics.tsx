@@ -1,10 +1,14 @@
 import { useScrubAt } from '../lib/seek';
 import { knownLyrics, loadLyrics, putLyrics } from '../lib/trackLyrics';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, errorMessage } from '../api/client';
 import { seek, useListen } from '../lib/listen';
 import { KIND_LABEL, activeLine, breakAt, setLyricsLook, setTranslatePrefs, useLyricsLook, useTranslatePrefs, type LyricsLine, type LyricsLook, type LyricsOut, type LyricsReading, type LyricsTranslation, type LyricsTranslators, type TranslatePrefs } from '../lib/lyrics';
 import { attempt, confirmDialog, toast } from '../lib/ui';
+import { navigate } from '../lib/router';
+import { dropMark, tidyPath, useTidyMarks } from '../lib/tidyMarks';
+import type { TidyProposalOut } from '../api/types';
+import { TidyMarkButton } from './TidyMark';
 import { Icon } from './Icon';
 import { ServiceBadge } from './ServiceBadge';
 import { Button, Checkbox, IconButton, Loading, Sheet, Spinner, cx } from './ui';
@@ -95,6 +99,42 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
   }, [playing, timed, wordy]);
 
   const lines = useMemo<LyricsLine[]>(() => data?.lines ?? [], [data]);
+  // what «Наведение порядка» offers for the text: each line it is about, by its place (while it still reads so)
+  const proposals = useTidyMarks(data?.track_id ? { track: data.track_id } : null, true);
+  const fixes = useMemo(() => {
+    const text = data?.lines?.length ? data.lines.map((x) => x.text) : (data?.plain ?? '').split('\n');
+    const out = new Map<number, Fix>();
+    for (const p of proposals) {
+      const at = p.kind === 'lyrics' ? p.show.drop_at : p.show.fix_at;
+      at?.forEach((i, k) => {
+        const was = p.kind === 'lyrics' ? p.show.lines?.[k] : p.show.pairs?.[k]?.was;
+        if (was !== undefined && text[i] === was) out.set(i, { p, to: p.kind === 'lyrics' ? null : (p.show.pairs?.[k]?.to ?? null) });
+      });
+    }
+    return out;
+  }, [proposals, data]);
+  const [preview, setPreview] = useState(false); // «Как будет»: the text as it would be, put right
+  const shownPreview = preview && fixes.size > 0;
+  const fixedBy = [...new Map([...fixes.values()].map((f) => [f.p.id, f.p])).values()];
+  const [accepting, setAccepting] = useState(false);
+  const acceptAll = async () => {
+    setAccepting(true);
+    let ok = 0;
+    for (const p of fixedBy) {
+      const r = await attempt(() => api.tidyDecide(p.id, 'accept'));
+      if (r) {
+        ok++;
+        dropMark(p.id);
+      }
+    }
+    if (ok) {
+      const fresh = await attempt(() => api.lyrics({ nd_song_id: songId ?? null, ref: refId }));
+      if (fresh) setData(fresh as LyricsOut);
+      toast('Текст исправлен — откатить можно в «Журнале» наведения порядка', 'success');
+    }
+    setPreview(false);
+    setAccepting(false);
+  };
   const offset = data?.offset_ms ?? 0;
   const now = scrubAt !== null ? scrubAt * 1000 : ms;
   const at = timed ? activeLine(lines, now - offset) : -1;
@@ -197,6 +237,18 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
           {trSince !== null ? `Перевожу… ${Math.round((performance.now() - trSince) / 1000)} с` : trError ? 'Перевод не удался' : prefs.on ? `Перевод: ${prefs.lang.toUpperCase()}` : 'Перевод'}
         </button>
       )}
+      {fixes.size > 0 && (
+        <button
+          type="button"
+          aria-pressed={shownPreview}
+          onClick={() => setPreview((x) => !x)}
+          title="Показать текст таким, каким он станет после исправления"
+          className={cx('flex items-center gap-1.5 rounded-full px-3 py-1.5 font-semibold', shownPreview ? 'bg-ai text-bg' : 'bg-ai/15 text-ai hover:bg-ai/25')}
+        >
+          <Icon name="sparkle" size={13} filled stroke={0} />
+          Как будет
+        </button>
+      )}
       {data.kind !== 'none' && (
         <IconButton icon="sliders" size={16} label="Вид текста" onClick={() => setLookOpen(true)} className="!h-8 !w-8 text-muted hover:text-fg" />
       )}
@@ -230,7 +282,7 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
             <>
               {pause && at < 0 && <Break left={pause.left} />}
               {lines.map((ln, i) => (
-                <div key={i}>
+                <div key={i} className={fixes.has(i) ? 'flex items-center gap-1' : undefined}>
                   <button
                     type="button"
                     data-line={i}
@@ -241,14 +293,15 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
                     }}
                     style={far(i)}
                     className={cx(
-                      'block w-full origin-left rounded-lg px-3 py-1.5 text-left text-2xl font-bold leading-snug transition-[color,opacity,transform] duration-300 hover:bg-fg/5',
+                      'block w-full min-w-0 origin-left rounded-lg px-3 py-1.5 text-left text-2xl font-bold leading-snug transition-[color,opacity,transform] duration-300 hover:bg-fg/5',
                       i === at && !pause ? 'scale-100 text-fg' : 'scale-[0.97] text-fg/40 hover:text-fg/70',
                     )}
                   >
-                    {replace && tl?.[i] ? tl[i] : i === at && ln.words && !pause ? <Words line={ln} ms={now - offset} /> : ruby?.[i]?.length ? <Ruby pieces={ruby[i]} /> : ln.text || '♪'}
+                    {fixes.has(i) && !(replace && tl?.[i]) ? <FixedLine text={ln.text} fix={fixes.get(i)!} preview={shownPreview} /> : replace && tl?.[i] ? tl[i] : i === at && ln.words && !pause ? <Words line={ln} ms={now - offset} /> : ruby?.[i]?.length ? <Ruby pieces={ruby[i]} /> : ln.text || '♪'}
                     {latin?.[i] && <span className="mt-0.5 block text-sm font-medium leading-snug tracking-wide text-fg/55">{latin[i]}</span>}
                     {!replace && tl?.[i] && <span className="mt-0.5 block text-base font-semibold leading-snug text-fg/60">{tl[i]}</span>}
                   </button>
+                  {fixes.has(i) && !shownPreview && <TidyMarkButton proposals={[fixes.get(i)!.p]} size="md" className="mr-2" />}
                   {pause && i === at && <Break left={pause.left} />}
                 </div>
               ))}
@@ -273,10 +326,31 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
                   </p>
                 ))}
               </div>
+            ) : fixes.size ? (
+              <div className="px-3 text-lg leading-relaxed text-fg/85">
+                {(data.plain ?? '').split('\n').map((line, i) => (
+                  <p key={i} className="flex min-h-[1.2em] items-center gap-2 pb-1">
+                    <span className="min-w-0 flex-1">{fixes.has(i) ? <FixedLine text={line} fix={fixes.get(i)!} preview={shownPreview} /> : line}</span>
+                    {fixes.has(i) && !shownPreview && <TidyMarkButton proposals={[fixes.get(i)!.p]} />}
+                  </p>
+                ))}
+              </div>
             ) : (
               <p className="whitespace-pre-line px-3 text-lg leading-relaxed text-fg/85">{data.plain}</p>
             )
           )}
+        </div>
+      )}
+      {shownPreview && (
+        <div className="mx-1 mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl bg-raised px-4 py-3">
+          <span className="min-w-0 flex-1 basis-52 text-[13px] leading-snug">
+            <span className="block font-semibold">Так текст будет выглядеть после исправления</span>
+            {fixedBy.some((p) => p.by === 'ai' && !p.sure) && <span className="block text-warn">Часть слов ИИ прочитал по маске — он не уверен</span>}
+          </span>
+          <span className="flex gap-2 max-sm:w-full">
+            <Button small variant="outline" onClick={() => navigate(tidyPath(fixedBy[0]))} className="max-sm:flex-1">Подробнее</Button>
+            <Button small variant="primary" busy={accepting} onClick={() => void acceptAll()} className="max-sm:flex-1">Принять всё</Button>
+          </span>
         </div>
       )}
       {footer}
@@ -309,6 +383,40 @@ export function Lyrics({ refId, songId }: { refId: string; songId?: string | nul
         />
       )}
     </div>
+  );
+}
+
+/** A line «Наведение порядка» offers to put right, and how. */
+interface Fix {
+  p: TidyProposalOut;
+  /** the line as it would be; null: it goes */
+  to: string | null;
+}
+
+/** That line: as it is, the hidden words underlined; «Как будет» — as it would be, the words put back lit (a line that
+ * goes, said so and struck through). */
+function FixedLine({ text, fix, preview }: { text: string; fix: Fix; preview: boolean }) {
+  if (fix.to === null)
+    return preview ? (
+      <span className="flex items-center gap-2 text-base font-medium text-fg/60">
+        <Icon name="minus" size={16} className="shrink-0" />
+        <span className="min-w-0">уберётся: <s className="decoration-danger/70">{text}</s></span>
+      </span>
+    ) : <>{text}</>;
+  const was = text.split(' ');
+  const to = fix.to.split(' ');
+  const same = was.length === to.length;
+  return (
+    <>
+      {(preview ? to : was).map((w, i) => (
+        <Fragment key={i}>
+          {i > 0 && ' '}
+          {!same || was[i] !== to[i] ? (
+            <span className={preview ? 'rounded-md bg-ai/25 px-1 text-ai' : 'underline decoration-ai decoration-dotted decoration-2 underline-offset-4'}>{w}</span>
+          ) : w}
+        </Fragment>
+      ))}
+    </>
   );
 }
 

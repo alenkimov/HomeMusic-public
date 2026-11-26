@@ -161,7 +161,7 @@ export function SongList<T extends TrackOut>({ tracks, extra, found, sort, onSor
 /** The head of a list: its picture in its own light (the cover, blurred, fading into the page; the accent's for a
  * list with no cover), then its name with ▶ and the shuffle of `tracks` at the right. `art`: a picture of the page's
  * own in place of the cover («Любимое»: the heart). `onCover`: a tap on the picture (it opens large). */
-export function Hero({ cover, round, title, sub, right, kicker, art, tracks, context, onCover }: { cover?: string | null; round?: boolean; title: string; sub?: ReactNode; right?: ReactNode; kicker?: string; art?: ReactNode; tracks?: readonly TrackOut[]; context?: string; onCover?: () => void }) {
+export function Hero({ cover, round, title, mark, sub, right, kicker, art, tracks, context, onCover }: { cover?: string | null; round?: boolean; title: string; /** after the name: the mark of «Наведение порядка» */ mark?: ReactNode; sub?: ReactNode; right?: ReactNode; kicker?: string; art?: ReactNode; tracks?: readonly TrackOut[]; context?: string; onCover?: () => void }) {
   const desktop = useDesktop();
   const play = tracks?.length ? <PlayPair tracks={tracks} context={context} /> : null;
   const picture = (size: string) =>
@@ -187,7 +187,7 @@ export function Hero({ cover, round, title, sub, right, kicker, art, tracks, con
         {picture('w-48')}
         <div className="min-w-0 flex-1">
           {kicker && <div className="text-sm text-muted">{kicker}</div>}
-          <h2 data-list-title className="line-clamp-2 break-words text-6xl font-black leading-[1.05] tracking-tight">{title}</h2>
+          <h2 data-list-title className="line-clamp-2 break-words text-6xl font-black leading-[1.05] tracking-tight">{title}{mark && <span className="ml-3 inline-flex align-middle">{mark}</span>}</h2>
           {sub && <div className="mt-3 text-sm text-muted">{sub}</div>}
         </div>
         {right}
@@ -200,7 +200,7 @@ export function Hero({ cover, round, title, sub, right, kicker, art, tracks, con
       <div className="flex justify-center pb-4">{picture('w-52')}</div>
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <h2 data-list-title className="line-clamp-2 text-2xl font-bold leading-tight">{title}</h2>
+          <h2 data-list-title className="line-clamp-2 text-2xl font-bold leading-tight">{title}{mark && <span className="ml-2 inline-flex align-middle">{mark}</span>}</h2>
           {sub && <div className="mt-1 text-sm text-muted">{sub}</div>}
         </div>
         {play}
@@ -647,6 +647,7 @@ export function NdAlbumPage({ id }: { id: string }) {
       />
       <AlbumHero
         album={{ title: a.title, cover: a.cover_url?.replace(/size=\d+/, 'size=600') }}
+        mark={a.library_album_id ? { album: a.library_album_id } : null}
         artists={[{ name: a.artist, to: a.artist_id ? `/lib/artist/${enc(a.artist_id)}` : null }]}
         facts={[a.year, tracksWord(a.song_count), a.duration_s ? fmtLength(a.duration_s) : null]}
         onCover={() => openAlbumArtwork(artwork)}

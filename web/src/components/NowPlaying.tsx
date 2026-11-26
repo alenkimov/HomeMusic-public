@@ -23,9 +23,12 @@ export function playingIdentity(track: ListenTrack, info: ListenOut | null | und
 
 const albumOf = (t: ListenTrack) => (t.album_ref || t.release_id ? albumPath({ ref: t.album_ref ?? '', release_id: t.release_id }) : null);
 
-/** The track's name; `link`: it leads to its album (not where the whole player is a link already). */
-export function PlayingTitle({ track, info, link = true, className }: { track: ListenTrack; info: ListenOut | null | undefined; link?: boolean; className?: string }) {
-  const name = <TrackTitle title={track.title} track={playingIdentity(track, info)} />;
+/** The track's name; `link`: it leads to its album (not where the whole player is a link already); `mark`: with the
+ * mark of «Наведение порядка». */
+export function PlayingTitle({ track, info, link = true, mark = false, className }: { track: ListenTrack; info: ListenOut | null | undefined; link?: boolean; mark?: boolean; className?: string }) {
+  const identity = playingIdentity(track, info);
+  // the mark of «Наведение порядка»: the full player and a computer's bar (the mini player has no room for it)
+  const name = <TrackTitle title={track.title} track={identity} mark={mark ? identity.library_track_id : null} />;
   const to = link ? albumOf(track) : null;
   return to ? <Link to={to} className={cx('hover:underline', className)}>{name}</Link> : <span className={className}>{name}</span>;
 }

@@ -278,7 +278,7 @@ export function TrackRow({
   const review = !needsFile && track.import_review ? (
     <ImportReviewButton review={track.import_review} track={track} playing={playing} onPlay={listenHere} />
   ) : null;
-  const trackName = <TrackTitle title={releaseFeed ? <span className="line-clamp-2 whitespace-normal wrap-anywhere">{track.title}</span> : track.title} label={label} />;
+  const trackName = <TrackTitle title={releaseFeed ? <span className="line-clamp-2 whitespace-normal wrap-anywhere">{track.title}</span> : track.title} label={label} mark={track.owned ? track.library_track_id : null} />;
   const sourceMarks = foundIn?.length ? <CatalogSourceMarks services={foundIn} /> : null;
   const action = needsFile || searchOnCover ? undefined : !track.owned ? listenHere : play;
   const toAlbum = link && track.owned && (track.album_ref || track.release_id)

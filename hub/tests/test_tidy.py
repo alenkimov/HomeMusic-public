@@ -162,6 +162,9 @@ async def test_artists_that_read_the_same_are_joined_and_parted_again(env):
     await _scan()
     (p,) = await _open(c, "artists")
     assert (p["subject_id"], p["was"], p["to"], p["sure"]) == (lsp_id, "LSP", "ЛСП", True)
+    # the pages mark it on both artists: who joins and who is joined
+    (m,) = (await c.get("/api/tidy/marks")).json()
+    assert (m["id"], m["show"]["artist_id"], m["show"]["into_id"]) == (p["id"], lsp_id, ru_id)
     assert (await c.post(f"/api/tidy/proposals/{p['id']}/accept")).status_code == 200
     await drain_jobs()
     async with session_scope() as s:
@@ -248,6 +251,8 @@ async def test_the_lines_of_a_text_that_are_not_the_song_are_dropped_and_come_ba
     await _scan()
     (p,) = await _open(c, "lyrics")
     assert (p["to"], p["show"]["lines"]) == ("Убрать 2 строки", ["Подписывайтесь: t.me/abc", "https://vk.com/x"])
+    assert p["show"]["drop_at"] == [0, 2]  # the places the text's mark finds them by
+    assert [m["id"] for m in (await c.get("/api/tidy/marks")).json()] == [p["id"]]
     assert (await c.post("/api/tidy/accept-sure", json={"section": "lyrics"})).json() == {"accepted": 1, "failed": 0}
     async with session_scope() as s:
         row = await s.get(Lyrics, tid)
@@ -432,6 +437,7 @@ async def test_a_censored_word_comes_back_from_another_source_with_its_timing(en
     (p,) = await _open(c, "lyrics")
     assert (p["kind"], p["by"], p["sure"], p["to"]) == ("uncensor", "rule", True, "Вернуть 1 слово без цензуры")
     assert p["show"]["pairs"] == [{"was": "Я б***ь не знаю", "to": "Я блять не знаю"}] and "NetEase" in p["why"]
+    assert p["show"]["fix_at"] == [0]  # the place of the line in the text, as the pairs go
     await _scan()
     assert asked == [tid]  # a text is looked up once
     assert (await c.post(f"/api/tidy/proposals/{p['id']}/accept")).status_code == 200

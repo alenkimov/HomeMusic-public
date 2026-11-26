@@ -263,7 +263,7 @@ export function PlayerPage() {
 
       <div className="flex items-center gap-2 px-6 pt-6">
         <div className="min-w-0 flex-1">
-          <PlayingTitle track={track} info={info} className="block truncate text-xl font-bold" />
+          <PlayingTitle track={track} info={info} mark className="block truncate text-xl font-bold" />
           <div className="flex items-center gap-1.5 text-[15px] text-muted">
             <PlayingMarks track={track} onWave={onWave} size={16} />
             {/* every credited artist opens their own page */}

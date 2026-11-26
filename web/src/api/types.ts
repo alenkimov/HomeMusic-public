@@ -1864,6 +1864,11 @@ export interface TidyShow {
   lines?: string[];
   /** a text: its censored lines and what they become */
   pairs?: { was: string; to: string }[];
+  /** a text: the places of the lines to drop (`lines`), of the censored ones (`pairs`), in the text as it is */
+  drop_at?: number[];
+  fix_at?: number[];
+  /** an artist joined: who into */
+  into_id?: number | null;
 }
 
 export interface TidyProposalOut {

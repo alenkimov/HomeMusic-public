@@ -585,6 +585,7 @@ export const api = {
   tidy: (signal?: AbortSignal) => request<TidyOverviewOut>('GET', '/api/tidy', { signal }),
   tidyProposals: (section: TidyProposalSection, signal?: AbortSignal) =>
     request<TidyProposalOut[]>('GET', withQuery('/api/tidy/proposals', { section }), { signal }),
+  tidyMarks: (signal?: AbortSignal) => request<TidyProposalOut[]>('GET', '/api/tidy/marks', { signal }),
   tidyJournal: (before?: number, signal?: AbortSignal) =>
     request<TidyProposalOut[]>('GET', withQuery('/api/tidy/journal', { before }), { signal }),
   /** accept / reject / reopen (a rejection taken back) / revert (what an accepted one did, taken back) */

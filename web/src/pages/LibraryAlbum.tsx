@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { api, libraryCoverUrl } from '../api/client';
 import type { LibAlbumOut, LibTrackOut, ReleaseType } from '../api/types';
 import { Icon } from '../components/Icon';
+import { TidyMark } from '../components/TidyMark';
 import { LibraryAlbumMenu } from '../components/AlbumEdit';
 import { AlbumPicker } from '../components/pickers';
 import { Button, Checkbox, Cover, ErrorState, Field, IconButton, Loading, Notice, PageHeader, SectionTitle, Sheet, cx } from '../components/ui';
@@ -121,7 +122,7 @@ export function LibraryAlbumPage({ id }: { id: number }) {
   return (
     <div className={selected.size ? 'pb-20' : ''}>
       <PageHeader
-        title={album.title}
+        title={<>{album.title}<TidyMark on={{ album: album.id }} size="md" className="ml-2" /></>}
         sub={album.album_artist}
         back="/files"
         right={<LibraryAlbumMenu id={album.id} title={album.title} onSaved={(saved) => {
@@ -178,7 +179,7 @@ export function LibraryAlbumPage({ id }: { id: number }) {
                 <span className="w-6 shrink-0 text-center text-sm tabular-nums text-dim">{t.track_no ?? '–'}</span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
-                    <span className="truncate text-[15px]"><TrackTitle title={t.title} track={{ track_id: t.id, nd_song_id: t.nd_song_id }} /></span>
+                    <span className="truncate text-[15px]"><TrackTitle title={t.title} track={{ track_id: t.id, nd_song_id: t.nd_song_id }} mark={t.id} /></span>
                     {t.locked && (
                       <span className="shrink-0 text-dim" title="Ранняя (оригинальная) копия: повторная загрузка её не заменит" aria-label="Оригинальная копия">
                         <Icon name="lock" size={13} />

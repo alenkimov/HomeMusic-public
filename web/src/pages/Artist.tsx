@@ -1,9 +1,10 @@
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { AlbumOut, ArtistPageOut, TrackOut } from '../api/types';
 import { ArtistBubble, ReleaseCard, TrackRow, TrackTableHeader } from '../components/catalog';
 import { TrackTable, useTrackTable } from '../components/TrackTable';
 import { Icon } from '../components/Icon';
+import { TidyMark } from '../components/TidyMark';
 import { CatalogSourceMarks } from '../components/CatalogSourceMarks';
 import { ListBar } from '../components/ListBar';
 import { ArtistLooksWindow } from '../components/ArtistLooks';
@@ -189,7 +190,7 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
           </>
         }
       />
-      <ArtistBanner name={shownName} photo={d.banner_url ? undefined : (photo ?? null)} />
+      <ArtistBanner name={shownName} photo={d.banner_url ? undefined : (photo ?? null)} mark={<TidyMark on={artist.hub_artist_id ? { artist: artist.hub_artist_id } : null} size="lg" />} />
 
       {/* what goes up over the picture has the page's own colour under it */}
       <div className="relative z-[1] min-h-[60dvh] bg-bg">
@@ -382,7 +383,8 @@ function useOneLine(what: string) {
  * there is no wide picture (`photo` given: the address, or null for no photo at all) the head is as tall as the
  * round photo, which stands before the name — on a phone and on a computer alike — on the ground made of it.
  */
-export function ArtistBanner({ name, photo, sub }: { name: string; photo?: string | null; /** a line under the name */ sub?: string }) {
+export function ArtistBanner({ name, photo, sub, mark }: { name: string; photo?: string | null; /** a line under the name */ sub?: string;
+  /** after the name: the mark of «Наведение порядка» */ mark?: ReactNode }) {
   const round = 'h-32 w-32 shrink-0 rounded-full shadow-xl sm:h-44 sm:w-44 lg:h-56 lg:w-56';
   const wide = photo === undefined;
   const title = useOneLine(name);
@@ -400,9 +402,12 @@ export function ArtistBanner({ name, photo, sub }: { name: string; photo?: strin
           ))}
         <div className="min-w-0 flex-1">
           <div className="text-xs text-fg/80 [text-shadow:0_1px_8px_rgb(0_0_0/0.6)] lg:text-sm">Исполнитель</div>
-          <h2 ref={title} data-list-title className="line-clamp-2 break-words text-[clamp(2.5rem,12vw,9rem)] font-black leading-[1.05] tracking-tight [text-shadow:0_2px_16px_rgb(0_0_0/0.55)]">
-            {name}
-          </h2>
+          <div className="flex items-center gap-3">
+            <h2 ref={title} data-list-title className="line-clamp-2 min-w-0 break-words text-[clamp(2.5rem,12vw,9rem)] font-black leading-[1.05] tracking-tight [text-shadow:0_2px_16px_rgb(0_0_0/0.55)]">
+              {name}
+            </h2>
+            {mark}
+          </div>
           {sub && <div className="mt-1 text-sm text-fg/80 [text-shadow:0_1px_8px_rgb(0_0_0/0.6)]">{sub}</div>}
         </div>
       </div>

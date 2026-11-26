@@ -16,6 +16,8 @@ export interface TrackLook {
   identity?: VersionIdentity | null;
   /** the version's word given outright; undefined: the one kept for `identity` */
   label?: string | null;
+  /** the library's track: the mark of «Наведение порядка» beside the name, when it offers something for it */
+  mark?: number | null;
 }
 
 /** The cover beside the track's name and its line (the artist, unless `sub` says more). `size`: 40 in a computer's
@@ -30,7 +32,7 @@ export function TrackCell({ track, sub, size = 48, playing, dim, after, classNam
       <Cover src={track.cover} size={size} alt="" />
       <span className="min-w-0 flex-1">
         <span className={cx('block truncate text-[15px]', playing && 'font-semibold text-accent')}>
-          <TrackTitle title={track.title} track={track.identity} label={track.label} />
+          <TrackTitle title={track.title} track={track.identity} label={track.label} mark={track.mark} />
         </span>
         {(sub ?? track.artist) && <span className="block truncate text-[13px] text-muted">{sub ?? track.artist}</span>}
       </span>

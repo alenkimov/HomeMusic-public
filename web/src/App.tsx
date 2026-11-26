@@ -1,5 +1,6 @@
 import { PageScrollbar } from './components/PageScrollbar';
 import { useVersionLabelsSync } from './lib/versionLabels';
+import { useTidyMarksSync } from './lib/tidyMarks';
 import { setListeningAccount } from './lib/plays';
 import { forgetLast } from './lib/hooks';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -291,6 +292,7 @@ export function App() {
   useEffect(() => uid != null ? watchManualQueue() : undefined, [uid]);
   useEffect(() => uid != null && STANDALONE ? watchPlaybackDevices() : undefined, [uid]);
   useVersionLabelsSync(uid);
+  useTidyMarksSync(uid);
   useEffect(() => {
     if (uid != null) void refreshDislikes(true);
   }, [uid]);

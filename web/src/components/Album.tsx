@@ -5,6 +5,8 @@ import { Link, albumPath } from '../lib/router';
 import { menuPressProps, useContextMenu, type MenuAt } from './ContextMenu';
 import { IconButton, Cover, cx } from './ui';
 import { Hero } from '../pages/MediaLibrary';
+import type { MarkSubject } from '../lib/tidyMarks';
+import { TidyMark } from './TidyMark';
 
 /** An album the way every view of it draws one, whatever it came as (the catalog's, the library's, a part of
  * «Объединение альбомов»). The four views: `AlbumHero` — the head of a page; `AlbumCard` — a cover over its name,
@@ -108,10 +110,12 @@ export function AlbumLink({ title, to, className }: { title?: string | null; to?
 }
 
 /** The head of an album's page: its kind, its name, each artist with their page, the facts after them. */
-export function AlbumHero({ album, artists, facts, onCover, tracks, context = 'album', right }: {
+export function AlbumHero({ album, mark, artists, facts, onCover, tracks, context = 'album', right }: {
   album: AlbumLook;
-  /** each credited artist and their page */
-  artists: { name: string; to?: string | null }[];
+  /** the library's album: the mark of «Наведение порядка» after its name */
+  mark?: MarkSubject | null;
+  /** each credited artist and their page; `id`: the Hub's artist, for the mark after the name */
+  artists: { name: string; to?: string | null; id?: number | null }[];
   /** year, how many tracks, how long */
   facts: (string | number | null | undefined)[];
   onCover?: () => void;
@@ -126,6 +130,7 @@ export function AlbumHero({ album, artists, facts, onCover, tracks, context = 'a
       cover={album.cover}
       onCover={onCover}
       title={album.title}
+      mark={<TidyMark on={mark} size="md" />}
       right={right}
       sub={
         <span className="flex flex-wrap items-center gap-x-1.5">
@@ -133,6 +138,7 @@ export function AlbumHero({ album, artists, facts, onCover, tracks, context = 'a
             <span key={`${a.name}:${i}`} className="font-semibold text-fg">
               {i > 0 && <span className="pr-1.5 font-normal text-muted">,</span>}
               {a.to ? <Link to={a.to} className="hover:underline">{a.name}</Link> : a.name}
+              {a.id ? <TidyMark on={{ artist: a.id }} className="ml-1.5" /> : null}
             </span>
           ))}
           {shown.length > 0 && <span>· {shown.join(' · ')}</span>}
