@@ -18,8 +18,9 @@ import { attempt, confirmDialog, toast } from '../lib/ui';
 
 /** «Перенести музыку»: a user's collection from Yandex Music, VK («Моя музыка» and the playlists: a sign-in with the
  * login and the password, the code VK sends is typed here) or Spotify (a saved account or a playlist link) — ♥, playlists in
- * their order, liked albums and artists. The Hub reads the lists only (no audio): sign-in by a code on ya.ru/device,
- * a token, or an open profile link. Economy (the default): playlists and ♥ at once from what the library has, the
+ * their order, liked albums and artists. The Hub reads the lists only (no audio): sign-in by a code on ya.ru/device or
+ * an open profile link; VK's token got by hand is offered once its sign-in has failed (the Hub takes a token of
+ * Yandex too: `method: token`, not shown). Economy (the default): playlists and ♥ at once from what the library has, the
  * rest plays from the sources and is downloaded once listened to; «Скачать всё» downloads everything in the
  * background, below the users' own downloads. */
 
@@ -33,11 +34,7 @@ const KIND_ICON: Record<ImportCollectionOut['kind'], IconName> = {
 
 const ACTIVE = ['auth', 'fetching', 'running'];
 
-/** The Yandex Music app's own sign-in (`hub/app/imports/sources/yandex.py` CLIENT_ID): the token comes back in the
- * address it opens. */
-const YANDEX_TOKEN_URL = 'https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d';
-
-/** What was pasted: the token, or the whole address it came in (`…#access_token=…&…`). */
+/** What was pasted: the token, or a whole address it came in (`…#access_token=…&…`). */
 function pastedToken(text: string): string {
   const t = text.trim();
   return /[#?&]access_token=([^&\s]+)/.exec(t)?.[1] ?? t;
@@ -127,33 +124,40 @@ function SavedAccounts({ source, disabled }: { source: ImportSource; disabled: b
 // --- the list of imports + a new one ---------------------------------------------------------------
 
 /** `from`: the page of one service — its past transfers and its way in («Ещё» has an entry for each); none: all. */
-export function ImportsPage({ from = null }: { from?: ImportSource | null }) {
+export function ImportsPage({ from = null, token = false }: { from?: ImportSource | null; token?: boolean }) {
   const res = useAsync((s) => api.imports(s), []);
   const past = (res.data ?? []).filter((imp) => !from || imp.source === from);
   const laterList = useCoalesced(() => res.reload(true), 1500);
   useHubEvent('import', laterList);
-  const [busy, setBusy] = useState<'device' | 'profile' | 'token' | 'vk' | 'vk-token' | 'spotify-link' | null>(null);
+  const [busy, setBusy] = useState<'device' | 'profile' | 'vk' | 'vk-token' | 'spotify-link' | null>(null);
   const [vkLogin, setVkLogin] = useState('');
   const [vkPassword, setVkPassword] = useState('');
   const [vkToken, setVkToken] = useState('');
   const [profile, setProfile] = useState('');
-  const [token, setToken] = useState('');
   const [spotifyLink, setSpotifyLink] = useState('');
 
-  const start = async (method: 'device' | 'profile' | 'token') => {
+  const start = async (method: 'device' | 'profile') => {
     setBusy(method);
     const r = await attempt(() =>
-      api.createImport(method === 'profile' ? { method, url: profile.trim() } : method === 'token' ? { method, token: pastedToken(token) } : { method }),
+      api.createImport(method === 'profile' ? { method, url: profile.trim() } : { method }),
     );
     setBusy(null);
     if (r) navigate(`/import/${r.id}`);
   };
 
+  const [vkFailed, setVkFailed] = useState(false);
+  // a token pasted by hand is offered once the sign-in by the password has not got through: here, a sign-in of VK
+  // that failed lately, or the failed transfer's page sent here (`token`)
+  const vkTokenShown = token || vkFailed || past.some((imp) => imp.source === 'vk' && imp.status === 'failed' && !imp.started_at);
+
   const startVk = async (how: 'vk' | 'vk-token') => {
     setBusy(how);
     const r = await attempt(() => api.createImport(how === 'vk' ? { source: 'vk', method: 'password', login: vkLogin.trim(), password: vkPassword } : { source: 'vk', method: 'token', token: pastedToken(vkToken) }));
     setBusy(null);
-    if (!r) return;
+    if (!r) {
+      if (how === 'vk') setVkFailed(true);
+      return;
+    }
     setVkPassword('');
     navigate(`/import/${r.id}`);
   };
@@ -210,31 +214,6 @@ export function ImportsPage({ from = null }: { from?: ImportSource | null }) {
         </Button>
       </div>
 
-      <details className="card mx-4 lg:mx-6 mt-3 p-4">
-        <summary className="cursor-pointer text-sm text-muted"><ServiceText text="Вставить токен Яндекс Музыки вручную" /></summary>
-        <div className="mt-3 space-y-2">
-          <p className="text-xs text-dim">Нужен, только если не получается войти кодом. Это тот же вход, только руками:</p>
-          <ol className="list-decimal space-y-1 pl-5 text-xs text-muted">
-            <li>
-              На компьютере откройте{' '}
-              <a className="text-accent" href={YANDEX_TOKEN_URL} target="_blank" rel="noreferrer">эту ссылку</a> и войдите в Яндекс
-              (если спросит — «Разрешить»).
-            </li>
-            <li>
-              Откроется Яндекс Музыка, а в адресной строке будет{' '}
-              <span className="font-mono text-fg">…#access_token=y0_…&amp;…</span>. Скопируйте весь адрес и вставьте сюда — токен Хаб найдёт в нём сам.
-            </li>
-            <li>
-              Если адрес успел смениться: нажмите F12 → вкладка «Сеть» (Network), отметьте «Сохранять журнал» (Preserve log) и
-              откройте ссылку ещё раз — адрес с <span className="font-mono text-fg">access_token</span> будет в первых строках.
-            </li>
-          </ol>
-          <input className="input" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Токен" autoComplete="off" />
-          <Button block busy={busy === 'token'} disabled={!!busy || !token.trim()} onClick={() => start('token')}>
-            Продолжить с токеном
-          </Button>
-        </div>
-      </details>
       </>
       )}
 
@@ -261,11 +240,12 @@ export function ImportsPage({ from = null }: { from?: ImportSource | null }) {
         </p>
       </form>
 
-      <details className="card mx-4 lg:mx-6 mt-3 p-4">
-        <summary className="cursor-pointer text-sm text-muted"><ServiceText text="Вставить токен ВКонтакте вручную" /></summary>
+      {vkTokenShown && (
+      <details className="card mx-4 lg:mx-6 mt-3 p-4" open={token}>
+        <summary className="cursor-pointer text-sm text-muted"><ServiceText text="Не получается войти? Войти с токеном ВКонтакте" /></summary>
         <div className="mt-3 space-y-2">
           <p className="text-xs text-dim">
-            Нужен, только если вход формой выше не проходит. В браузере такой токен не получить: ВК отдаёт музыку только своему
+            Если ВК не пускает Хаб (капча без конца, «подозрительный вход»), можно войти со своего компьютера и вставить токен. В браузере его не получить: ВК отдаёт музыку только своему
             приложению для Android. Его выдаёт программа vkpymusic, на своём компьютере:
           </p>
           <ol className="list-decimal space-y-1 pl-5 text-xs text-muted">
@@ -282,6 +262,7 @@ export function ImportsPage({ from = null }: { from?: ImportSource | null }) {
           </Button>
         </div>
       </details>
+      )}
       </>
       )}
 
@@ -342,6 +323,11 @@ export function ImportPage({ id }: { id: number }) {
           <Button block variant="primary" onClick={() => navigate(sourcePage(imp.source), { replace: true })}>
             Начать заново
           </Button>
+          {imp.source === 'vk' && (
+            <Button block onClick={() => navigate(`${sourcePage('vk')}&token=1`, { replace: true })}>
+              Войти с токеном
+            </Button>
+          )}
         </div>
       ) : (
         <Progress imp={imp} onChange={(r) => res.setData(r)} />
