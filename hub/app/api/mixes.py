@@ -233,7 +233,9 @@ async def artist_map(ref: str = Query(max_length=64), n: int = Query(15, ge=1, l
     try:
         near = await sources.lastfm_near_artists(known.name or center.name, MAP_ASKED)
     except sources.SourceDown as e:
-        raise HTTPException(502, f"Last.fm не ответил: {e}") from e
+        from app.errors import http_error
+
+        raise http_error(e.__cause__ or e, "lastfm") from e
 
     async def one(name: str) -> CatalogArtist | None:
         try:

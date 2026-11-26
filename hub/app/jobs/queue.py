@@ -252,8 +252,17 @@ async def _execute(job: Job) -> _Result:
         raise
     except Exception as e:
         tb = traceback.format_exc(limit=8)
+        from app.errors import ServiceError
+
+        if isinstance(e, ServiceError) and not e.retryable:
+            # a service said no for good (the sign-in not accepted, no such record, an answer not understood):
+            # trying again says the same
+            log.warning("job %s (%s) failed: %s", job.id, job.kind, e, extra={"job_id": job.id})
+            return _Result(error=f"{e!r}\n{tb}", failure=e)
         if job.attempts < job.max_attempts:
             delay = min(600.0, 5 * 2 ** (job.attempts - 1))
+            if isinstance(e, ServiceError) and e.retry_after:
+                delay = min(3600.0, max(delay, e.retry_after))  # as long as the service asked to wait
             log.warning("job %s (%s) attempt %s failed: %r, retry in %ss", job.id, job.kind, job.attempts, e, delay,
                         extra={"job_id": job.id})
             return _Result(error=f"{e!r}\n{tb}", retry_in=delay)

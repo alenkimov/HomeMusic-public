@@ -29,6 +29,7 @@ from typing import Any
 
 import httpx
 
+from app.errors import ServiceError, said
 from app.net import RateLimiter, make_client, request_with_backoff
 
 log = logging.getLogger(__name__)
@@ -45,10 +46,11 @@ _limiter = RateLimiter(RATE_PER_S)
 _http: httpx.AsyncClient | None = None
 
 
-class YandexError(Exception):
+class YandexError(ServiceError):
+    """An error of Yandex Music (`app.errors.ServiceError` of the service «yandex»)."""
+
     def __init__(self, kind: str, message: str, status: int | None = None):
-        super().__init__(message)
-        self.kind, self.status = kind, status
+        super().__init__("yandex", kind, message, status=status)  # type: ignore[arg-type]
 
 
 def _client() -> httpx.AsyncClient:
@@ -133,7 +135,7 @@ class YandexMusic:
                                                base_delay=1.0, retry_statuses={429, 500, 502, 503, 504},
                                                params=params, data=data, headers=h)
             except httpx.HTTPError as e:
-                raise YandexError("unavailable", f"Яндекс Музыка не ответила: {type(e).__name__}") from e
+                raise YandexError("unavailable", said("yandex", "unavailable")) from e
         return self._answer(r)
 
     @staticmethod
@@ -143,15 +145,17 @@ class YandexMusic:
         except ValueError:
             body = None
         error = body.get("error") if isinstance(body, dict) else None
-        said = (error.get("message") or error.get("name")) if isinstance(error, dict) else error
+        told = (error.get("message") or error.get("name")) if isinstance(error, dict) else error
         if r.status_code >= 400 or error:
             status = r.status_code
             kind = ("not_found" if status in (400, 404) else "auth" if status in (401, 403)
                     else "limited" if status == 429 else "unavailable" if status == 451 or status >= 500
                     else "bad_answer")
             if status < 400:  # an error in a 200
-                kind = "auth" if "auth" in str(said).lower() or "owner" in str(said).lower() else "bad_answer"
-            raise YandexError(kind, f"Яндекс Музыка: {said or f'HTTP {status}'}", status)
+                kind = "auth" if "auth" in str(told).lower() or "owner" in str(told).lower() else "bad_answer"
+            # Yandex's own words go to the log; the user reads ours
+            log.info("yandex: %s %s -> %s %s", r.request.method, r.request.url.path, status, str(told)[:200])
+            raise YandexError(kind, said("yandex", kind, status), status)
         if not isinstance(body, dict):
             raise YandexError("bad_answer", "Яндекс Музыка ответила не JSON", r.status_code)
         return body["result"] if body.get("result") is not None else body

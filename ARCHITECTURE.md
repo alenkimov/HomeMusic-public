@@ -100,6 +100,9 @@ httpx (`app.net.make_client` — every new client goes through it, or through `R
 Hub's own client on it, `app/catalog/ym.py`), `requests` (yt-dlp) and `wreq` (spotapi, the Spotify catalog — given
 its proxy when its session opens) by hooks, the Spotify session (another process) and Telegram by their proxy setting.
 «The requests that follow are an account's» is set when its secret is read (`integrations.credential`).
+Whatever a service's client raises is one `ServiceError` (`app/errors.py`: unavailable, limited, not_found, auth,
+bad_answer, refused) with words for the user; the API answers 404 / 503 / 502 by it, the job queue tries again only
+what is of the moment, as long as the service asked to wait.
 
 ## The app and the Hub talking
 

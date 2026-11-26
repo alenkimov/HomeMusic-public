@@ -343,3 +343,27 @@ async def test_an_event_published_by_the_worker_reaches_the_apps_through_the_api
         await relay.stop()
         await dispose()
         config.get_settings.cache_clear()
+
+
+async def test_a_service_error_for_good_is_not_tried_again_and_a_wait_is_as_long_as_asked(db):
+    from app.errors import ServiceError
+
+    errors = [ServiceError("yandex", "auth"), ServiceError("deezer", "limited", retry_after=120)]
+
+    @queue.handler("test_service")
+    async def fails(job: Job) -> None:
+        raise errors[job.payload_json["i"]]
+
+    try:
+        async with session_scope() as s:
+            ids = [(await queue.enqueue(s, "test_service", {"i": i})).id for i in range(2)]
+        for _ in range(2):
+            job = await queue._claim("test")
+            assert job is not None
+            await queue.run_job(job)
+    finally:
+        queue._handlers.pop("test_service", None)
+    async with session_scope() as s:
+        auth, limited = [await s.get(Job, i) for i in ids]
+    assert (auth.status, auth.attempts) == ("failed", 1)
+    assert limited.status == "queued" and (limited.run_after - limited.updated_at) >= timedelta(seconds=115)

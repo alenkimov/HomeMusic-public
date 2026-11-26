@@ -541,6 +541,10 @@ async def _handle_download_item(job: Job, prepared: Path | None) -> None:
     await step(item_id, "bad", f"Итог: {verdict[0].lower()}{verdict[1:]}. Нужен ваш выбор")
 
 
+# a source of files as a service of `app.errors` (whose words say who failed)
+PROVIDER_SERVICES = {"ytdlp": "youtube", "yt_reupload": "youtube", "hitmos_fm": "hitmos_fm"}
+
+
 async def search_provider(p, q: TrackQuery, item_id: int, *, limit: int = 15,
                           enrich_top_n: int | None = None) -> tuple[list[Candidate], str | None]:
     """Search one provider, rank its results and enrich the top ones (hitmoz: Explicit, real bitrate).
@@ -554,8 +558,10 @@ async def search_provider(p, q: TrackQuery, item_id: int, *, limit: int = 15,
     except ProviderError as e:
         return [], f"{p.name}: {e}"
     except Exception as e:
+        from app.errors import explain
+
         log.warning("provider %s search failed: %r", p.name, e, extra={"item_id": item_id})
-        return [], f"{p.name}: {e!r}"
+        return [], str(explain(e, PROVIDER_SERVICES.get(p.name, p.name)))
     ranked = rank_candidates(q, [c for c in raw if uploaded_in_time(c, cutoffs)], cfg)
     if ranked and n_enrich:
         top = ranked[:n_enrich]

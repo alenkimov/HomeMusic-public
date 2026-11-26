@@ -276,11 +276,9 @@ async def fetch_snapshot(client: Any, owner: str | int | None, *, signed_in: boo
 
 
 def _unanswered(e: Any) -> str:
-    if getattr(e, "status", None) == 451:
-        return "Яндекс Музыка не отвечает на запросы из этой страны — нужен прокси России («Прокси и запросы»)"
-    if getattr(e, "kind", None) == "limited":
-        return "Яндекс Музыка просит подождать: слишком много запросов — попробуйте позже"
-    return f"Яндекс Музыка не ответила: {e}"
+    from app.errors import explain
+
+    return str(explain(e, "yandex"))
 
 
 async def fetch(token: str | None, login: str | None, connection_id: int | None = None) -> Snapshot:

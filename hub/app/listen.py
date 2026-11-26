@@ -906,7 +906,9 @@ async def _resolve_catalog(ref: str, probe: bool, *, strict: bool = False) -> Ch
                 raise RecordingUnavailable("Трек не найден в каталоге") from e
         except Exception as e:
             if t is None:
-                raise ListenError(502, f"Каталог недоступен: {e}") from e
+                from app.errors import explain, service_of_ref
+
+                raise ListenError(502, str(explain(e, service_of_ref(external)))) from e
     q = query_from_track(t)
     query = {**q.model_dump(), "catalog_ref": t.ref}
     # An owned song never waits for optional album/name metadata from external services.

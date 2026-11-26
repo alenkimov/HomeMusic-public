@@ -274,7 +274,9 @@ async def match(upload_id: int, body: UploadMatchIn, user: User = Depends(curren
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
     except Exception as e:
-        raise HTTPException(502, f"Каталог не ответил: {e}") from e
+        from app.errors import http_error
+
+        raise http_error(e, body.ref) from e
     u.probed_tags_json = json.loads(json.dumps(tags, default=str))
     await s.flush()
     return await upload_out(s, u)

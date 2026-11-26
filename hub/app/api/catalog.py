@@ -35,13 +35,13 @@ from app.catalog.models import (
     ArtistPage,
     CatalogAlbum,
     CatalogArtist,
-    CatalogNotFound,
     CatalogTrack,
     SearchResults,
     split_ref,
 )
 from app.catalog.yandex import split_suffix
 from app.db import get_session, session_scope
+from app.errors import http_error
 from app.library import tagger
 from app.library.importer import ImportSpec, find_album, get_or_create_album, library_lock
 from app.library.owned import annotate_albums, annotate_tracks
@@ -75,10 +75,8 @@ async def get_artist_page(ref: str) -> ArtistPage:
     src, id_ = _split(ref)
     try:
         return await svc.artist_page(f"{src}:{id_}")
-    except CatalogNotFound as e:
-        raise HTTPException(404, "Исполнитель не найден") from e
     except Exception as e:
-        raise HTTPException(502, f"Каталог недоступен: {e}") from e
+        raise http_error(e, src, "Исполнитель не найден") from e
 
 
 async def _tie_yandex(s: AsyncSession, who: Any, page: ArtistPage, progress: SourceProgress | None = None) -> None:
@@ -410,10 +408,8 @@ async def get_album(ref: str, *, credited: bool = False) -> CatalogAlbum:
     src, id_ = _split(ref)
     try:
         return await svc.album(f"{src}:{id_}", credited=credited)
-    except CatalogNotFound as e:
-        raise HTTPException(404, "Альбом не найден") from e
     except Exception as e:
-        raise HTTPException(502, f"Каталог недоступен: {e}") from e
+        raise http_error(e, src, "Альбом не найден") from e
 
 
 @router.get("/artist/{ref}", response_model=ArtistPageOut)
@@ -676,7 +672,7 @@ async def namesakes_exclude(body: NamesakeIn, user: User = Depends(current_user)
         artist = await svc.deezer.get_artist(id_)
         albums = [a for a in await svc.deezer.get_artist_albums(id_, everyones=True) if a.ref in want]
     except Exception as e:
-        raise HTTPException(502, f"Каталог недоступен: {e}") from e
+        raise http_error(e, "deezer", "Исполнитель не найден") from e
     n = await namesakes.exclude(s, user.id, body.artist_ref, artist.name, albums)
     await s.commit()
     return {"excluded": n, "total": len(namesakes.of(body.artist_ref))}
