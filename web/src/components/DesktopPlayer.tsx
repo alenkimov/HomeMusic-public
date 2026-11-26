@@ -1,5 +1,5 @@
 import { PlayingArtists, PlayingMarks, PlayingTitle } from './NowPlaying';
-import { askForQueue } from '../lib/playerQueue';
+import { askForLyrics, askForQueue } from '../lib/playerQueue';
 import { openTagsSheet, tagKey } from '../lib/tags';
 import { useEffect, useRef, type CSSProperties } from 'react';
 import { fmtDuration } from '../lib/format';
@@ -144,6 +144,8 @@ export function DesktopPlayer() {
         </div>
 
         <div className="flex min-w-0 items-center justify-end gap-1">
+          {/* the buttons stand close: a narrower place each, no gap between them */}
+          <div className="flex items-center [&_button]:!w-8 [&>a]:!w-8">
           {track && !isUpload(track) && <TrackMenuButton track={menuTrack!} className="!h-9 !w-9" inPlayer />}
           {track && !isUpload(track) && <IconButton icon="share" size={18} label="Поделиться" onClick={() => openShare({ title: track.title, artist: track.artist, ref: track.ref, nd_song_id: info?.nd_song_id })} className="!h-9 !w-9 text-muted hover:text-fg" />}
           {/* the tags of the track: its own mark here, not a line of ⋯ (a track the library has not got has none) */}
@@ -158,9 +160,14 @@ export function DesktopPlayer() {
             />
           )}
           <PlaybackDevicesButton />
+          {/* the full player, opened with the text of the song */}
+          <Link to="/player" onClick={askForLyrics} title="Текст песни" aria-label="Текст песни" className={cx('flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg', !track && 'pointer-events-none opacity-40')}>
+            <Icon name="lyrics" size={19} />
+          </Link>
           <Link to="/player" onClick={askForQueue} title="Очередь" aria-label="Очередь" className={cx('flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:scale-115 hover:text-fg', !track && !hasManual && 'pointer-events-none opacity-40')}>
             <Icon name="queue" size={20} />
           </Link>
+          </div>
           <div ref={volumeControl} className="-mx-1 flex h-11 min-w-0 items-center gap-1 px-2">
             <Icon name="volume" size={18} className="shrink-0 text-muted" />
             <input

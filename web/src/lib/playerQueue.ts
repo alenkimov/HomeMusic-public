@@ -1,5 +1,18 @@
-/** The full player opens with its queue shown when it was asked for (the queue button of the desktop's bar). */
+/** The full player opens with its queue — or its lyrics — shown when it was asked for (the buttons of the desktop's
+ * bar). */
 let asked = false;
+let lyrics = false;
+
+export const askForLyrics = () => {
+  lyrics = true;
+};
+
+/** Were the lyrics asked for? Read once, as the queue is. */
+export function lyricsAsked(): boolean {
+  const was = lyrics;
+  lyrics = false;
+  return was;
+}
 
 export const askForQueue = () => {
   asked = true;

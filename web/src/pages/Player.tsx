@@ -20,7 +20,7 @@ import { TrackCell } from '../components/Track';
 import { Cover, Empty, IconButton, Sheet, Spinner, cx } from '../components/ui';
 import { fmtDuration, fmtNum, tracksWord } from '../lib/format';
 import { useAsync } from '../lib/hooks';
-import { queueAsked } from '../lib/playerQueue';
+import { lyricsAsked, queueAsked } from '../lib/playerQueue';
 import { useSeek } from '../lib/seek';
 import { SeekLine } from '../components/SeekLine';
 import { listenTopPull } from '../lib/topPull';
@@ -132,7 +132,10 @@ export function PlayerPage() {
   const canPrev = useListen(hasPrev);
   const { shownPos, aim, range } = useSeek(position, duration);
   const [busy, setBusy] = useState(false);
+  // asked for by the bar's lyrics button: open with the text, whatever was chosen last; else as it was left
+  const [lyricsWanted] = useState(lyricsAsked);
   const [lyrics, setLyrics] = useState(() => {
+    if (lyricsWanted) return true;
     try {
       return localStorage.getItem('hm-player-lyrics') === '1';
     } catch {
@@ -140,7 +143,7 @@ export function PlayerPage() {
     }
   });
   const wide = useWide();
-  const [queueOpen, setQueueOpen] = useState(queueAsked);
+  const [queueOpen, setQueueOpen] = useState(() => queueAsked() && !lyricsWanted);
   // «Во весь экран» (a wide screen): the page takes the whole screen and keeps it awake. What is so is read from the
   // browser: the whole screen is also left by Esc
   const [full, setFull] = useState(() => !!document.fullscreenElement);
