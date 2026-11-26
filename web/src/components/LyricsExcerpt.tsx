@@ -9,7 +9,8 @@ import { knownLyrics, loadLyrics } from '../lib/trackLyrics';
 import { fmtDuration, plural } from '../lib/format';
 import { listenTrack } from './catalog';
 import { FixedLine } from './Lyrics';
-import { Segmented, cx } from './ui';
+import { Icon } from './Icon';
+import { cx } from './ui';
 
 const CONTEXT = 2; // lines shown before and after what changes
 const SHOWN = 2; // pieces of the text shown before «Ещё»
@@ -72,8 +73,16 @@ export function LyricsExcerpt({ p, track, actions }: { p: TidyProposalOut; track
           {p.why && <span className="text-muted"> · {p.why}</span>}
         </span>
         {fixes.size > 0 && (
-          <Segmented<View> label="Какой текст показать" value={view} onChange={setView}
-            options={[{ value: 'after', label: 'Как будет' }, { value: 'before', label: 'Как было' }]} />
+          <button
+            type="button"
+            aria-pressed={view === 'after'}
+            onClick={() => setView((v) => (v === 'after' ? 'before' : 'after'))}
+            title={view === 'after' ? 'Показать текст, каким он был' : 'Показать текст таким, каким он станет после исправления'}
+            className={cx('flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-semibold', view === 'after' ? 'bg-ai text-bg' : 'bg-ai/15 text-ai hover:bg-ai/25')}
+          >
+            <Icon name="sparkle" size={13} filled stroke={0} />
+            Как будет
+          </button>
         )}
       </div>
 
