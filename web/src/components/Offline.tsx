@@ -1,3 +1,4 @@
+import { useHeard } from '../lib/heard';
 import { useEffect } from 'react';
 import type { TrackOut } from '../api/types';
 import { dropList, keepList, offlineSupported, syncList, useKept, useKeptList } from '../lib/offline';
@@ -59,9 +60,10 @@ export function KeptMark({ refId, className }: { refId: string; className?: stri
   );
 }
 
-/** A track cannot play now: there is no network and it is not kept on the device. */
-export function useUnreachable(refId: string): boolean {
+/** A track cannot play now: there is no network and it is not on the device (kept, or heard lately). */
+export function useUnreachable(refId: string, libraryId?: number | null): boolean {
   const online = useHubReachable();
   const kept = useKept(refId);
-  return !online && !kept;
+  const heard = useHeard(refId, libraryId);
+  return !online && !kept && !heard;
 }

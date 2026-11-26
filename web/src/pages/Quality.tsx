@@ -4,7 +4,7 @@ import { titleWithVersion } from '../lib/versionLabels';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { QualityRow } from '../api/types';
-import { fileReplaced } from '../lib/offline';
+import { fileReplaced } from '../lib/heard';
 import { Icon } from '../components/Icon';
 import { Button, Empty, ErrorState, PageHeader, ProgressBar, SkeletonRows, cx , Segmented } from '../components/ui';
 import { fmtDuration, tracksWord } from '../lib/format';

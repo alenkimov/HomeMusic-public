@@ -2,6 +2,8 @@ import { useSyncExternalStore } from 'react';
 import { api, listenStreamUrl } from '../api/client';
 import type { ListenOut, TrackOut } from '../api/types';
 import { AS_IT_IS } from './formats';
+import { hubEvents } from './events';
+import { needsTrackFile } from './findFile';
 import { hubFetch, hubReachable, onHubBack } from './reach';
 
 /** «Офлайн»: lists kept on the device — a playlist, «Любимое», a list of «Для вас» — so they play without the network.
@@ -11,6 +13,10 @@ import { hubFetch, hubReachable, onHubBack } from './reach';
  * address the player asks for. The service worker (`public/sw.js`) answers that address from the cache, so the
  * player plays a kept track without knowing it is kept — with the network and without. The lists and covers a page
  * reads are kept by the service worker as well, so the pages open offline.
+ *
+ * A kept list is kept up to date by itself (`syncKept`), as a subscription: when the app opens, when the library
+ * changes (a ♥, a track added to a playlist or taken out of it), when the Hub is back and when the app is looked at
+ * again — its new tracks are fetched, the ones taken out of it leave the device.
  *
  * A track is kept while some kept list has it; a list opened again is brought up to date (`syncList`) — and so is a
  * kept track whose file was put another in its place (another file picked, an upgrade: `FileOut.uid` is not the one
@@ -269,6 +275,9 @@ export function forgetAccount() {
   navigator.serviceWorker.controller?.postMessage({ type: 'hm-forget' });
 }
 
+/** A track is kept on the device by some list (whether or not it is the track's file now). */
+export const isKeptRef = (ref: string): boolean => tracks.has(ref);
+
 /** What the Hub said of a kept track's file: the player shows it when the Hub cannot be asked. */
 export const keptInfo = (ref: string): ListenOut | null => tracks.get(ref)?.info ?? null;
 // --- for the screen -----------------------------------------------------------------------------------------
@@ -318,3 +327,73 @@ onHubBack(() => {
   for (const ref of needed()) if (!tracks.has(ref) && !waiting.includes(ref) && wanted.has(ref)) waiting.push(ref);
   pump();
 });
+
+// --- a kept list as a subscription ----------------------------------------------------------------------------
+
+const SYNC_DELAY_MS = 3000;
+const SYNC_GAP_MS = 30_000; // the library changes often while it downloads: the lists are read again at most this often
+const SYNC_EVERY_MS = 60_000; // the app looked at again: not more often than this
+let syncTimer: number | undefined;
+let syncedAt = 0;
+let syncing: Promise<void> | null = null;
+
+/** A kept list as the Hub has it now (what has a file to play), or null when it is not there any more. */
+async function listNow(key: string): Promise<{ title?: string; items: TrackOut[] } | null> {
+  const playable = (items: readonly TrackOut[]) => items.filter((t) => !needsTrackFile(t));
+  if (key === 'liked') return { items: playable((await api.ndLiked()).songs) };
+  if (key.startsWith('playlist:')) {
+    const p = await api.playlist(key.slice('playlist:'.length));
+    return { title: p.name, items: playable(p.tracks) };
+  }
+  if (key.startsWith('foryou:')) return { items: playable((await api.forYouList(key.slice('foryou:'.length), {})).tracks) };
+  return null;
+}
+
+/** «Скачивать „Любимое“»: the liked tracks kept on the device, new likes fetched as they come. */
+export async function keepLiked(on: boolean): Promise<void> {
+  if (!on) return dropList('liked');
+  const now = await listNow('liked');
+  if (now) await keepList('liked', 'Любимое', '/liked', now.items);
+}
+
+export function useLikedKept(): boolean {
+  useVersion();
+  return lists.has('liked');
+}
+
+/** Every kept list brought up to date with the Hub. */
+export function syncKept(): Promise<void> {
+  if (!offlineSupported()) return Promise.resolve();
+  syncing ??= (async () => {
+    await initOffline();
+    syncedAt = Date.now();
+    for (const list of [...lists.values()]) {
+      if (!hubReachable()) break;
+      try {
+        const now = await listNow(list.key);
+        if (now) await syncList(list.key, now.title ?? list.title, now.items);
+      } catch (e) {
+        console.info('offline: a kept list was not brought up to date', list.key, e);
+      }
+    }
+  })().finally(() => { syncing = null; });
+  return syncing;
+}
+
+function syncSoon() {
+  if (!lists.size) return;
+  window.clearTimeout(syncTimer);
+  syncTimer = window.setTimeout(() => void syncKept(), Math.max(SYNC_DELAY_MS, syncedAt + SYNC_GAP_MS - Date.now()));
+}
+
+if (typeof window !== 'undefined') {
+  // a ♥ given or taken back, a playlist changed, the library changed, a new issue of «Для вас»
+  const LIST_CHANGES = new Set(['changed', 'imported', 'playlist', 'starred', 'unstarred', 'discoveries']);
+  hubEvents.on('library', (e) => { if (LIST_CHANGES.has(e.kind)) syncSoon(); });
+  hubEvents.on('reconnect', syncSoon);
+  window.addEventListener('hm:hub-favorite', syncSoon);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && Date.now() - syncedAt > SYNC_EVERY_MS) syncSoon();
+  });
+  onHubBack(syncSoon);
+}

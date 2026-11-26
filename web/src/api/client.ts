@@ -585,6 +585,8 @@ export const api = {
   tidy: (signal?: AbortSignal) => request<TidyOverviewOut>('GET', '/api/tidy', { signal }),
   tidyProposals: (section: TidyProposalSection, signal?: AbortSignal) =>
     request<TidyProposalOut[]>('GET', withQuery('/api/tidy/proposals', { section }), { signal }),
+  listenStorage: (signal?: AbortSignal) =>
+    request<{ count: number; bytes: number; keep_days: number; limit_bytes: number }>('GET', '/api/listen/storage', { signal }),
   tidyMarks: (signal?: AbortSignal) => request<TidyProposalOut[]>('GET', '/api/tidy/marks', { signal }),
   tidyJournal: (before?: number, signal?: AbortSignal) =>
     request<TidyProposalOut[]>('GET', withQuery('/api/tidy/journal', { before }), { signal }),

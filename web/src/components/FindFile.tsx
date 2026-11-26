@@ -7,7 +7,7 @@ import { closeFindFile, filePickerTarget, openFindFile, useFindFile, type FileSo
 import { fmtDuration } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { isUpload, pause, useListen } from '../lib/listen';
-import { fileReplaced } from '../lib/offline';
+import { fileReplaced } from '../lib/heard';
 import { pauseNative } from '../lib/player';
 import { EDITED_EVENT } from '../lib/trackEdit';
 import { confirmDialog, toast, toastError } from '../lib/ui';

@@ -3,6 +3,7 @@ import { subscribeVersionLabels, titleWithVersion } from './versionLabels';
 import { imageUrl } from './img';
 import { ofHiddenArtist } from './dislikes';
 import { keptInfo, keptPlays } from './offline';
+import { heardInfo, heardPlays, isHeard, noteHeard } from './heard';
 import { OFFLINE_WAVE, waveAudio } from './offlineWave';
 import { ApiError, api, errorMessage, isAbort, listenStreamUrl } from '../api/client';
 import { ANY_FORMAT, CANT_ANY } from './formats';
@@ -579,7 +580,8 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
     ...(claim ? { manualQueue: state.manualQueue.filter((entry) => entry.id !== claim.id) } : {}) });
   const reserve = listContext.startsWith('wave:') ? waveAudio(track.ref) : null;
   const ref = reserve ? track.ref : playbackRef(track);
-  a.src = reserve?.url ?? listenStreamUrl(ref);
+  // heard lately and still the track's file: it plays from the device (`lib/heard.ts`)
+  a.src = reserve?.url ?? listenStreamUrl(ref) + (heardPlays(ref, track.file) ? '&heard=1' : '');
   if (autoplay) play(a);
   else a.load();
   mediaSession(track);
@@ -590,7 +592,7 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
   // a track kept on the device (`lib/offline.ts`) plays from it: when the Hub cannot be asked, what it said of the
   // file when the track was kept is shown
   (reserve ? Promise.resolve(reserve.info) : api.listen(ref, ctl.signal)).catch((e: unknown) => {
-    const kept = isAbort(e) ? null : keptInfo(track.ref);
+    const kept = isAbort(e) ? null : keptInfo(track.ref) ?? heardInfo(ref);
     if (kept) return kept;
     if (e instanceof ApiError && e.status === 500 && !ctl.signal.aborted) {
       resolution.retryMedia = a.readyState < HTMLMediaElement.HAVE_CURRENT_DATA && !played?.started;
@@ -610,6 +612,7 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
       if (state.phase === 'playing') refreshInfo();
       reportStart();
       prefetchNext();
+      if (!reserve) heard(track, ref, { uid: info.file_uid });
     },
     (e: unknown) => {
       if (isAbort(e) || resolving !== resolution) return;
@@ -619,6 +622,12 @@ function start(queue: readonly ListenTrack[], index: number, auto = false, posit
       playbackFailed(errorMessage(e));
     },
   );
+}
+
+/** A track played or coming up goes into the device's cache of what was heard (`lib/heard.ts`). */
+function heard(t: ListenTrack, ref: string, file: { uid?: string | null } | null | undefined, now = false) {
+  const id = t.library_track_id ?? (ref.startsWith('lib:') ? Number(ref.slice(4)) : null);
+  noteHeard(ref, t.ref, { targetType: 'track', trackId: id, songId: t.nd_song_id, ref: t.ref }, id != null ? String(id) : null, file, now);
 }
 
 /** The Hub opens the picked file only when the stream asks for it, and moves on to the next file if it doesn't
@@ -661,6 +670,8 @@ function prefetchNext() {
       prefetching.delete(ref);
     }
   }
+  // the next two are fetched to the device as well: a switch then starts at once, with the network or without
+  for (const t of ahead.slice(0, 2)) if (!(state.context.startsWith('wave:') && waveAudio(t.ref))) heard(t, playbackRef(t), t.file, true);
   for (const [ref, how] of want) {
     prefetching.get(ref)?.ctl.abort(); // it was a start, it is the next track now
     const ctl = new AbortController();
@@ -744,10 +755,11 @@ export function listen(track: ListenTrack, queue?: readonly ListenTrack[], conte
   startList(track, queue, context, origin);
 }
 
-/** Without the network only what is on the device plays: a track kept for offline, or one of «Моя волна»'s reserve
- * when played as the wave. Anything else would only go looking for its file and fail. */
+/** Without the network only what is on the device plays: a track kept for offline, one heard lately (`lib/heard.ts`),
+ * or one of «Моя волна»'s reserve when played as the wave. Anything else would only go looking for its file and fail. */
 function playableNow(track: ListenTrack, context: string): boolean {
-  return hubReachable() || !!keptInfo(track.ref) || (context.startsWith('wave:') && !!waveAudio(track.ref));
+  return hubReachable() || !!keptInfo(track.ref) || isHeard(track.ref, track.library_track_id)
+    || (context.startsWith('wave:') && !!waveAudio(track.ref));
 }
 
 /** A tap on what cannot play without the network: said, and what plays now goes on. */

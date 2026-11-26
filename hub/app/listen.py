@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -102,13 +103,16 @@ PREFETCH_WORKERS = 3
 PREFETCH_MAX = 40  # tracks per user
 _PLAYABLE_TYPES = ("audio/", "video/")  # googlevideo may label audio-only formats video/*
 LOCAL_DIR = "listen"  # under staging: server copies, and copies of files of sources without plain HTTP audio
-LOCAL_KEEP_S = MEM_TTL_S  # a copy, since its last use
-LOCAL_MAX_BYTES = 500 * 2**20
+# a copy, since its last use: a home server has the room, and a track heard again (a pause, a replay a week later)
+# comes from its disk, not from the source anew
+LOCAL_KEEP_S = 30 * 86400
+LOCAL_MAX_BYTES = 30 * 2**30
 LOCAL_MEDIA_TYPES = {".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".mp4": "audio/mp4", ".opus": "audio/ogg",
                      ".ogg": "audio/ogg", ".webm": "audio/webm", ".flac": "audio/flac"}
 STREAM_SUFFIXES = {"audio/mpeg": ".mp3", "audio/mp4": ".m4a", "audio/ogg": ".ogg", "audio/webm": ".webm",
                    "audio/flac": ".flac"}
 COPY_NAME = "stream"  # a server copy, in the folder of its ref under LOCAL_DIR
+COPY_NOTE = "stream.json"  # beside a whole copy: which file it is — found again after a restart or a pick forgotten
 COPY_CHUNK = 64 * 1024  # what a stream reads from a server copy at once
 HEAD_BYTES = 512 * 1024  # the start of a track loaded ahead: some ten seconds of a heavy file, more of a light one
 HEAD_KEEP_S = 20 * 60  # how long a copy stopped at its start waits for the rest to be wanted
@@ -1329,6 +1333,19 @@ def _local_name(ref: str) -> str:
     return hashlib.sha1(ref.encode()).hexdigest()[:16]
 
 
+def copies_usage() -> tuple[int, int]:
+    """What the server copies take: how many tracks and how many bytes."""
+    root = get_settings().staging_dir / LOCAL_DIR
+    count = total = 0
+    if root.is_dir():
+        for d in root.iterdir():
+            if d.is_dir():
+                sizes = [f.stat().st_size for f in d.iterdir() if f.is_file()]
+                count += 1
+                total += sum(sizes)
+    return count, total
+
+
 def prune_local(root: Path, busy: set[str], now: float | None = None) -> None:
     """Copies unused for `LOCAL_KEEP_S` go, and the least recently used ones while all of them take more than
     `LOCAL_MAX_BYTES`. Copies being downloaded (`busy` folder names) stay."""
@@ -1375,6 +1392,9 @@ def _server_copy(c: Choice, *, background: bool, head: bool = False) -> _Copy:
     for ref in [r for r, old in _copies.items() if old.failed or (old.done and not old.path.is_file())]:
         del _copies[ref]
     assert c.candidate is not None
+    if (kept := _kept_copy(c)) is not None:
+        _copies[c.ref] = kept
+        return kept
     cp = _Copy(c.candidate, get_settings().staging_dir / LOCAL_DIR / _local_name(c.ref) / COPY_NAME,
                Priority(background), limit=HEAD_BYTES if head else None)
     if not head:
@@ -1383,6 +1403,29 @@ def _server_copy(c: Choice, *, background: bool, head: bool = False) -> _Copy:
     _copies[c.ref] = cp
     _stir()
     return cp
+
+
+def _kept_copy(c: Choice) -> _Copy | None:
+    """A whole copy of the picked file left on disk (`COPY_NOTE`): the Hub restarted, or the pick was forgotten in
+    the meantime. It is served as it is, and its use keeps it (`prune_local` goes by the time of the last use)."""
+    assert c.candidate is not None
+    path = get_settings().staging_dir / LOCAL_DIR / _local_name(c.ref) / COPY_NAME
+    try:
+        note = json.loads((path.parent / COPY_NOTE).read_text())
+        size = path.stat().st_size
+    except (OSError, ValueError):
+        return None
+    if (note.get("provider"), note.get("provider_id")) != (c.candidate.provider, c.candidate.provider_id) \
+            or note.get("size") != size or not size:
+        return None
+    os.utime(path)
+    return _Copy(c.candidate, path, Priority(False), media_type=note.get("media_type") or "audio/mpeg", size=size,
+                 have=size, done=True)
+
+
+def _note_copy(cp: _Copy) -> None:
+    (cp.path.parent / COPY_NOTE).write_text(json.dumps({"provider": cp.cand.provider, "provider_id": cp.cand.provider_id,
+                                                        "media_type": cp.media_type, "size": cp.have}))
 
 
 def _urgent() -> bool:
@@ -1473,6 +1516,7 @@ async def _download_copy(c: Choice, cp: _Copy) -> None:
                 continue
             if cp.size is None or cp.have >= cp.size:
                 cp.size = cp.have
+                await asyncio.to_thread(_note_copy, cp)
                 cp.done = True
         log.info("listen %s: server copy %d KB (%.1f s%s)", c.ref, cp.have // 1024, time.monotonic() - t0,
                  ", ahead" if cp.prio.background else "")

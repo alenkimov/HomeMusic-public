@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from starlette.background import BackgroundTask
 
@@ -70,6 +72,21 @@ async def resolve(ref: str, ahead: Literal["whole", "head"] | None = None, cant:
         track_id=track_id,
         stream_url=f"/api/listen/stream?ref={quote(c.ref, safe='')}",
     )
+
+
+class ListenStorageOut(BaseModel):
+    count: int  # tracks the Hub keeps copies of
+    bytes: int
+    keep_days: int  # a copy unheard this long goes
+    limit_bytes: int  # past this, the least recently heard go first
+
+
+@router.get("/storage", response_model=ListenStorageOut)
+async def storage(user: User = Depends(current_user)):
+    """The Hub's copies of the tracks listened to (`app.listen`, server copies): what they take and how long they stay."""
+    count, total = await asyncio.to_thread(listen.copies_usage)
+    return ListenStorageOut(count=count, bytes=total, keep_days=listen.LOCAL_KEEP_S // 86400,
+                            limit_bytes=listen.LOCAL_MAX_BYTES)
 
 
 @router.post("/prefetch", response_model=ListenPrefetchOut)

@@ -61,7 +61,8 @@ import { HiddenPage } from './pages/Hidden';
 import { HistoryPage } from './pages/History';
 import { OfflinePage } from './pages/Offline';
 import { refreshDislikes, resetDislikes } from './lib/dislikes';
-import { forgetAccount, initOffline } from './lib/offline';
+import { forgetAccount, initOffline, syncKept } from './lib/offline';
+import { clearHeard, initHeard } from './lib/heard';
 import { setOfflineWaveAccount } from './lib/offlineWave';
 import { ForYouPage } from './pages/ForYou';
 import { TastePage } from './pages/Mix';
@@ -184,6 +185,7 @@ export function App() {
         stopListening();
         forgetLast();
         forgetAccount();
+        void clearHeard();
         resetStars();
         resetDislikes();
         resetInPlaylists();
@@ -286,10 +288,13 @@ export function App() {
   // what is kept on the device is read once, and what was not fetched to the end goes on
   useEffect(() => {
     void initOffline();
+    void initHeard();
   }, []);
   // whom the user does not listen to: the player needs it from the start, to go past their tracks
   const uid = me?.id;
   useEffect(() => uid != null ? watchManualQueue() : undefined, [uid]);
+  // the kept lists, as subscriptions: brought up to date when the app opens for the account
+  useEffect(() => { if (uid != null) void initOffline().then(() => syncKept()); }, [uid]);
   useEffect(() => uid != null && STANDALONE ? watchPlaybackDevices() : undefined, [uid]);
   useVersionLabelsSync(uid);
   useTidyMarksSync(uid);

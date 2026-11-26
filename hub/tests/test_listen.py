@@ -423,6 +423,32 @@ async def test_dropped_upstream_connection_is_resumed(env):
     assert seen == ["bytes=0-", "bytes=1000-"]
 
 
+async def test_a_whole_copy_is_found_again_on_disk_after_a_restart(env):
+    from app import listen
+
+    c, hm, mock = env["client"], env["hm"], env["mock"]
+    seen: list[str | None] = []
+
+    def cdn(req: httpx.Request) -> httpx.Response:
+        seen.append(req.headers.get("range"))
+        return ranged(req)
+
+    mock.route(host="keep.test").mock(side_effect=cdn)
+    hm.cands = [cand("1", "https://keep.test/a.mp3")]
+    url = (await c.get("/api/listen", params={"ref": "dz:100"})).json()["stream_url"]
+    assert (await c.get(url)).content == AUDIO
+    assert seen == ["bytes=0-"]
+    # the Hub forgot its copies (a restart, the pick gone from memory): the one on its disk is served, not fetched anew
+    listen._copies.clear()
+    listen._choices.clear()
+    r = await c.get(url, headers={"Range": "bytes=10-19"})
+    assert r.status_code == 206 and r.content == AUDIO[10:20]
+    assert seen == ["bytes=0-"]
+    # «Офлайн» says what the copies take and how long they stay
+    st = (await c.get("/api/listen/storage")).json()
+    assert st["count"] == 1 and st["bytes"] >= len(AUDIO) and st["keep_days"] == 30 and st["limit_bytes"] == 30 * 2**30
+
+
 async def test_track_loaded_ahead_waits_for_the_played_one(env):
     from app import listen
 

@@ -360,7 +360,7 @@ export function TrackRow({
   const liked = useLiked(likeTarget);
   const kept = useInPlaylists(tagKey(track)) || liked; // the row's button shows ♥ or ✓
   // no network and not kept on the device, or of an artist the user does not listen to: it does not play by itself
-  const offline = useUnreachable(track.ref);
+  const offline = useUnreachable(track.ref, track.library_track_id);
   const hiddenArtist = useOfHiddenArtist(track);
   const unreachable = offline || hiddenArtist;
   const artistLine = track.artists?.length ? track.artists.join(', ') : track.artist;
