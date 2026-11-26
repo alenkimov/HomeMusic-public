@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from datetime import datetime, timedelta
@@ -15,13 +14,13 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from yandex_music.exceptions import UnauthorizedError
 
 from app import integrations, security
 from app.auth import admin_user, current_user
 from app.catalog import spotify_session
 from app.catalog.spotify import resource
 from app.catalog.yandex import yandex_client
+from app.catalog.ym import YandexError
 from app.db import get_session
 from app.imports.sources import yandex
 from app.imports.sources.base import AuthPending, SourceError
@@ -209,8 +208,8 @@ async def _pending_result(s: AsyncSession, digest: str) -> IntegrationAuthAttemp
     ).execution_options(populate_existing=True))
 
 
-def _yandex_identity(token: str) -> tuple[str, str | None, str | None]:
-    subject, account, plan = yandex.account_details(yandex_client(token).init())
+async def _yandex_identity(token: str) -> tuple[str, str | None, str | None]:
+    subject, account, plan = yandex.account_details(await yandex_client(token).init())
     if not subject:
         raise ValueError("Yandex account identifier missing")
     return subject, account, plan
@@ -227,7 +226,7 @@ async def poll_auth(body: TicketIn, user: User = Depends(current_user),
     pending = None
     try:
         token = await yandex.device_poll(security.decrypt(row.payload["device_code"]))
-        subject, name, plan = await asyncio.to_thread(_yandex_identity, token)
+        subject, name, plan = await _yandex_identity(token)
     except AuthPending as error:
         pending = error
     except Exception:
@@ -305,12 +304,14 @@ async def check_connection(connection_id: int, body: CheckIn, user: User = Depen
             else:
                 result["liked_read"] = checked["liked_read"]
         else:
-            subject, name, plan = await asyncio.to_thread(_yandex_identity, token)
+            subject, name, plan = await _yandex_identity(token)
         if row.subject and row.subject != subject:
             raise ValueError("account identity changed")
         row.account, row.plan = name, plan
         row.state = "connected"
-    except UnauthorizedError:
+    except YandexError as error:
+        if error.kind != "auth":
+            raise
         row.state = "reauth"
     except spotify_session.SessionError as error:
         if error.expired:

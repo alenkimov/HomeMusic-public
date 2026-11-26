@@ -1,7 +1,7 @@
 """Reading a Yandex Music collection for an import: the snapshot, profile links, sign-in by code.
 
 The client is a fake that answers with real (trimmed) responses of the open profile of Yandex Music's own blog
-(`fixtures/yandex_import/music_blog.json`), parsed by `yandex-music` itself.
+(`fixtures/yandex_import/music_blog.json`), read as the Hub's own client reads them (`app.catalog.ym.wrap`).
 """
 
 from __future__ import annotations
@@ -13,25 +13,18 @@ import httpx
 import pytest
 import respx
 
+from app.catalog.ym import wrap
 from app.imports.sources import yandex
 from app.imports.sources.base import AuthPending, SourceError
 
 DATA = json.loads((Path(__file__).parent / "fixtures" / "yandex_import" / "music_blog.json").read_text("utf-8"))
 
 
-def _client_base():
-    from yandex_music import Client
-
-    Client._Client__notice_displayed = True
-    return Client
-
-
-class FakeYandex(_client_base()):
-    """yandex_music.Client over the fixture (no requests). `closed` — the profile hides its library; `dislikes` —
-    track ids."""
+class FakeYandex:
+    """The client of Yandex (`app.catalog.ym`) over the fixture (no requests): its answers read as the client reads
+    them. `closed` — the profile hides its library; `dislikes` — track ids."""
 
     def __init__(self, *, closed: bool = False, dislikes: tuple[str, ...] = ()):
-        super().__init__()
         self.closed = closed
         self.dislikes = dislikes
         self.fetched: list[list[str]] = []
@@ -39,55 +32,41 @@ class FakeYandex(_client_base()):
 
     def _check(self):
         if self.closed:
-            from yandex_music.exceptions import UnauthorizedError
+            from app.catalog.ym import YandexError
 
-            raise UnauthorizedError("ownerOtherwiseUserBindingError")
+            raise YandexError("auth", "ownerOtherwiseUserBindingError", 403)
 
-    def users_likes_tracks(self, user_id=None):
-        from yandex_music import TracksList
-
+    async def users_likes_tracks(self, user_id=None):
         self._check()
-        return TracksList.de_json(DATA["likes"]["library"], self)
+        return wrap(DATA["likes"]["library"])
 
-    def tracks(self, ids):
-        from yandex_music import Track
-
+    async def tracks(self, ids):
         self.fetched.append(list(ids))
         want = {str(i).split(":")[0] for i in ids}
-        return [Track.de_json(t, self) for t in DATA["tracks"] if str(t["id"]) in want]
+        return [wrap(t) for t in DATA["tracks"] if str(t["id"]) in want]
 
-    def users_playlists_list(self, user_id=None):
-        from yandex_music import Playlist
-
+    async def users_playlists_list(self, user_id=None):
         likes = {**DATA["playlists_list"][0], "kind": 3, "title": "Мне нравится"}  # listed by some accounts
-        return Playlist.de_list([likes, *DATA["playlists_list"]], self)
+        return wrap([likes, *DATA["playlists_list"]])
 
-    def users_playlists(self, kind, user_id=None):
-        from yandex_music import Playlist
-
+    async def users_playlists(self, kind, user_id=None):
         assert kind == DATA["playlist"]["kind"]
-        return Playlist.de_json(DATA["playlist"], self)
+        return wrap(DATA["playlist"])
 
-    def users_likes_albums(self, user_id=None):
-        from yandex_music import Like
+    async def users_likes_albums(self, user_id=None):
+        return wrap(DATA["likes_albums"])
 
-        return Like.de_list(DATA["likes_albums"], self, "album")
+    async def users_likes_artists(self, user_id=None):
+        return [wrap(x if "artist" in x else {"artist": x}) for x in DATA["likes_artists"]]
 
-    def users_likes_artists(self, user_id=None):
-        from yandex_music import Like
-
-        return Like.de_list(DATA["likes_artists"], self, "artist")
-
-    def users_dislikes_tracks(self, user_id=None):
-        from yandex_music import TracksList
-
-        return TracksList.de_json({"uid": 1, "revision": 1, "tracks": [
-            {"id": i, "albumId": "1", "timestamp": "2026-01-01T00:00:00+00:00"} for i in self.dislikes]}, self)
+    async def users_dislikes_tracks(self, user_id=None):
+        return wrap({"uid": 1, "revision": 1, "tracks": [
+            {"id": i, "albumId": "1", "timestamp": "2026-01-01T00:00:00+00:00"} for i in self.dislikes]})
 
 
-def test_open_profile_gives_likes_playlists_albums_and_artists():
+async def test_open_profile_gives_likes_playlists_albums_and_artists():
     client = FakeYandex()
-    snap = yandex.fetch_snapshot(client, "music-blog", signed_in=False)
+    snap = await yandex.fetch_snapshot(client, "music-blog", signed_in=False)
     assert snap.account == "music-blog"
     kinds = [c.kind for c in snap.collections]
     assert kinds == ["likes", "playlist", "albums", "artists"]  # no dislikes without signing in
@@ -113,25 +92,23 @@ def test_open_profile_gives_likes_playlists_albums_and_artists():
     assert [i.raw["name"] for i in artists.items] == ["Варя Пипко", "Cosa Nostra (since 2010)"]
 
 
-def test_signed_in_user_gets_dislikes_too():
-    snap = yandex.fetch_snapshot(FakeYandex(dislikes=("20935722",)), None, signed_in=True)
+async def test_signed_in_user_gets_dislikes_too():
+    snap = await yandex.fetch_snapshot(FakeYandex(dislikes=("20935722",)), None, signed_in=True)
     dislikes = snap.collections[-1]
     assert dislikes.kind == "dislikes"
     assert [i.raw["title"] for i in dislikes.items] == ["Falling"]
 
 
-def test_closed_profile_says_how_to_get_in():
+async def test_closed_profile_says_how_to_get_in():
     with pytest.raises(SourceError, match="Медиатека закрыта"):
-        yandex.fetch_snapshot(FakeYandex(closed=True), "someone", signed_in=False)
+        await yandex.fetch_snapshot(FakeYandex(closed=True), "someone", signed_in=False)
 
 
 def test_track_version_and_unavailable_tracks():
-    from yandex_music import Track
-
-    t = Track.de_json({**DATA["tracks"][0], "version": "Live", "available": False}, None)
+    t = wrap({**DATA["tracks"][0], "version": "Live", "available": False})
     raw = yandex.track_raw(t)
     assert raw is not None and raw["title"] == "Falling (Live)" and raw["unavailable"] is True
-    assert yandex.track_raw(Track.de_json({**DATA["tracks"][0], "type": "podcast-episode"}, None)) is None
+    assert yandex.track_raw(wrap({**DATA["tracks"][0], "type": "podcast-episode"})) is None
 
 
 @pytest.mark.parametrize(("text", "login"), [

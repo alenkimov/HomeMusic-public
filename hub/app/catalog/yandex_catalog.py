@@ -5,19 +5,17 @@ A record is "ym:<id>". What Yandex gives without a sign-in is read here; what ne
 audio itself) is not: a track of this catalog is listened to and downloaded from the Hub's sources, by its names,
 like a track of any other catalog. Yandex keeps no ISRC of a track.
 
-The `yandex-music` client is synchronous: every call runs in a worker thread.
+Read through the Hub's own client of Yandex's API (`app.catalog.ym`): asynchronous, limited, proxied, journaled.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import date
 from typing import Any
 
 from app.catalog.cache import cached
-from app.catalog.models import CatalogNotFound
-from app.catalog.models import ArtistPage, CatalogAlbum, CatalogArtist, CatalogTrack, SearchResults
+from app.catalog.models import ArtistPage, CatalogAlbum, CatalogArtist, CatalogNotFound, CatalogTrack, SearchResults
 from app.catalog.yandex import yandex_client, yandex_track_row
 from app.integrations import shared_search_credential
 
@@ -80,7 +78,7 @@ def album_of(a: Any, tracks: list[CatalogTrack] | None = None) -> CatalogAlbum:
 
 
 def track_of(t: Any, album: Any | None = None) -> CatalogTrack | None:
-    """yandex_music.Track → a track of the catalog (None: a podcast, a row with no name). `album`: the release it
+    """A track of Yandex (`app.catalog.ym`) → a track of the catalog (None: a podcast, a row with no name). `album`: the release it
     was read in, where the track itself names another (a single put into an album later)."""
     row = yandex_track_row(t)
     if row is None or getattr(t, "id", None) is None:
@@ -113,16 +111,14 @@ def _own_first(artist_ref: str, tracks: list[Any]) -> list[CatalogTrack]:
     return sorted(found, key=lambda t: t.artist_ref != artist_ref)
 
 
-def _missing(e: Exception) -> bool:
-    return type(e).__name__ in ("NotFoundError", "BadRequestError")
-
-
 class YandexCatalog:
     async def _call(self, f: Any) -> Any:
+        from app.catalog.ym import YandexError
+
         try:
-            return await asyncio.to_thread(f)
-        except Exception as e:
-            if _missing(e):
+            return await f()
+        except YandexError as e:
+            if e.kind == "not_found":
                 raise CatalogNotFound(str(e)) from e
             raise
 
@@ -132,8 +128,8 @@ class YandexCatalog:
         if not q:
             return SearchResults()
 
-        def read(token: str | None = None) -> dict:
-            r = yandex_client(token).search(q, type_="all")
+        async def read(token: str | None = None) -> dict:
+            r = await yandex_client(token).search(q, type_="all")
             got = lambda kind: (getattr(getattr(r, kind, None), "results", None) or []) if r is not None else []  # noqa: E731
             return SearchResults(
                 artists=[artist_of(a) for a in got("artists") if getattr(a, "name", None) and not getattr(a, "various", False)],
@@ -158,14 +154,14 @@ class YandexCatalog:
         return (await self.search(f"{artist} {title}")).tracks[:limit]
 
     async def _artist(self, artist_id: str) -> dict:
-        def read() -> dict:
+        async def read() -> dict:
             c = yandex_client()
-            b = c.artists_brief_info(artist_id)
+            b = await c.artists_brief_info(artist_id)
             if b is None or b.artist is None:
                 raise CatalogNotFound(artist_id)
             albums: list[Any] = []
             for page in range(ALBUM_PAGES):
-                got = c.artists_direct_albums(artist_id, page=page, page_size=ALBUMS_PAGE, sort_by="year")
+                got = await c.artists_direct_albums(artist_id, page=page, page_size=ALBUMS_PAGE, sort_by="year")
                 albums += list(got.albums or []) if got is not None else []
                 if got is None or not got.albums or len(albums) >= ((got.pager.total if got.pager else 0) or 0):
                     break
@@ -201,8 +197,8 @@ class YandexCatalog:
     async def get_album(self, album_id: str | int) -> CatalogAlbum:
         album_id = str(album_id)
 
-        def read() -> dict:
-            a = yandex_client().albums_with_tracks(album_id)
+        async def read() -> dict:
+            a = await yandex_client().albums_with_tracks(album_id)
             if a is None or not a.title:
                 raise CatalogNotFound(album_id)
             tracks = [x for vol in (a.volumes or []) for t in vol if (x := track_of(t, a)) is not None]
@@ -213,8 +209,8 @@ class YandexCatalog:
     async def get_track(self, track_id: str | int) -> CatalogTrack:
         track_id = str(track_id)
 
-        def read() -> dict:
-            found = yandex_client().tracks([track_id]) or []
+        async def read() -> dict:
+            found = await yandex_client().tracks([track_id]) or []
             t = track_of(found[0]) if found else None
             if t is None:
                 raise CatalogNotFound(track_id)

@@ -32,7 +32,10 @@ async def test_connections_and_private_imports_are_scoped_to_the_owner(hub_env, 
     yandex_client = SimpleNamespace(me=SimpleNamespace(
         account=SimpleNamespace(uid=456, login="yandex-guest"), plus=SimpleNamespace(has_plus=True),
     ))
-    monkeypatch.setattr(integration_api, "yandex_client", lambda token: SimpleNamespace(init=lambda: yandex_client))
+    async def init():
+        return yandex_client
+
+    monkeypatch.setattr(integration_api, "yandex_client", lambda token: SimpleNamespace(init=init))
 
     def navidrome(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"subsonic-response": {

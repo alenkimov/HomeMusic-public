@@ -181,7 +181,7 @@ def ym_track(id_: int, artist: str, title: str, seconds: int = 200) -> SimpleNam
 
 
 class FakeYandex:
-    """The `yandex-music` client: a search, «similar» of a track, «Моя волна» (`rotor_station_tracks`)."""
+    """The client of Yandex (`app.catalog.ym`): a search, «similar» of a track, «Моя волна» (`rotor_station_tracks`)."""
 
     def __init__(self, token: str | None = None, *, wave: list[list[SimpleNamespace]] | None = None,
                  wave_error: Exception | None = None):
@@ -190,15 +190,15 @@ class FakeYandex:
         self.wave_error = wave_error
         self.queues: list[str | None] = []
 
-    def search(self, text: str, type_: str = "track"):
+    async def search(self, text: str, type_: str = "track"):
         found = [ym_track(38634621, "КИНО", "Группа крови", 285)] if "крови" in text.lower() else []
         return SimpleNamespace(tracks=SimpleNamespace(results=found))
 
-    def tracks_similar(self, track_id: str):
+    async def tracks_similar(self, track_id: str):
         assert track_id == "38634621"
         return SimpleNamespace(similar_tracks=[ym_track(1, "MyTsoi", "Я знаю, кто я."), ym_track(2, "2 серия", "Прощай")])
 
-    def rotor_station_tracks(self, station: str, queue: str | None = None):
+    async def rotor_station_tracks(self, station: str, queue: str | None = None):
         assert station == "user:onyourwave"
         if self.wave_error:
             raise self.wave_error

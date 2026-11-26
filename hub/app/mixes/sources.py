@@ -7,7 +7,6 @@ everything here answers with names (`Hit`) that `app.mixes.resolve` matches with
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 from dataclasses import asdict, dataclass
@@ -248,11 +247,11 @@ def _yandex_rows(tracks: Any) -> list[Hit]:
     return out
 
 
-def _yandex_find(artist: str, title: str, duration_s: int | None) -> str | None:
+async def _yandex_find(artist: str, title: str, duration_s: int | None) -> str | None:
     from app.catalog.yandex import yandex_client
     from app.matching.score import score
 
-    res = yandex_client().search(f"{artist} {title}", type_="track")
+    res = await yandex_client().search(f"{artist} {title}", type_="track")
     tracks = res.tracks.results[:5] if res is not None and res.tracks is not None else []
     best: tuple[float, str | None] = (0.0, None)
     for t, h in zip(tracks, _yandex_rows(tracks), strict=False):
@@ -262,13 +261,13 @@ def _yandex_find(artist: str, title: str, duration_s: int | None) -> str | None:
     return best[1] if best[0] >= get_settings().cfg.matching.auto_threshold else None
 
 
-def _yandex_similar_sync(artist: str, title: str, duration_s: int | None) -> list[Hit]:
+async def _yandex_similar(artist: str, title: str, duration_s: int | None) -> list[Hit]:
     from app.catalog.yandex import yandex_client
 
-    track_id = _yandex_find(artist, title, duration_s)
+    track_id = await _yandex_find(artist, title, duration_s)
     if track_id is None:
         return []
-    sim = yandex_client().tracks_similar(track_id)
+    sim = await yandex_client().tracks_similar(track_id)
     return _yandex_rows(sim.similar_tracks if sim is not None else [])
 
 
@@ -277,14 +276,14 @@ async def yandex_similar(artist: str, title: str, duration_s: int | None = None)
 
     async def produce() -> list[Hit]:
         try:
-            return await asyncio.to_thread(_yandex_similar_sync, artist, title, duration_s)
+            return await _yandex_similar(artist, title, duration_s)
         except Exception as e:
             raise SourceDown(f"Yandex: {e!r}") from e
 
     return await _cached_hits(f"mix:ym_similar:{_key(artist, title)}", produce)
 
 
-def _yandex_wave_sync(token: str, rounds: int) -> list[Hit]:
+async def _yandex_wave(token: str, rounds: int) -> list[Hit]:
     from app.catalog.yandex import yandex_client
 
     client = yandex_client(token)
@@ -292,7 +291,7 @@ def _yandex_wave_sync(token: str, rounds: int) -> list[Hit]:
     seen: set[str] = set()
     last: str | None = None
     for _ in range(rounds):
-        res = client.rotor_station_tracks("user:onyourwave", queue=last)
+        res = await client.rotor_station_tracks("user:onyourwave", queue=last)
         tracks = [x.track for x in (res.sequence if res is not None else []) if getattr(x, "track", None)]
         fresh = [h for h in _yandex_rows(tracks) if h.source_id not in seen]
         if not fresh:
@@ -307,6 +306,6 @@ async def yandex_wave(token: str, rounds: int = 6) -> list[Hit]:
     """«Моя волна» of the Yandex account an import signed in with (M7): personal, never cached. Yandex may refuse it
     (no Plus, a region): `SourceDown`, the generator stays off."""
     try:
-        return await asyncio.to_thread(_yandex_wave_sync, token, rounds)
+        return await _yandex_wave(token, rounds)
     except Exception as e:
         raise SourceDown(f"Yandex wave: {e!r}") from e

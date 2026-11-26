@@ -16,7 +16,7 @@ def no_cache(monkeypatch):
 
 
 def fake_search(rows):
-    def search(text):
+    async def search(text):
         search.queries.append(text)
         return rows
 
@@ -38,7 +38,7 @@ def test_latin_to_cyrillic() -> None:
 
 
 async def test_transliterated_title_is_searched_in_cyrillic(monkeypatch) -> None:
-    def search(text):
+    async def search(text):
         search.queries.append(text)
         return [{"artist": "Oxxxymiron", "title": "Где нас нет", "duration_s": 266}] if "нас" in text else []
 
@@ -104,7 +104,7 @@ async def test_international_track_keeps_default_order(monkeypatch) -> None:
 
 
 async def test_cis_barcode_alone_gives_russian_order(monkeypatch) -> None:
-    def broken(text):
+    async def broken(text):
         raise ConnectionError("yandex is down")
 
     monkeypatch.setattr(yandex, "_search_tracks", broken)

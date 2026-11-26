@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from app.catalog.ym import YandexError
 from app.net import RateLimiter, make_client
 from app.providers.base import Candidate, ProviderError, StreamSource, TrackQuery
 
@@ -34,7 +35,6 @@ GAP_S = 2.0  # between two files
 SEARCH_PER_S = 2.0
 TOKEN_TTL_S = 600  # the account is looked up again this often (connected, taken away)
 CODECS = ["flac", "mp3"]  # what the library keeps as it is: no MP4 container, no HE-AAC
-TIMEOUT_S = 60
 
 
 async def plus_token() -> tuple[int, str] | None:
@@ -87,7 +87,6 @@ class YandexProvider:
     def __init__(self) -> None:
         self._token: str | None = None
         self._account: int | None = None
-        self._proxy: str | None = None
         self._token_at: float | None = None  # when the account was looked up (None: not yet)
         self._client: Any = None
         self._lock = asyncio.Lock()
@@ -105,12 +104,6 @@ class YandexProvider:
                 account, token = found if found else (None, None)
                 if token != self._token:
                     self._token, self._account, self._client = token, account, None
-            from app.outbound import proxy_url, use_account
-
-            use_account(self._account)  # what follows is the account's: its proxy, its rows of the journal
-            _, proxy = proxy_url("yandex", self._account)
-            if proxy != self._proxy:  # the proxy was changed: a client of the new one
-                self._proxy, self._client = proxy, None
             if self._token and self._client is None:
                 from app.catalog.yandex import yandex_client
 
@@ -124,14 +117,14 @@ class YandexProvider:
         await self._search.wait()
         try:
             if q.yandex_id:
-                found = await asyncio.to_thread(client.tracks, [q.yandex_id])
+                found = await client.tracks([q.yandex_id])
                 return [c for t in found or [] if (c := _candidate(t))]
             text = " ".join(f"{q.artist} {q.title}".split())
             if not text:
                 return []
-            res = await asyncio.to_thread(client.search, text, type_="track")
-        except Exception as e:
-            raise ProviderError(f"Яндекс Музыка: {e!r}") from e
+            res = await client.search(text, type_="track")
+        except YandexError as e:
+            raise ProviderError(str(e)) from e
         tracks = res.tracks.results if res is not None and res.tracks is not None else []
         return [c for t in tracks[:limit] if (c := _candidate(t))]
 
@@ -143,9 +136,9 @@ class YandexProvider:
         if client is None:
             raise ProviderError("Яндекс Музыка: нет подключённого аккаунта с Плюсом")
         try:
-            info = await asyncio.to_thread(client.tracks_file_info, c.provider_id, "lossless", CODECS, "raw")
-        except Exception as e:
-            raise ProviderError(f"Яндекс Музыка: файл не выдан: {e!r}") from e
+            info = await client.tracks_file_info(c.provider_id, "lossless", CODECS, "raw")
+        except YandexError as e:
+            raise ProviderError(f"Яндекс Музыка: файл не выдан: {e}") from e
         file = getattr(info, "download_info", None)
         if file is None or not file.url:
             raise ProviderError("Яндекс Музыка: файл не выдан")
@@ -159,14 +152,13 @@ class YandexProvider:
             dest = Path(dest_dir) / f"yandex_{c.provider_id}.{ext}"
             part = dest.with_name(dest.name + ".part")
             try:
-                await asyncio.to_thread(file.download, str(part), TIMEOUT_S)
-                if not part.is_file() or part.stat().st_size < 64 * 1024:
+                client = await self._signed_in()
+                size = await client.download(file.url, part)
+                if size < 64 * 1024:
                     raise ProviderError("Яндекс Музыка: файл пустой")
                 part.replace(dest)
-            except ProviderError:
-                raise
-            except Exception as e:
-                raise ProviderError(f"Яндекс Музыка: ошибка при скачивании: {e!r}") from e
+            except YandexError as e:
+                raise ProviderError(str(e)) from e
             finally:
                 part.unlink(missing_ok=True)
             log.info("yandex: %s %s %s kbps -> %s", c.provider_id, file.codec, file.bitrate, dest.name)

@@ -7,7 +7,6 @@ take the Russian source order with Cyrillic queries (PLAN 8.3).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from typing import Any
@@ -57,16 +56,11 @@ def latin_to_cyrillic(s: str) -> str:
 
 
 def yandex_client(token: str | None = None, connection_id: int | None = None) -> Any:
-    """Anonymous client, or one signed in with the user's token (imports: `app.imports.sources.yandex`); through the
-    proxy of that account or of Yandex (`app.outbound`) — a client is of the proxy it was made with."""
-    from yandex_music import Client
-    from yandex_music.utils.request import Request
+    """Yandex Music without signing in, or signed in with a user's token (`app.catalog.ym`): asynchronous, through
+    the proxy of that account or of Yandex and into the journal (`app.outbound`)."""
+    from app.catalog.ym import YandexMusic
 
-    from app.outbound import proxy_url
-
-    Client._Client__notice_displayed = True  # silence the banner the library prints to stdout
-    _, proxy = proxy_url("yandex", connection_id)
-    return Client(token, request=Request(proxy_url=proxy, timeout=YANDEX_TIMEOUT_S), language="ru")
+    return YandexMusic(token, connection_id)
 
 
 def cis_release(upc: str | None, isrc: str | None) -> bool:
@@ -103,8 +97,8 @@ def split_suffix(title: str) -> tuple[str, str]:
     return (m.group(1), m.group(2) or "") if m else (title, "")
 
 
-def _search_tracks(text: str) -> list[dict[str, Any]]:
-    res = yandex_client().search(text, type_="track")
+async def _search_tracks(text: str) -> list[dict[str, Any]]:
+    res = await yandex_client().search(text, type_="track")
     tracks = res.tracks.results if res is not None and res.tracks is not None else []
     return [row for t in tracks[:SEARCH_LIMIT] if (row := yandex_track_row(t))]
 
@@ -119,7 +113,7 @@ async def original_names(artist: str, title: str, duration_s: int | None) -> dic
             queries.append(f"{artist} {cyr}")  # transliterated title: the artist name is found in Latin
         for text in queries:
             try:
-                rows = await asyncio.to_thread(_search_tracks, text)
+                rows = await _search_tracks(text)
             except Exception as e:  # network/API trouble: not cached, the download keeps the catalog names
                 log.warning("yandex search failed for %s: %r", text, e)
                 return None

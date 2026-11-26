@@ -10,7 +10,7 @@ Three ways in:
   public playlists; no private playlists, no dislikes;
 - a link to one open playlist or album (`fetch_link`): that playlist alone, without signing in.
 
-The `yandex-music` client is synchronous (its async one needs aiohttp): `fetch_snapshot` runs in a worker thread.
+Read through the Hub's own client of Yandex's API (`app.catalog.ym`): asynchronous, proxied, journaled.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.catalog.yandex import yandex_client, yandex_track_row
+from app.catalog.ym import YandexError, short_id
 from app.imports.sources.base import AuthPending, SnapCollection, SnapItem, Snapshot, SourceError
 from app.net import make_client
 
@@ -125,16 +126,14 @@ def link_target(url: str) -> tuple[str, tuple[str, ...]]:
     return kind, ids
 
 
-def fetch_link(url: str) -> Snapshot:
-    """Sync (run in a thread): the playlist — or the album, as a playlist — behind a link, read without signing in:
-    its tracks in its order, with the days they were added."""
-    from yandex_music.exceptions import BadRequestError, NotFoundError, UnauthorizedError, YandexMusicError
-
+async def fetch_link(url: str) -> Snapshot:
+    """The playlist — or the album, as a playlist — behind a link, read without signing in: its tracks in its order,
+    with the days they were added."""
     kind, ids = link_target(url)
     client = yandex_client()
     try:
         if kind == "album":
-            album = client.albums_with_tracks(ids[0])
+            album = await client.albums_with_tracks(ids[0])
             if album is None or not album.title:
                 raise SourceError("Альбом не найден в Яндекс Музыке")
             items = [SnapItem(external_id=str(t.id), raw=raw) for vol in (album.volumes or []) for t in vol
@@ -142,19 +141,19 @@ def fetch_link(url: str) -> Snapshot:
             title = " — ".join(x for x in (_names(album.artists), album.title) if x)
             cover, external, account = _cover(album), f"album:{ids[0]}", _names(album.artists) or None
         else:
-            pl = client.users_playlists(int(ids[1]), ids[0]) if kind == "user_playlist" else client.playlist(ids[0])
+            pl = await (client.users_playlists(int(ids[1]), ids[0]) if kind == "user_playlist" else client.playlist(ids[0]))
             if pl is None:
                 raise SourceError("Плейлист не найден в Яндекс Музыке")
-            items = _track_items(client, list(pl.tracks or []), liked=True)
+            items = await _track_items(client, list(pl.tracks or []), liked=True)
             if not items and (pl.track_count or 0) > 0:
                 raise SourceError("Плейлист закрыт: без входа в Яндекс его не прочитать")
             owner = getattr(pl, "owner", None)
             title, cover, external = pl.title or "Плейлист", _cover(pl), ":".join(ids)
             account = (getattr(owner, "name", None) or getattr(owner, "login", None)) if owner else None
-    except (NotFoundError, BadRequestError, UnauthorizedError) as e:
-        raise SourceError("Не найдено в Яндекс Музыке: ссылка устарела или плейлист закрыт") from e
-    except YandexMusicError as e:
-        raise SourceError(f"Яндекс Музыка не ответила: {e}") from e
+    except YandexError as e:
+        if e.kind in ("not_found", "auth"):
+            raise SourceError("Не найдено в Яндекс Музыке: ссылка устарела или плейлист закрыт") from e
+        raise SourceError(_unanswered(e)) from e
     if not items:
         raise SourceError("По ссылке нет треков")
     return Snapshot(account=account, collections=[
@@ -165,7 +164,7 @@ def fetch_link(url: str) -> Snapshot:
 
 
 def track_raw(t: Any, *, liked_at: str | None = None) -> dict[str, Any] | None:
-    """yandex_music.Track → raw import item (None for podcasts and rows without a title)."""
+    """A track of Yandex (`app.catalog.ym`) → raw import item (None for podcasts and rows without a title)."""
     row = yandex_track_row(t)
     if row is None:
         return None
@@ -186,12 +185,12 @@ def track_raw(t: Any, *, liked_at: str | None = None) -> dict[str, Any] | None:
     return {k: v for k, v in raw.items() if v is not None}
 
 
-def _track_items(client: Any, shorts: list[Any], *, liked: bool = False) -> list[SnapItem]:
-    """TrackShort rows → items; rows that came without the full track are fetched in chunks."""
-    missing = [s.track_id for s in shorts if getattr(s, "track", None) is None]
+async def _track_items(client: Any, shorts: list[Any], *, liked: bool = False) -> list[SnapItem]:
+    """The rows of a list → items; rows that came without the full track are fetched in chunks."""
+    missing = [short_id(s) for s in shorts if getattr(s, "track", None) is None]
     full: dict[str, Any] = {}
     for i in range(0, len(missing), TRACKS_CHUNK):
-        for t in client.tracks(missing[i:i + TRACKS_CHUNK]) or []:
+        for t in await client.tracks(missing[i:i + TRACKS_CHUNK]) or []:
             full[str(t.id)] = t
     items: list[SnapItem] = []
     seen: set[str] = set()
@@ -225,71 +224,75 @@ def account_details(client: Any) -> tuple[str | None, str | None, str | None]:
     return str(uid) if uid else None, (account.login or account.display_name) if account else None, plan
 
 
-def fetch_snapshot(client: Any, owner: str | int | None, *, signed_in: bool) -> Snapshot:
+async def fetch_snapshot(client: Any, owner: str | int | None, *, signed_in: bool) -> Snapshot:
     """Everything of `owner` (None: the signed-in user) that the client may read, in Yandex's order."""
-    from yandex_music.exceptions import NotFoundError, UnauthorizedError, YandexMusicError
-
     account: str | None = str(owner) if owner is not None else None
     try:
         subject, name, plan = account_details(client) if signed_in else (None, None, None)
         snap = Snapshot(account=name or account, account_subject=subject, plan=plan)
-        likes = client.users_likes_tracks(owner)
+        likes = await client.users_likes_tracks(owner)
         # newest first, as in the app
         snap.collections.append(SnapCollection(
             kind="likes", external_id="likes", title="Мне нравится",
-            items=_track_items(client, list(likes.tracks or []) if likes else [], liked=True)))
-        for pl in client.users_playlists_list(owner) or []:
+            items=await _track_items(client, list(likes.tracks or []) if likes else [], liked=True)))
+        for pl in await client.users_playlists_list(owner) or []:
             if pl.kind == LIKES_KIND or not pl.track_count:
                 continue
-            full = client.users_playlists(pl.kind, pl.owner.uid if pl.owner else owner)
-            items = _track_items(client, list(full.tracks or [])) if full else []
+            full = await client.users_playlists(pl.kind, pl.owner.uid if pl.owner else owner)
+            items = await _track_items(client, list(full.tracks or [])) if full else []
             if items:
                 snap.collections.append(SnapCollection(kind="playlist", external_id=f"{pl.uid or owner}:{pl.kind}",
                                                        title=pl.title or "Плейлист", items=items,
                                                        cover_url=_cover(pl)))
-        albums = [lk.album for lk in client.users_likes_albums(owner) or [] if getattr(lk, "album", None)]
+        albums = [lk.album for lk in await client.users_likes_albums(owner) or [] if getattr(lk, "album", None)]
         if albums:
             snap.collections.append(SnapCollection(kind="albums", external_id="albums", title="Альбомы", items=[
                 SnapItem(external_id=str(a.id), raw={k: v for k, v in {
                     "artist": _names(a.artists), "title": a.title, "year": a.year, "track_count": a.track_count,
                     "cover_url": _cover(a)}.items() if v is not None})
                 for a in albums if a.title]))
-        artists = [lk.artist for lk in client.users_likes_artists(owner) or [] if getattr(lk, "artist", None)]
+        artists = [lk.artist for lk in await client.users_likes_artists(owner) or [] if getattr(lk, "artist", None)]
         if artists:
             snap.collections.append(SnapCollection(kind="artists", external_id="artists", title="Исполнители", items=[
                 SnapItem(external_id=str(a.id), raw={k: v for k, v in {"name": a.name, "cover_url": _cover(a)}.items()
                                                      if v is not None})
                 for a in artists if a.name]))
         if signed_in:
-            dis = client.users_dislikes_tracks(owner)
+            dis = await client.users_dislikes_tracks(owner)
             shorts = list(dis.tracks or [])[:MAX_DISLIKES] if dis else []
             if shorts:
                 snap.collections.append(SnapCollection(kind="dislikes", external_id="dislikes", title="Не нравится",
-                                                       items=_track_items(client, shorts)))
+                                                       items=await _track_items(client, shorts)))
         return snap
-    except UnauthorizedError as e:
-        if signed_in:
-            raise SourceError("Яндекс не принял вход — войдите заново") from e
-        raise SourceError("Медиатека закрыта: откройте её в настройках приватности Яндекс Музыки "
-                          "или войдите через Яндекс") from e
-    except NotFoundError as e:
-        raise SourceError("Профиль не найден в Яндекс Музыке") from e
-    except YandexMusicError as e:
-        raise SourceError(f"Яндекс Музыка не ответила: {e}") from e
+    except YandexError as e:
+        if e.kind == "auth":
+            if signed_in:
+                raise SourceError("Яндекс не принял вход — войдите заново") from e
+            raise SourceError("Медиатека закрыта: откройте её в настройках приватности Яндекс Музыки "
+                              "или войдите через Яндекс") from e
+        if e.kind == "not_found":
+            raise SourceError("Профиль не найден в Яндекс Музыке") from e
+        raise SourceError(_unanswered(e)) from e
 
 
-def fetch(token: str | None, login: str | None) -> Snapshot:
-    """Sync (run in a thread): signed in with `token`, or the open profile `login`."""
-    from yandex_music.exceptions import UnauthorizedError, YandexMusicError
+def _unanswered(e: Any) -> str:
+    if getattr(e, "status", None) == 451:
+        return "Яндекс Музыка не отвечает на запросы из этой страны — нужен прокси России («Прокси и запросы»)"
+    if getattr(e, "kind", None) == "limited":
+        return "Яндекс Музыка просит подождать: слишком много запросов — попробуйте позже"
+    return f"Яндекс Музыка не ответила: {e}"
 
+
+async def fetch(token: str | None, login: str | None, connection_id: int | None = None) -> Snapshot:
+    """Signed in with `token` (of the Hub's account `connection_id`), or the open profile `login`."""
     if token:
         try:
-            client = yandex_client(token).init()
-        except UnauthorizedError as e:
-            raise SourceError("Токен не подошёл или устарел — войдите заново") from e
-        except YandexMusicError as e:
-            raise SourceError(f"Яндекс Музыка не ответила: {e}") from e
-        return fetch_snapshot(client, None, signed_in=True)
+            client = await yandex_client(token, connection_id).init()
+        except YandexError as e:
+            if e.kind == "auth":
+                raise SourceError("Токен не подошёл или устарел — войдите заново") from e
+            raise SourceError(_unanswered(e)) from e
+        return await fetch_snapshot(client, None, signed_in=True)
     if not login:
         raise SourceError("Нет ни входа, ни профиля")
-    return fetch_snapshot(yandex_client(), login, signed_in=False)
+    return await fetch_snapshot(yandex_client(), login, signed_in=False)

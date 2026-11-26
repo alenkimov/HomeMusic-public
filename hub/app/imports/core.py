@@ -471,11 +471,11 @@ async def fetch_snapshot(imp: Import) -> Snapshot:
         url = (imp.auth_json or {}).get("url") or ""
         if imp.source == "spotify":
             return await spotify.fetch_link(url, fresh=imp.started_at is not None)
-        return await asyncio.to_thread(yandex.fetch_link, url)
+        return await yandex.fetch_link(url)
     login = imp.account if imp.method == "profile" else None
     if login is None and not token:
         raise SourceError("Вход в Яндекс Музыку не сохранён — войдите заново")
-    return await asyncio.to_thread(yandex.fetch, token, login)
+    return await yandex.fetch(token, login, imp.connection_id)
 
 
 async def store_snapshot(s: AsyncSession, imp: Import, snap: Snapshot) -> int:

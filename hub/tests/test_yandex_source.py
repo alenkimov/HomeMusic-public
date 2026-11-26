@@ -27,18 +27,21 @@ class FakeClient:
     def __init__(self):
         self.asked: list = []
 
-    def tracks(self, ids):
+    async def tracks(self, ids):
         self.asked.append(("tracks", ids))
         return [_track(ids[0], "Rejected Diva")]
 
-    def search(self, text, type_):
+    async def search(self, text, type_):
         self.asked.append(("search", text))
         return NS(tracks=NS(results=[_track(1, "Rejected Diva"), _track(2, "Другая", warning="explicit")]))
 
-    def tracks_file_info(self, track_id, quality, codecs, transport):
+    async def tracks_file_info(self, track_id, quality, codecs, transport):
         self.asked.append(("file", track_id, quality, tuple(codecs), transport))
-        return NS(download_info=NS(codec="flac", bitrate=0, url="https://example.invalid/f.flac",
-                                   download=lambda path, timeout: open(path, "wb").write(b"f" * 100_000)))
+        return NS(download_info=NS(codec="flac", bitrate=0, url="https://example.invalid/f.flac"))
+
+    async def download(self, url, dest):
+        dest.write_bytes(b"f" * 100_000)
+        return 100_000
 
 
 @pytest.fixture

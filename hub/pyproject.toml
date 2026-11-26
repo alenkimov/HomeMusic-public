@@ -21,7 +21,6 @@ dependencies = [
     "yt-dlp==2026.10.26",
     "yt-dlp-ejs==0.8.0",
     "bgutil-ytdlp-pot-provider==2.0.2",
-    "yandex-music==3.2.2",
     "openai==3.35.1",
     "sse-starlette>=2.2.1",
     "unidecode>=1.4.0",
@@ -29,6 +28,8 @@ dependencies = [
     "pypinyin>=0.55.0",
     "aiogram>=3.13,<4",
     "spotapi==2.1.0",
+    # SOCKS proxies for `requests` (the Spotify session, yt-dlp): `app.outbound`
+    "pysocks>=1.7.1",
     "librespot @ git+https://github.com/Googolplexed0/librespot-python.git@01abfc8ad012dbc40e90417e640faaf271ea2f98",
 ]
 

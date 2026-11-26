@@ -83,7 +83,7 @@ async def env(hub_env, monkeypatch):
             return reply(starred2={"song": [{"id": i} for i in state["stars"]]})
         return reply()
 
-    def fake_fetch(token, login):
+    async def fake_fetch(token, login, connection_id=None):
         state["fetches"].append((token, login))
         return state.get("snapshot") or snapshot()
 
