@@ -237,6 +237,9 @@ async def _execute(job: Job) -> _Result:
     if fn is None:
         return _Result(error=f"no handler for {job.kind}")
     token = _priority.set(Priority(background=True)) if (job.priority or 0) < 0 else None
+    from app.outbound import set_purpose
+
+    set_purpose(f"job {job.kind}")  # the journal of outside requests says what they were for
     try:
         await fn(job)
     except RetryLater as e:

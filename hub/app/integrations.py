@@ -12,7 +12,13 @@ SHAREABLE = frozenset({"yandex", "spotify"})
 
 
 async def credential(s: AsyncSession, connection_id: int) -> str | None:
+    """The account's secret. The requests that follow in this task are made with it (`app.outbound.use_account`):
+    they go through its proxy and are journaled as its."""
+    from app.outbound import use_account
+
     row = await s.get(IntegrationCredential, connection_id)
+    if row is not None:
+        use_account(connection_id)
     return decrypt(row.encrypted) if row else None
 
 

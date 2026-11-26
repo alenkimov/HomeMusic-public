@@ -498,6 +498,13 @@ class YtdlpProvider:
             "retries": 3,
             "fragment_retries": 3,
         }
+        from app.outbound import proxy_url
+
+        # through the proxy set for the service or the account (`app.outbound`); its requests are journaled by
+        # `requests`, which yt-dlp sends them with
+        _, proxy = proxy_url("soundcloud" if self.name == "soundcloud" else "youtube")
+        if proxy:
+            opts["proxy"] = proxy
         if self._youtube:
             opts.update({
                 # which clients YouTube is asked as is yt-dlp's to choose, unless the config pins them; PO tokens are

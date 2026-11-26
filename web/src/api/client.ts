@@ -7,6 +7,11 @@ import { hubFetch, noteAnswer, suspect } from '../lib/reach';
 import type { Tag, TagSelection, TagsData } from '../lib/tags';
 import type { TelegramChat, TelegramStatus } from '../lib/telegram';
 import type {
+  OutboundFilter,
+  OutboundRequestOut,
+  OutboundSummaryOut,
+  ProxiesOut,
+  ProxyOut,
   AdminUserDetailOut,
   ArtistMapOut,
   CatalogArtist,
@@ -579,6 +584,15 @@ export const api = {
   /** Albums that are one album in pieces (the same name, artists that differ by a guest). */
   /** «Резервные копии» (admins): Google Drive, the last copy, the copies kept. */
   backup: (signal?: AbortSignal) => request<BackupOut>('GET', '/api/backup', { signal }),
+  proxies: (signal?: AbortSignal) => request<ProxiesOut>('GET', '/api/admin/proxies', { signal }),
+  addProxy: (url: string, name: string | null) => request<ProxyOut>('POST', '/api/admin/proxies', { json: { url, name } }),
+  changeProxy: (id: number, url: string, name: string | null) => request<ProxyOut>('PATCH', `/api/admin/proxies/${id}`, { json: { url, name } }),
+  dropProxy: (id: number) => request<void>('DELETE', `/api/admin/proxies/${id}`),
+  checkProxy: (id: number) => request<ProxyOut>('POST', `/api/admin/proxies/${id}/check`),
+  serviceProxy: (service: string, proxyId: number | null) => request<void>('PUT', `/api/admin/proxies/services/${enc(service)}`, { json: { proxy_id: proxyId } }),
+  accountProxy: (connectionId: number, proxyId: number | null) => request<void>('PUT', `/api/admin/proxies/accounts/${connectionId}`, { json: { proxy_id: proxyId } }),
+  outboundSummary: (hours: number, signal?: AbortSignal) => request<OutboundSummaryOut>('GET', withQuery('/api/admin/outbound/summary', { hours }), { signal }),
+  outboundRequests: (f: OutboundFilter, signal?: AbortSignal) => request<{ items: OutboundRequestOut[]; more: boolean }>('GET', withQuery('/api/admin/outbound/requests', { ...f, limit: 100 }), { signal }),
   backupConnect: () => request<{ user_code: string; url: string; interval: number }>('POST', '/api/backup/connect'),
   backupPoll: () => request<{ state: 'pending' | 'connected' | 'failed'; error: string | null; backup: BackupOut }>('POST', '/api/backup/connect/poll'),
   backupDisconnect: () => request<BackupOut>('DELETE', '/api/backup/connect'),

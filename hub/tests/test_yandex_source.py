@@ -46,10 +46,10 @@ def signed_in(monkeypatch):
     client = FakeClient()
 
     async def token():
-        return "t"
+        return 1, "t"
 
     monkeypatch.setattr(yandex, "plus_token", token)
-    monkeypatch.setattr("app.catalog.yandex.yandex_client", lambda t=None: client)
+    monkeypatch.setattr("app.catalog.yandex.yandex_client", lambda t=None, c=None: client)
     return client
 
 

@@ -56,14 +56,16 @@ def latin_to_cyrillic(s: str) -> str:
     return _FROM_LAT_RE.sub(repl, s_low)
 
 
-def yandex_client(token: str | None = None) -> Any:
-    """Anonymous client, or one signed in with the user's token (imports: `app.imports.sources.yandex`)."""
+def yandex_client(token: str | None = None, connection_id: int | None = None) -> Any:
+    """Anonymous client, or one signed in with the user's token (imports: `app.imports.sources.yandex`); through the
+    proxy of that account or of Yandex (`app.outbound`) — a client is of the proxy it was made with."""
     from yandex_music import Client
     from yandex_music.utils.request import Request
 
+    from app.outbound import proxy_url
+
     Client._Client__notice_displayed = True  # silence the banner the library prints to stdout
-    s = get_settings()
-    proxy = s.outbound_proxy if s.outbound_proxy and YANDEX_API_HOST in s.proxy_hosts else None
+    _, proxy = proxy_url("yandex", connection_id)
     return Client(token, request=Request(proxy_url=proxy, timeout=YANDEX_TIMEOUT_S), language="ru")
 
 

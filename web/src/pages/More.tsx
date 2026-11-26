@@ -129,6 +129,7 @@ export function MorePage() {
           <Group title="Администрирование">
             {me.is_admin && <Item icon="user" tint="bg-[#3d8ef0]" to="/admin" title="Пользователи и приглашения" />}
             {me.is_admin && <Item icon="install" tint="bg-[#6b7a8f]" to="/admin/backup" title="Резервные копии" badge={backupWord} badgeTone="warn" />}
+            {me.is_admin && <Item icon="chart" tint="bg-[#7a5af0]" to="/admin/outbound" title="Прокси и запросы" />}
             <Item icon="link" tint="bg-[#537fe2]" to="/integrations" title="Сторонние сервисы" />
             {me.is_admin && <Item icon="lyrics" tint="bg-[#c2528b]" to="/lyrics-sources" title="Тексты и перевод" />}
             <Item icon="send" brand="telegram" title="Telegram бот" value={telegramLabel} onClick={() => openTelegramSetup()} />

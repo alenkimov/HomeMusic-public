@@ -26,6 +26,14 @@ Errors: `{"detail": "<Russian message>"}` with 4xx/5xx.
 |---|---|---|
 | GET | `/api/admin/users` | → `AdminUsersOut {users: [AdminUserOut], ai_cost_usd, ai_cost_30d_usd, library_tracks}` — every Navidrome user (`id` null, `in_hub` false for those who never opened the Hub): AI spending (all time, 30 days, requests), downloads, tracks added, uploads, ♥ and playlists from Navidrome (null if it did not answer), last seen in the Hub and in the player, invite note |
 | GET | `/api/admin/users/{id}` | → `AdminUserDetailOut` (+ `ai_months`, `ai_recent`, `recent_downloads`) |
+| GET | `/api/admin/proxies` | → `{proxies: [ProxyOut], services: [{service, name, proxy_id}], accounts: [{id, provider, account, owner, plan, proxy_id}]}` — the proxies of outside requests (`app/outbound.py`); a password is never returned (`has_password`) |
+| POST | `/api/admin/proxies` | `{url: "socks5://login:password@host:port", name?}` → `ProxyOut` (protocols http, https, socks5, socks5h; http by default); 409: the same proxy is there |
+| PATCH / DELETE | `/api/admin/proxies/{id}` | change (the same body; no password: kept) / delete (its services and accounts go direct) |
+| POST | `/api/admin/proxies/{id}/check` | asks ipinfo.io through it → `ProxyOut` with `ip`, `country_code`, `check_ok`, `check_error` |
+| PUT | `/api/admin/proxies/services/{service}` | `{proxy_id}` (null: direct) — every request to the service without an account's own proxy |
+| PUT | `/api/admin/proxies/accounts/{connection_id}` | `{proxy_id}` — the requests made with this account |
+| GET | `/api/admin/outbound/summary?hours=` | → `{services, proxies, purposes}`: `[{key, requests, errors, limited (429), avg_ms, p95_ms, last_at}]` of the journal |
+| GET | `/api/admin/outbound/requests` | `service`, `outcome` (ok/error/limited), `proxy_id` (0: direct), `connection_id`, `purpose`, `before` (id), `limit` → `{items: [RequestOut], more}`, newest first |
 | GET | `/api/admin/invites` | → `[InviteOut]` (`code` as «ABCD-EFGH», `status` active/used/expired, `used_by`) |
 | POST | `/api/admin/invites` | `InviteIn {note, days?}` → `InviteOut` (`days` 1–90, default `INVITE_DAYS`) |
 | DELETE | `/api/admin/invites/{id}` | → `{ok}` |

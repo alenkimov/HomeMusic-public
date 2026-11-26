@@ -86,13 +86,26 @@ async def search_tracks(secret: str, query: str, limit: int) -> list[dict[str, A
 
 async def _run(operation: str, payload: dict[str, Any], *, seconds: int = 25) -> dict[str, Any]:
     # Librespot manages its own sockets and threads. A timed-out request needs to release them all.
+    # The session is another process: its web requests go through the proxy set for Spotify or the account
+    # (`app.outbound`, by the environment `requests` reads), and the call is one row of the journal.
+    import os
+    import time
+
+    from app import outbound
+
+    pid, proxy = outbound.proxy_url("spotify")
+    env = {**os.environ, **({"HTTPS_PROXY": proxy, "HTTP_PROXY": proxy} if proxy else {})}
+    t0, error, data = time.monotonic(), None, b""
     process = await asyncio.create_subprocess_exec(
         sys.executable, "-m", "app.catalog.spotify_session", operation,
-        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, env=env,
     )
     try:
         async with asyncio.timeout(seconds):
             data, _ = await process.communicate(json.dumps(payload).encode("utf-8"))
+    except TimeoutError:
+        error = f"timed out after {seconds} s"
+        raise
     finally:
         if process.returncode is None:
             try:
@@ -100,10 +113,16 @@ async def _run(operation: str, payload: dict[str, Any], *, seconds: int = 25) ->
             except ProcessLookupError:
                 pass
             await process.wait()
-    try:
-        result = json.loads(data)
-    except ValueError:
-        raise SessionError() from None
+        try:
+            result = json.loads(data)
+        except ValueError:
+            result = None
+        if error is None and (result is None or process.returncode or "error" in result):
+            error = f"session: {(result or {}).get('error') or f'exit {process.returncode}'}"
+        outbound.record(service="spotify", method="SESSION", host="librespot", path=operation,
+                        elapsed_s=time.monotonic() - t0, error=error, proxy_id=pid)
+    if not isinstance(result, dict):
+        raise SessionError()
     if process.returncode or "error" in result:
         raise SessionError(expired=result.get("error") == "expired")
     return result

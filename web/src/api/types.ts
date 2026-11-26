@@ -1912,3 +1912,70 @@ export interface BackupOut {
   /** a sign-in waiting for its code to be typed at google.com/device */
   pending: { user_code: string; url: string } | null;
 }
+
+// --- the Hub's outside requests (admins: «Прокси и запросы», `hub/app/outbound.py`) ---------------------------
+
+export interface ProxyOut {
+  id: number;
+  name: string | null;
+  protocol: 'http' | 'https' | 'socks5' | 'socks5h';
+  host: string;
+  port: number;
+  login: string | null;
+  has_password: boolean;
+  ip: string | null;
+  country_code: string | null;
+  checked_at: string | null;
+  check_ok: boolean | null;
+  check_error: string | null;
+}
+
+export interface ProxiesOut {
+  proxies: ProxyOut[];
+  services: { service: string; name: string; proxy_id: number | null }[];
+  accounts: { id: number; provider: string; account: string | null; owner: string | null; plan: string | null; proxy_id: number | null }[];
+}
+
+export interface OutboundSummaryRow {
+  key: string;
+  requests: number;
+  errors: number;
+  limited: number;
+  avg_ms: number;
+  p95_ms: number;
+  last_at: string | null;
+}
+
+export interface OutboundSummaryOut {
+  hours: number;
+  services: OutboundSummaryRow[];
+  proxies: OutboundSummaryRow[];
+  purposes: OutboundSummaryRow[];
+}
+
+export interface OutboundRequestOut {
+  id: number;
+  started_at: string;
+  service: string;
+  method: string;
+  host: string;
+  path: string;
+  purpose: string | null;
+  auth: 'account' | 'key' | null;
+  connection_id: number | null;
+  proxy_id: number | null;
+  status: number | null;
+  error: string | null;
+  elapsed_ms: number;
+  bytes: number | null;
+  process: string | null;
+}
+
+export interface OutboundFilter {
+  service?: string;
+  outcome?: 'ok' | 'error' | 'limited';
+  proxy_id?: number;
+  connection_id?: number;
+  purpose?: string;
+  before?: number;
+}

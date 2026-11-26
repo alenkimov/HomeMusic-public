@@ -145,11 +145,11 @@ class LLMClient:
         self.settings = s = settings or get_settings()
         self.base_url = s.llm_base_url.rstrip("/")
         self.model = s.llm_model
-        host = _host(self.base_url)
-        proxy = s.outbound_proxy if s.outbound_proxy and host in s.proxy_hosts else None
+        from app.outbound import RoutingTransport
+
         self._http = httpx.AsyncClient(
             timeout=httpx.Timeout(s.llm_timeout_s, connect=15),
-            proxy=proxy,
+            transport=RoutingTransport(),
             follow_redirects=True,
         )
         self._client = AsyncOpenAI(

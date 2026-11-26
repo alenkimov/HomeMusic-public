@@ -19,6 +19,8 @@ log = logging.getLogger("app")
 
 def _import_handlers() -> None:
     # registering job handlers is a side effect of importing these modules
+    import app.backup.restore
+    import app.backup.service
     import app.imports.core
     import app.jobs.artists
     import app.jobs.downloads
@@ -26,8 +28,6 @@ def _import_handlers() -> None:
     import app.mixes.discover
     import app.playlists_mirror
     import app.tidy.scan
-    import app.backup.service
-    import app.backup.restore
 
 
 @asynccontextmanager
@@ -47,6 +47,9 @@ async def lifespan(app: FastAPI):
     from app import relay
 
     relay.start()  # the Hub as two processes (`hub_role`): what passes between them
+    from app import outbound
+
+    await outbound.start(sweeping=s.hub_role != "api")  # the proxies of outside requests, and their journal
     worker = s.hub_role != "api"  # the jobs and the scheduled loops; the api only answers
 
     from app import listen, telegram_chats
@@ -84,35 +87,35 @@ async def lifespan(app: FastAPI):
         if n := await resume_orphaned():
             log.info("resumed %s interrupted transfers", n)
         pool.start()
-        tasks.append(asyncio.create_task(recovery_loop(), name="import-recovery"))
-        tasks.append(asyncio.create_task(scheduler_loop(), name="scheduler"))
-        tasks.append(asyncio.create_task(scrobbles_loop(), name="scrobbles"))
+        tasks.append(_loop_task(recovery_loop(), "import-recovery"))
+        tasks.append(_loop_task(scheduler_loop(), "scheduler"))
+        tasks.append(_loop_task(scrobbles_loop(), "scrobbles"))
         from app.library.cards import keep_fresh
 
-        tasks.append(asyncio.create_task(keep_fresh(), name="track-cards"))
-        tasks.append(asyncio.create_task(schedule_loop(), name="mixes"))
+        tasks.append(_loop_task(keep_fresh(), "track-cards"))
+        tasks.append(_loop_task(schedule_loop(), "mixes"))
         from app.releases import loop as releases_loop
 
-        tasks.append(asyncio.create_task(releases_loop(), name="releases"))
+        tasks.append(_loop_task(releases_loop(), "releases"))
         from app.playlists_mirror import loop as playlists_loop
 
-        tasks.append(asyncio.create_task(playlists_loop(), name="playlists"))
+        tasks.append(_loop_task(playlists_loop(), "playlists"))
         from app.mixes.discover import loop as discoveries_loop
 
-        tasks.append(asyncio.create_task(discoveries_loop(), name="discoveries"))
-        tasks.append(asyncio.create_task(for_you_loop(), name="for_you"))
+        tasks.append(_loop_task(discoveries_loop(), "discoveries"))
+        tasks.append(_loop_task(for_you_loop(), "for_you"))
         from app.listenbrainz import loop as listenbrainz_loop
 
-        tasks.append(asyncio.create_task(listenbrainz_loop(), name="listenbrainz"))
+        tasks.append(_loop_task(listenbrainz_loop(), "listenbrainz"))
         if s.telegram_bot_token.strip():
-            tasks.append(asyncio.create_task(telegram_chats.poll(), name="telegram"))
-        tasks.append(asyncio.create_task(_sync_tags(), name="tags"))
+            tasks.append(_loop_task(telegram_chats.poll(), "telegram"))
+        tasks.append(_loop_task(_sync_tags(), "tags"))
         from app.genres import loop as genres_loop
 
-        tasks.append(asyncio.create_task(genres_loop(), name="genres"))
+        tasks.append(_loop_task(genres_loop(), "genres"))
         from app.artist_pages import loop as artist_pages_loop
 
-        tasks.append(asyncio.create_task(artist_pages_loop(), name="artist-pages"))
+        tasks.append(_loop_task(artist_pages_loop(), "artist-pages"))
     log.info("hub started (%s)", s.hub_role)
     try:
         yield
@@ -125,9 +128,21 @@ async def lifespan(app: FastAPI):
         await wave.reset()
         await smart.reset()
         await svc.stop()
+        await outbound.stop()
         await relay.stop()
         await db.dispose()
         await watchdog.close()
+
+
+def _loop_task(coro, name: str) -> asyncio.Task:
+    """A scheduled loop, its outside requests journaled as made for it (`app.outbound`)."""
+    import contextvars
+
+    from app.outbound import set_purpose
+
+    ctx = contextvars.copy_context()
+    ctx.run(set_purpose, f"loop {name}")
+    return asyncio.create_task(coro, name=name, context=ctx)
 
 
 async def _sync_tags() -> None:
@@ -201,19 +216,25 @@ def create_app() -> FastAPI:
         uploads,
         wave,
     )
+    from app.api import (
+        outbound as outbound_api,
+    )
 
     # no page that lists the Hub's commands: it is reached from the internet, and nobody but a guesser reads it
     app = FastAPI(title="HomeMusic Hub", version="0.1.0", lifespan=lifespan, docs_url=None, openapi_url=None,
                   redoc_url=None)
     for r in (auth.router, search.router, catalog.router, downloads.router, listen.router, library.router, medialib.router, file_picker.router,
               uploads.router, playlists.router, plays.router, playback_queue.router, playback_devices.router, mixes.router, wave.router, smart_shuffle.router, imports.router, events.router, system.router, admin.router,
-              artists.router, insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, quality.router, discoveries.router, listenbrainz.router, for_you.router, subsonic.router, integrations.router, tidy.router, backup.router):
+              artists.router, insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, quality.router, discoveries.router, listenbrainz.router, for_you.router, subsonic.router, integrations.router, tidy.router, backup.router, outbound_api.router):
         app.include_router(r)
     app.include_router(integrations.callback_router)
 
     from app.etag import ETagMiddleware
 
     app.add_middleware(ETagMiddleware)  # a list read again unchanged does not cross the network again
+    from app.outbound import PurposeMiddleware
+
+    app.add_middleware(PurposeMiddleware)  # what a page asked the Hub for is what its outside requests were for
     app.add_middleware(HubMark)
 
     @app.exception_handler(Exception)

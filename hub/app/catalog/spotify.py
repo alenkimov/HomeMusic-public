@@ -70,7 +70,9 @@ def is_short(value: str) -> bool:
 async def expand(value: str) -> tuple[str, str] | None:
     if found := resource(value):
         return found
-    async with httpx.AsyncClient(timeout=6) as client:
+    from app.outbound import RoutingTransport
+
+    async with httpx.AsyncClient(timeout=6, transport=RoutingTransport()) as client:
         for _ in range(4):
             if not is_short(value):
                 return None

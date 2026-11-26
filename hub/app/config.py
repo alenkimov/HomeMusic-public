@@ -223,9 +223,6 @@ class Settings(BaseSettings):
     # local time of the users (the hour a mix is built at); the container itself runs in UTC
     timezone: str = "Europe/Moscow"
 
-    outbound_proxy: str = ""
-    outbound_proxy_hosts: str = ""
-
     # set by tests to skip background workers / scheduled tasks
     disable_background: bool = False
     # how often an import polls Navidrome for the end of its scan (tests set 0)
@@ -248,10 +245,6 @@ class Settings(BaseSettings):
     @property
     def backups_dir(self) -> Path:
         return self.music_root / ".backups"
-
-    @property
-    def proxy_hosts(self) -> set[str]:
-        return {h.strip().lower() for h in self.outbound_proxy_hosts.split(",") if h.strip()}
 
 
 def load_app_config(path: Path) -> AppConfig:

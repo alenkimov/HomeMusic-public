@@ -1,4 +1,5 @@
-"""Shared HTTP plumbing: httpx clients, polite rate limiting, exponential backoff, optional proxy per host."""
+"""Shared HTTP plumbing: httpx clients (each request through its proxy and into the journal: `app.outbound`),
+polite rate limiting, exponential backoff."""
 
 from __future__ import annotations
 
@@ -11,7 +12,6 @@ from collections import deque
 
 import httpx
 
-from app.config import get_settings
 
 log = logging.getLogger(__name__)
 
@@ -158,25 +158,19 @@ def make_client(
     *,
     headers: dict[str, str] | None = None,
     timeout: float = 30,
-    proxy_hosts: set[str] | None = None,
     http2: bool = True,
 ) -> httpx.AsyncClient:
-    """AsyncClient with HTTP/2, redirects and the outbound proxy for configured hosts."""
-    s = get_settings()
-    mounts: dict[str, httpx.AsyncHTTPTransport] = {}
-    hosts = proxy_hosts if proxy_hosts is not None else s.proxy_hosts
-    if s.outbound_proxy and hosts:
-        transport = httpx.AsyncHTTPTransport(proxy=s.outbound_proxy, http2=http2)
-        for h in hosts:
-            mounts[f"all://{h}"] = transport
+    """AsyncClient with HTTP/2 and redirects; each request goes through the proxy set for its service or account,
+    and into the journal (`app.outbound.RoutingTransport`)."""
+    from app.outbound import RoutingTransport
+
     h = {"User-Agent": DEFAULT_UA}
     h.update(headers or {})
     return httpx.AsyncClient(
         headers=h,
         timeout=httpx.Timeout(timeout, connect=15),
         follow_redirects=True,
-        http2=http2,
-        mounts=mounts or None,
+        transport=RoutingTransport(http2=http2),
     )
 
 

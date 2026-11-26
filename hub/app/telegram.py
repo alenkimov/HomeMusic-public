@@ -63,16 +63,18 @@ def clean_token(value: str) -> str:
 
 
 def _proxy() -> str | None:
-    """The Hub's outbound proxy, when Telegram is among the hosts it is set for (needs `aiohttp-socks`)."""
-    s = get_settings()
-    if not (s.outbound_proxy and HOST in s.proxy_hosts):
+    """The proxy set for Telegram (`app.outbound`; needs `aiohttp-socks`)."""
+    from app.outbound import proxy_url
+
+    _, url = proxy_url("telegram")
+    if not url:
         return None
     try:
         import aiohttp_socks  # noqa: F401
     except ImportError:
-        log.warning("telegram: OUTBOUND_PROXY is set for %s but aiohttp-socks is not installed — going direct", HOST)
+        log.warning("telegram: a proxy is set for %s but aiohttp-socks is not installed — going direct", HOST)
         return None
-    return s.outbound_proxy
+    return url
 
 
 def make_bot(token: str, wait_s: float = 30) -> Bot:

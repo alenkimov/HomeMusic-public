@@ -43,9 +43,9 @@ async def _fetch_keys(client: httpx.AsyncClient | None = None) -> None:
     global _keys, _keys_until
     own = client is None
     if client is None:
-        s = get_settings()
-        proxy = s.outbound_proxy if s.outbound_proxy and httpx.URL(CERTS_URL).host in s.proxy_hosts else None
-        client = httpx.AsyncClient(timeout=15, proxy=proxy)
+        from app.outbound import RoutingTransport
+
+        client = httpx.AsyncClient(timeout=15, transport=RoutingTransport())
     try:
         r = await client.get(CERTS_URL)
         r.raise_for_status()

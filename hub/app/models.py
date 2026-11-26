@@ -447,6 +447,72 @@ class IntegrationConnection(Base):
     plan: Mapped[str | None] = mapped_column(String(20))
     connected_at: Mapped[datetime | None] = mapped_column(DateTime)
     checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # the requests made with this account go through this proxy (`app.outbound`); none: the service's own, or direct
+    proxy_id: Mapped[int | None] = mapped_column(ForeignKey("proxies.id", ondelete="SET NULL"), index=True)
+
+
+class Proxy(Base):
+    """A proxy the Hub's requests to outside services may go through (`app.outbound`): of an account
+    (`IntegrationConnection.proxy_id`) or of a whole service (`ServiceProxy`)."""
+
+    __tablename__ = "proxies"
+    __table_args__ = (
+        CheckConstraint("port BETWEEN 1 AND 65535"),
+        CheckConstraint("protocol IN ('http', 'https', 'socks5', 'socks5h')"),
+        UniqueConstraint("host", "port", "login", postgresql_nulls_not_distinct=True),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str | None] = mapped_column(String(100))
+    protocol: Mapped[str] = mapped_column(String(10), default="http", server_default="http")
+    host: Mapped[str] = mapped_column(String(255))
+    port: Mapped[int] = mapped_column(Integer)
+    login: Mapped[str | None] = mapped_column(String(255))
+    password_enc: Mapped[str | None] = mapped_column(Text)  # `app.security.encrypt`
+    # what the last check saw (`POST /api/admin/proxies/{id}/check`): the address the services see, its country
+    ip: Mapped[str | None] = mapped_column(String(64))
+    country_code: Mapped[str | None] = mapped_column(String(2))
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    check_ok: Mapped[bool | None] = mapped_column(Boolean)
+    check_error: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ServiceProxy(Base):
+    """Every request to a service without an account of its own proxy goes through this one."""
+
+    __tablename__ = "service_proxies"
+
+    service: Mapped[str] = mapped_column(String(32), primary_key=True)
+    proxy_id: Mapped[int] = mapped_column(ForeignKey("proxies.id", ondelete="CASCADE"), index=True)
+
+
+class OutboundRequest(Base):
+    """A request of the Hub to an outside service (`app.outbound`): kept `outbound.KEEP_DAYS`. No body, no values
+    of the query — only its names: tokens and keys travel there."""
+
+    __tablename__ = "outbound_requests"
+    __table_args__ = (
+        Index("ix_outbound_requests_service_at", "service", "started_at"),
+        Index("ix_outbound_requests_proxy_at", "proxy_id", "started_at"),
+        Index("ix_outbound_requests_connection_at", "connection_id", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    service: Mapped[str] = mapped_column(String(32))
+    method: Mapped[str] = mapped_column(String(10))
+    host: Mapped[str] = mapped_column(String(255))
+    path: Mapped[str] = mapped_column(String(500))  # with the names of its query, not the values
+    purpose: Mapped[str | None] = mapped_column(String(100))  # the job, the page, the loop it was made for
+    auth: Mapped[str | None] = mapped_column(String(10))  # "account" | "key" | None
+    connection_id: Mapped[int | None] = mapped_column(ForeignKey("integration_connections.id", ondelete="SET NULL"))
+    proxy_id: Mapped[int | None] = mapped_column(ForeignKey("proxies.id", ondelete="SET NULL"))
+    status: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(String(300))
+    elapsed_ms: Mapped[int] = mapped_column(Integer)
+    bytes: Mapped[int | None] = mapped_column(BigInteger)
+    process: Mapped[str | None] = mapped_column(String(10))  # «api» | «worker» | «all»
 
 
 class IntegrationCredential(Base):

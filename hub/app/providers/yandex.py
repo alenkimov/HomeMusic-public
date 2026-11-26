@@ -37,8 +37,8 @@ CODECS = ["flac", "mp3"]  # what the library keeps as it is: no MP4 container, n
 TIMEOUT_S = 60
 
 
-async def plus_token() -> str | None:
-    """The token of a connected Yandex account with Plus: a shared one first, then the newest."""
+async def plus_token() -> tuple[int, str] | None:
+    """(the account, its token) of a connected Yandex account with Plus: a shared one first, then the newest."""
     from sqlalchemy import select
 
     from app import integrations
@@ -51,7 +51,7 @@ async def plus_token() -> str | None:
         ).order_by(C.shared.desc(), C.connected_at.desc(), C.id.desc())))
         for row in rows:
             if token := await integrations.credential(s, row.id):
-                return token
+                return row.id, token
     return None
 
 
@@ -86,6 +86,8 @@ class YandexProvider:
 
     def __init__(self) -> None:
         self._token: str | None = None
+        self._account: int | None = None
+        self._proxy: str | None = None
         self._token_at: float | None = None  # when the account was looked up (None: not yet)
         self._client: Any = None
         self._lock = asyncio.Lock()
@@ -98,14 +100,21 @@ class YandexProvider:
         """The client of the account with Plus (None: there is none)."""
         async with self._lock:
             if self._token_at is None or time.monotonic() - self._token_at > TOKEN_TTL_S:
-                token = await plus_token()
+                found = await plus_token()
                 self._token_at = time.monotonic()
+                account, token = found if found else (None, None)
                 if token != self._token:
-                    self._token, self._client = token, None
+                    self._token, self._account, self._client = token, account, None
+            from app.outbound import proxy_url, use_account
+
+            use_account(self._account)  # what follows is the account's: its proxy, its rows of the journal
+            _, proxy = proxy_url("yandex", self._account)
+            if proxy != self._proxy:  # the proxy was changed: a client of the new one
+                self._proxy, self._client = proxy, None
             if self._token and self._client is None:
                 from app.catalog.yandex import yandex_client
 
-                self._client = yandex_client(self._token)
+                self._client = yandex_client(self._token, self._account)
             return self._client
 
     async def search(self, q: TrackQuery, limit: int = 10) -> list[Candidate]:

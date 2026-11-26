@@ -123,6 +123,16 @@ what plays now and next; a first or old page), then the library's artists whose 
 one every 15 s (30 s while somebody listens, longer each time a catalog fails). Each put-together is in the log with
 its steps and the slowest catalogs (`artist 12 (Кино): 2.4 s — records 1.6 s, …; slowest: Spotify 1.5 s, …`).
 
+## Outside requests
+
+Every request of the Hub to an outside service goes through `app/outbound.py`: through the proxy of the account it is
+made with (`integration_connections.proxy_id`), else of its service (`service_proxies`), else direct — and into the
+journal (`outbound_requests`, 14 days): the service, the path with the names of its query (never the values), what
+it was for (the job, the API route, the loop), the account or key, the proxy, the status or the error, the time.
+httpx clients (`app.net.make_client`) by their transport, `requests` (the Yandex Music client, yt-dlp) by a hook,
+the Spotify session and Telegram by their proxy setting. The admin page «Прокси и запросы» sets the proxies and
+reads the journal: by service, proxy and purpose, how many requests failed or hit a limit (429), how long they took.
+
 ## Where a file comes from
 
 A track to download or to listen to is looked for in the sources one after another (`Services.provider_order`):
