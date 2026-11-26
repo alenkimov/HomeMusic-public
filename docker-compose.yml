@@ -232,6 +232,9 @@ services:
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-localhost}
     volumes:
       - ./gateway/direct/Caddyfile:/etc/caddy/Caddyfile:ro
+      # the audio the Hub points it to (X-Accel-Redirect): the music folder and the Hub's data (its working files)
+      - ${MUSIC_ROOT}:/srv/_files/music:ro
+      - hub-data:/srv/_files/data:ro
       - caddy-data:/data
       - caddy-config:/config
     logging: *logging

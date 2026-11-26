@@ -15,5 +15,19 @@
 	# SSE (/api/events) is flushed immediately; uploads up to 500 MB are streamed without a body limit.
 	reverse_proxy hub:8080 {
 		flush_interval -1
+		# Audio is sent from here, not by Python: told it may (X-HomeMusic-Accel), the Hub checks who asks, picks the
+		# file and answers with its place only (X-Accel-Redirect, hub/app/api/listen.py `accel_path`). Caddy reads it
+		# from the folders mounted under /srv/_files (docker-compose.yml) with the ranges a seek asks for.
+		header_up X-HomeMusic-Accel 1
+		@accel header X-Accel-Redirect *
+		handle_response @accel {
+			root * /srv
+			rewrite * {rp.header.X-Accel-Redirect}
+			# what the Hub said of the file goes with it (the audio's type, where it is from, the Hub's mark)
+			copy_response_headers {
+				include Content-Type Cache-Control X-HomeMusic-Hub X-HomeMusic-Listen-Kind X-HomeMusic-Source X-HomeMusic-Variant
+			}
+			file_server
+		}
 	}
 }

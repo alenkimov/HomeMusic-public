@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
@@ -15,6 +16,7 @@ from starlette.background import BackgroundTask
 from app import activity, listen
 from app.api.schemas import ListenOut, ListenPrefetchIn, ListenPrefetchOut
 from app.auth import current_user
+from app.config import get_settings
 from app.db import session_scope
 from app.events import bus
 from app.library.owned import file_out, with_journal
@@ -96,6 +98,28 @@ async def prefetch(body: ListenPrefetchIn, user: User = Depends(current_user)):
     return ListenPrefetchOut(queued=listen.prefetch(user.id, body.refs))
 
 
+ACCEL_HEADER = "x-homemusic-accel"  # set by the gateway (gateway/direct/Caddyfile) on what it passes to the Hub
+ACCEL_PREFIX = "/_files"
+
+
+def accel_path(request: Request, path: Path) -> str | None:
+    """Where the gateway finds the file, when it sends files itself: the Hub checks who asks and picks the file,
+    and answers with its place (`X-Accel-Redirect`) instead of its bytes — Caddy reads it from the disk, with the
+    ranges a seek asks for, and Python sends no audio. The music folder and the Hub's data folder are the ones the
+    gateway has (docker-compose.yml: under /srv/_files); a file elsewhere, or a request not through the gateway, is
+    sent by the Hub."""
+    if request.headers.get(ACCEL_HEADER) != "1":
+        return None
+    s = get_settings()
+    for name, root in (("music", s.music_root), ("data", s.data_dir)):
+        try:
+            rel = path.resolve().relative_to(root.resolve())
+        except ValueError:
+            continue
+        return f"{ACCEL_PREFIX}/{name}/{quote(rel.as_posix())}"
+    return None
+
+
 @router.get("/stream")
 async def stream(ref: str, request: Request, q: str | None = None, cant: str | None = None, can: str | None = None,
                  user: User = Depends(current_user)):
@@ -127,6 +151,11 @@ async def stream(ref: str, request: Request, q: str | None = None, cant: str | N
     if m.variant:
         variant["X-HomeMusic-Variant"] = m.variant
     if m.path is not None:
+        if (inner := accel_path(request, m.path)) is not None:
+            # the gateway (Caddy) sends the file itself: the Hub has only said which one (`accel_path`)
+            return Response(status_code=200, headers={
+                "Cache-Control": "no-store", **variant, "X-Accel-Redirect": inner,
+                "Content-Type": m.media_type or listen.local_media_type(m.path)})
         return FileResponse(m.path, media_type=m.media_type, headers={"Cache-Control": "no-store", **variant})
     headers = {**m.headers, "accept-ranges": "bytes", "cache-control": "no-store", **variant}
     if m.body is None:

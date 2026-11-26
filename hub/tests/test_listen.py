@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date
+from urllib.parse import quote
 
 import httpx
 import pytest
@@ -828,8 +829,14 @@ async def test_owned_track_plays_the_library_file(env, monkeypatch):
     assert r.json()["kind"] == "library" and env["hm"].searched == 0
     album_lookup.assert_not_awaited()
     assert r.json()["nd_song_id"] is None  # Navidrome hasn't scanned it yet
-    r = await c.get(r.json()["stream_url"], headers={"Range": "bytes=0-9"})
+    url = r.json()["stream_url"]
+    r = await c.get(url, headers={"Range": "bytes=0-9"})
     assert r.status_code == 206 and r.content == AUDIO[:10]
+    # through the gateway that sends files itself: the Hub says which, and sends no audio
+    r = await c.get(url, headers={"Range": "bytes=0-9", "X-HomeMusic-Accel": "1"})
+    assert r.status_code == 200 and r.content == b""
+    assert r.headers["x-accel-redirect"] == "/_files/music/library/" + quote(rel)
+    assert r.headers["content-type"] == "audio/mpeg" and r.headers["x-homemusic-listen-kind"] == "library"
 
     # scanned meanwhile: the cached choice is looked up again and carries the song id (♥ in the player)
     async with session_scope() as s:
