@@ -82,7 +82,25 @@ async def enqueue(
 
 
 def notify() -> None:
+    """Workers look for work now. Queued by the api process: the worker's are told (`app.relay`)."""
+    from app import relay
+
+    if relay.role() == "api":
+        return relay.send("jobs")
     _wakeup.set()
+
+
+def _relayed_jobs(_msg: dict[str, Any]) -> None:
+    _wakeup.set()
+
+
+def _register() -> None:
+    from app import relay
+
+    relay.on("jobs")(_relayed_jobs)
+
+
+_register()
 
 
 async def recover_stale() -> int:
@@ -134,6 +152,21 @@ _IMPORT_CLAIMABLE = (
 )
 
 
+# Of the downloads at one priority, the next is of whoever has the fewest running now: one person's transfer of
+# thousands of tracks does not hold every hand while somebody else's download waits behind it.
+_FAIR_PICK = (
+    "WITH busy AS (SELECT d.user_id, COUNT(*) AS n FROM jobs r "
+    "JOIN download_items d ON d.id = (r.payload_json ->> 'item_id')::integer "
+    "WHERE r.status = 'running' AND r.kind = 'download_item' GROUP BY d.user_id) "
+    "SELECT jobs.id FROM jobs "
+    "LEFT JOIN download_items di ON jobs.kind = 'download_item' AND di.id = (jobs.payload_json ->> 'item_id')::integer "
+    "LEFT JOIN busy ON busy.user_id = di.user_id "
+    "WHERE jobs.id IN (SELECT id FROM jobs WHERE {claimable} AND run_after <= :now) "
+    "ORDER BY jobs.priority DESC, jobs.kind = 'download_item', COALESCE(busy.n, 0), jobs.run_after, jobs.id "
+    "LIMIT 1 FOR UPDATE OF jobs SKIP LOCKED"
+)
+
+
 async def _claim(worker_id: str, *, imports: bool = False) -> Job | None:
     # At one priority the short jobs go before downloads: a transfer queues thousands of downloads at once, and a
     # transfer's finish (or another's fetch, a mix) re-queued after them would wait until every one was through.
@@ -146,8 +179,7 @@ async def _claim(worker_id: str, *, imports: bool = False) -> Job | None:
             await s.execute(
                 text(
                     "UPDATE jobs SET status='running', locked_by=:w, locked_at=:now, attempts=attempts+1, updated_at=:now "
-                    f"WHERE id = (SELECT id FROM jobs WHERE {claimable} AND run_after <= :now "
-                    "ORDER BY priority DESC, kind = 'download_item', run_after, id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id"
+                    f"WHERE id = ({_FAIR_PICK.format(claimable=claimable)}) RETURNING id"
                 ),
                 {"w": worker_id, "now": now, "bg": background_slots()},
             )

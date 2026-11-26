@@ -98,6 +98,20 @@ the Hub's state is written. The Hub wins a conflict; an edit made elsewhere is n
 becomes `tracks.find` — «does the Hub know this song» — and `has a file`); `nd_song_id` and `ref` side by side in
 events, dislikes and the items of mixes.
 
+## Processes
+
+In `docker-compose.yml` the Hub is two containers of one image (`HUB_ROLE`): **hub** («api») answers the apps —
+the API, the event streams, the audio; **hub-worker** («worker») does the background work — the job queue
+(downloads, a transfer's thousands of them, ffmpeg and fpcalc, yt-dlp), mixes and the scheduled loops. However busy
+the worker is, the answers do not wait for it. What passes between them goes through PostgreSQL's LISTEN/NOTIFY
+(`app/relay.py`): the events the worker publishes, reaching the apps through the api; a job the api queues, waking
+the worker; somebody listening, which makes the worker's background jobs give way; a pick the api must forget. The
+working files are on the Linux disk of the hub-data volume (`STAGING_ROOT`), the library on MUSIC_ROOT. Development
+and tests run one process doing both (`HUB_ROLE=all`).
+
+Of the downloads waiting at one priority, the next is of whoever has the fewest running now: one person's transfer
+does not hold every hand.
+
 ## Modules
 
 - `app/library/tracks.py` — the registry: find or make a Track by a catalog ref or by names; its links; its files.

@@ -537,12 +537,24 @@ async def _track_addresses(ref: str) -> list[str]:
 
 async def forget(ref: str) -> None:
     """Drop the pick (the track has just been imported: the library file plays from now on). A provider's file
-    stays: it is that file the user asks for."""
+    stays: it is that file the user asks for. Done by the worker (a download), the api's memory of it goes too."""
     if is_file_ref(ref):
         return
     for key in await _track_addresses(ref):
         _choices.pop(key, None)
         await cache_delete(_key(key))
+    from app import relay
+
+    if relay.role() == "worker":
+        relay.send("forget", ref=ref)
+
+
+def _forget_relayed(msg: dict) -> None:
+    async def run() -> None:
+        for key in await _track_addresses(msg["ref"]):
+            _choices.pop(key, None)
+
+    _spawn(run())
 
 
 def is_file_ref(ref: str) -> bool:
@@ -1205,6 +1217,17 @@ def prepared_file(ref: str, candidate: Candidate | None = None) -> PreparedAudio
             and cp.done and cp.failed is None and cp.have and cp.path.is_file()):
         if suffix := STREAM_SUFFIXES.get(cp.media_type):
             return PreparedAudio(cp.path, suffix)
+    # a whole copy on the disk the other process made (the api's player, the worker's download): its note says which
+    # file it is (`COPY_NOTE`)
+    path = get_settings().staging_dir / LOCAL_DIR / _local_name(ref) / COPY_NAME
+    try:
+        note = json.loads((path.parent / COPY_NOTE).read_text())
+        size = path.stat().st_size
+    except (OSError, ValueError):
+        return None
+    if size and note.get("size") == size and (candidate is None or (note.get("provider"), note.get("provider_id")) == (
+            candidate.provider, candidate.provider_id)) and (suffix := STREAM_SUFFIXES.get(note.get("media_type") or "")):
+        return PreparedAudio(path, suffix)
     return None
 
 
@@ -1819,3 +1842,12 @@ async def _remembered(ref: str, *, library: bool = True) -> Choice | None:
             return Choice(ref, "library", c.artist, c.title, c.duration_s, path=path, nd_song_id=nd_song_id,
                           query=c.query)
     return c
+
+
+def _register() -> None:
+    from app import relay
+
+    relay.on("forget")(_forget_relayed)
+
+
+_register()

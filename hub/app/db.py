@@ -52,8 +52,10 @@ def get_database_url(url: str | URL | None = None) -> URL:
 
 def init_engine(url: str | URL | None = None) -> AsyncEngine:
     global _engine, _sessionmaker
+    # two processes share PostgreSQL's 100 connections: the worker keeps fewer in reserve
+    overflow = POOL_OVERFLOW if get_settings().hub_role != "worker" else POOL_OVERFLOW - 10
     _engine = create_async_engine(get_database_url(url), pool_pre_ping=True, pool_size=POOL_SIZE,
-                                  max_overflow=POOL_OVERFLOW)
+                                  max_overflow=overflow)
     _watch_pool(_engine)
     _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
     return _engine

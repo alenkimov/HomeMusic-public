@@ -270,3 +270,76 @@ async def test_job_from_a_stopped_worker_is_reclaimed_while_other_workers_keep_t
             assert job.status == "running"
     finally:
         await pool.stop()
+
+
+async def _download_of(user_id: int, *, running: bool = False) -> int:
+    from app.models import DownloadBatch, DownloadItem
+
+    async with session_scope() as s:
+        batch = DownloadBatch(user_id=user_id, origin="import")
+        s.add(batch)
+        await s.flush()
+        item = DownloadItem(batch_id=batch.id, user_id=user_id, query_json={"query": {"artist": "A", "title": "a"}})
+        s.add(item)
+        await s.flush()
+        job = await queue.enqueue(s, "download_item", {"item_id": item.id}, priority=queue.PRIORITY_IMPORT)
+        if running:
+            job.status = "running"
+        return job.id
+
+
+async def test_the_next_download_is_of_whoever_has_fewest_running(db):
+    from app.models import User
+
+    async with session_scope() as s:
+        friend, me = User(nd_username="friend", nd_password_enc="unused"), User(nd_username="me", nd_password_enc="unused")
+        s.add_all([friend, me])
+        await s.flush()
+        friend_id, me_id = friend.id, me.id
+    await _download_of(friend_id, running=True)  # the friend's transfer is downloading
+    for _ in range(3):
+        await _download_of(friend_id)  # and has thousands more queued, before mine
+    mine = await _download_of(me_id)
+    job = await queue._claim("test")
+    assert job is not None and job.id == mine
+
+
+async def test_an_event_published_by_the_worker_reaches_the_apps_through_the_api(db_url, monkeypatch, tmp_path):
+    """The api process delivers what the worker publishes (`app.relay`), a long event too."""
+    import json
+
+    import psycopg
+
+    from app import config, relay
+    from app.events import bus
+
+    monkeypatch.setenv("CONFIG_FILE", str(tmp_path / "none.yaml"))
+    monkeypatch.setenv("HUB_ROLE", "api")
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    config.get_settings.cache_clear()
+    init_engine(db_url)
+    q = bus.subscribe(5)
+    try:
+        relay.start()
+        await asyncio.wait_for(relay.listening.wait(), 10)
+        info = relay._conninfo()
+        async with await psycopg.AsyncConnection.connect(info, autocommit=True) as conn:
+            short = {"t": "event", "r": "worker", "user": 5, "event": "library", "data": {"kind": "imported"}}
+            await conn.execute("SELECT pg_notify(%s, %s)", (relay.CHANNEL, json.dumps(short)))
+            long = {"t": "event", "r": "worker", "user": None, "event": "cards", "data": {"ids": list(range(3000))}}
+            row = await (await conn.execute("INSERT INTO relay_messages (body) VALUES (%s) RETURNING id", (json.dumps(long),))).fetchone()
+            await conn.execute("SELECT pg_notify(%s, %s)", (relay.CHANNEL, json.dumps({"t": "stored", "r": "worker", "id": row[0]})))
+            own = {**short, "r": "api"}  # its own message is not delivered twice
+            await conn.execute("SELECT pg_notify(%s, %s)", (relay.CHANNEL, json.dumps(own)))
+        got = [json.loads(await asyncio.wait_for(q.get(), 5)) for _ in range(2)]
+        assert [g["event"] for g in got] == ["library", "cards"] and len(got[1]["data"]["ids"]) == 3000
+        await asyncio.sleep(0.3)
+        assert q.empty()
+        # what the api queues wakes the worker through the relay, not its own (absent) workers
+        relay.send("ping")
+        assert relay._out is not None and relay._out.qsize() <= 1
+    finally:
+        bus.unsubscribe(5, q)
+        await relay.stop()
+        await dispose()
+        config.get_settings.cache_clear()

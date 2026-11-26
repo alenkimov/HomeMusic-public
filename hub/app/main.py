@@ -44,6 +44,10 @@ async def lifespan(app: FastAPI):
     from app.watchdog import watchdog
 
     watchdog.start()  # a loop held up is said in the log, with where
+    from app import relay
+
+    relay.start()  # the Hub as two processes (`hub_role`): what passes between them
+    worker = s.hub_role != "api"  # the jobs and the scheduled loops; the api only answers
 
     from app import listen, telegram_chats
     from app.for_you import loop as for_you_loop
@@ -61,12 +65,13 @@ async def lifespan(app: FastAPI):
     from app.db import session_scope
     from app.library import artists as artist_names
 
-    async with session_scope() as names_s:  # every artist the library names is one the Hub knows
-        await artist_names.seed(names_s)
+    if worker:
+        async with session_scope() as names_s:  # every artist the library names is one the Hub knows
+            await artist_names.seed(names_s)
     _import_handlers()
     pool = WorkerPool(s.cfg.jobs.workers)
     tasks: list[asyncio.Task] = []
-    if not s.disable_background:
+    if worker and not s.disable_background:
         n = await recover_stale()
         if n:
             log.info("re-queued %s interrupted jobs", n)
@@ -105,7 +110,7 @@ async def lifespan(app: FastAPI):
         from app.genres import loop as genres_loop
 
         tasks.append(asyncio.create_task(genres_loop(), name="genres"))
-    log.info("hub started")
+    log.info("hub started (%s)", s.hub_role)
     try:
         yield
     finally:
@@ -117,6 +122,7 @@ async def lifespan(app: FastAPI):
         await wave.reset()
         await smart.reset()
         await svc.stop()
+        await relay.stop()
         await db.dispose()
         await watchdog.close()
 

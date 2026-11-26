@@ -150,6 +150,10 @@ class Settings(BaseSettings):
     # folder that the containers read through WSL2's 9P — many times slower than the Linux disk of a Docker volume,
     # where docker-compose.yml puts this (`/data/staging`). Files reach the library from here by a copy.
     staging_root: Path | None = None
+    # «all»: one process does everything (development, tests). In docker-compose.yml the Hub is two: «api» answers
+    # the apps, «worker» runs the jobs and the scheduled loops — the background work never holds up the answers
+    # (`app.relay`: what passes between them).
+    hub_role: Literal["all", "api", "worker"] = "all"
     database_url: str = ""
     database_password: str = ""
     data_dir: Path = Path("/data")
