@@ -1,6 +1,6 @@
 import { tagKey } from '../lib/tags';
 import { imageUrl } from '../lib/img';
-import { useSoftCover } from '../lib/softCover';
+import { useCoverColors } from '../lib/softCover';
 import { FileCard, PlayLine } from '../components/FileInfo';
 import { ChoosePlaybackFile } from '../components/FindFile';
 import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
@@ -181,7 +181,7 @@ export function PlayerPage() {
   };
 
   const cover = track?.cover_small_url || track?.cover_url;
-  const blob = useSoftCover(cover ? imageUrl(cover) : null, { vivid: true, blob: true }); // the drifting light
+  const lights = useCoverColors(cover ? imageUrl(cover) : null); // the drifting light
 
   if (!track)
     return (
@@ -215,15 +215,20 @@ export function PlayerPage() {
 
   return (
     <div className={cx('pt-safe relative isolate mx-auto flex min-h-dvh max-w-2xl flex-col pb-[calc(24px+env(safe-area-inset-bottom))]', side && 'lg:max-w-6xl')}>
-      {blob && (
-        // the page's own light — the cover's colours in slow motion: three soft blobs of it, each drifting its own way.
-        // A blob is blurred once into a tiny picture (`lib/softCover.ts`): what moves has no filter, and an iPhone
-        // moves it on its own, without working a blur out at every frame
+      {lights && (
+        // the page's own light — the cover's colours in slow motion: three soft glows, each drifting its own way.
+        // A glow is a radial gradient of one of the cover's colours (`lib/softCover.ts`): soft by itself, and moved
+        // without a filter — three copies of the cover under a 64 px blur were worked out at every frame, and held
+        // an iPhone
         <div aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-          {(['hm-drift-a', 'hm-drift-b', 'hm-drift-c'] as const).map((name, i) => (
-            <div key={name} className="absolute h-[85%] w-[85%] bg-cover bg-center opacity-60 motion-reduce:!animate-none"
-              style={{ backgroundImage: `url(${blob})`, left: ['-20%', '35%', '10%'][i], top: ['-15%', '5%', '40%'][i], animation: `${name} ${[34, 41, 47][i]}s ease-in-out infinite alternate` }} />
-          ))}
+          {(['hm-drift-a', 'hm-drift-b', 'hm-drift-c'] as const).map((name, i) => {
+            const [r, g, b] = lights[i];
+            return (
+              <div key={name} className="absolute h-[85%] w-[85%] motion-reduce:!animate-none"
+                style={{ background: `radial-gradient(closest-side, rgb(${r} ${g} ${b} / 0.85), rgb(${r} ${g} ${b} / 0.6) 50%, rgb(${r} ${g} ${b} / 0) 100%)`,
+                  left: ['-20%', '35%', '10%'][i], top: ['-15%', '5%', '40%'][i], animation: `${name} ${[34, 41, 47][i]}s ease-in-out infinite alternate` }} />
+            );
+          })}
           <div className="absolute inset-0 bg-bg/40" />
         </div>
       )}

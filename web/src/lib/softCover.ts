@@ -44,26 +44,12 @@ function saturate(px: Uint8ClampedArray, amount: number) {
   }
 }
 
-/** A round blob: the edge fades out in the picture itself (no blur filter, no mask while drawn). */
-function round(px: Uint8ClampedArray) {
-  const c = (SIZE - 1) / 2;
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const d = Math.hypot(x - c, y - c) / c; // 0 at the middle, 1 at the edge
-      const a = Math.max(0, Math.min(1, 1 - d));
-      px[(y * SIZE + x) * 4 + 3] = Math.round(255 * a * a * (3 - 2 * a)); // smoothstep
-    }
-  }
-}
-
 export interface SoftLook {
   /** the colors a half stronger */
   vivid?: boolean;
-  /** a round blob fading out at its edge (the full player's drifting light) */
-  blob?: boolean;
 }
 
-const keyOf = (url: string, look: SoftLook) => `${look.vivid ? 'v' : ''}${look.blob ? 'b' : ''}:${url}`;
+const keyOf = (url: string, look: SoftLook) => `${look.vivid ? 'v' : ''}:${url}`;
 
 /** The soft picture of `url` as a data address (null: not readable). */
 export function softCover(url: string, look: SoftLook = {}): Promise<string | null> {
@@ -92,7 +78,6 @@ export function softCover(url: string, look: SoftLook = {}): Promise<string | nu
         const data = g.getImageData(0, 0, SIZE, SIZE);
         blur(data.data, 2);
         if (look.vivid) saturate(data.data, 1.5);
-        if (look.blob) round(data.data);
         g.putImageData(data, 0, 0);
         done(c.toDataURL('image/png'));
       } catch {
@@ -108,14 +93,75 @@ export function softCover(url: string, look: SoftLook = {}): Promise<string | nu
 
 /** The soft picture of a cover, once it is made (at once when it was made before). */
 export function useSoftCover(url: string | null | undefined, look: SoftLook = {}): string | null {
-  const { vivid = false, blob = false } = look;
-  const key = url ? keyOf(url, { vivid, blob }) : '';
+  const { vivid = false } = look;
+  const key = url ? keyOf(url, { vivid }) : '';
   const [made, setMade] = useState<{ key: string; src: string | null }>(() => ({ key, src: url ? cache.get(key) ?? null : null }));
   useEffect(() => {
     if (!url) return;
     let on = true;
-    void softCover(url, { vivid, blob }).then((src) => on && setMade({ key, src }));
+    void softCover(url, { vivid }).then((src) => on && setMade({ key, src }));
     return () => { on = false; };
-  }, [url, vivid, blob, key]);
+  }, [url, vivid, key]);
   return made.key === key ? made.src : (url ? cache.get(key) ?? null : null);
 }
+
+
+// --- colors of a cover: the full player's drifting light -------------------------------------------------------
+
+export type Rgb = [number, number, number];
+const colorCache = new Map<string, Rgb[] | null>();
+
+/** Three colors of a cover — its upper left, its middle, its lower right, blurred and a half stronger — for the
+ * full player's light: radial gradients that drift. A gradient has a soft edge by itself and costs nothing to draw;
+ * a picture with a soft edge of its own lost the edge in a browser (its square corners came out dark). */
+export function coverColors(url: string): Promise<Rgb[] | null> {
+  if (colorCache.has(url)) return Promise.resolve(colorCache.get(url) ?? null);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.decoding = 'async';
+    const done = (r: Rgb[] | null) => {
+      if (colorCache.size > 100) colorCache.clear();
+      colorCache.set(url, r);
+      resolve(r);
+    };
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = c.height = SIZE;
+        const g = c.getContext('2d', { willReadFrequently: true });
+        if (!g) return done(null);
+        g.drawImage(img, 0, 0, SIZE, SIZE);
+        const px = g.getImageData(0, 0, SIZE, SIZE).data;
+        saturate(px, 1.5);
+        const mean = (x0: number, y0: number, w: number): Rgb => {
+          let r = 0, gg = 0, b = 0, n = 0;
+          for (let y = y0; y < y0 + w; y++) for (let x = x0; x < x0 + w; x++) {
+            const i = (y * SIZE + x) * 4;
+            r += px[i]; gg += px[i + 1]; b += px[i + 2]; n++;
+          }
+          return [Math.round(r / n), Math.round(gg / n), Math.round(b / n)];
+        };
+        const q = SIZE / 2;
+        done([mean(0, 0, q), mean(q / 2, q / 2, q), mean(q, q, q)]);
+      } catch {
+        done(null);
+      }
+    };
+    img.onerror = () => done(null);
+    img.src = url;
+  });
+}
+
+export function useCoverColors(url: string | null | undefined): Rgb[] | null {
+  const [made, setMade] = useState<{ url: string; colors: Rgb[] | null } | null>(null);
+  useEffect(() => {
+    if (!url) return;
+    let on = true;
+    void coverColors(url).then((colors) => on && setMade({ url, colors }));
+    return () => { on = false; };
+  }, [url]);
+  if (!url) return null;
+  return made?.url === url ? made.colors : colorCache.get(url) ?? null;
+}
+
