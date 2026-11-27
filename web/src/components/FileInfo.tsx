@@ -68,40 +68,30 @@ export function PlayLine({ phase, info, error, className }: { phase: string; inf
   return <FileInfo info={info} className={className} />;
 }
 
-/** «Файл»: the card of the full player, under «Участники» — the source with its mark, the file's words, and what the
- * check after the download said of it. */
-export function FileCard({ info }: { info: ListenOut | null | undefined }) {
+/** The file's row of the full player's card (`pages/Player.tsx`, under the artists and the album): the source
+ * with its mark, the file's words, what the check after the download said of it. The row opens «Как скачан» — the
+ * journal of the download that brought the file — when there is one; no arrow, as the rows above it have none. */
+export function FileRow({ info }: { info: ListenOut | null | undefined }) {
   if (!info?.source) return null;
   const words = fileWords(info);
-  return (
-    <section aria-label="Файл" className="mx-4 mt-3 rounded-2xl bg-surface px-4 pb-3 pt-3">
-      <h2 className="pb-2 text-base font-bold">Файл</h2>
-      <div className="flex min-h-12 items-center gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-fg/10">
-          <ServiceIcon service={info.source} size={20} />
+  const journal = info.journal && info.track_id ? `/file/${info.track_id}` : null;
+  const body = (
+    <>
+      <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-fg/10">
+        <ServiceIcon service={info.source} size={22} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className={cx('block truncate text-[15px] font-medium', journal && 'group-hover/file:underline')}>{words || providerLabel(info.source)}</span>
+        <span className="block text-[13px] text-muted">
+          {words && providerLabel(info.source)}
+          {info.kind === 'full' && <>{words && ' · '}играет из источника, на сервер ещё не скачан</>}
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[15px]">{words || providerLabel(info.source)}</span>
-          <span className="block text-[13px] text-muted">
-            {words && providerLabel(info.source)}
-            {info.kind === 'full' && <>{words && ' · '}играет из источника, на сервер ещё не скачан</>}
-          </span>
-        </span>
-        {info.page_url && (
-          <a href={info.page_url} target="_blank" rel="noopener noreferrer" aria-label="Открыть страницу файла" title="Открыть страницу файла" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted hover:text-fg">
-            <Icon name="external" size={18} />
-          </a>
-        )}
-      </div>
-      {info.sounds_like_kbps ? <p className="pt-1 text-[13px] text-warn">По звуку около {info.sounds_like_kbps} кбит/с: похоже, файл сделан из худшего.</p> : null}
-      {/* the journal of the download that brought the file: where it was looked for, why this one was taken */}
-      {info.journal && info.track_id ? (
-        <Link to={`/file/${info.track_id}`} className="-mx-2 mt-1 flex min-h-11 items-center gap-2 rounded-lg px-2 text-[15px] hover:bg-fg/5">
-          <Icon name="history" size={18} className="text-muted" />
-          <span className="flex-1">Как скачан</span>
-          <Icon name="chevron" size={18} className="text-dim" />
-        </Link>
-      ) : null}
-    </section>
+        {info.sounds_like_kbps ? <span className="block text-[13px] text-warn">По звуку около {info.sounds_like_kbps} кбит/с: похоже, файл сделан из худшего</span> : null}
+      </span>
+    </>
   );
+  const row = 'group/file flex min-h-16 items-center gap-3 py-2';
+  return journal
+    ? <Link to={journal} className={row} title="Как скачан этот файл">{body}</Link>
+    : <div className={row}>{body}</div>;
 }

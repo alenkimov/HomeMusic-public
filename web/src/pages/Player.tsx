@@ -1,7 +1,7 @@
 import { tagKey } from '../lib/tags';
 import { PlayerLight } from '../components/PlayerLight';
 import { usePlayerLight } from '../lib/playerLight';
-import { FileCard, PlayLine } from '../components/FileInfo';
+import { FileRow, PlayLine } from '../components/FileInfo';
 import { ChoosePlaybackFile } from '../components/FindFile';
 import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
 import { api } from '../api/client';
@@ -45,7 +45,9 @@ import { isUpload,
   artistTo,
   creditedOf,
 } from '../lib/listen';
-import { Link, goBack } from '../lib/router';
+import { Link, albumPath, enc, goBack } from '../lib/router';
+import { STANDALONE } from '../lib/embedded';
+import type { ListenOut } from '../api/types';
 import { openShare } from '../lib/shareTrack';
 import { addRec, hideRec } from '../lib/smartShuffle';
 
@@ -341,12 +343,11 @@ export function PlayerPage() {
           <IconButton icon="queue" label={queueOpen ? 'Скрыть очередь' : 'Очередь'} aria-pressed={queueOpen} onClick={() => setQueueOpen((v) => !v)} className={queueOpen ? '!text-accent' : 'text-muted'} />
         </div>
       </div>
-      <Credits track={track} />
+      <Credits track={track} info={info} />
       {!isUpload(track) && <SpotifyTrackPlays key={track.ref} track={track} songId={info?.nd_song_id || track.nd_song_id} />}
       {!isUpload(track) && (versionTrackId != null || versionSongId) && (
         <OtherVersions key={versionTrackId ?? versionSongId} trackId={versionTrackId} songId={versionSongId} />
       )}
-      <FileCard info={info} />
         </div>
       </div>
 
@@ -369,12 +370,24 @@ function SpotifyTrackPlays({ track, songId }: { track: ListenTrack; songId?: str
   );
 }
 
-/** «Участники»: who plays the track — each a link to their page, with their ♥ (to follow them). */
-function Credits({ track }: { track: ListenTrack }) {
+/** Under the buttons, one card with no heading: who plays the track — each a link to their page, with their ♥ (to
+ * follow them) —, the album it is of, and the file that plays (a tap: «Как скачан»). */
+function Credits({ track, info }: { track: ListenTrack; info: ListenOut | null | undefined }) {
   const people = creditedOf(track);
+  const albumTo = track.album_ref || track.release_id ? albumPath({ ref: track.album_ref ?? '', release_id: track.release_id })
+    : STANDALONE && track.nd_album_id ? `/lib/album/${enc(track.nd_album_id)}` : null;
+  const album = track.album ? (
+    <>
+      <Cover src={track.cover_small_url ?? track.cover_url} size={48} alt="" icon="disc" />
+      <span className="min-w-0 flex-1">
+        <span className={cx('block truncate text-[15px] font-medium', albumTo && 'group-hover/album:underline')}>{track.album}</span>
+        <span className="block truncate text-[13px] text-muted">{['Альбом', track.year].filter(Boolean).join(' · ')}</span>
+      </span>
+    </>
+  ) : null;
+  const albumRow = 'group/album flex min-h-16 items-center gap-3 py-2';
   return (
-    <section aria-label="Участники" className="mx-4 mt-5 rounded-2xl bg-surface px-4 pb-2 pt-3">
-      <h2 className="pb-1 text-base font-bold">Участники</h2>
+    <section aria-label="Исполнители, альбом и файл" className="mx-4 mt-5 rounded-2xl bg-surface px-4 py-1.5">
       <ul>
         {people.map((a, i) => (
           <li key={`${a.ref ?? a.name}:${i}`}>
@@ -387,6 +400,8 @@ function Credits({ track }: { track: ListenTrack }) {
           </li>
         ))}
       </ul>
+      {album && (albumTo ? <Link to={albumTo} className={albumRow}>{album}</Link> : <div className={albumRow}>{album}</div>)}
+      <FileRow info={info} />
     </section>
   );
 }
