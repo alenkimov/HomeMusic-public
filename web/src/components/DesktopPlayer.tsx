@@ -85,7 +85,7 @@ export function DesktopPlayer() {
                 <PlayLine phase={phase} info={info} error={error} className="block truncate text-[11px] leading-4 text-dim" />
               </span>
               <ChoosePlaybackFile compact />
-              {!isUpload(track) && <SaveButton songId={info?.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} className="ml-1 !w-9" />}
+              {!isUpload(track) && <SaveButton songId={info?.nd_song_id ?? track.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} className="ml-1 !w-9" />}
             </>
           ) : (
             <span className="flex items-center gap-3 text-sm text-dim">

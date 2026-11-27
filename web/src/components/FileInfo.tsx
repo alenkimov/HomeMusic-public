@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { FileOut, ListenOut } from '../api/types';
 import { providerLabel } from '../lib/format';
 import { Link } from '../lib/router';
@@ -51,13 +52,7 @@ export function PlayLine({ phase, info, error, className }: { phase: string; inf
   }
   if (phase === 'resolving' || phase === 'loading') {
     // no source is picked yet: it is being looked for. One is: its file is being opened — «YouTube · загрузка…»
-    if (!info?.source)
-      return (
-        <span className={className} role="status">
-          <span className="hm-spin mr-1.5 inline-block h-3 w-3 rounded-full border-[1.5px] border-fg/25 border-t-fg/80 align-[-0.15em]" />
-          Ищу файл…
-        </span>
-      );
+    if (!info?.source) return <Looking className={className} />;
     return (
       <span className={className} role="status">
         <ServiceBadge service={info.source} size={13} /> · загрузка…
@@ -66,6 +61,25 @@ export function PlayLine({ phase, info, error, className }: { phase: string; inf
   }
   if (!info?.source) return null;
   return <FileInfo info={info} className={className} />;
+}
+
+/** «Ищу файл…» — only once the looking has lasted (`LOOKING_SHOWN_MS`): a file is found in a fraction of a second
+ * as a rule, and a word that flashes up for it at every switch of the track was noise. Until then the line is
+ * there, empty, so nothing under it moves. */
+const LOOKING_SHOWN_MS = 700;
+function Looking({ className }: { className?: string }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setShown(true), LOOKING_SHOWN_MS);
+    return () => window.clearTimeout(t);
+  }, []);
+  if (!shown) return <span className={className} aria-hidden="true">{'\u00a0'}</span>;
+  return (
+    <span className={className} role="status">
+      <span className="hm-spin mr-1.5 inline-block h-3 w-3 rounded-full border-[1.5px] border-fg/25 border-t-fg/80 align-[-0.15em]" />
+      Ищу файл…
+    </span>
+  );
 }
 
 /** The file's row of the full player's card (`pages/Player.tsx`, under the artists and the album): the source

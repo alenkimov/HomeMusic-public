@@ -277,7 +277,7 @@ export function PlayerPage() {
         ) : (
           <IconButton icon="download" label="Скачать в библиотеку" onClick={download} busy={busy} />
         )}
-        {!isUpload(track) && <SaveButton songId={info?.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} size={26} />}
+        {!isUpload(track) && <SaveButton songId={info?.nd_song_id ?? track.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} size={26} />}
       </div>
 
       {track.rec && (

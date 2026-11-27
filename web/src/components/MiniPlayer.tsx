@@ -109,7 +109,7 @@ export function MiniPlayer() {
             <div className="flex min-w-0 flex-1 items-center gap-3">{head}</div>
           )}
           <ChoosePlaybackFile compact />
-          {!isUpload(track) && <SaveButton songId={info?.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} size={22} />}
+          {!isUpload(track) && <SaveButton songId={info?.nd_song_id ?? track.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} size={22} />}
           <button
             type="button"
             onClick={toggle}
