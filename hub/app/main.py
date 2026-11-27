@@ -125,6 +125,10 @@ async def lifespan(app: FastAPI):
         async def fold_stubs() -> None:  # once: tracks without a file whose song the library has as another track
             if n := await fold_known():
                 log.info("folded %s tracks without a file into the library's tracks of their songs", n)
+            from app.jobs.downloads import owe_missing_covers
+
+            if n := await owe_missing_covers():
+                log.info("%s albums without a picture asked for the catalog's again", n)
 
         tasks.append(asyncio.create_task(fold_stubs(), name="fold-stubs"))
         from app.library.acoustic import loop as doubles_loop

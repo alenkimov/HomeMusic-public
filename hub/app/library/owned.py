@@ -100,7 +100,8 @@ async def with_recording_availability(s: AsyncSession, tracks: Iterable[TrackOut
 
 
 async def with_cover_fallbacks(s: AsyncSession, pairs: list[tuple[TrackOut, Track]]) -> None:
-    """Prefer saved covers and fall back to the catalog when Navidrome has no image."""
+    """A track's picture, the same everywhere: its own, else its album's, else the catalog's, else Navidrome's of
+    its file."""
     album_ids = list({t.album_id for _, t in pairs if t.album_id is not None and not t.cover_key})
     covered: dict[int, str] = {}
     for i in range(0, len(album_ids), 500):
@@ -113,8 +114,10 @@ async def with_cover_fallbacks(s: AsyncSession, pairs: list[tuple[TrackOut, Trac
         elif track.album_id in covered:
             out.cover_url = covered[track.album_id]
             out.cover_small_url = f"{out.cover_url}&size=300"
-        elif not out.cover_url:
-            catalog = track.catalog or {}
+        elif (catalog := track.catalog or {}).get("cover_url") or catalog.get("cover_small_url"):
+            # the album has no picture of its own, so neither has its file, as a rule: Navidrome's address of the
+            # file's picture is there all the same and shows nothing — the catalog's picture is the track's then,
+            # as the window that changes it shows (`edits.info`)
             out.cover_url = catalog.get("cover_url") or catalog.get("cover_small_url")
             out.cover_small_url = catalog.get("cover_small_url") or out.cover_url
 

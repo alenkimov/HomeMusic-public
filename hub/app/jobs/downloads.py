@@ -271,6 +271,30 @@ async def owe_cover(s: AsyncSession, album_id: int, url: str) -> None:
     await enqueue(s, "album_cover", {"album_id": album_id, "url": url}, max_attempts=12)
 
 
+async def owe_missing_covers() -> int:
+    """The albums of the library with no picture though a track of theirs has the catalog's (its download did not
+    get it then, and nothing asked again): the picture is asked for again (`owe_cover`). At the worker's start; an
+    album already owed one is left to it."""
+    from sqlalchemy import text
+
+    async with session_scope() as s:
+        rows = (await s.execute(text("""
+            SELECT DISTINCT ON (a.id) a.id, coalesce(t.catalog->>'cover_url', t.catalog->>'cover_small_url')
+            FROM albums a JOIN tracks t ON t.album_id = a.id
+            WHERE a.cover_path IS NULL AND t.cover_key IS NULL
+              AND coalesce(t.catalog->>'cover_url', t.catalog->>'cover_small_url') IS NOT NULL
+              AND EXISTS (SELECT 1 FROM track_files f WHERE f.track_id = t.id)
+              AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'album_cover' AND j.status IN ('queued', 'running')
+                              AND (j.payload_json->>'album_id')::int = a.id)
+            ORDER BY a.id, t.id LIMIT 500"""))).all()
+        for album_id, url in rows:
+            await owe_cover(s, album_id, url)
+        await s.commit()
+    if rows:
+        notify()
+    return len(rows)
+
+
 @handler("album_cover")
 async def handle_album_cover(job: Job) -> None:
     from app.library import editor
@@ -791,6 +815,15 @@ async def import_downloaded(item_id: int, user_id: int, q: TrackQuery, meta: dic
     async with session_scope() as s:
         track = await import_file(s, path, spec)
         track_id = track.id
+        url = meta.get("cover_url") or cand.cover_url
+        if cover is None and url and track.album_id:
+            from app.models import Album
+
+            album = await s.get(Album, track.album_id)
+            if album is not None and not album.cover_path:
+                # the catalog did not give the picture just now: the album gets it when it does (`handle_album_cover`)
+                await owe_cover(s, album.id, url)
+                await s.commit()
     await update_item(item_id, track_id=track_id, warnings=spec.warnings, error=None)
     await step(item_id, "ok", "Теги и обложка записаны, файл в библиотеке"
                + (f". Замечания: {'; '.join(str(w) for w in spec.warnings)}" if spec.warnings else ""))

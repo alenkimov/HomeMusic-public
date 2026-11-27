@@ -342,6 +342,8 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec, *, require_m
         if cover and not (album_dir / "cover.jpg").is_file():
             await asyncio.to_thread(_write_cover_file, album_dir, cover)
             album.cover_path = (album_dir_rel / "cover.jpg").as_posix()
+        elif not album.cover_path and (album_dir / "cover.jpg").is_file():
+            album.cover_path = (album_dir_rel / "cover.jpg").as_posix()  # the folder has its picture: so has the album
 
         file.path = PurePosixPath(album_dir_rel, dest.name).as_posix()
         if file.chroma is None:  # the picture of its sound: the next file that is this recording is known by it

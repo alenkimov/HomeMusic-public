@@ -240,3 +240,25 @@ async def test_a_track_without_a_file_found_in_the_library_becomes_that_track(en
         assert (await tracks.by_ref(s, "dz:99")).id == owned
         # a track with a file is never folded
         assert await tracks.fold(s, await s.get(Track, owned), await s.get(Track, env[1])) == set()
+
+
+async def test_a_track_whose_album_has_no_picture_shows_the_catalogs(env):
+    """Navidrome names a picture of every file, there or not: a track whose album has no picture of its own (its
+    download did not get it) shows the catalog's, as the window that changes it does — not Navidrome's empty one."""
+    from app.api.schemas import NdSongOut
+    from app.library.owned import with_cover_fallbacks
+
+    async with db.session_scope() as s:
+        t = Track(artist="курящих нет", title="Утро", ref="ym:1", fingerprint="курящих нет|утро",
+                  catalog={"cover_url": "https://avatars.yandex.net/x/1000x1000"})
+        s.add(t)
+        await s.flush()
+        out = NdSongOut(ref="ym:1", source="ym", id="1", title="Утро", artist="курящих нет", owned=True,
+                        cover_url="/api/nd/cover/mf-1?size=600", cover_small_url="/api/nd/cover/mf-1")
+        await with_cover_fallbacks(s, [(out, t)])
+        assert out.cover_url == "https://avatars.yandex.net/x/1000x1000"
+        # no catalog's picture: Navidrome's stays
+        bare = Track(artist="X", title="Y", fingerprint="x|y")
+        other = NdSongOut(ref="nd:2", source="nd", id="2", title="Y", artist="X", owned=True, cover_url="/api/nd/cover/mf-2")
+        await with_cover_fallbacks(s, [(other, bare)])
+        assert other.cover_url == "/api/nd/cover/mf-2"
