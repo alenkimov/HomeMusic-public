@@ -445,6 +445,37 @@ async def offer(s: AsyncSession, *, kind: str, subject_type: str, subject_id: in
     return res.scalar_one_or_none() is not None
 
 
+async def drop_gone(s: AsyncSession) -> int:
+    """The open proposals of something no longer there — the track, album or artist they are about, or the other
+    one of them (a double's copy that stays, a version's original, the artist to join): gone between two
+    look-throughs (deleted from «Файлы», joined), they are not questions any more. Quick, by ids alone: asked as a
+    list opens; `drop_stale` sees the rest at the next look-through."""
+    rows = list((await s.execute(select(TidyProposal).where(TidyProposal.state == "open"))).scalars())
+    if not rows:
+        return 0
+    models = {"track": Track, "album": Album, "artist": Artist}
+    others = {"double": ("track", "keep"), "version": ("track", "of"), "artist": ("artist", "into")}
+    wanted: dict[str, set[int]] = {k: set() for k in models}
+    for p in rows:
+        if p.subject_type in wanted:
+            wanted[p.subject_type].add(p.subject_id)
+        if (o := others.get(p.kind)) and isinstance((p.to_json or {}).get(o[1]), int):
+            wanted[o[0]].add(p.to_json[o[1]])
+    there = {k: set((await s.execute(select(models[k].id).where(models[k].id.in_(ids)))).scalars()) if ids else set()
+             for k, ids in wanted.items()}
+    n = 0
+    for p in rows:
+        o = others.get(p.kind)
+        other = (p.to_json or {}).get(o[1]) if o else None
+        if (p.subject_type in there and p.subject_id not in there[p.subject_type]) or \
+                (o and isinstance(other, int) and other not in there[o[0]]):
+            await s.delete(p)
+            n += 1
+    if n:
+        await s.flush()
+    return n
+
+
 async def drop_stale(s: AsyncSession) -> int:
     """The open proposals whose subjects changed or are gone: not questions any more."""
     n = 0

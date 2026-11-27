@@ -528,3 +528,27 @@ async def test_an_ai_word_that_does_not_fit_the_mask_is_not_offered(env, monkeyp
     monkeypatch.setattr(LLMClient, "call_tool", call_tool)
     await _scan()
     assert await _open(c, "lyrics") == []
+
+
+
+async def test_a_proposal_of_something_gone_since_is_no_question(env):
+    """A double whose copy was deleted between two look-throughs (from «Файлы»), or whose copy that stays was, is
+    not shown nor counted: there is nothing to draw it with, and nothing to decide."""
+    from app.db import session_scope
+    from app.models import Track
+    from app.tidy import kinds
+
+    c = env["client"]
+    ids = [await _add(artist="Кино", title=f"Группа крови {i}") for i in range(4)]
+    async with session_scope() as s:
+        for copy, keep in ((ids[0], ids[1]), (ids[2], ids[3])):
+            await kinds.offer(s, kind="double", subject_type="track", subject_id=copy, was={"both": True},
+                              to={"keep": keep}, show={"title": "Группа крови"}, by="rule", sure=True,
+                              why="Звучат одинаково")
+    section = kinds.KINDS["double"].section
+    assert len(await _open(c, section)) == 2
+    async with session_scope() as s:
+        await s.delete(await s.get(Track, ids[0]))  # the copy that would go: gone already
+        await s.delete(await s.get(Track, ids[3]))  # the one that would stay: gone
+    assert await _open(c, section) == []
+    assert (await c.get("/api/tidy")).json()["total"] == 0

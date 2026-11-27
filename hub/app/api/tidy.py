@@ -169,6 +169,7 @@ async def _done(s: AsyncSession, user: User, after: kinds.After | None) -> None:
 async def overview(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     from app.api.library import split_waiting
 
+    await kinds.drop_gone(s)  # what is gone since the last look-through is not counted
     counts = {sec: (n, sure) for sec, n, sure in (await s.execute(
         select(TidyProposal.section, func.count(TidyProposal.id), func.count(TidyProposal.id).filter(TidyProposal.sure))
         .where(TidyProposal.state == "open").group_by(TidyProposal.section))).all()}
@@ -189,7 +190,9 @@ async def overview(user: User = Depends(current_user), s: AsyncSession = Depends
 @router.get("/proposals", response_model=list[TidyProposalOut])
 async def proposals(section: Section, user: User = Depends(current_user),
                     s: AsyncSession = Depends(get_session, scope="function")):
-    """What waits for an answer in the section: the sure ones first, then as they were found."""
+    """What waits for an answer in the section: the sure ones first, then as they were found. Of something gone
+    since (a copy deleted, an artist joined) there is no question: dropped first."""
+    await kinds.drop_gone(s)
     rows = list((await s.execute(select(TidyProposal).where(TidyProposal.section == section, TidyProposal.state == "open")
                                  .order_by(TidyProposal.sure.desc(), TidyProposal.id))).scalars())
     return await _out(s, rows)
@@ -199,6 +202,7 @@ async def proposals(section: Section, user: User = Depends(current_user),
 async def marks(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     """Everything that waits for an answer, of every section: the pages mark what it is about (a track's row, an
     album's or an artist's name, the lines of a text) and lead from the mark to it."""
+    await kinds.drop_gone(s)
     rows = list((await s.execute(select(TidyProposal).where(TidyProposal.state == "open")
                                  .order_by(TidyProposal.sure.desc(), TidyProposal.id))).scalars())
     return await _out(s, rows)
