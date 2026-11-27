@@ -387,16 +387,7 @@ function Credits({ track, info }: { track: ListenTrack; info: ListenOut | null |
   return (
     <section aria-label="Исполнители, альбом и файл" className="mx-4 mt-5 rounded-2xl bg-surface px-4 py-1.5">
       <ul>
-        {people.map((a, i) => (
-          <li key={`${a.ref ?? a.name}:${i}`}>
-            <ArtistRow
-              artist={{ name: a.name, to: artistTo(a) }}
-              picture={<CreditPhoto refId={a.ref} />}
-              actions={a.ref && <LikeButton targetType="artist" refId={a.ref} title={a.name} data={{ name: a.name }} className="-mr-2" />}
-              className="!px-0"
-            />
-          </li>
-        ))}
+        {people.map((a, i) => <li key={`${a.ref ?? a.name}:${i}`}><Credit a={a} /></li>)}
       </ul>
       {album && (albumTo ? <Link to={albumTo} className={albumRow}>{album}</Link> : <div className={albumRow}>{album}</div>)}
       <FileRow info={info} />
@@ -404,9 +395,24 @@ function Credits({ track, info }: { track: ListenTrack; info: ListenOut | null |
   );
 }
 
-function CreditPhoto({ refId }: { refId?: string }) {
-  const res = useAsync((signal) => api.catalogArtistPhoto(refId!, signal), [refId], !!refId);
-  return <Cover src={res.data?.url} size={48} round alt="" icon="user" />;
+/** One credited artist: their photo, their page, their ♥. Known by the catalog's record of them; else by the Hub's
+ * own (`id`); else by the name alone — any of its spellings the Hub keeps («Михаил Круг» of the artist kept as
+ * «Mikhail Krug»), else the catalog's artist of that very name — as the link of a bare name finds them. */
+function Credit({ a }: { a: { name: string; ref?: string; nd?: string; id?: number } }) {
+  const known = a.ref ?? (a.id ? String(a.id) : undefined);
+  const named = useAsync((signal) => api.artistNamed(a.name, signal), [a.name], !known && !!a.name.trim(), `credit:${a.name}`);
+  const who = known ?? named.data?.ref ?? undefined;
+  const photo = useAsync((signal) => api.catalogArtistPhoto(who!, signal), [who], !!who);
+  // a catalog's record is followed by its ♥; the Hub's own number is no such record
+  const followed = a.ref ?? (who && !/^\d+$/.test(who) ? who : undefined);
+  return (
+    <ArtistRow
+      artist={{ name: a.name, to: artistTo(a.ref || a.id ? a : who ? { ...a, ref: who } : a) }}
+      picture={<Cover src={photo.data?.url} size={48} round alt="" icon="user" />}
+      actions={followed && <LikeButton targetType="artist" refId={followed} title={a.name} data={{ name: a.name }} className="-mr-2" />}
+      className="!px-0"
+    />
+  );
 }
 
 /** The head of the player: what is playing — «Играет из плейлиста · JAPAN», a link to that list. */
