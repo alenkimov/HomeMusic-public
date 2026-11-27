@@ -303,7 +303,12 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
       <ArtistWindow
         open={naming === 'names'}
         card={names.card}
-        onChange={names.set}
+        onChange={(next) => {
+          // a profile tied, an artist joined, a project: the Hub has it at once — the page is read again, without a
+          // spinner (the old one stays until the new one comes: a catalog's releases are asked anew, some seconds)
+          names.set(next);
+          res.reload(true);
+        }}
         onClose={() => setNaming(null)}
         onProfileDetached={() => {
           names.reload();

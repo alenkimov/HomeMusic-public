@@ -601,7 +601,7 @@ export function NdArtistPage({ id }: { id: string }) {
           ]}
         />
       )}
-      <ArtistWindow open={naming === 'names'} card={names.card} onChange={names.set} onClose={() => setNaming(null)} />
+      <ArtistWindow open={naming === 'names'} card={names.card} onChange={(next) => { names.set(next); res.reload(true); }} onClose={() => setNaming(null)} />
       {naming === 'looks' && names.card && <ArtistLooksWindow artistId={names.card.id} onChanged={() => res.reload()} onClose={() => setNaming(null)} />}
 
       {tracks.length > 0 && (
