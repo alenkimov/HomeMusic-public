@@ -15,10 +15,12 @@ export const KIND_TITLE: Record<TidyProposalOut['kind'], string> = {
   artist: 'Один исполнитель',
   lyrics: 'Лишние строки текста',
   uncensor: 'Слова под цензурой',
+  import_match: 'Проверить совпадение',
 };
 
 /** Who says so: a rule, the AI, the AI unsure (in yellow — a person decides). */
 export function ByMark({ p }: { p: TidyProposalOut }) {
+  if (p.kind === 'import_match') return <Badge tone="muted">Импорт</Badge>;
   if (p.by === 'rule') return <Badge tone="muted">Правило</Badge>;
   return p.sure ? <Badge tone="accent">ИИ уверен</Badge> : <Badge tone="warn">ИИ сомневается</Badge>;
 }
@@ -63,7 +65,7 @@ export function TidyMarkButton({ proposals, size = 'sm', className }: { proposal
           window.clearTimeout(timer.current);
           setBox(null);
         }}
-        className={cx('relative inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full bg-ai/15 align-middle text-ai transition hover:bg-ai/25',
+        className={cx('relative inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full align-middle text-ai transition hover:bg-ai/15',
           // the finger's target is larger than the mark
           'before:absolute before:-inset-2.5', className)}
         style={{ width: d, height: d }}

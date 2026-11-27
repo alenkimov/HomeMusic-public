@@ -20,6 +20,8 @@ from app.models import (
     Album,
     Artist,
     ArtistName,
+    Import,
+    ImportItem,
     Lyrics,
     PlaylistItem,
     SongTrack,
@@ -32,9 +34,9 @@ from app.models import (
 )
 
 # the sections of the page, in its order («Альбомы» is the page of «Объединение альбомов», not proposals)
-SECTIONS = ("names", "versions", "artists", "albums", "lyrics")
+SECTIONS = ("names", "versions", "artists", "albums", "lyrics", "imports")
 TITLES = {"names": "Названия", "versions": "Версии и дубли", "artists": "Исполнители", "albums": "Альбомы",
-          "lyrics": "Тексты"}
+          "lyrics": "Тексты", "imports": "Импорт"}
 
 
 class Changed(ValueError):
@@ -360,6 +362,63 @@ async def _lyrics_revert(s: AsyncSession, user: User, p: TidyProposal, after: Af
 # ---------------------------------------------------------------- the kinds
 
 
+# ---------------------------------------------------------------- a transfer's match to look over
+
+
+async def _import_now(s: AsyncSession, p: TidyProposal) -> dict[str, Any] | None:
+    """The song of a listener's transfer (a playlist, the likes of Spotify, Yandex, VK) was matched with this track
+    probably, not surely: still so, and not looked over."""
+    from app.imports import review
+
+    item_id = int(p.was_json.get("item") or 0)
+    row = (await s.execute(review.pending().where(ImportItem.id == item_id))).first()
+    if row is None or row[0].track_id != p.subject_id:
+        return None
+    return {"item": item_id, "probable": True}
+
+
+async def _import_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
+    """«Совпадает»: the match is the song — for every transfer of the listener that has it from the same service."""
+    from app.imports import review
+
+    marked = await review.acknowledge(s, p.user_id or user.id, int(p.was_json["item"]), track_id=p.subject_id)
+    if not marked:
+        raise Changed("Это совпадение уже проверили")
+    return {"items": marked}
+
+
+async def _import_revert(s: AsyncSession, user: User, p: TidyProposal, after: After) -> None:
+    from app.imports import review
+
+    await review.unacknowledge(s, [int(i) for i in (p.undo_json or {}).get("items") or []])
+
+
+async def offer_imports(s: AsyncSession, user_id: int) -> int:
+    """The matches of the listener's transfers to look over, as proposals of theirs (`import_match`): asked as their
+    lists of «Наведение порядка» open, so a transfer's doubt is there at once. One question a track (a song in
+    several playlists of a transfer is one); one asked and answered is not asked again."""
+    from app.imports import review
+
+    rows = (await s.execute(review.pending().where(Import.user_id == user_id).order_by(ImportItem.id))).all()
+    if not rows:
+        return 0
+    have = set((await s.execute(select(TidyProposal.subject_id).where(
+        TidyProposal.kind == "import_match", TidyProposal.user_id == user_id, TidyProposal.state == "open"))).scalars())
+    n = 0
+    for item, source, _ in rows:
+        if item.track_id in have:
+            continue
+        have.add(item.track_id)
+        raw = item.raw_json or {}
+        n += await offer(s, kind="import_match", subject_type="track", subject_id=item.track_id,
+                         was={"item": item.id, "probable": True}, to={"item": item.id},
+                         show={"source": source, "title": raw.get("title") or "", "artist": raw.get("artist") or "",
+                               "duration_s": raw.get("duration_s"), "cover": raw.get("cover_url"), "item_id": item.id},
+                         by="rule", sure=False, why="Импорт нашёл похожий трек, но не уверен, что это та же песня",
+                         user_id=user_id)
+    return n
+
+
 @dataclass(frozen=True)
 class Kind:
     section: str
@@ -376,6 +435,7 @@ KINDS: dict[str, Kind] = {
     "artist": Kind("artists", _artist_now, _artist_apply, _artist_revert),
     "lyrics": Kind("lyrics", _lyrics_now, _lyrics_apply, _lyrics_revert),  # lines that are not the song
     "uncensor": Kind("lyrics", _lyrics_now, _lyrics_apply, _lyrics_revert),  # words hidden by censorship
+    "import_match": Kind("imports", _import_now, _import_apply, _import_revert),  # a transfer's probable match
 }
 
 
@@ -497,9 +557,9 @@ async def review(s: AsyncSession, user: User, p: TidyProposal) -> After | None:
 
 
 async def offer(s: AsyncSession, *, kind: str, subject_type: str, subject_id: int, was: dict[str, Any],
-                to: dict[str, Any], show: dict[str, Any], by: str, sure: bool, why: str) -> bool:
+                to: dict[str, Any], show: dict[str, Any], by: str, sure: bool, why: str, user_id: int | None = None) -> bool:
     """Write a proposal down, unless the same question was asked before (whatever the answer). Returns whether it
-    is new."""
+    is new. `user_id`: a listener's own question (shown to them alone); none — the library's, everybody's."""
     import json
 
     key = hashlib.sha1(json.dumps([kind, subject_type, subject_id, was, to], sort_keys=True, ensure_ascii=False)
@@ -507,6 +567,7 @@ async def offer(s: AsyncSession, *, kind: str, subject_type: str, subject_id: in
     res = await s.execute(insert(TidyProposal).values(
         key=key, kind=kind, section=KINDS[kind].section, subject_type=subject_type, subject_id=subject_id,
         was_json=was, to_json=to, show_json=show, by=by, sure=sure, why=why[:300], state="open", created_at=utcnow(),
+        user_id=user_id,
     ).on_conflict_do_nothing(index_elements=[TidyProposal.key]).returning(TidyProposal.id))
     return res.scalar_one_or_none() is not None
 
@@ -535,8 +596,9 @@ async def drop_gone(s: AsyncSession) -> int:
         other = (p.to_json or {}).get(o[1]) if o else None
         gone = (p.subject_type in there and p.subject_id not in there[p.subject_type]) or \
             (o and isinstance(other, int) and other not in there[o[0]])
-        # two artists answered already in their window (joined, projects, two people): a few rows each, so asked
-        if gone or (p.kind == "artist" and not await holds(s, p)):
+        # two artists answered already in their window (joined, projects, two people), a transfer's match looked
+        # over or given another file: a few rows each, so asked
+        if gone or (p.kind in ("artist", "import_match") and not await holds(s, p)):
             await s.delete(p)
             n += 1
     if n:

@@ -881,3 +881,45 @@ async def test_a_playlist_of_an_import_deleted_by_the_user_is_not_made_again(env
     async with session_scope() as s:
         coll = (await s.execute(select(ImportCollection).where(ImportCollection.title == "Дорога"))).scalar_one()
         assert not coll.selected and coll.playlist_id is None
+
+
+async def test_a_transfers_doubt_is_a_question_of_tidy(env):
+    """A probable match of a transfer is the listener's question in «Наведение порядка» («Импорт»): «Совпадает» is
+    its answer, written in the journal and taken back there; another listener does not see it."""
+    from app.db import session_scope
+    from app.models import ImportItem
+
+    c = env["client"]
+    imp = await prepared(c)
+    likes, playlist = [x["id"] for x in imp["collections"][:2]]
+    assert (await c.post(f"/api/imports/{imp['id']}/start", json={"collection_ids": [likes, playlist]})).status_code == 200
+    await run_imports()
+    async with session_scope() as s:
+        rows = (await s.scalars(select(ImportItem).where(ImportItem.import_id == imp["id"],
+                                                        ImportItem.external_id == "1"))).all()
+        for row in rows:
+            row.match = "probable"
+
+    r = await c.get("/api/tidy/proposals", params={"section": "imports"})
+    assert r.status_code == 200, r.text
+    (p,) = r.json()
+    assert p["kind"] == "import_match" and p["show"]["source"] == "yandex" and p["show"]["title"] == KROVI["title"]
+    assert next(x for x in (await c.get("/api/tidy")).json()["sections"] if x["id"] == "imports")["count"] == 1
+    assert [m["id"] for m in (await c.get("/api/tidy/marks")).json() if m["kind"] == "import_match"] == [p["id"]]
+
+    r = await c.post(f"/api/tidy/proposals/{p['id']}/accept")  # «Совпадает»
+    assert r.status_code == 200 and r.json()["state"] == "accepted", r.text
+    async with session_scope() as s:
+        got = (await s.scalars(select(ImportItem).where(ImportItem.import_id == imp["id"], ImportItem.external_id == "1",
+                                                        ImportItem.track_id.is_not(None)))).all()
+        assert got and all((x.raw_json or {}).get("match_reviewed") for x in got)
+    assert (await c.get("/api/tidy/proposals", params={"section": "imports"})).json() == []
+    # taken back: a question again
+    assert (await c.post(f"/api/tidy/proposals/{p['id']}/review")).json()["state"] == "open"
+    async with session_scope() as s:
+        got = (await s.scalars(select(ImportItem).where(ImportItem.import_id == imp["id"], ImportItem.external_id == "1",
+                                                        ImportItem.track_id.is_not(None)))).all()
+        assert not any((x.raw_json or {}).get("match_reviewed") for x in got)
+    # confirmed from elsewhere (a file picked for it): no question any more
+    assert (await c.post(f"/api/imports/items/{got[0].id}/confirm_match")).status_code == 200
+    assert (await c.get("/api/tidy/proposals", params={"section": "imports"})).json() == []

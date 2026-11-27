@@ -1326,6 +1326,9 @@ class TidyProposal(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # whose question it is: one of the library, everybody's (None), or one of a listener's own (a match of their
+    # transfer to look over, «import_match»): shown to them alone
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
 
 
 class TidyAsked(Base):

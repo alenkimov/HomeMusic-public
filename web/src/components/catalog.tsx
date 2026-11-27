@@ -1,5 +1,4 @@
 import { TrackTitle } from './TrackTitle';
-import { ImportReviewButton } from './ImportReview';
 import { titleWithVersion, useVersionLabel } from '../lib/versionLabels';
 import { plural } from '../lib/format';
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
@@ -278,9 +277,6 @@ export function TrackRow({
   const displayTitle = titleWithVersion(track.title, track, label);
   const playLabel = playing ? `Пауза «${displayTitle}»` : `Слушать «${displayTitle}»`;
   const findLabel = `Найти файл: «${displayTitle}»`;
-  const review = !needsFile && track.import_review ? (
-    <ImportReviewButton review={track.import_review} track={track} playing={playing} onPlay={listenHere} />
-  ) : null;
   const trackName = <TrackTitle title={releaseFeed ? <span className="line-clamp-2 whitespace-normal wrap-anywhere">{track.title}</span> : track.title} label={label} mark={track.owned ? track.library_track_id : null} />;
   const sourceMarks = foundIn?.length ? <CatalogSourceMarks services={foundIn} /> : null;
   const action = needsFile || searchOnCover ? undefined : !track.owned ? listenHere : play;
@@ -324,7 +320,7 @@ export function TrackRow({
         <span className={cx('relative flex h-12 shrink-0 items-center justify-center', showCover ? 'w-12' : 'w-7')}>
           {showCover ? (
             searchOnCover ? missingCover(48) :
-              (review || sourceMarks) ? tap('shrink-0', <Cover src={track.cover_small_url || track.cover_url} size={48} alt="" />) :
+              sourceMarks ? tap('shrink-0', <Cover src={track.cover_small_url || track.cover_url} size={48} alt="" />) :
                 <Cover src={track.cover_small_url || track.cover_url} size={48} alt="" />
           ) : (
             <span className={cx('text-sm tabular-nums text-dim', rowPlays && 'group-hover/track:opacity-0 group-focus-within/track:opacity-0', rowPlays && current && 'opacity-0')}>{number}</span>
@@ -342,8 +338,7 @@ export function TrackRow({
       ) : null}
       <div className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-1">
-          {review}
-          {(review || sourceMarks) ? tap(cx('min-w-0 truncate text-left text-[15px]', titleColor), trackName) :
+          {sourceMarks ? tap(cx('min-w-0 truncate text-left text-[15px]', titleColor), trackName) :
             <span className={cx('min-w-0 truncate text-[15px]', titleColor)}>{trackName}</span>}
         </span>
         <div className={cx('flex items-center gap-1.5 text-[13px]', needsFile ? 'text-dim' : 'text-muted')}>
@@ -451,7 +446,6 @@ export function TrackRow({
           {current && !needsFile && (!desktop || releaseFeed || (number ?? index) === undefined) && <PlayingBars on={phase === 'playing'} />}
           {separateAction ? (
             <>
-              {review}
               {tap(cx(nameClass, 'text-left'), trackName)}
             </>
           ) : (
@@ -561,7 +555,6 @@ export function TrackRow({
               ))}
             <span className="block min-w-0 flex-1">
               <span className="flex min-w-0 items-center gap-1">
-                {review}
                 {tap(cx('min-w-0 truncate text-left text-[15px]', titleColor), trackName)}
               </span>
               <span className="flex items-center gap-1.5 text-[13px] text-muted">
@@ -673,8 +666,8 @@ export function TrackRow({
                 {tap('flex min-h-11 shrink-0 items-center gap-2 rounded-md', lead(desktop), false)}
                 {names(artistLinks(), true)}
               </>
-            ) : review || sourceMarks ? (
-              <div className="flex min-w-0 flex-1 items-center gap-3 py-2 text-left" onClick={review ? undefined : openTrack}>
+            ) : sourceMarks ? (
+              <div className="flex min-w-0 flex-1 items-center gap-3 py-2 text-left" onClick={openTrack}>
                 {(showCover || number !== undefined) && tap('flex shrink-0 items-center gap-3', lead(false))}
                 {names(artistLine, true)}
               </div>
@@ -701,8 +694,8 @@ export function TrackRow({
   const rowClass = cx('flex min-w-0 flex-1 items-center gap-3 py-2 text-left', rowPlays && 'cursor-pointer');
   return (
     <div ref={rowRef} {...menuPressProps((at) => openTrackMenu({ track: menuTrack, extra: menuExtra, at }))} className={cx('group/track flex min-h-16 items-center gap-3 pl-4 pr-1', grey, rowPlays && 'transition-colors hover:bg-fg/5 focus-within:bg-fg/5')}>
-      {needsFile || searchOnCover || review || sourceMarks ? (
-        <div className={rowClass} onClick={sourceMarks && !review ? openTrack : undefined}>{body}</div>
+      {needsFile || searchOnCover || sourceMarks ? (
+        <div className={rowClass} onClick={sourceMarks ? openTrack : undefined}>{body}</div>
       ) : !track.owned ? (
         <button type="button" onClick={listenHere} onPointerDown={() => touchTrack(track.ref)} className={rowClass} aria-label={rowPlays ? playLabel : `Послушать «${track.title}»`}>
           {body}

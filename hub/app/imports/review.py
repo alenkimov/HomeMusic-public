@@ -51,17 +51,42 @@ async def word(s: AsyncSession, user_id: int, ids: set[int]) -> tuple[dict[int, 
     return reviews, failed
 
 
-async def acknowledge(s: AsyncSession, user_id: int, item_id: int, *, track_id: int | None = None) -> bool:
-    """Remember a decision for this song from the same service across all of the listener's imports."""
+async def acknowledge(s: AsyncSession, user_id: int, item_id: int, *, track_id: int | None = None) -> list[int]:
+    """Remember a decision for this song from the same service across all of the listener's imports. Returns the
+    rows marked (none: no such match to look over)."""
     query = _items(user_id).where(ImportItem.match == "probable", ImportItem.track_id.is_not(None))
     found = (await s.execute(query.where(ImportItem.id == item_id))).one_or_none()
     if found is None:
-        return False
+        return []
     item, source = found
     if track_id is not None and item.track_id != track_id:
-        return False
-    same = query.with_only_columns(ImportItem.id).where(
-        Import.source == source, ImportItem.external_id == item.external_id, ImportItem.track_id == item.track_id)
+        return []
+    same = list((await s.execute(query.with_only_columns(ImportItem.id).where(
+        Import.source == source, ImportItem.external_id == item.external_id,
+        ImportItem.track_id == item.track_id))).scalars())
     await s.execute(update(ImportItem).where(ImportItem.id.in_(same))
                     .values(raw_json=ImportItem.raw_json.concat(literal({"match_reviewed": True}, JSONB))))
-    return True
+    return same
+
+
+async def unacknowledge(s: AsyncSession, item_ids: list[int]) -> None:
+    """A confirmation taken back («Наведение порядка»: «Откатить»): the matches are to be looked over again."""
+    if item_ids:
+        await s.execute(update(ImportItem).where(ImportItem.id.in_(item_ids))
+                        .values(raw_json=ImportItem.raw_json - "match_reviewed"))
+
+
+def pending():
+    """The matches a transfer made that the listener has not looked over: probable ones, of a playlist or the likes
+    taken over, with a track (whose ones: `Import.user_id`)."""
+    return (_items_all().where(ImportItem.match == "probable", ImportItem.status.in_(_REVIEWABLE),
+                               ImportItem.track_id.is_not(None),
+                               ImportItem.raw_json["match_reviewed"].as_boolean().is_(None)))
+
+
+def _items_all():
+    return (select(ImportItem, Import.source, Import.user_id)
+            .join(Import, Import.id == ImportItem.import_id)
+            .join(ImportCollection, ImportCollection.id == ImportItem.collection_id)
+            .where(ImportCollection.selected.is_(True), ImportCollection.kind.in_(("playlist", "likes")),
+                   ImportItem.status != "skipped"))

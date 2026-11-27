@@ -1,21 +1,23 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api, type TidyDecision } from '../api/client';
-import type { TidyOverviewOut, TidyProposalOut, TidyProposalSection, TidySectionId, TrackOut } from '../api/types';
+import type { ImportSource, TidyOverviewOut, TidyProposalOut, TidyProposalSection, TidySectionId, TrackOut } from '../api/types';
 import { TrackRow } from '../components/catalog';
 import { LyricsExcerpt } from '../components/LyricsExcerpt';
 import { ArtistAnswers } from '../components/ArtistNames';
 import { Icon } from '../components/Icon';
 import { ByMark } from '../components/TidyMark';
+import { ServiceBadge } from '../components/ServiceBadge';
 import { Button, Cover, Empty, ErrorState, IconButton, PageHeader, SkeletonRows, Segmented, cx } from '../components/ui';
 import { useHubEvent } from '../lib/events';
-import { fmtWhen, plural } from '../lib/format';
+import { fmtDuration, fmtWhen, plural } from '../lib/format';
+import { filePickerTarget, openFindFile } from '../lib/findFile';
 import { useAsync } from '../lib/hooks';
 import { Link, albumPath, artistPath, goBack, navigate, useRoute } from '../lib/router';
 import { dropMark } from '../lib/tidyMarks';
 import { attempt, toast } from '../lib/ui';
 import { AlbumMergeSection } from './AlbumMerge';
 
-const SECTIONS: TidySectionId[] = ['names', 'versions', 'artists', 'albums', 'lyrics'];
+const SECTIONS: TidySectionId[] = ['names', 'versions', 'artists', 'albums', 'lyrics', 'imports'];
 const isSection = (x: string | null): x is TidySectionId => !!x && (SECTIONS as string[]).includes(x);
 
 /** What a section looks for, in a line under its tabs. */
@@ -25,6 +27,7 @@ const ABOUT: Record<TidySectionId, string> = {
   artists: 'Один исполнитель под разными написаниями — объединить. Прежние написания останутся: по ним тоже найдётся.',
   albums: '',
   lyrics: 'Строки текста, которые не поются (ссылки, призывы подписаться, реклама), и слова, скрытые цензурой: «б***ь», «[цензура]».',
+  imports: 'Песни ваших импортов, для которых нашёлся похожий трек, но не наверняка: та ли это песня — «Совпадает», если нет — найти другой файл.',
 };
 
 /** The AI's month and the last look-through, in a line. */
@@ -148,7 +151,7 @@ function Proposals({ section, sure, focus, checked, onChange }: { section: TidyP
   const [rows, setRows] = useState<TidyProposalOut[] | null>(null);
   const [busy, setBusy] = useState<number | 'sure' | null>(null);
   useEffect(() => { if (res.data) setRows(res.data); }, [res.data]);
-  useHubEvent('tidy', (d) => { if (d.kind === 'checked') res.reload(true); });
+  useHubEvent('tidy', (d) => { if (d.kind === 'checked' || d.kind === 'answered') res.reload(true); });
 
   // the proposal a mark led to is brought into view once the list is there
   const lit = useRef<HTMLLIElement>(null);
@@ -397,6 +400,54 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
               </span>
             )}
           </span>
+          {answers && <div className="shrink-0 max-sm:w-full">{answers}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  if (p.kind === 'import_match' && track) {
+    // a transfer's song and the library's track it was taken for, not surely: «Совпадает», or another file for it
+    const review = { id: p.show.item_id ?? 0, source: (p.show.source ?? 'yandex') as ImportSource, title: p.show.title ?? '', artist: p.show.artist ?? '',
+      duration_s: p.show.duration_s ?? null, cover_url: p.show.cover ?? null };
+    const target = filePickerTarget({ ...track, import_review: review });
+    const label = (text: ReactNode, tone: string) => <p className={cx('px-3 pt-2 text-[12px] font-semibold sm:px-4', tone)}>{text}</p>;
+    const answers = journal ? actions : decided ? actions : (
+      <span className="flex gap-2 max-sm:w-full">
+        {target && (
+          <Button small variant="outline" disabled={busy} className="whitespace-nowrap max-sm:flex-1"
+            onClick={() => openFindFile({ ...target, has_file: !!track.owned, import_review: review })}>
+            Найти другой файл
+          </Button>
+        )}
+        <Button small variant="primary" busy={busy} onClick={() => onDecide('accept')} className="max-sm:flex-1">Совпадает</Button>
+      </span>
+    );
+    return (
+      <div className={cx('rounded-xl bg-raised/60 pb-2 pt-1 transition', lit && 'bg-ai/10 ring-2 ring-ai', decided && !journal && 'opacity-60')}>
+        {label(<>В импорте · <ServiceBadge service={review.source} size={12} /></>, 'text-muted')}
+        <div className="flex min-h-14 items-center gap-3 px-3 py-1.5 sm:px-4">
+          <Cover src={review.cover_url} size={40} icon="note" />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[15px]">{review.title}</span>
+            <span className="block truncate text-[13px] text-muted">{review.artist}</span>
+          </span>
+          {review.duration_s ? <span className="shrink-0 text-[13px] text-muted tabular-nums">{fmtDuration(review.duration_s)}</span> : null}
+        </div>
+        {label(p.state === 'accepted' ? 'Совпадает' : 'Взято из библиотеки', p.state === 'accepted' ? 'text-accent' : 'text-ai')}
+        <TrackRow track={track} showAlbum />
+        <div className="mt-1 flex flex-wrap items-center gap-3 px-3 sm:px-4">
+          <div className="min-w-0 flex-1 basis-60">
+            <span className="flex min-w-0 items-center gap-2">
+              <ByMark p={p} />
+              {p.why && <span className="truncate text-[12px] text-dim">{p.why}</span>}
+            </span>
+            {journal && (
+              <span className="mt-1 block text-[12px] text-dim">
+                {p.state === 'accepted' ? 'Совпадает' : stateWord}{p.decided_by ? ` · ${p.decided_by}` : ''}{p.decided_at ? ` · ${fmtWhen(p.decided_at)}` : ''}
+              </span>
+            )}
+          </div>
           {answers && <div className="shrink-0 max-sm:w-full">{answers}</div>}
         </div>
       </div>

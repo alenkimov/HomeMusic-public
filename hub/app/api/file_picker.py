@@ -379,6 +379,8 @@ async def take(track_id: int, body: TakeIn, user: User = Depends(current_user),
             await s.commit()
     notify()
     bus.publish(user_id, "library", {"kind": "imported", "track_id": track_id})
+    if body.import_review_id is not None:  # the question of «Наведение порядка» («Импорт») is answered by the file
+        bus.publish(user_id, "tidy", {"kind": "answered"})
     await listen.forget(f"lib:{track_id}")
     if track.ref:
         await listen.forget(track.ref)

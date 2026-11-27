@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import admin_user, current_user
@@ -25,7 +25,7 @@ from app.tidy import ai, kinds, scan
 
 router = APIRouter(prefix="/api/tidy", tags=["tidy"])
 
-Section = Literal["names", "versions", "artists", "lyrics"]
+Section = Literal["names", "versions", "artists", "lyrics", "imports"]
 
 
 class TidySectionOut(BaseModel):
@@ -91,6 +91,9 @@ def _words(p: TidyProposal, show: dict[str, Any]) -> tuple[str, str]:
     if p.kind == "uncensor":
         n = sum(len(w) for w in (p.to_json.get("replace") or {}).values())
         return "", f"Вернуть {n} {'слово' if n % 10 == 1 and n % 100 != 11 else 'слова' if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else 'слов'} без цензуры"
+    if p.kind == "import_match":
+        said = " — ".join(x for x in (show.get("artist"), show.get("title")) if x)
+        return said, show.get("title_now") or ""
     if p.kind == "lyrics":
         n = len(p.to_json.get("drop") or [])
         return "", f"Убрать {n} {'строку' if n % 10 == 1 and n % 100 != 11 else 'строки' if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else 'строк'}"
@@ -150,9 +153,21 @@ async def _out(s: AsyncSession, rows: list[TidyProposal]) -> list[TidyProposalOu
     return out
 
 
-async def _proposal(s: AsyncSession, proposal_id: int) -> TidyProposal:
+def _mine(user: User):
+    """The questions a listener sees: the library's, everybody's, and their own (a match of their transfer)."""
+    return or_(TidyProposal.user_id.is_(None), TidyProposal.user_id == user.id)
+
+
+async def _ready(s: AsyncSession, user: User) -> None:
+    """Before a list is read: the listener's transfers' matches are questions of theirs, and what is gone since the
+    last look-through (or answered elsewhere) is none."""
+    await kinds.offer_imports(s, user.id)
+    await kinds.drop_gone(s)
+
+
+async def _proposal(s: AsyncSession, proposal_id: int, user: User) -> TidyProposal:
     p = await s.get(TidyProposal, proposal_id)
-    if p is None:
+    if p is None or (p.user_id is not None and p.user_id != user.id):
         raise HTTPException(404, "Предложение не найдено")
     return p
 
@@ -171,10 +186,10 @@ async def _done(s: AsyncSession, user: User, after: kinds.After | None) -> None:
 async def overview(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     from app.api.library import split_waiting
 
-    await kinds.drop_gone(s)  # what is gone since the last look-through is not counted
+    await _ready(s, user)  # a transfer's matches are counted; what is gone since the last look-through is not
     counts = {sec: (n, sure) for sec, n, sure in (await s.execute(
         select(TidyProposal.section, func.count(TidyProposal.id), func.count(TidyProposal.id).filter(TidyProposal.sure))
-        .where(TidyProposal.state == "open").group_by(TidyProposal.section))).all()}
+        .where(TidyProposal.state == "open", _mine(user)).group_by(TidyProposal.section))).all()}
     albums = await split_waiting(s, user)
     sections = [TidySectionOut(id=sec, title=kinds.TITLES[sec], count=albums if sec == "albums" else counts.get(sec, (0, 0))[0],
                                sure=0 if sec == "albums" else counts.get(sec, (0, 0))[1]) for sec in kinds.SECTIONS]
@@ -194,8 +209,9 @@ async def proposals(section: Section, user: User = Depends(current_user),
                     s: AsyncSession = Depends(get_session, scope="function")):
     """What waits for an answer in the section: the sure ones first, then as they were found. Of something gone
     since (a copy deleted, an artist joined) there is no question: dropped first."""
-    await kinds.drop_gone(s)
-    rows = list((await s.execute(select(TidyProposal).where(TidyProposal.section == section, TidyProposal.state == "open")
+    await _ready(s, user)
+    rows = list((await s.execute(select(TidyProposal).where(TidyProposal.section == section, TidyProposal.state == "open",
+                                                            _mine(user))
                                  .order_by(TidyProposal.sure.desc(), TidyProposal.id))).scalars())
     return await _out(s, rows)
 
@@ -204,8 +220,8 @@ async def proposals(section: Section, user: User = Depends(current_user),
 async def marks(user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     """Everything that waits for an answer, of every section: the pages mark what it is about (a track's row, an
     album's or an artist's name, the lines of a text) and lead from the mark to it."""
-    await kinds.drop_gone(s)
-    rows = list((await s.execute(select(TidyProposal).where(TidyProposal.state == "open")
+    await _ready(s, user)
+    rows = list((await s.execute(select(TidyProposal).where(TidyProposal.state == "open", _mine(user))
                                  .order_by(TidyProposal.sure.desc(), TidyProposal.id))).scalars())
     return await _out(s, rows)
 
@@ -215,7 +231,7 @@ async def journal(section: Section | None = None, before: int | None = None, lim
                   user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     """What was decided — accepted, rejected, taken back — the latest decided first; `before`: the page after that
     proposal."""
-    q = select(TidyProposal).where(TidyProposal.state.in_(("accepted", "rejected", "reverted")))
+    q = select(TidyProposal).where(TidyProposal.state.in_(("accepted", "rejected", "reverted")), _mine(user))
     if section:
         q = q.where(TidyProposal.section == section)
     if before and (last := await s.get(TidyProposal, before)) is not None and last.decided_at is not None:
@@ -225,7 +241,7 @@ async def journal(section: Section | None = None, before: int | None = None, lim
 
 
 async def _decide(s: AsyncSession, user: User, proposal_id: int, what: str) -> TidyProposalOut:
-    p = await _proposal(s, proposal_id)
+    p = await _proposal(s, proposal_id, user)
     after = None
     try:
         if what == "accept":
@@ -294,7 +310,7 @@ async def accept_sure(body: AcceptSureIn, user: User = Depends(current_user),
     """Accept every sure proposal of the section; one that cannot be done (changed since, somebody else's file) is
     left, and the others go on."""
     ids = list((await s.execute(select(TidyProposal.id).where(TidyProposal.section == body.section,
-                                                              TidyProposal.state == "open", TidyProposal.sure)
+                                                              TidyProposal.state == "open", TidyProposal.sure, _mine(user))
                                 .order_by(TidyProposal.id))).scalars())
     accepted = failed = 0
     after = kinds.After(rewrite=set(), playlists=set())

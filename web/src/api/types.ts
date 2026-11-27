@@ -1455,7 +1455,7 @@ export interface HubEventMap {
   playback_devices: Record<string, never>;
   ping: Record<string, never>;
   /** «Наведение порядка» looked through the library, or somebody answered it: its counts are new */
-  tidy: { kind: 'checked' | 'decided' };
+  tidy: { kind: 'checked' | 'decided' | 'answered' };
   /** an artist's page was put together anew (`hub/app/artist_pages.py`): a page of theirs open takes it, quietly —
    * `id` the Hub's artist, `refs` their records in the catalogs */
   artist: { id: number; refs: string[] };
@@ -1821,7 +1821,7 @@ export interface DownloadsOverviewOut {
 
 // --- «Наведение порядка» (hub/app/api/tidy.py) ------------------------------------------------------------------
 
-export type TidySectionId = 'names' | 'versions' | 'artists' | 'albums' | 'lyrics';
+export type TidySectionId = 'names' | 'versions' | 'artists' | 'albums' | 'lyrics' | 'imports';
 export type TidyProposalSection = Exclude<TidySectionId, 'albums'>;
 
 export interface TidySectionOut {
@@ -1847,6 +1847,12 @@ export interface TidyOverviewOut {
 export interface TidyShow {
   /** two artists: «Это его проект» was the answer (accepted, not joined) */
   answer?: 'project';
+  /** a transfer's match: the service it came from, the song as it named it, the transfer's row */
+  source?: string;
+  title?: string;
+  artist?: string;
+  duration_s?: number | null;
+  item_id?: number;
   what?: string;
   line?: string | null;
   cover?: string | null;
@@ -1885,7 +1891,7 @@ export interface TidyShow {
 
 export interface TidyProposalOut {
   id: number;
-  kind: 'title' | 'cyrillic' | 'version' | 'double' | 'artist' | 'lyrics' | 'uncensor';
+  kind: 'title' | 'cyrillic' | 'version' | 'double' | 'artist' | 'lyrics' | 'uncensor' | 'import_match';
   section: TidyProposalSection;
   subject_type: 'track' | 'album' | 'artist';
   subject_id: number;
