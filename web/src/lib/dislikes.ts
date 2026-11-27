@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import type { DislikeOut } from '../api/types';
 import { routeContext } from './plays';
 import { toast, toastError } from './ui';
+import { keep as keepChange, onDropped, onSettled, waiting, waits } from './outbox';
 
 /** «Не нравится» (MIXES.md 3.2): tracks and artists the user doesn't want in mixes and «Моя волна» — set here, in the
  * app, or moved over with the dislikes of a Yandex import (`GET /api/dislikes`). A track is known by its catalog
@@ -51,12 +52,13 @@ export function refreshDislikes(force = false): Promise<void> {
     .dislikes()
     .then(
       (r) => {
-        rows = r;
+        rows = withWaiting(r);
         loadedAt = Date.now();
         emit();
       },
       () => {
-        /* offline: keep what we have */
+        rows = withWaiting(rows); // offline: keep what we have, and what was marked here meanwhile
+        emit();
       },
     )
     .finally(() => {
@@ -139,9 +141,32 @@ export async function setDisliked(t: DislikeTarget, on: boolean, quiet = false):
     }
     return true;
   } catch (e) {
+    // no Hub now: the mark stays and waits on the device (`lib/outbox.ts`)
+    if (waits(e) && keepChange({ kind: 'dislike', key: keyOf(t), on, body: { ...what, artist: t.artist, title: t.title, context: routeContext(), client: 'pwa' } })) {
+      if (!quiet) toast(`Нет связи с сервером — ${on ? 'отмечу' : 'сниму отметку'}, когда он будет доступен`);
+      return true;
+    }
     rows = before;
     emit();
     toastError(e);
     return false;
   }
 }
+
+const keyOf = (t: DislikeTarget) => (t.artist_ref ? `artist:${t.artist_ref}` : `track:${t.track_id ?? ''}:${t.ref ?? ''}:${t.nd_song_id ?? ''}`);
+
+/** The marks as the Hub has them, with the ones set or taken off here without it, still waiting to be sent. */
+function withWaiting(list: readonly DislikeOut[]): readonly DislikeOut[] {
+  let out = list;
+  for (const c of waiting()) {
+    if (c.kind !== 'dislike') continue;
+    const t: DislikeTarget = c.body;
+    out = out.filter((d) => !matches(d, t));
+    if (c.on) out = [{ id: 0, track_id: t.track_id ?? null, ref: t.ref ?? null, nd_song_id: t.nd_song_id ?? null, artist_ref: t.artist_ref ?? null, artist: t.artist ?? null, title: t.title ?? null, source: 'pwa', created_at: new Date().toISOString() }, ...out];
+  }
+  return out;
+}
+
+// sent, or refused for good: the marks as the Hub has them
+onSettled((c) => { if (c.kind === 'dislike') void refreshDislikes(true); });
+onDropped((c) => { if (c.kind === 'dislike') void refreshDislikes(true); });

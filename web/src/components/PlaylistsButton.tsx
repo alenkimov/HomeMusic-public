@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { PlaylistOfSongOut, PlaylistOfSongsOut } from '../api/types';
 import { tracksWord } from '../lib/format';
-import { noteInPlaylists, useInPlaylists } from '../lib/inPlaylists';
+import { changeMembership, useInPlaylists, withWaiting } from '../lib/inPlaylists';
 import { isLiked, setLikes, toggleLike, useLiked, type LikeTarget } from '../lib/stars';
 import { attempt, toast } from '../lib/ui';
 import { Icon } from './Icon';
@@ -112,6 +112,10 @@ function Footer({ text, busy, onClose, onDone, disabled }: { text: ReactNode; bu
 const names = (list: { name: string }[]) => list.map((p) => `«${p.name}»`).join(', ');
 const LIKED = { name: 'Любимое' };
 
+/** Without the Hub: the playlists as last read (the service worker keeps them), none ticked — where the track is
+ * now only the Hub knows; what was changed here meanwhile is ticked over them (`withWaiting`). */
+const offlineRows = (): Promise<PlaylistOfSongOut[]> => api.playlists().then((r) => r.map((p) => ({ ...p, has: false }) as PlaylistOfSongOut));
+
 /** Where one track is kept: «Любимое» first, then the user's playlists — the ones the track is in on top, then the
  * rest, the ones changed last first. It is ticked into some and out of others; nothing changes until «Готово».
  * A library song changes places at once; a catalog track the library has not got is downloaded and goes into the
@@ -130,8 +134,8 @@ export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     let alive = true;
-    (songId ? api.playlistsOfTrack(songId) : api.playlists().then((r) => r.map((p) => ({ ...p, has: false }))))
-      .then((r) => alive && setRows(r))
+    (songId ? api.playlistsOfTrack(songId).catch(() => offlineRows()) : api.playlists().then((r) => r.map((p) => ({ ...p, has: false }))))
+      .then((r) => alive && setRows(songId ? withWaiting([songId], r, (p, has) => ({ ...p, has })) : r))
       .catch(() => {
         if (alive) {
           toast('Не удалось получить плейлисты', 'error');
@@ -165,13 +169,14 @@ export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_
   };
   const save = async () => {
     if (!into.length && !out.length) return onClose();
+    let waited = false;
     setBusy(true);
     try {
       if (liked !== wasLiked && isLiked(target) !== liked) await toggleLike(target, true);
       if (songId && (add.length || remove.length)) {
-        const r = await attempt(() => api.playlistMembership({ track: songId, add: add.map((p) => p.id), remove: remove.map((p) => p.id) }));
+        const r = await changeMembership([songId], add.map((p) => p.id), remove.map((p) => p.id));
         if (!r) return;
-        noteInPlaylists([songId], r.some((p) => p.has));
+        if (r.waits) waited = true;
       } else if (!songId && add.length && track.ref) {
         const r = await attempt(() => api.download({ track_refs: [track.ref as string], playlist_ids: add.map((p) => p.id) }));
         if (!r) return;
@@ -179,7 +184,7 @@ export function TrackPlaylists({ track, onClose }: { track: { title: string; nd_
     } finally {
       setBusy(false);
     }
-    toast([into.length ? `${songId ? 'Добавлено в' : 'Скачиваем — трек появится в'}: ${names(into)}` : '', out.length ? `Убрано из: ${names(out)}` : ''].filter(Boolean).join('. '), 'success');
+    toast([into.length ? `${songId ? 'Добавлено в' : 'Скачиваем — трек появится в'}: ${names(into)}` : '', out.length ? `Убрано из: ${names(out)}` : '', waited ? 'Нет связи с сервером — изменения уйдут на сервер, когда он будет доступен' : ''].filter(Boolean).join('. '), 'success');
     onClose();
   };
   const row = (p: PlaylistOfSongOut) => {
@@ -248,8 +253,8 @@ export function BulkPlaylists({ tracks, onClose, onDone }: { tracks: PickedTrack
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     let alive = true;
-    (songIds.length ? api.playlistsOfTracks(songIds) : api.playlists().then((r) => r.map((p) => ({ ...p, count: 0 }))))
-      .then((r) => alive && setRows(r))
+    (songIds.length ? api.playlistsOfTracks(songIds).catch(() => offlineRows().then((r) => r.map(({ has: _, ...p }) => ({ ...p, count: 0 })))) : api.playlists().then((r) => r.map((p) => ({ ...p, count: 0 }))))
+      .then((r) => alive && setRows(withWaiting(songIds, r, (p, has) => ({ ...p, count: has ? n : 0 }))))
       .catch(() => {
         if (alive) {
           toast('Не удалось получить плейлисты', 'error');
@@ -284,13 +289,14 @@ export function BulkPlaylists({ tracks, onClose, onDone }: { tracks: PickedTrack
   };
   const save = async () => {
     if (!add.length && !remove.length && like === null) return onClose();
+    let waited = false;
     setBusy(true);
     try {
       if (like !== null) await setLikes(targets, like);
       if (songIds.length && (add.length || remove.length)) {
-        const r = await attempt(() => api.playlistMembershipMany({ tracks: songIds, add: add.map((p) => p.id), remove: remove.map((p) => p.id) }));
+        const r = await changeMembership(songIds, add.map((p) => p.id), remove.map((p) => p.id));
         if (!r) return;
-        noteInPlaylists(songIds, add.length > 0);
+        if (r.waits) waited = true;
       }
       const fresh = tracks.filter((t) => !t.key && !t.ref.startsWith('nd:')).map((t) => t.ref);
       if (fresh.length && add.length) {
@@ -302,7 +308,7 @@ export function BulkPlaylists({ tracks, onClose, onDone }: { tracks: PickedTrack
     }
     const into = [...(like === true ? [LIKED] : []), ...add];
     const out = [...(like === false ? [LIKED] : []), ...remove];
-    toast([into.length ? `Добавлено в: ${names(into)}` : '', out.length ? `Убрано из: ${names(out)}` : ''].filter(Boolean).join('. '), 'success');
+    toast([into.length ? `Добавлено в: ${names(into)}` : '', out.length ? `Убрано из: ${names(out)}` : '', waited ? 'Нет связи с сервером — изменения уйдут на сервер, когда он будет доступен' : ''].filter(Boolean).join('. '), 'success');
     onClose();
     onDone?.();
   };
@@ -419,8 +425,8 @@ export function PlaylistsSubmenu({ track, onClose }: { track: { title: string; n
   const [name, setName] = useState('');
   useEffect(() => {
     let alive = true;
-    (songId ? api.playlistsOfTrack(songId) : api.playlists().then((r) => r.map((p) => ({ ...p, has: false }))))
-      .then((r) => alive && setRows(r))
+    (songId ? api.playlistsOfTrack(songId).catch(() => offlineRows()) : api.playlists().then((r) => r.map((p) => ({ ...p, has: false }))))
+      .then((r) => alive && setRows(songId ? withWaiting([songId], r, (p, has) => ({ ...p, has })) : r))
       .catch(() => alive && setRows([]));
     return () => {
       alive = false;
@@ -430,10 +436,9 @@ export function PlaylistsSubmenu({ track, onClose }: { track: { title: string; n
   const put = async (p: { id: string; name: string }, into: boolean) => {
     onClose();
     if (songId) {
-      const r = await attempt(() => api.playlistMembership({ track: songId, add: into ? [p.id] : [], remove: into ? [] : [p.id] }));
+      const r = await changeMembership([songId], into ? [p.id] : [], into ? [] : [p.id]);
       if (!r) return;
-      noteInPlaylists([songId], r.some((x) => x.has));
-      toast(into ? `Добавлено в «${p.name}»` : `Убрано из «${p.name}»`, 'success');
+      toast((into ? `Добавлено в «${p.name}»` : `Убрано из «${p.name}»`) + (r.waits ? '. Нет связи с сервером — изменение уйдёт на сервер, когда он будет доступен' : ''), 'success');
     } else if (track.ref && into) {
       if (await attempt(() => api.download({ track_refs: [track.ref as string], playlist_ids: [p.id] }))) toast(`Скачиваем — трек появится в «${p.name}»`, 'success');
     }

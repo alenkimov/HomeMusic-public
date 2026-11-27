@@ -1,12 +1,13 @@
 import { useEffect, useSyncExternalStore } from 'react';
-import { api } from '../api/client';
-import type { FavoriteSubject, FavoriteTarget, FavoriteType } from '../api/types';
+import { ApiError, api } from '../api/client';
+import type { FavoriteSubject, FavoriteTarget, FavoriteType, StarIn, StarOut } from '../api/types';
 import { typedFavoritesSupported } from './capabilities';
 import { hubEvents } from './events';
 import { STANDALONE } from './embedded';
 import { HUB_DOWNLOAD_EVENT, markQueued } from './listen';
 import { newEventId, playEvent, routeContext } from './plays';
 import { toast, toastError, type Toast } from './ui';
+import { keep as keepChange, onDropped, onSettled, waiting, waits, type Change } from './outbox';
 
 export interface LikeTarget {
   targetType?: FavoriteType;
@@ -98,6 +99,7 @@ export function refreshStars(force = false): Promise<void> {
     own = decisions;
     linkedAliases = links;
     loadedAt = Date.now();
+    showWaiting();
     emit();
   }, () => { /* offline or logged out: keep the last known state */ }).finally(() => {
     loading = null;
@@ -146,7 +148,7 @@ export async function setLikes(list: readonly LikeTarget[], liked: boolean): Pro
   const generation = epoch;
   const todo = list.filter((t) => typeOf(t) === 'track' && isLiked(t) !== liked && aliases(t)[0] && !aliases(t).some((a) => busy.has(a)));
   if (!todo.length) return 0;
-  const typed = await typedFavoritesSupported();
+  const typed = (await typedFavoritesSupported()) ?? true; // no answer: the Hub is not there — the ♥s wait for it
   if (generation !== epoch) return 0;
   if (!typed) {  // an old Hub: one by one, as before
     let done = 0;
@@ -185,6 +187,11 @@ export async function setLikes(list: readonly LikeTarget[], liked: boolean): Pro
     }
   } catch (e) {
     if (generation !== epoch) return done;
+    const rest = todo.slice(done);
+    if (waits(e) && keepOffline(rest.map(aliases), liked, { targets: rest.map(apiTarget), unstar: !liked, event_id: `${operation}-w${done}`, ts, client: 'pwa', context: routeContext() })) {
+      toast(liked ? 'Нет связи с сервером — добавлю в «Любимое», когда он будет доступен' : 'Нет связи с сервером — уберу из «Любимого», когда он будет доступен');
+      return todo.length;
+    }
     todo.slice(done).forEach((t, k) => {
       const was = before[done + k];
       if (was) local.set(aliases(t)[0], was);
@@ -216,7 +223,7 @@ export async function toggleLike(t: LikeTarget, quiet = false, change?: () => vo
   retries.set(key, operation);
   try {
     const typed = await typedFavoritesSupported();
-    if (typed === null) throw new Error('Не удалось проверить соединение с Хабом. Повторите попытку.');
+    if (typed === null) throw new ApiError(0, 'Нет связи с сервером');
     if (!typed && typeOf(t) !== 'track') throw new Error('Обновите Хаб, чтобы отмечать альбомы и исполнителей');
     if (generation !== epoch) return;
     local.set(key, { liked, aliases: keys, eventId: operation.eventId });
@@ -253,6 +260,12 @@ export async function toggleLike(t: LikeTarget, quiet = false, change?: () => vo
     else if (!quiet) toast(liked ? (fetching ? 'Добавлено в «Любимое» — сохраняю в библиотеку' : 'Добавлено в «Любимое»') : 'Убрано из «Любимого»', 'success', link);
   } catch (e) {
     if (generation !== epoch) return;
+    // no Hub now: the ♥ stays and waits on the device (`lib/outbox.ts`) — the same decision, its id and time
+    if (waits(e) && keepOffline([keys], liked, { targets: [apiTarget(t)], unstar: !liked, event_id: operation.eventId, ts: operation.ts, client: 'pwa', context: routeContext() })) {
+      retries.delete(key);
+      if (!quiet) toast(liked ? 'Нет связи с сервером — добавлю в «Любимое», когда он будет доступен' : 'Нет связи с сервером — уберу из «Любимого», когда он будет доступен');
+      return;
+    }
     if (previous) local.set(key, previous);
     else local.delete(key);
     emit();
@@ -265,6 +278,47 @@ export async function toggleLike(t: LikeTarget, quiet = false, change?: () => vo
     }
   }
 }
+
+/** A ♥ (or its taking back) made without the Hub: shown as done, kept to be sent (`lib/outbox.ts`). False: the
+ * device could not keep it. */
+function keepOffline(each: string[][], liked: boolean, body: StarIn): boolean {
+  const key = each.length === 1 ? each[0][0] : `many:${body.event_id}`;
+  if (!keepChange({ kind: 'star', key, aliases: each, liked, body })) return false;
+  for (const keys of each) local.set(keys[0], { liked, aliases: keys, eventId: body.event_id });
+  emit();
+  return true;
+}
+
+/** What waits on the device is shown as done: after the page was opened again too. */
+function showWaiting() {
+  for (const c of waiting()) {
+    if (c.kind !== 'star') continue;
+    for (const keys of c.aliases) if (!busy.has(keys[0])) local.set(keys[0], { liked: c.liked, aliases: keys, eventId: c.body.event_id });
+  }
+}
+
+onSettled((c: Change, result: unknown) => {
+  if (c.kind !== 'star') return;
+  const ids = (result as StarOut | undefined)?.event_ids ?? [];
+  const targets = c.body.targets ?? [];
+  c.aliases.forEach((keys, k) => {
+    local.set(keys[0], { liked: c.liked, aliases: keys, eventId: ids[k] ?? c.body.event_id, acknowledgedAt: ++acknowledged });
+    const target = targets[k];
+    if (target && (target.target_type ?? 'track') === 'track' && ids[k]) playEvent(c.liked ? 'like' : 'unlike', target, { event_id: ids[k], ts: c.body.ts, context: c.body.context });
+    if (!c.liked && target?.ref) pendingRefs.delete(target.ref);
+  });
+  // a catalog track liked offline is downloaded now, as a ♥ given online would have been
+  const refs = c.liked && STANDALONE ? targets.filter((x) => (x.target_type ?? 'track') === 'track' && x.ref && !x.ref.startsWith('nd:') && !x.nd_song_id).map((x) => x.ref as string) : [];
+  if (refs.length) void api.download({ track_refs: refs }).then((r) => { if (r.queued > 0 || r.expanding) refs.forEach(markQueued); }, () => undefined);
+  window.dispatchEvent(new CustomEvent('hm:hub-favorite', { detail: { star: c.liked } }));
+});
+onDropped((c: Change) => {
+  if (c.kind !== 'star') return;
+  for (const keys of c.aliases) local.delete(keys[0]);
+  emit();
+  void refreshStars(true);
+});
+showWaiting();
 
 export function markLikePending(ref: string) {
   const key = typedKey('track', `ref:${ref}`);
