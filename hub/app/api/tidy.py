@@ -122,6 +122,8 @@ async def _out(s: AsyncSession, rows: list[TidyProposal]) -> list[TidyProposalOu
             show["into_id"] = p.to_json.get("into")
         elif p.kind == "double":
             show["keep_id"] = p.to_json.get("keep")  # the copy that stays: its own row beside the one that goes
+        elif p.kind == "version":
+            show["of_id"] = p.to_json.get("of")  # the original: its own row above the version
         was, to = _words(p, show)
         out.append(TidyProposalOut(
             id=p.id, kind=p.kind, section=p.section, subject_type=p.subject_type, subject_id=p.subject_id, was=was,

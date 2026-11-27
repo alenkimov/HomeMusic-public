@@ -128,10 +128,14 @@ export function TidyPage() {
 /** A section's proposals. A decided one stays where it was, dimmed, with «Отменить», until the list is asked anew
  * (another tab, a look-through done). */
 /** The tracks the proposals are about, as every list shows them: their cards, asked in one request. */
+/** The other track a proposal is about: a double's copy that stays, a version's original — its row is on the card
+ * too. */
+const pairOf = (p: TidyProposalOut) => (p.kind === 'double' ? p.show.keep_id : p.kind === 'version' ? p.show.of_id : null) ?? null;
+
 function useTrackCards(rows: readonly TidyProposalOut[] | null | undefined): Map<number, TrackOut> {
   const ids = [...new Set((rows ?? []).flatMap((p) => [
     ...(p.subject_type === 'track' ? [p.subject_id] : []),
-    ...(p.kind === 'double' && p.show.keep_id ? [p.show.keep_id] : []), // a double: the copy that stays as well
+    ...(pairOf(p) ? [pairOf(p) as number] : []), // a double's copy that stays, a version's original
   ]))].sort((a, b) => a - b);
   const key = ids.join(',');
   const res = useAsync(() => (ids.length ? api.trackCards(ids) : Promise.resolve([])), [key], true, `tidy:cards:${key}`);
@@ -202,7 +206,7 @@ function Proposals({ section, sure, focus, checked, onChange }: { section: TidyP
           {shown.map((p) => (
             <li key={p.id} ref={p.id === focus ? lit : undefined}>
               <ProposalCard p={p} lit={p.id === focus} busy={busy === p.id} onDecide={(what) => decide(p, what)}
-                track={p.subject_type === 'track' ? tracks.get(p.subject_id) : undefined} keep={p.show.keep_id ? tracks.get(p.show.keep_id) : undefined} />
+                track={p.subject_type === 'track' ? tracks.get(p.subject_id) : undefined} pair={pairOf(p) ? tracks.get(pairOf(p) as number) : undefined} />
             </li>
           ))}
         </ul>
@@ -220,14 +224,15 @@ function subjectLink(p: TidyProposalOut): string | null {
 const WHAT: Record<TidyProposalOut['subject_type'], string> = { track: 'Трек', album: 'Альбом', artist: 'Исполнитель' };
 
 /** The subject as the proposal names it: its picture, what it is and whose; then «было → станет» in the kind's words. */
-export function ProposalCard({ p, busy, onDecide, journal, lit, track, keep }: {
+export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
   p: TidyProposalOut; busy: boolean; onDecide: (what: TidyDecision) => void; journal?: boolean;
   /** the one a mark on a page led to */
   lit?: boolean;
   /** the track it is about, as every list shows a track (`useTrackCards`): its row heads the card */
   track?: TrackOut;
-  /** a double: the copy that stays — its row stands under the one that goes, each to be played and compared */
-  keep?: TrackOut;
+  /** the other track (`pairOf`): a double's copy that stays — under the one that goes — or a version's original —
+   * above the version; each row plays, to be compared */
+  pair?: TrackOut;
 }) {
   const to = subjectLink(p);
   const head = [WHAT[p.subject_type], p.show.line].filter(Boolean).join(' · ');
@@ -333,17 +338,29 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track, keep }: {
     </span>
   );
 
-  if (track && keep && p.kind === 'double') {
-    // both copies as rows of tracks: the one that goes, the one that stays — each plays, to hear they are one
-    const label = (text: string, file: string | undefined, tone: string) => (
-      <p className={cx('px-3 pt-2 text-[12px] font-semibold sm:px-4', tone)}>{text}{file ? <span className="font-normal text-muted"> · {file}</span> : null}</p>
+  if (track && pair) {
+    // both tracks as rows: a double's copy that goes and the one that stays, a version's original and the version
+    const label = (text: string, more: string | undefined, tone: string) => (
+      <p className={cx('px-3 pt-2 text-[12px] font-semibold sm:px-4', tone)}>{text}{more ? <span className="font-normal text-muted"> · {more}</span> : null}</p>
     );
+    const version = p.kind === 'version';
     return (
       <div className={cx('rounded-xl bg-raised/60 pb-2 pt-1 transition', lit && 'bg-ai/10 ring-2 ring-ai', decided && !journal && 'opacity-60')}>
-        {label(p.state === 'accepted' ? 'Удалена копия' : 'Удалить копию', p.show.file, 'text-danger')}
-        <TrackRow track={track} showAlbum />
-        {label('Оставить', p.show.keep_file, 'text-accent')}
-        <TrackRow track={keep} showAlbum />
+        {version ? (
+          <>
+            {label('Оригинал', undefined, 'text-muted')}
+            <TrackRow track={pair} showAlbum />
+            {label(p.state === 'accepted' ? 'Его версия' : 'Похоже на его версию', p.show.label ? `«${p.show.label}»` : undefined, 'text-ai')}
+            <TrackRow track={track} showAlbum />
+          </>
+        ) : (
+          <>
+            {label(p.state === 'accepted' ? 'Удалена копия' : 'Удалить копию', p.show.file, 'text-danger')}
+            <TrackRow track={track} showAlbum />
+            {label('Оставить', p.show.keep_file, 'text-accent')}
+            <TrackRow track={pair} showAlbum />
+          </>
+        )}
         <div className="mt-1 flex flex-wrap items-center gap-3 px-3 sm:px-4">
           <div className="min-w-0 flex-1 basis-60">
             <span className="flex min-w-0 items-center gap-2">
@@ -463,7 +480,7 @@ export function TidyJournalPage() {
           <ul className="mt-3 space-y-2 px-2 lg:px-4">
             {rows.map((p) => (
               <li key={p.id}><ProposalCard p={p} journal busy={busy === p.id} onDecide={(what) => void decide(p, what)}
-                track={p.subject_type === 'track' ? tracks.get(p.subject_id) : undefined} keep={p.show.keep_id ? tracks.get(p.show.keep_id) : undefined} /></li>
+                track={p.subject_type === 'track' ? tracks.get(p.subject_id) : undefined} pair={pairOf(p) ? tracks.get(pairOf(p) as number) : undefined} /></li>
             ))}
           </ul>
           {more && (
