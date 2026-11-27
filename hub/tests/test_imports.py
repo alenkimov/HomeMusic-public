@@ -53,6 +53,8 @@ async def env(hub_env, monkeypatch):
     def nd_handler(request: httpx.Request) -> httpx.Response:
         ep = request.url.path.rsplit("/", 1)[-1]
         p = request.url.params
+        if request.method == "POST" and request.content:  # a form (a playlist's songs): its fields as the query's
+            p = p.merge(httpx.QueryParams(request.content.decode()))
         ok = {"status": "ok", "version": "1.16.1"}
 
         def reply(**body) -> httpx.Response:
@@ -282,10 +284,20 @@ async def test_economy_import_likes_and_playlists_in_order(env):
     # the user takes the ♥ off Город золотой in the app: the import leaves it alone from then on
     from app.imports.apply import sync_likes
 
+    from app.library.importer import library_abs
+    from app.models import TrackFile
+
     state["stars"].remove("ndA")
+    # its file is gone from the disk (a drive away): Navidrome does not list it — no unlike of the listener's
+    async with session_scope() as s:
+        path = library_abs((await s.execute(select(TrackFile.path).where(TrackFile.nd_song_id == "ndA"))).scalar_one())
+        await sync_likes(s, await s.get(Import, imp["id"]))
+    assert {x["status"] for x in await items(c, imp, collection_id=likes) if x["title"] == "Город золотой"} == {"done"}
+    # the file is there: the unstar is the listener's
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"sound")
     async with session_scope() as s:
         await sync_likes(s, await s.get(Import, imp["id"]))
-    assert state["stars"] == ["ndC", "ndB"]
     assert {x["status"] for x in await items(c, imp, collection_id=likes) if x["title"] == "Город золотой"} == {"skipped"}
 
 
@@ -926,3 +938,40 @@ async def test_a_transfers_doubt_is_a_question_of_tidy(env):
         owner = (await s.get(Import, imp["id"])).user_id
         assert await review.acknowledge(s, owner, got[0].id)
     assert (await c.get("/api/tidy/proposals", params={"section": "imports"})).json() == []
+
+
+async def test_a_song_navidrome_hides_is_not_taken_out_of_the_playlist(env):
+    """The mirror of a playlist takes out what was taken out in another app — not a song Navidrome stopped listing
+    because its file is not there (a drive away for a while): that one stays, and goes back to Navidrome."""
+    from app.db import session_scope
+    from app.library.importer import library_abs
+    from app.models import TrackFile
+    from app.playlists_mirror import mirror
+
+    c, state = env["client"], env["state"]
+    pid = (await c.post("/api/playlists", json={"name": "Сборник"})).json()["id"]
+    async with session_scope() as s:
+        files = dict((await s.execute(select(TrackFile.nd_song_id, TrackFile.path))).all())
+    ids = []
+    for song in ("ndA", "ndB"):
+        async with session_scope() as s:
+            ids.append((await s.execute(select(TrackFile.track_id).where(TrackFile.nd_song_id == song))).scalar_one())
+    assert (await c.post(f"/api/playlists/{pid}/add", json={"track_ids": ids})).status_code == 200
+    await mirror(int(pid))
+    nd_id = next(k for k, v in state["playlists"].items() if v["name"] == "Сборник")
+    assert state["playlists"][nd_id]["songs"] == ["ndA", "ndB"]
+
+    async def hub_songs():
+        return [t.get("nd_song_id") for t in (await c.get(f"/api/playlists/{pid}")).json()["tracks"]]
+
+    # Navidrome lists ndA no more, and its file is not on the disk: kept, and written back
+    state["playlists"][nd_id]["songs"] = ["ndB"]
+    await mirror(int(pid))
+    assert await hub_songs() == ["ndA", "ndB"] and state["playlists"][nd_id]["songs"] == ["ndA", "ndB"]
+    # the file is there: taken out in another app
+    path = library_abs(files["ndA"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"sound")
+    state["playlists"][nd_id]["songs"] = ["ndB"]
+    await mirror(int(pid))
+    assert await hub_songs() == ["ndB"]

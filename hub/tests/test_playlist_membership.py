@@ -199,7 +199,17 @@ async def test_the_mirror_gets_the_songs_and_what_other_apps_did_comes_back(env,
     await mirror(pid)
     assert nd["writes"] == writes  # nothing changed: nothing is written
 
-    # another app adds a song and takes one out: both come back, the track without a file stays in its place
+    # another app adds a song and takes one out (its file is on the disk: the listener's doing, not a drive away):
+    # both come back, the track without a file stays in its place
+    from sqlalchemy import select
+
+    from app.library.importer import library_abs
+    from app.models import TrackFile
+
+    async with session_scope() as s:
+        path = library_abs((await s.execute(select(TrackFile.path).where(TrackFile.nd_song_id == "ndK"))).scalar_one())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"sound")
     nd["playlists"]["nd1"]["songs"] = ["ndX", "ndZ"]
     await mirror(pid)
     async with session_scope() as s:

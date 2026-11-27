@@ -2,7 +2,9 @@
 
 A playlist's tracks that have a file, in the Hub's order, are written to a Navidrome playlist of the same name.
 Before writing, what Navidrome holds now is compared with what the Hub last gave it (`Playlist.mirrored`): a song
-that appeared there was added in another app and is added to the Hub's playlist, one that disappeared is taken out.
+that appeared there was added in another app and is added to the Hub's playlist, one that disappeared is taken out
+— unless its file is not on the disk, or so many went at once (`app.library.presence`): Navidrome hides what it
+does not find, and a drive away for a while is not the listener's word.
 Then the Hub's state is written — the Hub wins a conflict, an edit made elsewhere is merged, not lost.
 
 «Микс дня» (`kind` "mix") goes the other way: the mix builder writes that playlist in Navidrome, and the Hub's
@@ -23,6 +25,7 @@ from app.auth import user_navidrome
 from app.db import session_scope
 from app.events import bus
 from app.jobs.queue import enqueue, handler, notify
+from app.library import presence
 from app.library.navidrome import SubsonicError
 from app.models import Job, Playlist, PlaylistItem, Track, TrackFile, User
 
@@ -118,6 +121,17 @@ async def mirror(playlist_id: int) -> None:
                 have = set(mirrored)
                 came = [x for x in now if x not in have]
                 gone = [x for x in mirrored if x not in set(now)]
+                if gone:
+                    # gone from Navidrome's playlist: taken out in another app — unless its file is not there
+                    # (Navidrome does not list it then), or so many at once that it is no person's doing
+                    off = await presence.away(s, gone)
+                    if off:
+                        log.warning("mirror %s: %s songs of the playlist are not on the disk: kept", playlist_id, len(off))
+                        gone = [x for x in gone if x not in off]
+                    if presence.mass(len(gone), len(mirrored)):
+                        log.warning("mirror %s: %s of %s songs gone from Navidrome at once: none taken out",
+                                    playlist_id, len(gone), len(mirrored))
+                        gone = []
                 if came or gone:
                     ids = await _tracks_of_songs(s, came + gone)
                     changed = bool(await playlists.remove_tracks(s, p, [ids[x] for x in gone if x in ids]))

@@ -418,6 +418,16 @@ async def sync_likes(s: AsyncSession, imp: Import) -> None:
                 have = {x.get("id") for x in (await nd.get_starred2()).get("song", [])}
                 gone = set(prev) - have
                 if gone:
+                    # unstarred in another app — unless the file is not on the disk (Navidrome hides what it does not
+                    # find), or so many at once that it is no person's doing (`app.library.presence`)
+                    from app.library import presence
+
+                    gone -= await presence.away(s, gone)
+                    if presence.mass(len(gone), len(prev)):
+                        log.warning("import %s: %s of %s likes gone from Navidrome at once: none taken as unliked",
+                                    imp.id, len(gone), len(prev))
+                        gone = set()
+                if gone:
                     for i in items:
                         if i.status == "done" and songs.get(i.id) in gone:
                             i.status, i.raw_json = "skipped", {**(i.raw_json or {}), "unliked": True}

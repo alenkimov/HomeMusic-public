@@ -392,3 +392,49 @@ async def test_compensation_before_original_requeues_neutral_mirror(ledger):
         nd = AsyncMock()
         await reconcile(s, user, {"song": [{"id": "s"}]}, nd=nd)
         nd.unstar.assert_awaited_once_with(song_ids=["s"])
+
+
+async def test_a_like_whose_file_is_away_is_not_unliked_by_navidrome(ledger, tmp_path, monkeypatch):
+    """Navidrome does not list a song whose file it does not find (a music drive away for a while): its star is
+    not seen, but that is no unlike of the listener's — the like stays. With the file there, it is one."""
+    from app import config
+    from app.db import session_scope
+
+    monkeypatch.setenv("MUSIC_ROOT", str(tmp_path))
+    config.get_settings.cache_clear()
+    user, _ = ledger
+    async with session_scope() as s:
+        s.add(filed_track(artist="Кино", title="Кукушка", fingerprint="кино|кукушка", path="k/kukushka.mp3", nd_song_id="s1"))
+        await s.flush()
+        ev = await record(s, user.id, FavoriteTarget(nd_song_id="s1"), True, ts=NOW)
+        later = ev.received_at + timedelta(hours=25)
+        assert await reconcile(s, user, {}, now=later) == 0  # the file is not on the disk: kept
+        assert next(iter((await snapshot(s, user.id, later)).values())).liked
+        (tmp_path / "library" / "k").mkdir(parents=True)
+        (tmp_path / "library" / "k" / "kukushka.mp3").write_bytes(b"sound")
+        assert await reconcile(s, user, {}, now=later) == 1  # it is: unliked in another app
+        assert not next(iter((await snapshot(s, user.id, later)).values())).liked
+    config.get_settings.cache_clear()
+
+
+async def test_many_likes_gone_at_once_are_not_unliked(ledger):
+    """Many likes gone from Navidrome at once is no person's doing (a rescan half done, a drive away): none of them
+    is taken for an unlike."""
+    from app.db import session_scope
+
+    user, _ = ledger
+    async with session_scope() as s:
+        events = [await record(s, user.id, FavoriteTarget(nd_song_id=f"s{i}"), True, ts=NOW) for i in range(20)]
+        later = max(e.received_at for e in events) + timedelta(hours=25)
+        assert await reconcile(s, user, {"song": [{"id": f"s{i}"} for i in range(5)]}, now=later) == 0
+        assert all(st.liked for st in (await snapshot(s, user.id, later)).values())
+        # one at a time is the listener's
+        assert await reconcile(s, user, {"song": [{"id": f"s{i}"} for i in range(19)]}, now=later) == 1
+
+
+def test_how_many_gone_at_once_is_no_persons_doing():
+    from app.library.presence import mass
+
+    assert not mass(3, 5)  # a few: a person's
+    assert not mass(11, 100)  # under a quarter
+    assert mass(11, 40) and mass(500, 600)

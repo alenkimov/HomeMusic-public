@@ -720,9 +720,30 @@ async def reconcile(s: AsyncSession, user: User, body: dict, *, now: datetime | 
             have[key], dates[key] = target, parse_time(obj.get("starred"))
             if typ != "track":  # a track's names are the library's: nothing of it is kept (`remember`)
                 await remember(s, target)
+    # a ♥ Navidrome does not list any more is the listener's unstar in another app — unless the song's file is not
+    # on the disk (Navidrome hides what it does not find: a drive away for a while), or so many went at once that
+    # it is no person's doing (`app.library.presence`). Unliked so, it would stay unliked for good: a ♥ older than
+    # an unlike does not bring the like back
+    from app.library import presence
+
+    dropped = [(key, st) for key, st in before.items() if st.liked and st.nd_id and key not in have
+               and not st.event.mirror_pending and now - st.received_at >= GRACE]
+    keep_liked: set[tuple[str, str]] = set()
+    if dropped:
+        off = await presence.away(s, [st.nd_id for _, st in dropped if st.target_type == "track"])
+        keep_liked = {key for key, st in dropped if st.target_type == "track" and st.nd_id in off}
+        if keep_liked:
+            log.warning("favorites of %s: %s liked songs are not on the disk: their likes kept", user.id, len(keep_liked))
+        liked = sum(1 for st in before.values() if st.liked)
+        if presence.mass(len(dropped) - len(keep_liked), liked):
+            log.warning("favorites of %s: %s of %s likes gone from Navidrome at once: none unliked",
+                        user.id, len(dropped) - len(keep_liked), liked)
+            keep_liked = {key for key, _ in dropped}
     changed = 0
     for key in sorted(before.keys() | have.keys()):
         state, target = before.get(key), have.get(key)
+        if key in keep_liked:
+            continue
         if state and state.event.mirror_pending:
             # A failed own delivery is retried, never interpreted as an outside unstar.
             if nd is not None and state.nd_id:
