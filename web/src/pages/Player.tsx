@@ -1,6 +1,5 @@
 import { tagKey } from '../lib/tags';
 import { PlayerLight } from '../components/PlayerLight';
-import { usePlayerLight } from '../lib/playerLight';
 import { FileRow, PlayLine } from '../components/FileInfo';
 import { ChoosePlaybackFile } from '../components/FindFile';
 import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
@@ -186,7 +185,6 @@ export function PlayerPage() {
   };
 
   const cover = track?.cover_small_url || track?.cover_url;
-  const light = usePlayerLight();
 
   if (!track)
     return (
@@ -221,7 +219,7 @@ export function PlayerPage() {
   return (
     <div className={cx('pt-safe relative isolate mx-auto flex min-h-dvh max-w-2xl flex-col pb-[calc(24px+env(safe-area-inset-bottom))]', side && 'lg:max-w-6xl')}>
       {/* the page's own light: the look chosen on this device («Меню» → «Фон плеера») */}
-      <PlayerLight cover={cover} look={light} />
+      <PlayerLight cover={cover} />
       <div className="flex min-h-14 items-center gap-1 px-2">
         <IconButton icon="down" label="Свернуть" onClick={() => goBack('/home')} />
         {wide && canFull && (

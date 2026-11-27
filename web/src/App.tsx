@@ -51,7 +51,6 @@ import { BackupPage } from './pages/Backup';
 import { OutboundPage } from './pages/Outbound';
 import { ServiceChecksPage } from './pages/ServiceChecks';
 import { AboutPage, WhatsNewPage } from './pages/WhatsNew';
-import { PlayerLightPage } from './pages/PlayerLightPage';
 import { QualityPage } from './pages/Quality';
 import { LibraryPage, LibrarySearchPage } from './pages/Library';
 import { LoginPage } from './pages/Login';
@@ -152,7 +151,6 @@ const ROUTES: RouteDef[] = [
   ['/admin/about', 'more', () => <AboutPage />, 'text'],
   ['/admin/checks', 'more', () => <ServiceChecksPage />, 'text'],
   ['/whats-new', 'more', () => <WhatsNewPage />, 'text'],
-  ['/settings/player-light', 'more', () => <PlayerLightPage />, 'text'],
   ['/lyrics-sources', 'more', () => <LyricsSettingsPage />, 'text'],
   ['/admin/user/:id', 'more', (p) => <AdminUserPage key={p.id} id={Number(p.id)} />, 'wide'],
   ['/admin/insights', 'more', () => <InsightsOverviewPage />, 'wide'],

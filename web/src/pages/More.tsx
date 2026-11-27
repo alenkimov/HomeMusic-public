@@ -14,7 +14,6 @@ import { PageHeader, cx, Badge } from '../components/ui';
 import { notifyPermission, requestNotifyPermission, useActiveDownloads, type NotifyPermission } from '../lib/notify';
 import { Link } from '../lib/router';
 import { WEB_VERSION, useVersion } from '../lib/version';
-import { usePlayerLight } from '../lib/playerLight';
 import { confirmDialog, toast } from '../lib/ui';
 
 interface InstallPromptEvent extends Event {
@@ -40,7 +39,6 @@ export function MorePage() {
   const tidy = useAsync((s) => (STANDALONE ? api.tidy(s) : Promise.resolve(null)), [], true, 'menu:tidy');
   const tidyWaiting = tidy.data?.total ?? 0;
   // the backups, for an admin: a red word when they are not going off the server
-  const light = usePlayerLight();
   const version = useVersion(); // the number at the bottom, and a dot while a release is not opened yet
   const backup = useAsync((s) => (me.is_admin ? api.backup(s) : Promise.resolve(null)), [], true, 'menu:backup').data;
   // what the Hub is built of that is behind (yt-dlp first): a count by «О сервере»
@@ -156,7 +154,6 @@ export function MorePage() {
           )}
           <Group title="Это устройство">
             <Item icon="bell" tint="bg-[#d9534f]" title="Уведомления" value={permText[perm]} onClick={notifications} />
-            <Item icon="image" tint="bg-[#7a5af0]" to="/settings/player-light" title="Фон плеера" value={light === 'blur' ? 'Размытая обложка' : 'Лёгкий'} />
             {canInstall && !standalone && <Item icon="install" tint="bg-[#30b85c]" title="Установить приложение" onClick={install} />}
             {/* the player is here: in the browser, and the app's own on Android */}
             <Item icon="install" tint="bg-[#1f9d55]" href="/app/latest.apk" title="Приложение для Android" />
