@@ -3,7 +3,7 @@ import { useHubReachable } from '../lib/reach';
 import { OFFLINE_WAVE, useWaveReserve } from '../lib/offlineWave';
 import { Link, navigate } from '../lib/router';
 import { tastePath, useNewcomer } from '../lib/taste';
-import { canWave, startWave, useWave } from '../lib/wave';
+import { startWave, useWave } from '../lib/wave';
 import { Icon } from './Icon';
 import { WaveGlow } from './WaveGlow';
 
@@ -24,7 +24,6 @@ export function WaveHero() {
   const newcomer = useNewcomer();
   const online = useHubReachable();
   const reserve = useWaveReserve();
-  if (!canWave()) return null;
   const busy = starting === '';
   const own = localWave || (wave && title === 'Моя волна');
   const on = own && phase !== 'ended';

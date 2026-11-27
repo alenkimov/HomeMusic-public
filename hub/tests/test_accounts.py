@@ -1,50 +1,21 @@
-"""Invites, registration, sign-in with Google and the admin's user list, against a fake Navidrome."""
+"""Invites, registration and the admin's user list, against a fake Navidrome."""
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import json
-import time
 from datetime import timedelta
 
 import httpx
 import pytest
 import respx
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from tests.support import app_client, filed_track
-
-CLIENT_ID = "123-web.apps.googleusercontent.com"
-CERTS = "https://www.googleapis.com/oauth2/v3/certs"
-KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-
-
-def _b64(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-
-def jwks() -> dict:
-    n = KEY.public_key().public_numbers()
-    return {"keys": [{"kty": "RSA", "kid": "k1", "alg": "RS256", "use": "sig",
-                      "n": _b64(n.n.to_bytes((n.n.bit_length() + 7) // 8, "big")), "e": _b64(n.e.to_bytes(3, "big"))}]}
-
-
-def google_token(sub: str = "g-1", email: str = "anna.k@gmail.com", **over) -> str:
-    now = int(time.time())
-    claims = {"iss": "https://accounts.google.com", "aud": CLIENT_ID, "sub": sub, "email": email,
-              "email_verified": True, "iat": now, "exp": now + 3600, "name": "Анна", **over}
-    head = _b64(json.dumps({"alg": "RS256", "kid": "k1", "typ": "JWT"}).encode())
-    body = _b64(json.dumps(claims).encode())
-    sig = KEY.sign(f"{head}.{body}".encode(), padding.PKCS1v15(), hashes.SHA256())
-    return f"{head}.{body}.{_b64(sig)}"
 
 
 @pytest.fixture
 async def env(hub_env, monkeypatch):
-    monkeypatch.setenv("GOOGLE_CLIENT_ID", CLIENT_ID)
     monkeypatch.setenv("PUBLIC_MUSIC_URL", "https://music.test:8444")
 
     from app.main import create_app
@@ -99,7 +70,6 @@ async def env(hub_env, monkeypatch):
         with respx.mock(assert_all_called=False) as mock:
             mock.route(host="navidrome.test", path__startswith="/rest/").mock(side_effect=subsonic)
             mock.route(host="navidrome.test").mock(side_effect=native)
-            mock.get(CERTS).mock(return_value=httpx.Response(200, json=jwks(), headers={"cache-control": "max-age=600"}))
             transport = httpx.ASGITransport(app=app)
 
             def client() -> httpx.AsyncClient:
@@ -261,20 +231,6 @@ async def test_search_history_requires_authentication(env, method):
     async with env["client"]() as anonymous:
         r = await anonymous.request(method, "/api/search/history", json={"title": "Кино"})
         assert r.status_code == 401, r.text
-
-
-async def test_options_tell_about_google(env, monkeypatch):
-    async with env["client"]() as c:
-        r = await c.get("/api/auth/options")
-        assert r.json() == {"invites": True, "email_signup": False, "google_client_id": CLIENT_ID,
-                            "music_url": "https://music.test:8444"}
-        from app import config
-
-        monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
-        config.get_settings.cache_clear()
-        assert (await c.get("/api/auth/options")).json()["google_client_id"] is None
-        r = await c.post("/api/auth/google", json={"id_token": google_token()})
-        assert r.status_code == 404
 
 
 async def test_register_with_invite(env):
@@ -514,67 +470,6 @@ async def test_old_email_codes_are_purged(env, letters):
     assert await purge_email_codes() == 1
     async with session_scope() as s:
         assert (await s.execute(select(func.count(EmailCode.id)))).scalar_one() == 1
-
-
-async def test_google_sign_in_registers_with_invite_then_signs_in(env):
-    async with env["client"]() as c:
-        r = await c.post("/api/auth/google", json={"id_token": google_token()})
-        assert r.status_code == 409, r.text  # not linked, no code
-        inv = await make_invite(env["admin"])
-        r = await c.post("/api/auth/google", json={"id_token": google_token(), "code": inv["code"]})
-        assert r.status_code == 200, r.text
-        out = r.json()
-        # the name comes from the email when the app sends none; the password works for the player
-        assert out["username"] == "anna.k" and out["google_email"] == "anna.k@gmail.com"
-        assert env["nd"]["users"]["anna.k"]["password"] == out["password"]
-    async with env["client"]() as c:  # another phone: the same account, no code needed
-        r = await c.post("/api/auth/google", json={"id_token": google_token()})
-        assert r.status_code == 200, r.text
-        assert r.json()["username"] == "anna.k" and r.json()["password"] == out["password"]
-        assert (await c.get("/api/auth/me")).json()["username"] == "anna.k"
-
-
-async def test_google_tokens_are_checked(env):
-    inv = await make_invite(env["admin"])
-    other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    good = google_token()
-    head, body, _ = good.split(".")
-    forged = f"{head}.{body}.{_b64(other.sign(f'{head}.{body}'.encode(), padding.PKCS1v15(), hashes.SHA256()))}"
-    async with env["client"]() as c:
-        for token in [forged, google_token(aud="someone-else"), google_token(exp=int(time.time()) - 3600),
-                      google_token(iss="evil.example"), google_token(email_verified=False), "not-a-token"]:
-            r = await c.post("/api/auth/google", json={"id_token": token, "code": inv["code"]})
-            assert r.status_code == 401, (token, r.text)
-    statuses = {i["id"]: i["status"] for i in (await env["admin"].get("/api/admin/invites")).json()}
-    assert statuses[inv["id"]] == "active"
-
-
-async def test_link_google_to_a_password_account(env):
-    admin = env["admin"]
-    r = await admin.post("/api/auth/google/link", json={"id_token": google_token(sub="g-admin", email="boss@gmail.com")})
-    assert r.status_code == 200 and r.json()["google_email"] == "boss@gmail.com"
-    async with env["client"]() as c:
-        r = await c.post("/api/auth/google", json={"id_token": google_token(sub="g-admin")})
-        assert r.status_code == 200 and r.json()["username"] == "admin" and r.json()["password"] == "adminpw"
-        assert r.json()["is_admin"]
-    # the same Google account can't go to a second user
-    inv = await make_invite(admin)
-    async with env["client"]() as c:
-        r = await c.post("/api/auth/register", json={"code": inv["code"], "username": "anna", "password": "secret1"})
-        assert r.status_code == 200
-        r = await c.post("/api/auth/google/link", json={"id_token": google_token(sub="g-admin")})
-        assert r.status_code == 409
-    assert (await admin.delete("/api/auth/google/link")).json()["google_email"] is None
-    async with env["client"]() as c:
-        assert (await c.post("/api/auth/google", json={"id_token": google_token(sub="g-admin")})).status_code == 409
-
-
-async def test_google_account_whose_password_changed(env):
-    await env["admin"].post("/api/auth/google/link", json={"id_token": google_token(sub="g-admin")})
-    env["nd"]["users"]["admin"]["password"] = "changed"
-    async with env["client"]() as c:
-        r = await c.post("/api/auth/google", json={"id_token": google_token(sub="g-admin")})
-        assert r.status_code == 401 and "привяжите Google снова" in r.json()["detail"]
 
 
 async def test_admin_user_list_with_spending_and_songs(env):

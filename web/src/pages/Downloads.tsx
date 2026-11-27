@@ -14,7 +14,6 @@ import { SOURCES } from './Import';
 import { useHubConnected, useHubEvent } from '../lib/events';
 import { DOWNLOAD_ACTIVE, fmtWhen, plural, warningText } from '../lib/format';
 import { useAsync, useInterval } from '../lib/hooks';
-import { canPlay, playList } from '../lib/player';
 import { Link, navigate, useRoute } from '../lib/router';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 
@@ -186,8 +185,8 @@ export function DownloadsPage() {
       return next;
     });
 
-  /** A row's props; `among`: the list it plays with, `update`: where the answer of its action goes. */
-  const rowFor = (item: DownloadItemOut, among: DownloadItemOut[], update: (r: DownloadItemOut) => void, pickable: boolean): RowProps => ({
+  /** A row's props; `update`: where the answer of its action goes. */
+  const rowFor = (item: DownloadItemOut, update: (r: DownloadItemOut) => void, pickable: boolean): RowProps => ({
     item,
     picked: pickable ? picked.has(item.id) : undefined,
     onPick: pickable ? (v) => pick(item.id, v) : undefined,
@@ -197,9 +196,6 @@ export function DownloadsPage() {
     onRetry: () => void one(item, 'retry', update),
     onCancel: () => void one(item, 'cancel', update),
     onRemove: () => void remove([item], `remove:${item.id}`),
-    onPlay: canPlay() && item.status === 'done' && item.nd_song_id
-      ? () => playList(among.filter((x) => x.status === 'done' && x.nd_song_id), (x) => x.nd_song_id, item)
-      : undefined,
   });
 
   const tabs: Array<{ value: Tab; label: string; count: number | null }> = TABS.map((t) => {
@@ -289,13 +285,13 @@ export function DownloadsPage() {
                     <span />
                   </div>
                   {shown.map((item) => (
-                    <TableRow key={item.id} {...rowFor(item, shown, merge, true)} />
+                    <TableRow key={item.id} {...rowFor(item, merge, true)} />
                   ))}
                 </div>
               ) : (
                 <ul className="space-y-2 px-4">
                   {shown.map((item) => (
-                    <Card key={item.id} {...rowFor(item, shown, merge, true)} />
+                    <Card key={item.id} {...rowFor(item, merge, true)} />
                   ))}
                 </ul>
               )}
@@ -340,7 +336,7 @@ function Group({ group, tab, desktop, rowFor, retrying, onRetryAll }: {
   group: DownloadGroupOut;
   tab: Tab;
   desktop: boolean;
-  rowFor: (item: DownloadItemOut, among: DownloadItemOut[], update: (r: DownloadItemOut) => void, pickable: boolean) => RowProps;
+  rowFor: (item: DownloadItemOut, update: (r: DownloadItemOut) => void, pickable: boolean) => RowProps;
   retrying: boolean;
   onRetryAll: () => void;
 }) {
@@ -432,11 +428,11 @@ function Group({ group, tab, desktop, rowFor, retrying, onRetryAll }: {
             <SkeletonRows />
           ) : desktop ? (
             <div role="table" aria-label={groupTitle(group)}>
-              {rows.map((item) => <TableRow key={item.id} {...rowFor(item, rows, update, false)} />)}
+              {rows.map((item) => <TableRow key={item.id} {...rowFor(item, update, false)} />)}
             </div>
           ) : (
             <ul className="space-y-1.5 p-1.5">
-              {rows.map((item) => <Card key={item.id} flat {...rowFor(item, rows, update, false)} />)}
+              {rows.map((item) => <Card key={item.id} flat {...rowFor(item, update, false)} />)}
             </ul>
           )}
           {rows !== null && left > 0 && (
@@ -467,8 +463,6 @@ interface RowProps {
   onRetry: () => void;
   onCancel: () => void;
   onRemove: () => void;
-  /** Done and scanned by Navidrome: plays it (and the finished ones around it) in the app's player. */
-  onPlay?: () => void;
 }
 
 /** The reason of a problem: a line that says what to do; a click shows the source's own words under it. */
@@ -490,12 +484,11 @@ function Why({ item, open, onOpen }: { item: DownloadItemOut; open: boolean; onO
   );
 }
 
-function Actions({ item, busy, onRetry, onCancel, onRemove, onPlay }: RowProps) {
+function Actions({ item, busy, onRetry, onCancel, onRemove }: RowProps) {
   const cls = '!h-9 !w-9 text-muted hover:text-fg';
   if (DOWNLOAD_ACTIVE.includes(item.status)) return <IconButton icon="x" size={18} label="Отменить" busy={busy === 'cancel'} onClick={onCancel} className={cls} />;
   return (
     <>
-      {onPlay && <IconButton icon="play" size={18} label={`Слушать «${item.title}»`} onClick={onPlay} className="!h-9 !w-9 !text-accent" />}
       {item.status !== 'done' && <IconButton icon="refresh" size={18} label="Повторить поиск" busy={busy === 'retry'} onClick={onRetry} className={cls} />}
       {isProblem(item) && <IconButton icon="search" size={18} label="Выбрать файл или вставить ссылку" onClick={() => navigate(`/downloads/${item.id}`)} className={cls} />}
       <IconButton icon="trash" size={18} label={item.status === 'done' ? 'Убрать из списка' : 'Убрать: не скачивать'} busy={busy === 'remove'} onClick={onRemove} className={cls} />
@@ -586,11 +579,6 @@ function Card(p: RowProps & { flat?: boolean }) {
           </Button>
         ) : (
           <>
-            {p.onPlay && (
-              <Button small className="flex-1" icon="play" onClick={p.onPlay}>
-                Слушать
-              </Button>
-            )}
             {item.status !== 'done' && (
               <Button small className="flex-1" icon="refresh" busy={p.busy === 'retry'} onClick={p.onRetry}>
                 Повторить

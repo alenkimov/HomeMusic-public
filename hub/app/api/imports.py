@@ -20,7 +20,7 @@ from app.api.schemas import (
 from app.auth import current_user
 from app.db import get_session
 from app.events import bus
-from app.imports import apply, core, review
+from app.imports import apply, core
 from app.imports.sources.base import SourceError
 from app.jobs.downloads import IN_WORK
 from app.jobs.queue import PermanentError, enqueue, notify
@@ -237,17 +237,7 @@ async def remove(import_id: int, user: User = Depends(current_user),
     """Forget the import (and its sign-in). The music, the ♥ and the playlists it made stay."""
     await core.remove(s, await _own(s, user, import_id, lock=True))
     await s.commit()
-    bus.publish(user.id, "library", {"kind": "import_review"})
-    return {"ok": True}
-
-
-@router.post("/items/{item_id}/confirm_match")
-async def confirm_match(item_id: int, user: User = Depends(current_user),
-                        s: AsyncSession = Depends(get_session, scope="function")):
-    if not await review.acknowledge(s, user.id, item_id):
-        raise HTTPException(404, "Совпадение не найдено")
-    await s.commit()
-    bus.publish(user.id, "library", {"kind": "import_review"})
+    bus.publish(user.id, "library", {"kind": "changed", "album_id": None})
     return {"ok": True}
 
 

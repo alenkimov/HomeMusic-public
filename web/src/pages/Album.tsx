@@ -16,7 +16,6 @@ import { needsTrackFile, withRecordingAvailability } from '../lib/findFile';
 import { fmtLength, tracksWord, yearOf } from '../lib/format';
 import { SourceStatuses } from '../components/SourceStatuses';
 import { useSourceRequest } from '../lib/hooks';
-import { canPlay, canPlayAll, playList } from '../lib/player';
 import { AlbumHero, catalogLook } from '../components/Album';
 import { albumPath, artistPath, enc, navigate, useCanonicalPath } from '../lib/router';
 import { copyText } from '../lib/share';
@@ -83,9 +82,6 @@ export function AlbumPage({ refId }: { refId: string }) {
   const total = tracks.reduce((s, t) => s + (t.duration_s ?? 0), 0);
   const missing = tracks.filter((t) => !t.owned);
   const owned = tracks.filter((t) => t.owned);
-  // Older apps: owned tracks Navidrome has scanned play in the app's player, in album order.
-  const playable = canPlay() && !canPlayAll() ? owned.filter((t) => t.nd_song_id) : [];
-  const play = (from?: TrackOut) => playList(playable, (t) => t.nd_song_id, from);
   const markDownloading = (refs: Set<string>) =>
     res.setData((prev) => (prev ? { ...prev, tracks: (prev.tracks ?? []).map((t) => (refs.has(t.ref) ? { ...t, downloading: true } : t)) } : prev));
 
@@ -166,7 +162,7 @@ export function AlbumPage({ refId }: { refId: string }) {
             <div key={disc}>
               {discs.length > 1 && <div className="px-4 pb-1 pt-3 text-sm font-semibold text-muted">Диск {disc}</div>}
               {list.map((t, i) => (
-                <TrackRow key={t.ref} track={t} number={t.track_no ?? i + 1} link={false} onPlay={() => play(t)} queue={playableTracks} rows={tracks} />
+                <TrackRow key={t.ref} track={t} number={t.track_no ?? i + 1} link={false} queue={playableTracks} rows={tracks} />
               ))}
             </div>
           ))}
@@ -185,7 +181,7 @@ export function AlbumPage({ refId }: { refId: string }) {
             tracks.length > 0 && (allHere
               ? { icon: 'download', label: 'Скачано', active: true, done: true, disabled: true, onSelect: () => {} }
               : { icon: 'download', label: owned.length ? `Скачать недостающие (${missing.length})` : 'Скачать альбом', shortcut: 'D', onSelect: () => void downloadAlbum() }),
-            playableTracks.length > 0 && !canPlayAll() && { icon: 'queue', label: 'Добавить в очередь', shortcut: 'Q', onSelect: () => void addToQueue(playableTracks.map(listenTrack)) },
+            playableTracks.length > 0 && { icon: 'queue', label: 'Добавить в очередь', shortcut: 'Q', onSelect: () => void addToQueue(playableTracks.map(listenTrack)) },
             'sep',
             (album.artist_ref || album.hub_artist_id) && { icon: 'user', label: 'Перейти к исполнителю', shortcut: 'Alt+A', onSelect: () => navigate(artistPath({ ref: album.artist_ref ?? '', hub_artist_id: album.hub_artist_id })) },
             'sep',

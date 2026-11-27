@@ -57,7 +57,7 @@ const CHUNK = 20; // files brought in by one request: the page says how far it h
 
 export const isAudioFile = (f: File) => f.type.startsWith('audio/') || AUDIO_EXT.test(f.name);
 
-// Files handed over by the Share page (Android "Share" → HomeMusic); consumed on mount.
+// Files handed over by the Share page («Поделиться» → HomeMusic on a phone); consumed on mount.
 let handoff: File[] = [];
 export function queueFilesForUpload(files: File[]) {
   handoff = files;

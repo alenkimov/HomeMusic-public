@@ -1,5 +1,4 @@
-/** The living blob of «Моя волна» (`components/WaveGlow.tsx`): one fragment shader (GLSL ES 1.0, the same source runs
- * in the Android app, `WaveGlowShader.kt`), the smoothed state that feeds it, and the colors taken from a cover.
+/** The living blob of «Моя волна» (`components/WaveGlow.tsx`): one fragment shader (GLSL ES 1.0), the smoothed state that feeds it, and the colors taken from a cover.
  *
  * Every input moves by exponential smoothing `x += (target - x) * (1 - exp(-dt * rate))` — nothing jumps. No rings, no
  * beats: the loudness is a smoothed RMS only and just makes the blob breathe. */

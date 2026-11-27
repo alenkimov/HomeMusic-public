@@ -3,8 +3,7 @@ import { ApiError, api } from '../api/client';
 import type { FavoriteSubject, FavoriteTarget, FavoriteType, StarIn, StarOut } from '../api/types';
 import { typedFavoritesSupported } from './capabilities';
 import { hubEvents } from './events';
-import { STANDALONE } from './embedded';
-import { HUB_DOWNLOAD_EVENT, markQueued } from './listen';
+import { markQueued } from './listen';
 import { newEventId, playEvent, routeContext } from './plays';
 import { toast, toastError, type Toast } from './ui';
 import { keep as keepChange, onDropped, onSettled, waiting, waits, type Change } from './outbox';
@@ -178,7 +177,7 @@ export async function setLikes(list: readonly LikeTarget[], liked: boolean): Pro
     }
     window.dispatchEvent(new CustomEvent('hm:hub-favorite', { detail: { star: liked } }));
     // the liked ones the library has not got are downloaded, as with a single ♥ — in one batch
-    const refs = liked && STANDALONE ? todo.filter((t) => !!t.ref && !t.ref.startsWith('nd:') && !apiTarget(t).nd_song_id).map((t) => t.ref!) : [];
+    const refs = liked ? todo.filter((t) => !!t.ref && !t.ref.startsWith('nd:') && !apiTarget(t).nd_song_id).map((t) => t.ref!) : [];
     for (let i = 0; i < refs.length; i += 200) {
       if (generation !== epoch) return done;
       const part = refs.slice(i, i + 200);
@@ -249,7 +248,7 @@ export async function toggleLike(t: LikeTarget, quiet = false, change?: () => vo
     window.dispatchEvent(new CustomEvent('hm:hub-favorite', { detail: { ref: t.ref, star: liked } }));
     // ♥ on a track the library has not got: it is downloaded too — what is in «Любимое» is one's own file, with its
     // lyrics, tags and the rest. An ordinary download, not tied to the ♥: if no file is found the ♥ stays.
-    const fetching = STANDALONE && typed && liked && typeOf(t) === 'track' && !!t.ref && !t.ref.startsWith('nd:') && !apiTarget(t).nd_song_id
+    const fetching = typed && liked && typeOf(t) === 'track' && !!t.ref && !t.ref.startsWith('nd:') && !apiTarget(t).nd_song_id
       ? await api.download({ track_refs: [t.ref] }).then((r) => r.queued > 0 || r.expanding, () => false)
       : false;
     if (generation !== epoch) return;
@@ -308,7 +307,7 @@ onSettled((c: Change, result: unknown) => {
     if (!c.liked && target?.ref) pendingRefs.delete(target.ref);
   });
   // a catalog track liked offline is downloaded now, as a ♥ given online would have been
-  const refs = c.liked && STANDALONE ? targets.filter((x) => (x.target_type ?? 'track') === 'track' && x.ref && !x.ref.startsWith('nd:') && !x.nd_song_id).map((x) => x.ref as string) : [];
+  const refs = c.liked ? targets.filter((x) => (x.target_type ?? 'track') === 'track' && x.ref && !x.ref.startsWith('nd:') && !x.nd_song_id).map((x) => x.ref as string) : [];
   if (refs.length) void api.download({ track_refs: refs }).then((r) => { if (r.queued > 0 || r.expanding) refs.forEach(markQueued); }, () => undefined);
   window.dispatchEvent(new CustomEvent('hm:hub-favorite', { detail: { star: c.liked } }));
 });
@@ -326,10 +325,6 @@ export function markLikePending(ref: string) {
   pendingRefs.add(ref);
   emit();
 }
-window.addEventListener(HUB_DOWNLOAD_EVENT, (e) => {
-  const d = (e as CustomEvent<{ ref?: string; star?: boolean }>).detail;
-  if (d?.ref && d.star) markLikePending(d.ref);
-});
 window.addEventListener('hm:hub-favorite', (e) => {
   const d = (e as CustomEvent<{ ref?: string; star?: boolean }>).detail;
   if (d?.ref && !d.star) pendingRefs.delete(d.ref);

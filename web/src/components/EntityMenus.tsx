@@ -6,7 +6,7 @@ import { useSession } from '../lib/session';
 import { copyText } from '../lib/share';
 import { toggleLike, useLiked } from '../lib/stars';
 import { toast } from '../lib/ui';
-import { canWave, startWave } from '../lib/wave';
+import { startWave } from '../lib/wave';
 import { BrandIcon } from './BrandIcon';
 import { ContextMenu, type MenuAt } from './ContextMenu';
 import { Cover } from './ui';
@@ -36,7 +36,7 @@ export function AlbumMenu({ album, at, onClose }: { album: AlbumOut; at: MenuAt 
           : { icon: 'download', label: album.owned_status === 'partial' ? 'Скачать недостающие' : 'Скачать альбом', shortcut: 'D', onSelect: () => void startDownload({ album_ref: String(album.release_id ?? album.ref) }) },
         'sep',
         artistTo && { icon: 'user', label: 'Перейти к исполнителю', shortcut: 'Alt+A', onSelect: () => navigate(artistTo) },
-        canWave() && album.artist_ref && { icon: 'wave', label: 'Волна по исполнителю', shortcut: 'R', onSelect: () => void startWave({ artist_ref: album.artist_ref! }, 'artist_menu') },
+        album.artist_ref && { icon: 'wave', label: 'Волна по исполнителю', shortcut: 'R', onSelect: () => void startWave({ artist_ref: album.artist_ref! }, 'artist_menu') },
         'sep',
         { icon: 'link', label: 'Скопировать ссылку', shortcut: 'C', onSelect: () => void copyLink(to, 'релиз') },
         ...(album.links ?? []).map((x) => ({ glyph: <BrandIcon service={x.service} size={18} />, label: serviceName(x.service), onSelect: () => void window.open(x.url, '_blank', 'noopener,noreferrer') })),
@@ -61,7 +61,7 @@ export function ArtistMenu({ artist, at, onClose }: { artist: CatalogArtist; at:
         { icon: 'user', label: 'Открыть исполнителя', onSelect: () => navigate(to) },
         { icon: 'heart', label: followed ? 'Отписаться' : 'Подписаться', shortcut: 'L', active: followed, onSelect: () => void toggleLike(follow) },
         'sep',
-        canWave() && { icon: 'wave', label: 'Волна по исполнителю', shortcut: 'R', onSelect: () => void startWave({ artist_ref: artist.ref }, 'artist_menu') },
+        { icon: 'wave', label: 'Волна по исполнителю', shortcut: 'R', onSelect: () => void startWave({ artist_ref: artist.ref }, 'artist_menu') },
         canMap && artist.ref.startsWith('dz:') && { icon: 'nodes', label: 'Карта похожих', onSelect: () => navigate(`/map/${enc(artist.ref)}`) },
         'sep',
         { icon: 'link', label: 'Скопировать ссылку', shortcut: 'C', onSelect: () => void copyLink(to, 'исполнителя') },
@@ -82,7 +82,7 @@ export function NdAlbumMenu({ album, at, onClose }: { album: NdAlbumOut; at: Men
       entries={[
         { icon: 'disc', label: 'Открыть альбом', onSelect: () => navigate(to) },
         album.artist_id && { icon: 'user', label: 'Перейти к исполнителю', shortcut: 'Alt+A', onSelect: () => navigate(`/lib/artist/${enc(album.artist_id!)}`) },
-        canWave() && album.artist_id && { icon: 'wave', label: 'Волна по исполнителю', shortcut: 'R', onSelect: () => void startWave({ nd_artist_id: album.artist_id! }, 'artist_menu') },
+        album.artist_id && { icon: 'wave', label: 'Волна по исполнителю', shortcut: 'R', onSelect: () => void startWave({ nd_artist_id: album.artist_id! }, 'artist_menu') },
         'sep',
         { icon: 'link', label: 'Скопировать ссылку', shortcut: 'C', onSelect: () => void copyLink(to, 'альбом') },
       ]}
@@ -103,7 +103,7 @@ export function NdArtistMenu({ artist, at, onClose }: { artist: NdArtistOut; at:
         { icon: 'user', label: 'Открыть исполнителя', onSelect: () => navigate(to) },
         { icon: 'heart', label: followed ? 'Отписаться' : 'Подписаться', shortcut: 'L', active: followed, onSelect: () => void toggleLike(follow) },
         'sep',
-        canWave() && { icon: 'wave', label: 'Волна по исполнителю', shortcut: 'R', onSelect: () => void startWave({ nd_artist_id: artist.id }, 'artist_menu') },
+        { icon: 'wave', label: 'Волна по исполнителю', shortcut: 'R', onSelect: () => void startWave({ nd_artist_id: artist.id }, 'artist_menu') },
         'sep',
         { icon: 'link', label: 'Скопировать ссылку', shortcut: 'C', onSelect: () => void copyLink(to, 'исполнителя') },
       ]}

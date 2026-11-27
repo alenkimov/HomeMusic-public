@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { STANDALONE } from '../lib/embedded';
 import { isUpload, useListen } from '../lib/listen';
 import { OFFLINE_WAVE } from '../lib/offlineWave';
 import { answerPlaybackTransfer, transferPlayback, usePlaybackDevices } from '../lib/playbackDevices';
@@ -12,7 +11,6 @@ export function PlaybackDevicesButton() {
   const available = useListen((state) => !!state.track && state.context !== OFFLINE_WAVE && !isUpload(state.track)
     && (state.phase === 'playing' || state.phase === 'paused'));
   const { devices, connected, sending } = usePlaybackDevices();
-  if (!STANDALONE) return null;
   return (
     <>
       <IconButton icon="devices" size={19} label="Устройства воспроизведения" disabled={!available || sending}
@@ -46,7 +44,6 @@ export function PlaybackDevicesButton() {
 
 export function PlaybackTransferOffer() {
   const { incoming, receiving } = usePlaybackDevices();
-  if (!STANDALONE) return null;
   const track = incoming?.snapshot.queue[incoming.snapshot.index];
   return (
     <Sheet open={!!incoming || receiving} onClose={() => answerPlaybackTransfer(false)} title="Продолжить здесь?"

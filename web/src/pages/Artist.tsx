@@ -25,7 +25,7 @@ import { copyText } from '../lib/share';
 import { useSession } from '../lib/session';
 import { toggleLike, useLiked, useLikesKnown } from '../lib/stars';
 import { confirmDialog, toast } from '../lib/ui';
-import { canWave, startWave } from '../lib/wave';
+import { startWave } from '../lib/wave';
 import { PlayPair } from './MediaLibrary';
 
 function PopularTracks({ tracks }: { tracks: readonly TrackOut[] }) {
@@ -285,7 +285,7 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
           head={{ title: shownName, sub: 'Исполнитель', cover: <Cover src={photo} size={44} round icon="user" /> }}
           onClose={menu.close}
           entries={[
-            canWave() && { icon: 'wave', label: 'Волна по исполнителю', shortcut: 'R', onSelect: () => void startWave({ artist_ref: identityRef }, 'artist_page') },
+            { icon: 'wave', label: 'Волна по исполнителю', shortcut: 'R', onSelect: () => void startWave({ artist_ref: identityRef }, 'artist_page') },
             canMap && { icon: 'nodes', label: 'Карта похожих', onSelect: () => navigate(`/map/${enc(artist.ref)}`) },
             'sep',
             { icon: 'download', label: 'Скачать всё', shortcut: 'D', onSelect: () => void downloadAll() },

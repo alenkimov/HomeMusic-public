@@ -3,7 +3,6 @@ import { useContext, useEffect } from 'react';
 import { api } from '../api/client';
 import { playAll } from '../components/catalog';
 import { Button, Cover, Empty, ErrorState, Loading, PageHeader } from '../components/ui';
-import { STANDALONE } from '../lib/embedded';
 import { useAsync } from '../lib/hooks';
 import { RouteBackground, enc, navigate } from '../lib/router';
 
@@ -32,7 +31,7 @@ export function OpenPage({ query }: { query: URLSearchParams }) {
 
   return (
     <div>
-      <PageHeader title={q.url ? 'Открыть ссылку Spotify' : 'Трек по ссылке'} back={STANDALONE ? '/home' : '/search'} />
+      <PageHeader title={q.url ? 'Открыть ссылку Spotify' : 'Трек по ссылке'} back="/home" />
       {res.error ? (
         <ErrorState text={res.error} onRetry={() => res.reload()} />
       ) : !found ? (
@@ -45,7 +44,7 @@ export function OpenPage({ query }: { query: URLSearchParams }) {
           <Button variant="primary" block icon="play" onClick={() => playAll([song], { context: 'link' })}>
             Слушать
           </Button>
-          {STANDALONE && song.nd_album_id && (
+          {song.nd_album_id && (
             <Button block className="mt-2" icon="disc" onClick={() => navigate(`/lib/album/${enc(song.nd_album_id!)}`)}>
               Открыть альбом
             </Button>

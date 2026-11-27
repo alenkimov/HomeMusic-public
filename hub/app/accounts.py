@@ -11,7 +11,6 @@ import secrets
 import time
 from collections import deque
 from datetime import timedelta
-from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select, update
@@ -20,10 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import auth, mailer
 from app.config import get_settings
 from app.db import session_scope
-from app.google_auth import GoogleTokenError, verify_id_token
 from app.library.navidrome import AuthError, NavidromeAdmin, NavidromeUserExists
 from app.models import ND_USERNAME_KEY, EmailCode, Invite, User, nd_username_key, utcnow
-from app.security import decrypt
 
 log = logging.getLogger(__name__)
 
@@ -94,8 +91,7 @@ def check_new_account(username: str, password: str) -> None:
         raise HTTPException(400, f"Пароль — не короче {MIN_PASSWORD} символов")
 
 
-async def register(s: AsyncSession, code: str, username: str, password: str,
-                   google: dict[str, Any] | None = None) -> tuple[User, str]:
+async def register(s: AsyncSession, code: str, username: str, password: str) -> tuple[User, str]:
     """Creates the Navidrome user for an unused invite and signs in. Returns (user, session token)."""
     _check_rate()
     username = username.strip()
@@ -105,16 +101,12 @@ async def register(s: AsyncSession, code: str, username: str, password: str,
     if inv is None or invite_status(inv) != "active":
         raise _fail(400, "Код приглашения не подходит: проверьте его или попросите новый")
     await _check_name_free(s, username)
-    if google is not None:
-        await _check_google_free(s, google)
     # Taken first, within this transaction: a second registration with the same code waits for it and finds it used.
     res = await s.execute(update(Invite).where(Invite.id == inv.id, Invite.used_at.is_(None)).values(used_at=utcnow()))
     if res.rowcount != 1:
         raise _fail(400, "Код приглашения уже использован")
     user, token = await _create_account(s, username, password, inv.note or username)
     inv.used_by = user.id
-    if google is not None:
-        user.google_sub, user.google_email = str(google["sub"]), google.get("email")
     log.info("registered %s by invite %s", username, inv.id, extra={"user_id": user.id})
     return user, token
 
@@ -252,53 +244,7 @@ async def username_for_login(s: AsyncSession, login: str) -> str:
     return login
 
 
-async def _google_claims(id_token: str) -> dict[str, Any]:
-    if not get_settings().google_client_id:
-        raise HTTPException(404, "Вход через Google на этом сервере не настроен")
-    try:
-        return await verify_id_token(id_token)
-    except GoogleTokenError as e:
-        log.warning("google token rejected: %s", e)
-        raise HTTPException(401, "Google не подтвердил вход, попробуйте ещё раз") from e
-
-
-async def _check_google_free(s: AsyncSession, claims: dict[str, Any], user: User | None = None) -> None:
-    other = (await s.execute(select(User).where(User.google_sub == str(claims["sub"])))).scalar_one_or_none()
-    if other is not None and (user is None or other.id != user.id):
-        raise HTTPException(409, f"Этот Google-аккаунт уже привязан к пользователю «{other.nd_username}»")
-
-
 def username_from_email(email: str | None) -> str:
     local = (email or "").split("@", 1)[0].lower()
     name = re.sub(r"[^\w.\-]", "", local)[:32]
     return name if len(name) >= 2 else f"user{secrets.randbelow(10000):04d}"
-
-
-async def google_login(s: AsyncSession, id_token: str, code: str | None, username: str | None
-                       ) -> tuple[User, str, str]:
-    """Sign-in with Google: the linked user, or a new one with an invite code. Returns (user, token, password)."""
-    claims = await _google_claims(id_token)
-    user = (await s.execute(select(User).where(User.google_sub == str(claims["sub"])))).scalar_one_or_none()
-    if user is not None:
-        password = decrypt(user.nd_password_enc)
-        try:
-            user, token = await auth.login(s, user.nd_username, password)
-        except HTTPException as e:
-            if e.status_code != 401:
-                raise
-            raise HTTPException(401, "Пароль аккаунта сменили в Navidrome: войдите паролем и привяжите Google снова") from e
-        return user, token, password
-    if not code:
-        raise HTTPException(409, "Этот Google-аккаунт ещё не привязан. Введите код приглашения, "
-                                 "а если аккаунт уже есть — войдите паролем и привяжите Google в настройках")
-    password = secrets.token_urlsafe(12)
-    user, token = await register(s, code, (username or "").strip() or username_from_email(claims.get("email")),
-                                 password, google=claims)
-    return user, token, password
-
-
-async def link_google(s: AsyncSession, user: User, id_token: str) -> User:
-    claims = await _google_claims(id_token)
-    await _check_google_free(s, claims, user)
-    user.google_sub, user.google_email = str(claims["sub"]), claims.get("email")
-    return user

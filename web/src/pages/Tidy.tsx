@@ -410,13 +410,13 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
     // a transfer's song and the library's track it was taken for, not surely: «Совпадает», or another file for it
     const review = { id: p.show.item_id ?? 0, source: (p.show.source ?? 'yandex') as ImportSource, title: p.show.title ?? '', artist: p.show.artist ?? '',
       duration_s: p.show.duration_s ?? null, cover_url: p.show.cover ?? null };
-    const target = filePickerTarget({ ...track, import_review: review });
+    const target = filePickerTarget({ ...track, doubt: review });
     const label = (text: ReactNode, tone: string) => <p className={cx('px-3 pt-2 text-[12px] font-semibold sm:px-4', tone)}>{text}</p>;
     const answers = journal ? actions : decided ? actions : (
       <span className="flex gap-2 max-sm:w-full">
         {target && (
           <Button small variant="outline" disabled={busy} className="whitespace-nowrap max-sm:flex-1"
-            onClick={() => openFindFile({ ...target, has_file: !!track.owned, import_review: review })}>
+            onClick={() => openFindFile({ ...target, has_file: !!track.owned, doubt: review })}>
             Найти другой файл
           </Button>
         )}

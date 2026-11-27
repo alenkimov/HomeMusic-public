@@ -1,10 +1,11 @@
-"""Probable matches awaiting the listener's confirmation."""
+"""What a listener's transfers say of the tracks: a probable match to look over (a question of «Наведение порядка»,
+`pending`), a song no file was found of (`unfound`)."""
 
-from sqlalchemy import literal, or_, select, update
+from sqlalchemy import literal, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import ImportReviewOut, TrackOut
+from app.api.schemas import TrackOut
 from app.models import Import, ImportCollection, ImportItem
 
 _REVIEWABLE = ("done", "waiting", "failed")
@@ -18,37 +19,21 @@ def _items(user_id: int):
                    ImportCollection.kind.in_(("playlist", "likes")), ImportItem.status != "skipped"))
 
 
-async def annotate(s: AsyncSession, user_id: int, tracks: list[TrackOut]) -> None:
-    """What the user's transfers say of these tracks (`word`), on each of them."""
-    reviews, failed = await word(s, user_id, {t.library_track_id for t in tracks if t.library_track_id is not None})
+async def mark_unavailable(s: AsyncSession, user_id: int, tracks: list[TrackOut]) -> None:
+    """A track without a file a transfer of the user's did not find a file of: not to be had (`unfound`)."""
+    failed = await unfound(s, user_id, {t.library_track_id for t in tracks if t.library_track_id is not None})
     for track in tracks:
         if not track.owned and track.library_track_id in failed:
             track.unavailable = True
-        track.import_review = reviews.get(track.library_track_id)
 
 
-async def word(s: AsyncSession, user_id: int, ids: set[int]) -> tuple[dict[int, ImportReviewOut], set[int]]:
-    """What the user's transfers say of these tracks: a match to look over (by track), and the tracks a transfer of
-    theirs did not find a file of (such a track without a file is not to be had)."""
+async def unfound(s: AsyncSession, user_id: int, ids: set[int]) -> set[int]:
+    """The tracks a transfer of the user's did not find a file of. (Its matches to look over are questions of
+    «Наведение порядка»: `app.tidy.kinds`, «import_match».)"""
     if not ids:
-        return {}, set()
-    pending = ((ImportItem.match == "probable") & ImportItem.status.in_(_REVIEWABLE)
-               & ImportItem.raw_json["match_reviewed"].as_boolean().is_(None))
-    rows = await s.execute(
-        _items(user_id).where(
-            ImportItem.track_id.in_(ids),
-            or_(ImportItem.status == "failed", pending),
-        ).order_by(ImportItem.id.desc()))
-    reviews, failed = {}, set()
-    for item, source in rows:
-        if item.status == "failed":
-            failed.add(item.track_id)
-        raw = item.raw_json or {}
-        if item.match == "probable" and not raw.get("match_reviewed") and item.track_id not in reviews:
-            reviews[item.track_id] = ImportReviewOut(
-                id=item.id, source=source, title=raw.get("title") or "", artist=raw.get("artist") or "",
-                duration_s=raw.get("duration_s"), cover_url=raw.get("cover_url"))
-    return reviews, failed
+        return set()
+    return set((await s.execute(_items(user_id).with_only_columns(ImportItem.track_id).where(
+        ImportItem.track_id.in_(ids), ImportItem.status == "failed"))).scalars())
 
 
 async def acknowledge(s: AsyncSession, user_id: int, item_id: int, *, track_id: int | None = None) -> list[int]:
@@ -73,7 +58,7 @@ async def unacknowledge(s: AsyncSession, item_ids: list[int]) -> None:
     """A confirmation taken back («Наведение порядка»: «Откатить»): the matches are to be looked over again."""
     if item_ids:
         await s.execute(update(ImportItem).where(ImportItem.id.in_(item_ids))
-                        .values(raw_json=ImportItem.raw_json - "match_reviewed"))
+                        .values(raw_json=ImportItem.raw_json.op("-")("match_reviewed")))
 
 
 def pending():

@@ -38,11 +38,10 @@ import { attempt, confirmDialog } from '../lib/ui';
 import { openPlaylistMenu } from '../lib/playlistMenu';
 import { useSmartForPage, useSmartPage, useSmartPossible } from '../lib/smartShuffle';
 import { toggleLike, useLiked } from '../lib/stars';
-import { canWave, seedKey, startWave, useWave } from '../lib/wave';
+import { seedKey, startWave, useWave } from '../lib/wave';
 import { VirtualRows } from '../components/VirtualRows';
 
-/** The Navidrome library as a player shows it, for the PWA in a plain browser (`STANDALONE`): inside the app these
- * are its native screens. Songs are `NdSongOut` (owned catalog-like tracks), so `TrackRow` plays them. */
+/** The Navidrome library as a player shows it. Songs are `NdSongOut` (owned catalog-like tracks), so `TrackRow` plays them. */
 
 // --- pieces ------------------------------------------------------------------------------------------------
 
@@ -565,17 +564,15 @@ export function NdArtistPage({ id }: { id: string }) {
           {busy ? <Spinner size={14} /> : followed && <Icon name="check" size={15} stroke={3} />}
           {followed ? 'Вы подписаны' : 'Подписаться'}
         </button>
-        {canWave() && (
-          <button
-            type="button"
-            disabled={starting === seedKey({ nd_artist_id: artist.id })}
-            onClick={() => void startWave({ nd_artist_id: artist.id }, 'radio')}
-            className={buttonClass('outline', true, 'gap-1.5 disabled:opacity-60')}
-          >
-            <Icon name="wave" size={16} className="text-accent" />
-            Волна по исполнителю
-          </button>
-        )}
+        <button
+          type="button"
+          disabled={starting === seedKey({ nd_artist_id: artist.id })}
+          onClick={() => void startWave({ nd_artist_id: artist.id }, 'radio')}
+          className={buttonClass('outline', true, 'gap-1.5 disabled:opacity-60')}
+        >
+          <Icon name="wave" size={16} className="text-accent" />
+          Волна по исполнителю
+        </button>
         <ArtistProjects card={names.card} />
         </div>
         {/* ▶ and the shuffle, as on a catalog artist's page: of the row under the head */}

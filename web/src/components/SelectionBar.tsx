@@ -3,7 +3,6 @@ import type { PickedTrack } from './PlaylistsButton';
 import { tracksWord } from '../lib/format';
 import { deleteFiles } from '../lib/deleteFile';
 import { addToQueue } from '../lib/listen';
-import { canPlayAll } from '../lib/player';
 import { useRoute } from '../lib/router';
 import { clearSelection, playable, selData, selectAll, selectedTracks, useSelectionCount } from '../lib/selection';
 import { openShare } from '../lib/shareTrack';
@@ -76,19 +75,17 @@ export function SelectionBar() {
           onClick={() => (tagKeys.length ? openTagsSheet(tagKeys, '') : toast('Хаб ещё не знает эти треки — добавьте их в плейлист или «Любимое»', 'info'))}
           className={cx(btn, 'text-muted hover:text-fg')}
         />
-        {!canPlayAll() && (
-          <IconButton
-            icon="queue"
-            size={20}
-            label="В очередь"
-            onClick={async () => {
-              const list = take();
-              const n = await addToQueue(playable(list));
-              if (n) toast(`В очереди: ${tracksWord(n)}`, 'success');
-            }}
-            className={cx(btn, 'text-muted hover:text-fg')}
-          />
-        )}
+        <IconButton
+          icon="queue"
+          size={20}
+          label="В очередь"
+          onClick={async () => {
+            const list = take();
+            const n = await addToQueue(playable(list));
+            if (n) toast(`В очереди: ${tracksWord(n)}`, 'success');
+          }}
+          className={cx(btn, 'text-muted hover:text-fg')}
+        />
         <IconButton icon="share" size={20} label="Поделиться" onClick={() => openShare(take())} className={cx(btn, 'text-muted hover:text-fg')} />
         {fileIds.length > 0 && (
           <IconButton

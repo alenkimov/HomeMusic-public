@@ -85,7 +85,7 @@ self.addEventListener('fetch', (event) => {
       networkFirst(event, API, req.url, (res) => (res.headers.get('content-type') || '').includes('json'));
     return;
   }
-  if (url.pathname === '/healthz' || url.pathname.startsWith('/app/')) return;
+  if (url.pathname === '/healthz') return;
 
   if (url.pathname.startsWith('/assets/')) {
     event.respondWith(cacheFirst(req, ASSETS));

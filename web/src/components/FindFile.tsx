@@ -8,7 +8,6 @@ import { fmtDuration } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { isUpload, pause, useListen } from '../lib/listen';
 import { fileReplaced } from '../lib/heard';
-import { pauseNative } from '../lib/player';
 import { EDITED_EVENT } from '../lib/trackEdit';
 import { confirmDialog, toast, toastError } from '../lib/ui';
 import { fileRef } from './candidate';
@@ -108,7 +107,6 @@ function usePreview() {
     if (active.current?.url === url && seconds == null) return stop();
     reset();
     pause();
-    pauseNative();
     const next = { ref, url, at: excerpt?.[0] ?? seconds ?? 0, excerpt };
     const element = new Audio(url);
     audio.current = element;
@@ -191,7 +189,7 @@ function FilePicker({ track }: { track: FileSought & { library_track_id: number 
   const desktop = useDesktop();
   const player = usePreview();
   const mine = useAsync((signal) => api.trackFile(id, signal), [id]);
-  const sought = track.import_review ?? track;
+  const sought = track.doubt ?? track;
   const query = [(sought.artist.split(',')[0] || sought.artist).trim(), sought.title].filter(Boolean).join(' - ');
   const sources = useAsync((signal) => api.searchProviders(query, signal, 'sources'), [query]);
   const reuploads = useAsync((signal) => api.searchProviders(query, signal, 'reuploads'), [query]);
@@ -361,7 +359,7 @@ function FilePicker({ track }: { track: FileSought & { library_track_id: number 
         if (!confirmed) return;
       }
       try {
-        await api.fileTake(id, { ref: selected, expected_file_uid: existing, sure: existing != null, import_review_id: track.import_review?.id });
+        await api.fileTake(id, { ref: selected, expected_file_uid: existing, sure: existing != null, import_review_id: track.doubt?.id });
       } catch (error) {
         toastError(error);
         if (error instanceof ApiError && error.status === 410) discardPrepared([selected]);

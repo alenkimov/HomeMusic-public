@@ -1,4 +1,4 @@
-"""Request/response models of the Hub HTTP API (contract for the PWA and the future Android app)."""
+"""Request/response models of the Hub HTTP API (the contract of the web app)."""
 
 from __future__ import annotations
 
@@ -60,21 +60,18 @@ class MeOut(BaseModel):
     username: str
     is_admin: bool
     public_music_url: str = ""
-    public_hub_url: str = ""  # for links that leave the Hub (an invite: where to get the app)
-    google_email: str | None = None  # the linked Google account (sign-in with Google in the app)
+    public_hub_url: str = ""  # for links that leave the Hub (an invite: where to open it)
     email: str | None = None  # the email the account registered with (sign-in by it, too)
     # the server has a Last.fm key: «Карта» of artists is there (it is Last.fm's word of who is near whom)
     artist_map: bool = False
 
 
 class AuthOptionsOut(BaseModel):
-    """What the sign-in screen offers: registration by invite code, by email (a code in a letter, no invite),
-    Google (with the Web client id for the app)."""
+    """What the sign-in screen offers: registration by invite code, by email (a code in a letter, no invite)."""
 
     invites: bool = True
     email_signup: bool = False
-    google_client_id: str | None = None
-    # the public address of the Navidrome these accounts are for: the app offers registration only for it
+    # the public address of the Navidrome these accounts are for
     music_url: str = ""
 
 
@@ -97,23 +94,6 @@ class EmailRegisterIn(BaseModel):
     code: str = Field(max_length=16)
     username: str
     password: str
-
-
-class GoogleIn(BaseModel):
-    id_token: str
-    # for a Google account that is not linked yet: register it with an invite code
-    code: str | None = None
-    username: str | None = None
-
-
-class GoogleLoginOut(MeOut):
-    """The player signs in to Navidrome itself (Subsonic), so it gets the account's password."""
-
-    password: str
-
-
-class GoogleLinkIn(BaseModel):
-    id_token: str
 
 
 # --- admin -------------------------------------------------------------------------------
@@ -145,7 +125,6 @@ class AdminUserOut(BaseModel):
     created_at: datetime | None = None
     last_seen_at: datetime | None = None  # last request to the Hub
     player_seen_at: datetime | None = None  # Navidrome's lastAccessAt (the player, any client)
-    google_email: str | None = None
     email: str | None = None  # registered by email
     invite_note: str | None = None
     ai_cost_usd: float = 0
@@ -459,15 +438,6 @@ class FileJournalOut(BaseModel):
     download_id: int | None = None  # the download itself, when it is the asker's own (its page has more: the files found)
 
 
-class ImportReviewOut(BaseModel):
-    id: int
-    source: str
-    title: str
-    artist: str
-    duration_s: int | None = None
-    cover_url: str | None = None
-
-
 class TrackOut(CatalogTrack):
     owned: bool = False
     versions: int = 0  # how many recordings the song it is has here, itself among them (0: it is nobody's version)
@@ -481,7 +451,6 @@ class TrackOut(CatalogTrack):
     # known by its name alone: no file and no record of the catalog — nothing to play until it is given a file
     unknown: bool = False
     unavailable: bool = False  # a catalog track whose latest completed search yielded no playable recording
-    import_review: ImportReviewOut | None = None
     # in a list: when the track was added to it (a playlist, the likes); else when it came into the library
     added_at: datetime | None = None
     # among an artist's most listened: how many listened to it on Last.fm (None: Last.fm does not say)
@@ -710,7 +679,7 @@ class DownloadItemOut(BaseModel):
     track_id: int | None = None
     attach_to_track_id: int | None = None  # a manually selected file goes into this existing recording
     nd_song_id: str | None = None  # Navidrome song once imported and scanned
-    playlist_id: str | None = None  # target Navidrome playlist of the batch (Android: sync only that one offline)
+    playlist_id: str | None = None  # target Navidrome playlist of the batch
     track_ref: str | None = None  # catalog track the item was made from (dz:…)
     # queued by an import, a mix or the wave, nobody asked to download it: not shown as a download; false once the
     # track is downloaded explicitly too

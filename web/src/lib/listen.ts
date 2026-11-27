@@ -10,22 +10,20 @@ import { ANY_FORMAT, CANT_ANY } from './formats';
 import type { LaunchOrigin, ListenOut } from '../api/types';
 import { startDownload } from './actions';
 import { hubEvents } from './events';
-import { NATIVE_PLAYING_EVENT, canPlayAll, pauseNative, webPlayerShown } from './player';
 import { listeningAccount, newEventId, newLaunch, playEvent, routeContext, type Launch } from './plays';
 import { toast } from './ui';
 import { hubReachable, onHubBack, recheckHub } from './reach';
 import { dropQueue, loadQueue, saveQueue } from './listenStore';
 
 /** Listening to catalog tracks before downloading them, in the page itself (one `<audio>`): the Hub picks the
- * file a download would take and streams it (GET /api/listen). Works in a plain browser too. Inside the Android
- * app only one player plays: starting here pauses the app's player, and its start pauses this one.
+ * file a download would take and streams it (GET /api/listen).
  *
  * A tap in a list (album, search results) plays that list from the tapped track on: when a track ends the next
  * one starts, and while one plays the Hub already picks the file for the next (the pick is what takes seconds).
  * The tracks on screen are named to the Hub as they appear (`watchOnScreen`): it picks their files in the
  * background and remembers them, so most taps start at once.
  *
- * `<audio src>` is set and `play()` is called within the tap itself: the app's WebView (and Safari) allow sound
+ * `<audio src>` is set and `play()` is called within the tap itself: phone browsers (Safari first) allow sound
  * only from a user gesture, and the Hub picking the file may take seconds. The stream request waits for the
  * same pick that `api.listen` reports on.
  *
@@ -179,12 +177,10 @@ let state: ListenState = {
 const subscribers = new Set<() => void>();
 
 function set(patch: Partial<ListenState>) {
-  const shown = !!state.track;
   state = { ...state, ...patch };
   // Time updates are frequent; queue edits and controls must survive an immediate reload.
   const playerKeys = Object.keys(patch).filter((key) => key !== 'manualQueue');
   if (playerKeys.length) persistListening(playerKeys.some((key) => key !== 'position' && key !== 'duration'));
-  if (!!state.track !== shown) webPlayerShown(!!state.track);
   for (const fn of subscribers) fn();
 }
 
@@ -461,7 +457,6 @@ function el(): HTMLAudioElement {
   });
   a.addEventListener('timeupdate', sync);
   a.addEventListener('durationchange', sync);
-  a.addEventListener('play', pauseNative);
   a.addEventListener('playing', () => {
     if (fadeInOnPlaying) {
       fadeInOnPlaying = false;
@@ -495,8 +490,6 @@ function el(): HTMLAudioElement {
     else if (!advance(true)) set({ phase: 'ended' });
   });
   a.addEventListener('error', () => mediaFailed(a));
-  // the app's player started: one player on screen, so this one closes (the app shows its own again)
-  window.addEventListener(NATIVE_PLAYING_EVENT, stopListening);
   audio = a;
   return a;
 }
@@ -1046,7 +1039,7 @@ function persistListening(force = false) {
   } catch { /* Playback remains available when storage is full or disabled. */ }
 }
 
-/** Restore only after /me confirms the account. Native Android playback owns its own session. */
+/** Restore only after /me confirms the account. */
 export function restoreListening(account: number | null) {
   if (sessionAccount === account) return;
   if (sessionAccount !== null) stopListening();
@@ -1055,7 +1048,7 @@ export function restoreListening(account: number | null) {
   set({ manualQueue: [] });
   sessionAccount = account;
   savedQueueOf = null;
-  if (account === null || canPlayAll()) return;
+  if (account === null) return;
   void restoreSaved(account);
 }
 
@@ -1539,15 +1532,6 @@ export function markQueued(ref: string) {
   set({ downloads: new Map(state.downloads).set(ref, 'queued') });
 }
 
-/** The app's player queued a download of a catalog track: «Скачать в библиотеку» — rows show «качается»; its ♥
- * (`star`) — only the ♥ shows it (`lib/stars.ts`). */
-export const HUB_DOWNLOAD_EVENT = 'hm:hub-download';
-
-window.addEventListener(HUB_DOWNLOAD_EVENT, (e) => {
-  const d = (e as CustomEvent<{ ref?: string; star?: boolean }>).detail;
-  if (d?.ref && !d.star) markQueued(d.ref);
-});
-
 /** The playing track has just been downloaded to the server (a ♥, a transfer, «Скачать»): what the player says of
  * its file is asked anew — «играет из источника» is not true of it any more. The sound goes on as it is. */
 function reloadInfoOnceDownloaded(ref: string) {
@@ -1579,7 +1563,7 @@ hubEvents.on('download', (d) => {
   set({ downloads: next });
 });
 
-/** Lock screen / headset controls in a phone browser (the app's WebView ignores them). */
+/** Lock screen / headset controls in a phone browser. */
 function mediaTitle(track: ListenTrack) {
   return titleWithVersion(track.title, {
     ...track,

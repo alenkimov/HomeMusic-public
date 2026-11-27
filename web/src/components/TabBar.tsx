@@ -1,4 +1,3 @@
-import { EMBEDDED } from '../lib/embedded';
 import { Link } from '../lib/router';
 import { useActiveDownloads } from '../lib/notify';
 import { useVersion } from '../lib/version';
@@ -10,7 +9,7 @@ export const FOCUS_SEARCH = 'hm:focus-search';
 
 export type Tab = 'home' | 'search' | 'downloads' | 'library' | 'more';
 
-/** Only a plain browser draws it (inside the app the app's tabs open the routes): what is listened to — «Главная»,
+/** The tabs of a phone: what is listened to — «Главная»,
  * «Поиск», «Библиотека» — and «Меню» with everything else (the downloads among it: the number of
  * downloads under way stands on «Меню»). */
 const TABS: Array<{ id: Tab; to: string; label: string; icon: IconName }> = [
@@ -26,7 +25,6 @@ const shownTab = (t: Tab | null): Tab | null => (t && !TABS.some((x) => x.id ===
 export function TabBar({ active: routeTab, last }: { active: Tab | null; last: Partial<Record<Tab, string>> }) {
   const activeDownloads = useActiveDownloads();
   const fresh = useVersion().fresh; // a release not opened yet: a dot on «Меню»
-  if (EMBEDDED) return null; // the Android app shows its own navigation
   const active = shownTab(routeTab);
 
   return (

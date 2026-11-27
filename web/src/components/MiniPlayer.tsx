@@ -7,20 +7,18 @@ import { PlayLine } from './FileInfo';
 import { ChoosePlaybackFile } from './FindFile';
 import { useLayoutEffect, useRef, type TouchEvent } from 'react';
 import { isUpload, stopListening, toggle, useListen } from '../lib/listen';
-import { STANDALONE } from '../lib/embedded';
-import { Link, albumPath } from '../lib/router';
+import { Link } from '../lib/router';
 import { Icon } from './Icon';
 import { tracksWord } from '../lib/format';
 import { SaveButton } from './PlaylistsButton';
 import { Cover } from './ui';
 
-/** What plays, above the tabs of a phone (inside the app: at the bottom of the Hub page, which the app keeps above
- * its own player): the cover, the name, the artist — and two buttons, ♥ (a track that isn't downloaded is downloaded
+/** What plays, above the tabs of a phone: the cover, the name, the artist — and two buttons, ♥ (a track that isn't downloaded is downloaded
  * first) and play. A line along its bottom is how far the track is. Everything else is one tap away, in the full
- * player (`/player`; inside the app — the album); swept down, it goes. Publishes its height as `--player-h`. */
+ * player (`/player`); swept down, it goes. Publishes its height as `--player-h`. */
 export function MiniPlayer() {
   const track = useListen((s) => s.track);
-  const manualCount = useListen((s) => STANDALONE ? s.manualQueue.length : 0);
+  const manualCount = useListen((s) => s.manualQueue.length);
   const phase = useListen((s) => s.phase);
   const info = useListen((s) => s.info);
   const error = useListen((s) => s.error);
@@ -97,17 +95,9 @@ export function MiniPlayer() {
     <div ref={box} className={bar} role="region" aria-label="Прослушивание">
       <div {...swipe} {...(isUpload(track) ? {} : menuPressProps((at) => openTrackMenu({ track: menuTrackOf(track, info), inPlayer: true, at })))} className="anim-up relative overflow-hidden rounded-xl bg-raised shadow-2xl select-none [-webkit-touch-callout:none]">
         <div className="flex items-center gap-1 py-1.5 pl-2 pr-1">
-          {STANDALONE ? (
-            <Link to="/player" overlay className="flex min-w-0 flex-1 items-center gap-3" title="Открыть плеер">
-              {head}
-            </Link>
-          ) : track.album_ref || track.release_id ? (
-            <Link to={albumPath({ ref: track.album_ref ?? '', release_id: track.release_id })} className="flex min-w-0 flex-1 items-center gap-3" title="Открыть альбом">
-              {head}
-            </Link>
-          ) : (
-            <div className="flex min-w-0 flex-1 items-center gap-3">{head}</div>
-          )}
+          <Link to="/player" overlay className="flex min-w-0 flex-1 items-center gap-3" title="Открыть плеер">
+            {head}
+          </Link>
           <ChoosePlaybackFile compact />
           {!isUpload(track) && <SaveButton songId={info?.nd_song_id ?? track.nd_song_id} refId={track.ref} listKey={tagKey({ library_track_id: info?.track_id ?? track.library_track_id })} title={track.title} data={{ ...track }} size={22} />}
           <button
@@ -134,8 +124,8 @@ export function MiniPlayer() {
   );
 }
 
-/** Keeps the end of the page above the player (the app's style fixes `main`'s bottom padding). */
+/** Keeps the end of the page above the player. */
 export function PlayerSpacer() {
-  const shown = useListen((s) => !!s.track || (STANDALONE && s.manualQueue.length > 0));
+  const shown = useListen((s) => !!s.track || s.manualQueue.length > 0);
   return shown ? <div aria-hidden="true" style={{ height: 'var(--player-h, 0px)' }} /> : null;
 }

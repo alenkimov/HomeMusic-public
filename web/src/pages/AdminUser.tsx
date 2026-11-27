@@ -3,7 +3,6 @@ import type { ReactNode } from 'react';
 import { api } from '../api/client';
 import type { AdminUserDetailOut } from '../api/types';
 import { ErrorState, Loading, PageHeader, SectionTitle, Segmented } from '../components/ui';
-import { ServiceBadge } from '../components/ServiceBadge';
 import { setQuery } from '../lib/insights';
 import { useRoute } from '../lib/router';
 import { ListeningTab } from './insights/Listening';
@@ -97,7 +96,6 @@ function OverviewTab({ u }: { u: AdminUserDetailOut }) {
         <Row k="Аккаунт в Хабе с" v={fmtDate(u.created_at)} />
         <Row k="Последний раз в Хабе" v={fmtWhen(u.last_seen_at) || '—'} />
         <Row k="Последний раз в плеере" v={fmtWhen(u.player_seen_at) || '—'} />
-        <Row k={<ServiceBadge service="google" />} v={u.google_email || 'не привязан'} />
         <Row k="Последний запрос к ИИ" v={fmtWhen(u.ai_last_at) || '—'} />
       </dl>
 

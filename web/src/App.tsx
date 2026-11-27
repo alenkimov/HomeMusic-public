@@ -16,7 +16,6 @@ import { SelectionBar } from './components/SelectionBar';
 import { TabBar, type Tab } from './components/TabBar';
 import { ErrorState, Spinner, cx } from './components/ui';
 import { useDesktop } from './lib/desktop';
-import { STANDALONE } from './lib/embedded';
 import { hubEvents } from './lib/events';
 import { restoreListening, stopListening, watchManualQueue } from './lib/listen';
 import { watchPlaybackDevices } from './lib/playbackDevices';
@@ -90,9 +89,8 @@ import { UploadPage } from './pages/Upload';
 type Width = 'text' | 'wide';
 type RouteDef = [pattern: string, tab: Tab | null, render: (p: Record<string, string>, r: Route) => ReactNode, width?: Width];
 
-/** Screens of the standalone service (a plain browser, `STANDALONE`): inside the app they are its native ones, so
- * these routes don't exist there (an unknown route goes to the catalog). */
-const STANDALONE_ROUTES: RouteDef[] = [
+/** The screens of listening: the home, the player, the library. */
+const LISTENING_ROUTES: RouteDef[] = [
   ['/home', 'home', () => <HomePage />],
   ['/player', null, () => <PlayerPage />],
   ['/liked', 'library', () => <LikedPage />],
@@ -115,10 +113,10 @@ const STANDALONE_ROUTES: RouteDef[] = [
 ];
 
 /** Where an unknown or empty route goes. */
-const START = STANDALONE ? '/home' : '/search';
+const START = '/home';
 
 const ROUTES: RouteDef[] = [
-  ...(STANDALONE ? STANDALONE_ROUTES : []),
+  ...LISTENING_ROUTES,
   ['/search', 'search', (_, r) => <SearchPage initialQuery={r.query.get('q') ?? ''} initialTab={searchTab(r.query.get('tab'))} />],
   ['/spotify/playlist/:id', 'search', (p, r) => <SpotifyPlaylistPage key={p.id} id={p.id} query={r.query.get('q')} />],
   ['/artist/:ref/discography', 'search', (p) => <DiscographyPage key={p.ref} refId={p.ref} />],
@@ -140,7 +138,7 @@ const ROUTES: RouteDef[] = [
   ['/tidy', 'more', () => <TidyPage />],
   ['/quality', 'more', () => <QualityPage />],
   ['/upload', 'more', () => <UploadPage />],
-  ['/playlists', STANDALONE ? 'library' : 'more', () => <PlaylistsPage />],
+  ['/playlists', 'library', () => <PlaylistsPage />],
   ['/file/:id', 'library', (p) => <FileJournalPage key={p.id} id={Number(p.id)} />, 'text'],
   ['/import', 'more', (_, r) => <ImportsPage key={r.query.get('from') ?? ''} from={(['yandex', 'spotify', 'vk'] as const).find((x) => x === r.query.get('from')) ?? null} token={r.query.get('token') === '1'} />, 'text'],
   ['/import/:id', 'more', (p) => <ImportPage key={p.id} id={Number(p.id)} />, 'text'],
@@ -205,7 +203,7 @@ export function App() {
       }
       accountRef.current = account;
       setApiAccount(account);
-      setOfflineWaveAccount(STANDALONE ? account : null);
+      setOfflineWaveAccount(account);
     }
     setMe(next);
   }, []);
@@ -278,9 +276,9 @@ export function App() {
   }, [me]);
 
   const fullPlayer = route.path === '/player';
-  const mobilePlayer = STANDALONE && !desktop && fullPlayer;
+  const mobilePlayer = !desktop && fullPlayer;
   const page = useRef<HTMLElement>(null);
-  usePagePull(page, me != null && STANDALONE && !desktop && !fullPlayer, route.full);
+  usePagePull(page, me != null && !desktop && !fullPlayer, route.full);
   const background = useMemo(() => mobilePlayer ? backgroundRoute() ?? parseHash(START) : null, [mobilePlayer, route]);
   // Keep the previous screen mounted so it shows through as the mobile player slides away.
   const resolved = background ? resolve(background) ?? resolve(parseHash(START)) : resolve(route);
@@ -300,7 +298,7 @@ export function App() {
   useEffect(() => uid != null ? watchManualQueue() : undefined, [uid]);
   // the kept lists, as subscriptions: brought up to date when the app opens for the account
   useEffect(() => { if (uid != null) void initOffline().then(() => syncKept()); }, [uid]);
-  useEffect(() => uid != null && STANDALONE ? watchPlaybackDevices() : undefined, [uid]);
+  useEffect(() => uid != null ? watchPlaybackDevices() : undefined, [uid]);
   useVersionLabelsSync(uid);
   useTidyMarksSync(uid);
   useEffect(() => {

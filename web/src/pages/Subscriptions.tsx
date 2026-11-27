@@ -4,7 +4,6 @@ import type { AlbumOut, FollowOut, ReleaseOut } from '../api/types';
 import { TrackRow, playAll } from '../components/catalog';
 import { Icon } from '../components/Icon';
 import { Cover, Empty, ErrorState, IconButton, Loading, PageHeader, Segmented, cx } from '../components/ui';
-import { STANDALONE } from '../lib/embedded';
 import { useHubEvent } from '../lib/events';
 import { plural, tracksWord, yearOf } from '../lib/format';
 import { useAsync } from '../lib/hooks';
@@ -54,7 +53,7 @@ export function SubscriptionsPage() {
   }, [d]);
   const artistRef = who?.ref;
   const shown = useMemo(() => (d?.items ?? []).filter((r) => (kind === 'all' || kindOf(r) === kind) && (!artistRef || r.artist_ref === artistRef)), [d, kind, artistRef]);
-  const back = STANDALONE ? '/home' : '/library';
+  const back = '/home';
 
   if (res.error && !d) return (<><PageHeader title="Релизы" back={back} /><ErrorState text={res.error} onRetry={() => res.reload()} /></>);
   if (!d) return (<><PageHeader title="Релизы" back={back} /><Loading text="Смотрю, что вышло…" /></>);

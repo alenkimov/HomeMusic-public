@@ -2,7 +2,6 @@ import { titleWithVersion } from './versionLabels';
 import { useEffect, useSyncExternalStore } from 'react';
 import { ApiError, api, errorMessage } from '../api/client';
 import type { PlayEventIn, SmartOut, SmartRecOut } from '../api/types';
-import { STANDALONE } from './embedded';
 import {
   endSmart,
   getListenState,
@@ -64,13 +63,13 @@ export function useSmartPage(context: string | null, title: string | null) {
 
 /** The screen is a playlist's or «Любимое»: its shuffle button has the smart shuffle in its round. */
 export function useSmartPossible(): boolean {
-  return useSyncExternalStore(subscribe, () => STANDALONE && page !== null);
+  return useSyncExternalStore(subscribe, () => page !== null);
 }
 
 /** The list at the top of the screen can be played in the smart shuffle: the button of «Перемешать» shows it. */
 export function useSmartForPage(): boolean {
   const chosen = useSmartChosen();
-  return useSyncExternalStore(subscribe, () => STANDALONE && chosen && page !== null);
+  return useSyncExternalStore(subscribe, () => chosen && page !== null);
 }
 
 // --- the session ---------------------------------------------------------------------------------------------------
@@ -212,7 +211,6 @@ registerSmart({
     listPage = (context === 'playlist' || context === 'liked') && page && (page.context === 'liked') === (context === 'liked') ? page : null;
   },
   canStart() {
-    if (!STANDALONE) return false;
     // a list of a playlist's / «Любимое» page, noted when it was started (or, for a restored one, the session)
     return listPage !== null && !getListenState().context.startsWith('wave:');
   },

@@ -5,9 +5,7 @@ import { openFindFile } from '../lib/findFile';
 import { openTrackEdit } from '../lib/trackEdit';
 import { openVersions } from '../lib/versions';
 import { setDisliked, useDisliked, type DislikeTarget } from '../lib/dislikes';
-import { STANDALONE } from '../lib/embedded';
 import { addToQueue, next, stopListening, useListen, type ListenTrack } from '../lib/listen';
-import { canPlayAll } from '../lib/player';
 import { albumPath, artistPath, enc, navigate } from '../lib/router';
 import { useSession } from '../lib/session';
 import { openShare } from '../lib/shareTrack';
@@ -15,7 +13,7 @@ import { toggleLike, useLiked, type LikeTarget } from '../lib/stars';
 import { openTagsSheet, tagKey } from '../lib/tags';
 import { tidyPath, useTidyMarks } from '../lib/tidyMarks';
 import { closeTrackMenu, openTrackMenu, useTrackMenu, type TrackMenuState } from '../lib/trackMenu';
-import { artistSeed, canWave, startWave, trackSeed } from '../lib/wave';
+import { artistSeed, startWave, trackSeed } from '../lib/wave';
 import { ContextMenu, menuAtButton, type MenuEntry } from './ContextMenu';
 import { type IconName } from './Icon';
 import { KIND_TITLE } from './TidyMark';
@@ -120,13 +118,13 @@ function TrackMenu({ track, extra, at, inPlayer, onPlaylists }: TrackMenuState &
   const liked = useLiked(like);
   const playing = useListen((s) => !!track.ref && s.track?.ref === track.ref);
   // the page's own player plays here (a browser, an app without `playQueue`)
-  const queueable = !!track.listen && !canPlayAll();
+  const queueable = !!track.listen;
   const known = !!(track.library_track_id || track.ref || track.nd_song_id);
   const keepable = !!(track.nd_song_id || track.ref);
   const albumTo = track.album_ref || track.release_id ? albumPath({ ref: track.album_ref ?? '', release_id: track.release_id })
-    : STANDALONE && track.nd_album_id ? `/lib/album/${enc(track.nd_album_id)}` : null;
+    : track.nd_album_id ? `/lib/album/${enc(track.nd_album_id)}` : null;
   const artistTo = track.artist_ref || track.hub_artist_id ? artistPath({ ref: track.artist_ref ?? '', hub_artist_id: track.hub_artist_id })
-    : STANDALONE && track.nd_artist_id ? `/lib/artist/${enc(track.nd_artist_id)}` : null;
+    : track.nd_artist_id ? `/lib/artist/${enc(track.nd_artist_id)}` : null;
   const fileId = track.has_file && track.library_track_id != null ? track.library_track_id : null;
   // what «Наведение порядка» offers for it, its name first, then its text: the line that leads there
   const marked = track.library_track_id ? { track: track.library_track_id } : null;
@@ -145,8 +143,8 @@ function TrackMenu({ track, extra, at, inPlayer, onPlaylists }: TrackMenuState &
     queueable && { icon: 'queue', label: 'Добавить в очередь', shortcut: 'Q', onSelect: () => void addToQueue([track.listen as ListenTrack]) },
     ...(extra ?? []).map((x) => ({ icon: x.icon, label: x.label, shortcut: x.shortcut, onSelect: x.onClick })),
     'sep',
-    canWave() && trackWave && !track.unknown && { icon: 'wave', label: 'Волна по треку', shortcut: 'R', onSelect: () => void startWave(trackWave, inPlayer ? 'player' : trackWave.ref?.startsWith('file:') ? 'search_file' : 'track_menu') },
-    canWave() && artistWave && { label: 'Волна по исполнителю', onSelect: () => void startWave(artistWave, inPlayer ? 'player' : 'artist_menu') },
+    trackWave && !track.unknown && { icon: 'wave', label: 'Волна по треку', shortcut: 'R', onSelect: () => void startWave(trackWave, inPlayer ? 'player' : trackWave.ref?.startsWith('file:') ? 'search_file' : 'track_menu') },
+    artistWave && { label: 'Волна по исполнителю', onSelect: () => void startWave(artistWave, inPlayer ? 'player' : 'artist_menu') },
     artistTo && { icon: 'user', label: 'Перейти к исполнителю', shortcut: 'Alt+A', onSelect: () => navigate(artistTo) },
     albumTo && { icon: 'disc', label: 'Перейти к альбому', shortcut: 'A', onSelect: () => navigate(albumTo) },
     canMap && track.artist_ref?.startsWith('dz:') && { icon: 'nodes', label: 'Карта похожих', onSelect: () => navigate(`/map/${enc(track.artist_ref!)}`) },

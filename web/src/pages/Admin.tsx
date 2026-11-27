@@ -2,13 +2,11 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { AdminUserOut, InviteOut } from '../api/types';
 import { Icon } from '../components/Icon';
-import { ServiceBadge } from '../components/ServiceBadge';
 import { Button, Empty, ErrorState, Field, IconButton, PageHeader, SectionTitle, Segmented, Sheet, SkeletonRows, cx } from '../components/ui';
 import { fmtDate, fmtUsd, fmtWhen, parseTime, plural } from '../lib/format';
 import { useAsync } from '../lib/hooks';
 import { Link } from '../lib/router';
 import { useSession } from '../lib/session';
-import { EMBEDDED } from '../lib/embedded';
 import { canShare, copyText, shareText } from '../lib/share';
 import { attempt, confirmDialog, toast } from '../lib/ui';
 
@@ -43,8 +41,7 @@ export function AdminPage() {
 
   return (
     <div className="pb-6">
-      {/* in the app the page is opened from its settings: the system back leaves it */}
-      <PageHeader title="Пользователи" back={EMBEDDED ? undefined : '/more'} right={<IconButton icon="refresh" label="Обновить" onClick={() => (users.reload(true), invites.reload(true))} />} />
+      <PageHeader title="Пользователи" back="/more" right={<IconButton icon="refresh" label="Обновить" onClick={() => (users.reload(true), invites.reload(true))} />} />
 
       <ul className="mx-4 mb-3 overflow-hidden rounded-2xl bg-surface">
         <InsightLink to="/admin/insights" icon="history" title="Аналитика пользователей" sub="прослушивания, миксы, волна по пользователям" />
@@ -170,7 +167,6 @@ export function lastActivity(u: AdminUserOut): string | null {
 export function UserBadges({ u }: { u: AdminUserOut }) {
   const badges: ReactNode[] = [];
   if (u.is_admin) badges.push(<Badge key="a">Админ</Badge>);
-  if (u.google_email) badges.push(<Badge key="g"><ServiceBadge service="google" /></Badge>);
   if (u.email) badges.push(<Badge key="e">почта</Badge>);
   if (!u.in_hub) badges.push(<Badge key="p">только плеер</Badge>);
   return <>{badges}</>;
@@ -261,11 +257,10 @@ function CreateInviteSheet({ open, onClose, onCreated }: { open: boolean; onClos
 }
 
 function inviteMessage(inv: InviteOut, hubUrl: string): string {
-  const apk = `${hubUrl.replace(/\/$/, '')}/app/latest.apk`;
   return [
     `Приглашение в HomeMusic${inv.note ? ` для: ${inv.note}` : ''}.`,
-    `1. Установите приложение: ${apk}`,
-    '2. На экране входа нажмите «Далее», затем «Регистрация по коду».',
+    `1. Откройте ${hubUrl.replace(/\/$/, '')}`,
+    '2. На экране входа нажмите «У меня есть код приглашения».',
     `3. Введите код ${inv.code} и придумайте имя и пароль.`,
     `Код действует до ${fmtDate(inv.expires_at)}.`,
   ].join('\n');

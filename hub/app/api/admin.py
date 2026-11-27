@@ -113,7 +113,7 @@ def _user_out(user: User, stats: dict[str, Any], nd: dict | None, counts: tuple[
     return dict(
         id=user.id, username=user.nd_username, name=(nd or {}).get("name") or "", is_admin=user.is_admin,
         in_hub=True, created_at=user.created_at, last_seen_at=user.last_seen_at,
-        player_seen_at=_nd_time((nd or {}).get("lastAccessAt")), google_email=user.google_email, email=user.email,
+        player_seen_at=_nd_time((nd or {}).get("lastAccessAt")), email=user.email,
         starred_songs=counts[0], playlists=counts[1], **stats,
     )
 

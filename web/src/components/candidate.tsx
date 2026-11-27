@@ -4,7 +4,6 @@ import type { Candidate } from '../api/types';
 import { fmtDate, fmtDuration } from '../lib/format';
 import { ServiceBadge } from './ServiceBadge';
 import { listen, touchTrack, useListen, watchOnScreen, type ListenTrack } from '../lib/listen';
-import { canPlayAll, playHubItems, type HubItem } from '../lib/player';
 import { ListenButton } from './catalog';
 import { Icon } from './Icon';
 import { SaveButton } from './PlaylistsButton';
@@ -15,7 +14,7 @@ import { Cover, cx } from './ui';
  * The Hub remembers files it has just shown in search results or a download's details. */
 export const fileRef = (c: Candidate) => `file:${c.provider}:${c.provider_id}`;
 
-const fileTrack = (c: Candidate): ListenTrack & HubItem => ({
+const fileTrack = (c: Candidate): ListenTrack => ({
   ref: fileRef(c),
   title: c.title,
   artist: c.artist,
@@ -25,12 +24,11 @@ const fileTrack = (c: Candidate): ListenTrack & HubItem => ({
   duration_s: c.duration_s,
 });
 
-/** Plays the files of one search from `c` on: in the app's player (1.2.0+), else in the page. */
+/** Plays the files of one search from `c` on. */
 export function listenFiles(list: readonly Candidate[], c: Candidate) {
   const tracks = list.map(fileTrack);
   const i = Math.max(0, list.indexOf(c));
-  if (canPlayAll()) playHubItems(tracks, i);
-  else listen(tracks[i], tracks);
+  listen(tracks[i], tracks);
 }
 
 /** Uploads before this date predate the law of 2026-03-01 that got tracks edited (PLAN 3.2). */

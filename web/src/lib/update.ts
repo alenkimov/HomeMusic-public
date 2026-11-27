@@ -2,12 +2,11 @@ import { listenBusy } from './listen';
 import { ROUTE_EVENT } from './router';
 import { hubFetch } from './reach';
 
-/** Picks up a new PWA build without the user doing anything. The Android app keeps one WebView with the page for
- * the whole life of its process (days), so a rebuilt Hub would otherwise never reach it.
+/** Picks up a new PWA build without the user doing anything: an installed app stays open for days, so a rebuilt
+ * Hub would otherwise never reach it.
  *
  * `__HM_BUILD__` is this bundle's build id; the Hub reports the one it serves in `/healthz` (`web_build`, read from
- * index.html). Checked when the page comes back on screen (`visibilitychange`, and `hm:resume` from the app when
- * the Hub tab is shown again) and on route changes (at most once a minute). A page with another build reloads
+ * index.html). Checked when the page comes back on screen (`visibilitychange`) and on route changes (at most once a minute). A page with another build reloads
  * itself, keeping its route (the hash):
  * - right away, if it is idle: no sheet or dialog open, no field holding typed text, not on the
  *   upload/share/login screens, the page's own player not playing;
@@ -20,8 +19,6 @@ const CHECK_EVERY_MS = 60_000;
 const RELOADED_FOR = 'hm-reloaded-for';
 /** Routes whose state lives only in the page (files picked, a share being handled, typing a password). */
 const HOLD_ROUTES = ['/upload', '/share', '/login'];
-/** Event the Android app fires when the Hub tab is shown again (`HubFragment.onStart`). */
-export const RESUME_EVENT = 'hm:resume';
 
 let lastCheck = 0;
 let checking: Promise<void> | null = null;
@@ -111,7 +108,6 @@ function onRouteChange() {
 export function startUpdateWatcher() {
   if (BUILD === 'dev') return; // vite dev server / mock: no build to compare
   document.addEventListener('visibilitychange', () => void onResume());
-  window.addEventListener(RESUME_EVENT, () => void onResume());
   window.addEventListener('hashchange', onRouteChange);
   window.addEventListener(ROUTE_EVENT, onRouteChange);
   void check(false);

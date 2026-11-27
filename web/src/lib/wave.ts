@@ -2,11 +2,9 @@ import { useSyncExternalStore } from 'react';
 import { ApiError, api } from '../api/client';
 import type { PlayEventIn, WaveOrigin, WaveOut, WaveSeedIn, WaveTrackOut } from '../api/types';
 import { ofHiddenArtist } from './dislikes';
-import { EMBEDDED } from './embedded';
 import { hubEvents } from './events';
 import { getListenState, listStamp, listenAll, next, onListeningRestored, replaceUpcoming, subscribeListening, type ListenTrack } from './listen';
 import { heardWaveTrack, notePersonalWave, OFFLINE_WAVE, offlineWaveTracks, waveAudio, waveReserveEnabled } from './offlineWave';
-import { canPlayAll, canPlayWave, playWave } from './player';
 import { onPlayEvent } from './plays';
 import { navigate } from './router';
 import { tastePath } from './taste';
@@ -16,21 +14,12 @@ import { hubReachable, onHubBack, onHubReach } from './reach';
 /** «Моя волна» (MIXES.md 7): an endless stream the Hub picks for the user, 5 tracks at a time
  * (`POST /api/wave/start`, then `POST /api/wave/{id}/next`).
  *
- * In a browser (and app versions whose player doesn't play catalog tracks) the page's own mini player plays it
- * (`lib/listen.ts`, context `wave:<id>`): each time a wave track starts, and after a ♥ of one, the events since the
+ * The page's own mini player plays it (`lib/listen.ts`, context `wave:<id>`): each time a wave track starts, and after a ♥ of one, the events since the
  * last call go to the Hub with the refs still ahead, and the answer replaces them (`replaceUpcoming`) — so the
  * stream is picked again after every action. The same events go to /api/plays/events as always (the Hub stores an
  * event_id once).
  *
- * Inside the app (1.2.0+) one player plays, the native one: the wave is handed to it whole through the bridge
- * `playWave(waveJson)` (app 1.6.0+, `lib/player.ts`): the answer of /start; the app plays it and asks `next`
- * itself (`HubWave.kt`), with the same events. An app with `playQueue` but without `playWave` gets no wave
- * buttons (5 tracks without a continuation would be worse). Another list started in the page player ends the wave. */
-
-/** The wave can play here: the page's own player, or the app's player that knows waves. */
-export function canWave(): boolean {
-  return !canPlayAll() || canPlayWave();
-}
+ * Another list started in the page player ends the wave. */
 
 const RETRY_MS = 4000;
 
@@ -84,7 +73,7 @@ export function restorePlayerWave() {
   session = null;
   const account = sessionAccount;
   const st = getListenState();
-  if (account !== null && !canPlayAll() && st.track && st.context.startsWith('wave:') && st.context !== OFFLINE_WAVE) {
+  if (account !== null && st.track && st.context.startsWith('wave:') && st.context !== OFFLINE_WAVE) {
     const id = st.context.slice('wave:'.length);
     let saved: { id?: string; title?: string; personal?: boolean; refs?: string[]; songs?: string[]; pending?: PlayEventIn[] } | null = null;
     try { saved = JSON.parse(localStorage.getItem(SESSION_KEY + account) ?? 'null'); } catch { /* rebuild from the queue */ }
@@ -192,7 +181,7 @@ function playFromReserve(s: Session): boolean {
  * (INSIGHTS.md 6.3: analytics only, the Hub keeps it with the session). */
 export async function startWave(seed: WaveSeedIn | null | undefined, origin: WaveOrigin): Promise<boolean> {
   if (starting !== null) return false;
-  if (!seed && !hubReachable() && !EMBEDDED) {
+  if (!seed && !hubReachable()) {
     if (startOfflineWave()) return true;
     toast('Нет сохранённых треков для офлайн-волны', 'info');
     return false;
@@ -201,17 +190,12 @@ export async function startWave(seed: WaveSeedIn | null | undefined, origin: Wav
   emit();
   const stamp = listStamp();
   try {
-    const w = await api.waveStart({ seed: seed ?? null, origin, client: EMBEDDED ? 'pwa-app' : 'pwa' });
+    const w = await api.waveStart({ seed: seed ?? null, origin, client: 'pwa' });
     // something else was started while the wave was being picked: that is what the listener wants now
     if (listStamp() !== stamp) return false;
     if (!w.tracks.length) {
       toast('Волна пока пустая: попробуйте чуть позже', 'error');
       return false;
-    }
-    if (canPlayWave()) {
-      end(); // a wave the page's own player had is over: the app's player plays now
-      playWave(w);
-      return true;
     }
     const s: Session = { id: w.session_id, title: w.title, context: `wave:${w.session_id}`, personal: !w.seed,
       refs: new Set(), songs: new Set(), pending: [], inFlight: [], busy: false, again: false };
@@ -224,7 +208,7 @@ export async function startWave(seed: WaveSeedIn | null | undefined, origin: Wav
     return true;
   } catch (e) {
     if (listStamp() !== stamp) return false;
-    if (!seed && !EMBEDDED && e instanceof ApiError && e.status === 0 && startOfflineWave()) return true;
+    if (!seed && e instanceof ApiError && e.status === 0 && startOfflineWave()) return true;
     // the user's own wave has nothing to start from: the artists are picked first, and the wave starts from there
     if (!seed && e instanceof ApiError && e.status === 409) navigate(tastePath('wave'));
     else toastError(e);

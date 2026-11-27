@@ -13,7 +13,6 @@ import { useHubEvent } from '../lib/events';
 import { DOWNLOAD_ACTIVE, downloadStatusLabel, fmtDuration, warningText } from '../lib/format';
 import { useAsync, useInterval } from '../lib/hooks';
 import { listen } from '../lib/listen';
-import { canPlay, playSongs } from '../lib/player';
 import { Link } from '../lib/router';
 import { attempt } from '../lib/ui';
 
@@ -117,8 +116,7 @@ export function DownloadDetailPage({ id }: { id: number }) {
   const songId = item.nd_song_id;
   const playDownloaded = () => {
     if (!songId) return;
-    if (canPlay()) playSongs([songId]);
-    else listen({ ref: `nd:${songId}`, nd_song_id: songId, title: item.title, artist: item.artist, album: item.album ?? undefined, duration_s: item.duration_s, cover_url: item.chosen?.cover_url });
+    listen({ ref: `nd:${songId}`, nd_song_id: songId, title: item.title, artist: item.artist, album: item.album ?? undefined, duration_s: item.duration_s, cover_url: item.chosen?.cover_url });
   };
 
   return (

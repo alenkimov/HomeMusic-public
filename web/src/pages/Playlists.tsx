@@ -4,7 +4,6 @@ import { Icon } from '../components/Icon';
 import { ServiceIcon, ServiceText } from '../components/ServiceBadge';
 import { Button, Empty, ErrorState, PageHeader, SkeletonRows } from '../components/ui';
 import { useHubEvent } from '../lib/events';
-import { STANDALONE } from '../lib/embedded';
 import { useAsync, useCoalesced } from '../lib/hooks';
 import { openPlaylistMenu } from '../lib/playlistMenu';
 import { PlaylistRow, playlistLook } from '../components/Playlist';
@@ -46,7 +45,7 @@ export function PlaylistsPage() {
 
   return (
     <div>
-      <PageHeader title="Плейлисты" back={STANDALONE ? '/library' : '/more'} />
+      <PageHeader title="Плейлисты" back="/library" />
       <form onSubmit={create} className="flex gap-2 px-4 pb-3">
         <input className="input flex-1" placeholder="Название нового плейлиста" aria-label="Название нового плейлиста" value={name} onChange={(e) => setName(e.target.value)} />
         <Button type="submit" variant="primary" icon="plus" busy={busy} disabled={!name.trim()}>
@@ -61,9 +60,7 @@ export function PlaylistsPage() {
         </Button>
       </form>
       <p className="px-4 pb-2 text-xs text-muted">
-        <ServiceText text={STANDALONE
-          ? 'Плейлисты хранятся в Navidrome: те же, что в приложении HomeMusic.'
-          : 'Плейлисты хранятся в Navidrome: слушайте и скачивайте их для офлайна в плеере (Tempus).'} />
+        <ServiceText text="Плейлисты хранятся в Navidrome: их видят и другие плееры, подключённые к Navidrome." />
       </p>
       {res.loading ? (
         <SkeletonRows />
@@ -75,8 +72,7 @@ export function PlaylistsPage() {
         <ul>
           {res.data.map((p) => (
             <li key={p.id}>
-              {/* a playlist opens (its songs, «Слушать») in a browser; inside the app the app's own library has it */}
-              <PlaylistRow playlist={{ ...playlistLook(p), to: STANDALONE ? `/playlist/${enc(p.id)}` : null }}
+              <PlaylistRow playlist={{ ...playlistLook(p), to: `/playlist/${enc(p.id)}` }}
                 onMenu={(at) => openPlaylistMenu(p, at)} className="hover:bg-fg/5" />
             </li>
           ))}

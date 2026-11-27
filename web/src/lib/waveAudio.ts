@@ -3,8 +3,7 @@ import { isDesktop } from './desktop';
 /** Smoothed-loudness source for the «Моя волна» glow (`components/WaveGlow.tsx`): an
  * `AnalyserNode` on the page player's `<audio>` (`createMediaElementSource`). Once connected, the sound of that element
  * goes only through the AudioContext, so this is careful:
- *  - only on a computer in a plain browser (`isDesktop()`): nothing else ever touches the `<audio>`, and inside the app
- *    the native player plays and the page has no sound,
+ *  - only on a computer (`isDesktop()`): nothing else ever touches the `<audio>` there,
  *  - the element is connected only while it is playing and the context is already `running` (a suspended context
  *    would make it silent) and plays from the same origin (a cross-origin source without CORS would be muted),
  *  - the context is resumed again on every `play` and when the browser suspends it,

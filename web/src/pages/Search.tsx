@@ -11,11 +11,9 @@ import { ServiceText } from '../components/ServiceBadge';
 import { Icon } from '../components/Icon';
 import { Button, Cover, Empty, ErrorState, IconButton, Notice, PageBar, SectionTitle, Segmented, SkeletonRows, Spinner } from '../components/ui';
 import { startDownload } from '../lib/actions';
-import { STANDALONE } from '../lib/embedded';
 import { useHubEvent } from '../lib/events';
 import { useAsync, useDebounced, useRememberScrollX } from '../lib/hooks';
 import { extendQueue, markQueued, useListen } from '../lib/listen';
-import { canPlayAll } from '../lib/player';
 import { PlaylistRow } from '../components/Playlist';
 import { RouteBackground, albumPath, artistPath, enc, navigate } from '../lib/router';
 import { useLiveSearch } from '../lib/search';
@@ -79,7 +77,7 @@ export function SearchPage({ initialQuery, initialTab }: { initialQuery: string;
               maxLength={512}
               enterKeyHint="search"
               className="h-12 w-0 min-w-0 flex-1 appearance-none bg-transparent pl-1.5 text-base outline-none [&::-webkit-search-cancel-button]:appearance-none"
-              placeholder={STANDALONE ? 'Трек, исполнитель или просьба' : 'Исполнитель, альбом или трек'}
+              placeholder="Трек, исполнитель или просьба"
               aria-label="Поиск"
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -345,9 +343,9 @@ function useMoreTracks(q: string, first: SearchOut | undefined) {
     return () => o.disconnect();
   }, [trigger, tracks]);
 
-  // the page's own player plays on through the tracks loaded after it started (the app's player keeps its queue)
+  // the player plays on through the tracks loaded after it started
   useEffect(() => {
-    if (!canPlayAll()) extendQueue(tracks.map(listenTrack));
+    extendQueue(tracks.map(listenTrack));
   }, [tracks]);
 
   return { tracks, trigger, sentinel, loading: cur.loading, failed: cur.failed, loadMore };

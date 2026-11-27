@@ -22,45 +22,13 @@
   --color-facet-3: #b98cff;
   --color-facet-4: #f5d547;
   --color-facet-5: #ff7eb6;
-  /* Inter, as in the Android app (bundled, Latin + Cyrillic) */
+  /* Inter (bundled, Latin + Cyrillic) */
   --font-sans: 'Inter Variable', 'Roboto', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
 }
 
 :root {
   --tabbar-h: 64px; /* TabBar height; fixed bottom bars sit above it */
   /* --player-h: MiniPlayer height while it shows (set by it); fixed bottom bars sit above it too */
-}
-:root.hm-embedded {
-  --tabbar-h: 0px; /* inside the Android app: no PWA tab bar */
-  /* the app's own background (sent by the app as --hm-bg): no seam at its status bar and players */
-  --color-bg: var(--hm-bg, #000000);
-}
-/* Inside the app in its light theme (the app sets .hm-light): the app's light colors, green as its accent. */
-:root.hm-embedded.hm-light {
-  color-scheme: light;
-  --color-bg: var(--hm-bg, #f6fbf3);
-  --color-surface: #ecf1ea;
-  --color-raised: #e4eae2;
-  --color-line: #d3dad1;
-  --color-fg: #181d18;
-  --color-muted: #535b53;
-  --color-dim: #737c73;
-  --color-accent: #006e2d;
-  --color-accent-strong: #005320;
-  --color-danger: #ba1a1a;
-  --color-warn: #845400;
-  --color-info: #00629d;
-  --color-ai: #00629d;
-  --color-hover: #d9e0d7;
-  --color-on-accent: #ffffff;
-  --color-facet-1: #0b6bcb;
-  --color-facet-2: #b85400;
-  --color-facet-3: #7a3fd1;
-  --color-facet-4: #7d6400;
-  --color-facet-5: #c2306f;
-  --track: #c4ccc2;
-  --skeleton-a: #e4eae2;
-  --skeleton-b: #d6ddd4;
 }
 
 @layer base {
@@ -121,10 +89,10 @@
   initial-value: transparent;
 }
 @media (hover: hover) and (pointer: fine) {
-  html:not(.hm-embedded) {
+  html {
     scrollbar-width: none;
   }
-  html:not(.hm-embedded)::-webkit-scrollbar {
+  html::-webkit-scrollbar {
     display: none;
   }
   :where([class*='overflow-auto'], [class*='overflow-y-auto'], [class*='overflow-x-auto'], [class*='overflow-scroll'], [class*='overflow-y-scroll']) {
@@ -329,7 +297,7 @@
   }
 }
 
-/* The width of the app's column: a phone's on small screens and inside the Android app; on a computer (the same
+/* The width of the app's column: a phone's on small screens; on a computer (the same
  * test as `lib/desktop.ts`) the pages, the tab bar and the mini player use the room of a wide window. */
 :root {
   --app-w: 42rem;
@@ -337,8 +305,8 @@
   --page-top: 0px; /* where the page starts, and its bars stick: a computer's page is a panel with room around it */
 }
 @media (pointer: coarse) {
-  html:not(.hm-embedded),
-  html:not(.hm-embedded) body {
+  html,
+  html body {
     overscroll-behavior-y: none;
   }
 }
@@ -352,7 +320,7 @@
 }
 
 @media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
-  html:not(.hm-embedded) {
+  html {
     --app-w: 72rem;
     --side-w: 16rem;
     --tabbar-h: 84px; /* a computer has the player bar (`DesktopPlayer`) where a phone has the tab bar */

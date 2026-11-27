@@ -109,9 +109,9 @@ async def tracks_out(s: AsyncSession, user: User, rows: list[Track], *, import_s
     kept = await cards.read(s, [t.id for t in rows])
     out = [NdSongOut.model_validate(kept[t.id]) for t in rows]
     if import_state:
-        from app.imports.review import annotate
+        from app.imports.review import mark_unavailable
 
-        await annotate(s, user.id, out)
+        await mark_unavailable(s, user.id, out)
     return out
 
 

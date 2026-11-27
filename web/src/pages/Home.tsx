@@ -11,10 +11,10 @@ import { useAsync } from '../lib/hooks';
 import { useUnseenReleases } from '../lib/releases';
 import { Link } from '../lib/router';
 
-/** «Главная» of the PWA in a plain browser (`STANDALONE`), four things and no more: «Моя волна» — play something;
+/** «Главная», four things and no more: «Моя волна» — play something;
  * «Продолжить» — the lists last played from; «Новые релизы» — what the followed artists released, as tracks (the
  * bell in the corner of a phone leads to «Подписки» — a computer has them in its side panel); «Для вас» — the lists
- * that make themselves. A block with nothing in it is not shown. Inside the app this is its native home screen. */
+ * that make themselves. A block with nothing in it is not shown. */
 export function HomePage() {
   const fresh = useUnseenReleases();
   return (

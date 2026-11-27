@@ -8,7 +8,6 @@ import { Icon, type IconName } from '../components/Icon';
 import { Button, Checkbox, ErrorState, IconButton, Loading, Notice, PageHeader, ProgressBar, Radio, SectionTitle, SkeletonRows, Spinner, cx, Badge } from '../components/ui';
 import { LIKED_MARK, PlaylistRow, playlistLook } from '../components/Playlist';
 import { useSession } from '../lib/session';
-import { EMBEDDED } from '../lib/embedded';
 import { useHubEvent } from '../lib/events';
 import { fmtDuration, fmtSize, fmtWhen, plural, tracksWord } from '../lib/format';
 import { useAsync, useInterval, useWindowEvent, useCoalesced } from '../lib/hooks';
@@ -192,7 +191,7 @@ export function ImportsPage({ from = null, token = false }: { from?: ImportSourc
 
   return (
     <div>
-      <PageHeader title={from ? <ServiceBadge service={from} label={SOURCES[from].page} size={18} /> : 'Перенести музыку'} back={EMBEDDED ? '/library' : '/more'} />
+      <PageHeader title={from ? <ServiceBadge service={from} label={SOURCES[from].page} size={18} /> : 'Перенести музыку'} back="/more" />
       {res.loading ? (
         <SkeletonRows n={2} />
       ) : res.error ? (
@@ -303,16 +302,14 @@ export function ImportsPage({ from = null, token = false }: { from?: ImportSourc
           Открыть предпросмотр
         </Button>
       </form>
-      {!EMBEDDED && (
-        <Link to="/stats" className="card mx-4 lg:mx-6 mt-3 flex items-center gap-3 p-4 hover:bg-hover">
-          <ServiceIcon service="spotify" size={22} />
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold">История прослушиваний</span>
-            <span className="block text-xs text-muted">Что вы слушали в Spotify за все годы — импортируется на странице «Статистика»</span>
-          </span>
-          <Icon name="chevron" size={18} className="text-dim" />
-        </Link>
-      )}
+      <Link to="/stats" className="card mx-4 lg:mx-6 mt-3 flex items-center gap-3 p-4 hover:bg-hover">
+        <ServiceIcon service="spotify" size={22} />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold">История прослушиваний</span>
+          <span className="block text-xs text-muted">Что вы слушали в Spotify за все годы — импортируется на странице «Статистика»</span>
+        </span>
+        <Icon name="chevron" size={18} className="text-dim" />
+      </Link>
       </>
       )}
 

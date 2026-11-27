@@ -17,7 +17,6 @@ export interface MeOut {
   is_admin: boolean;
   public_music_url: string;
   public_hub_url?: string;
-  google_email?: string | null;
   email?: string | null;
   /** the server has a Last.fm key: «Карта» of artists is there */
   artist_map?: boolean;
@@ -32,7 +31,6 @@ export interface RegisterIn {
 export interface AuthOptionsOut {
   invites: boolean;
   email_signup?: boolean;
-  google_client_id: string | null;
   music_url?: string;
 }
 
@@ -71,7 +69,6 @@ export interface AdminUserOut {
   created_at: string | null;
   last_seen_at: string | null;
   player_seen_at: string | null;
-  google_email: string | null;
   email?: string | null;
   invite_note: string | null;
   ai_cost_usd: number;
@@ -256,7 +253,6 @@ export interface TrackOut extends CatalogTrack {
   unknown?: boolean;
   /** A completed catalog or source search found no playable recording. */
   unavailable?: boolean;
-  import_review?: ImportReviewOut | null;
   /** the user ♥ it and a download that stars it is under way: the ♥ shows filled */
   /** in a list: when the track was added to it; else when it came into the library */
   added_at?: string | null;
@@ -1059,7 +1055,9 @@ export interface PlaylistAddIn {
 // --- imports from music services ------------------------------------------------------------
 
 export type ImportSource = 'yandex' | 'spotify' | 'vk';
-export interface ImportReviewOut {
+/** A transfer's song matched with a library track not surely: the question of «Наведение порядка» («Импорт») a file
+ * is picked for (`lib/findFile.ts`). `id`: the transfer's row. */
+export interface ImportDoubt {
   id: number;
   source: ImportSource;
   title: string;
@@ -1427,7 +1425,7 @@ export interface ReleasesOut {
 }
 
 export interface LibraryEvent {
-  kind: 'imported' | 'changed' | 'starred' | 'unstarred' | 'import_review' | 'playlist' | 'releases' | 'discoveries';
+  kind: 'imported' | 'changed' | 'starred' | 'unstarred' | 'playlist' | 'releases' | 'discoveries';
   playlist_id?: string | null;
   album_id?: number | null;
   track_id?: number | null;
@@ -1717,7 +1715,7 @@ export interface WaveStartIn {
   seed?: WaveSeedIn | null;
   mode?: MixMode | null;
   /** analytics only: where it was started (`home_card`, `catalog_card`, `track_menu`, `artist_menu`, `player`,
-   * `artist_page`, `radio`, `search_file`; the app's `restart`), the client (`pwa`, `pwa-app`) */
+   * `artist_page`, `radio`, `search_file`), the client (`pwa`) */
   origin?: WaveOrigin | null;
   client?: string | null;
   restart_of?: string | null;

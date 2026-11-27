@@ -516,14 +516,10 @@ async def test_review_from_playlists_and_liked_survives_reload(env):
         assert r.status_code == 200, r.text
         return next(x for x in r.json()[key] if x["title"] == title)
 
-    review = (await entry(playlist_url, "tracks"))["import_review"]
-    assert review["source"] == "yandex" and review["duration_s"] == 255
-    assert (await entry("/api/nd/liked", "songs"))["import_review"] is not None
-    confirm_url = f"/api/imports/items/{review['id']}/confirm_match"
-    assert (await c.post(confirm_url)).status_code == 200
-    assert (await c.post(confirm_url)).status_code == 200
-    assert (await entry(playlist_url, "tracks"))["import_review"] is None
-    assert (await entry("/api/nd/liked", "songs"))["import_review"] is None
+    # the doubt is a question of «Наведение порядка» (`test_a_transfers_doubt_is_a_question_of_tidy`)
+    (p,) = (await c.get("/api/tidy/proposals", params={"section": "imports"})).json()
+    assert p["show"]["source"] == "yandex" and p["show"]["duration_s"] == 255
+    assert (await c.post(f"/api/tidy/proposals/{p['id']}/accept")).status_code == 200
     assert all(row["match"] == "probable" for row in await items(c, imp, match="probable"))
     assert (await entry(playlist_url, "tracks", NONE["title"]))["unknown"]
 
@@ -920,6 +916,12 @@ async def test_a_transfers_doubt_is_a_question_of_tidy(env):
         got = (await s.scalars(select(ImportItem).where(ImportItem.import_id == imp["id"], ImportItem.external_id == "1",
                                                         ImportItem.track_id.is_not(None)))).all()
         assert not any((x.raw_json or {}).get("match_reviewed") for x in got)
-    # confirmed from elsewhere (a file picked for it): no question any more
-    assert (await c.post(f"/api/imports/items/{got[0].id}/confirm_match")).status_code == 200
+    # answered elsewhere (a file picked for it, which confirms the match): no question any more
+    from app.imports import review
+
+    from app.models import Import
+
+    async with session_scope() as s:
+        owner = (await s.get(Import, imp["id"])).user_id
+        assert await review.acknowledge(s, owner, got[0].id)
     assert (await c.get("/api/tidy/proposals", params={"section": "imports"})).json() == []

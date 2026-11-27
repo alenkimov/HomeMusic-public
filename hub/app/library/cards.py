@@ -166,7 +166,7 @@ async def draw(s: AsyncSession, rows: list[Track], *, songs: dict[str, dict] | N
 # --- kept cards ----------------------------------------------------------------------------------------------------
 
 # what is somebody's of a track, not its card's: a list lays it over the card
-NOT_CARD = {"import_review"}
+NOT_CARD: set[str] = set()
 BATCH = 400
 
 
@@ -294,22 +294,20 @@ async def ensure(s: AsyncSession, track_ids: list[int]) -> None:
 async def list_json(s: AsyncSession, playlist_id: int, user_id: int, *, extra: list[dict] | None = None) -> str:
     """A playlist's tracks as a list gives them — a JSON array, made by the database of the kept cards in the
     playlist's order: none of thousands of cards is parsed or written out here. Over each card: when it was put in
-    the list, and what the user's transfers say of it (`imports.review.word`). `extra`: tracks the list has beside
+    the list, and whether the user's transfers found no file of it (`imports.review.unfound`). `extra`: tracks the list has beside
     the playlist (drawn already, each with its `added_at`); with them the list is ordered by when each was added."""
     import json
 
     from sqlalchemy import text
 
     from app import playlists
-    from app.imports.review import word
+    from app.imports.review import unfound
 
     ids = await playlists.track_ids(s, playlist_id)
     await ensure(s, ids)
-    reviews, failed = await word(s, user_id, set(ids))
-    said = json.dumps({str(i): {"import_review": r.model_dump(mode="json")} for i, r in reviews.items()})
+    failed = await unfound(s, user_id, set(ids))
     rows = """
-        SELECT c.card || jsonb_build_object('added_at', to_jsonb(pi.added_at), 'import_review', NULL::jsonb)
-                      || coalesce(CAST(:said AS jsonb) -> pi.track_id::text, '{}'::jsonb)
+        SELECT c.card || jsonb_build_object('added_at', to_jsonb(pi.added_at))
                       || CASE WHEN pi.track_id = ANY(:failed) AND NOT (c.card->>'owned')::boolean
                               THEN '{"unavailable": true}'::jsonb ELSE '{}'::jsonb END AS song,
                pi.added_at AS at, pi.position AS pos, pi.id AS id
@@ -324,7 +322,7 @@ async def list_json(s: AsyncSession, playlist_id: int, user_id: int, *, extra: l
             SELECT coalesce(json_agg(song ORDER BY at DESC NULLS LAST, pos, id), '[]')::text FROM rows"""
     else:
         q = f"SELECT coalesce(json_agg(song ORDER BY pos, id), '[]')::text FROM ({rows}) rows"
-    params = {"pid": playlist_id, "said": said, "failed": sorted(failed)}
+    params = {"pid": playlist_id, "failed": sorted(failed)}
     if extra:
         params["extra"] = json.dumps(extra)
     return (await s.execute(text(q), params)).scalar_one()
@@ -332,7 +330,7 @@ async def list_json(s: AsyncSession, playlist_id: int, user_id: int, *, extra: l
 
 async def list_tag(s: AsyncSession, playlist_id: int, user_id: int, *more: str) -> str:
     """The version of what `list_json` gives for the playlist (an ETag): its rows and their cards as kept, and what
-    the user's transfers say of them — told by one aggregate, without making the list. `more`: what else the answer
+    the user's transfers' unfound ones — told by one aggregate, without making the list. `more`: what else the answer
     holds (the tracks beside the playlist, Navidrome's stars)."""
     import hashlib
     import json
@@ -340,17 +338,17 @@ async def list_tag(s: AsyncSession, playlist_id: int, user_id: int, *more: str) 
     from sqlalchemy import text
 
     from app import playlists
-    from app.imports.review import word
+    from app.imports.review import unfound
 
     ids = await playlists.track_ids(s, playlist_id)
     await ensure(s, ids)
-    reviews, failed = await word(s, user_id, set(ids))
+    failed = await unfound(s, user_id, set(ids))
     rows = (await s.execute(text("""
         SELECT md5(coalesce(string_agg(concat_ws(':', pi.track_id, pi.position, pi.added_at, c.built_at),
                                        ',' ORDER BY pi.position, pi.id), ''))
         FROM playlist_items pi JOIN track_cards c ON c.track_id = pi.track_id WHERE pi.playlist_id = :pid"""),
         {"pid": playlist_id})).scalar_one()
-    said = json.dumps([sorted((i, r.model_dump(mode="json")["id"]) for i, r in reviews.items()), sorted(failed), *more])
+    said = json.dumps([sorted(failed), *more])
     return '"' + hashlib.md5(f"{rows}|{said}".encode()).hexdigest() + '"'
 
 

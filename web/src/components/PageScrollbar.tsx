@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
-import { STANDALONE } from '../lib/embedded';
 import { cx } from './ui';
 
 /** A mouse is there: the window's own bar is hidden (index.css) and this one is drawn instead. */
@@ -9,7 +8,7 @@ const subscribe = (cb: () => void) => {
   mql?.addEventListener('change', cb);
   return () => mql?.removeEventListener('change', cb);
 };
-const useMouse = () => useSyncExternalStore(subscribe, () => STANDALONE && !!mql?.matches, () => false);
+const useMouse = () => useSyncExternalStore(subscribe, () => !!mql?.matches, () => false);
 
 const MIN_THUMB = 32;
 

@@ -1,6 +1,5 @@
-"""The Navidrome library as the user's player sees it: artists, albums, «Любимое», covers. The Android app
-has these as native screens (Tempus); the PWA in a plain browser shows them from here (`web/src/pages/Home.tsx`,
-`MediaLibrary.tsx`). Everything is asked of Navidrome as the user, so their stars and play counts are the ones shown.
+"""The Navidrome library as the user's player sees it: artists, albums, «Любимое», covers — the web app shows them
+from here (`web/src/pages/Home.tsx`, `MediaLibrary.tsx`). Everything is asked of Navidrome as the user, so their stars and play counts are the ones shown.
 """
 
 from __future__ import annotations

@@ -360,8 +360,7 @@ async def test_the_cards_of_some_tracks_are_given_by_their_ids(env):
     assert r.status_code == 200, r.text
     got = r.json()
     assert [t["library_track_id"] for t in got] == [x, waiting, k]  # in the order asked, once, the unknown left out
-    assert [(t["title"], t["owned"], t["import_review"]) for t in got] == [
-        ("Своё", True, None), ("Ещё не скачан", False, None), ("Группа крови", True, None)]
+    assert [(t["title"], t["owned"]) for t in got] == [("Своё", True), ("Ещё не скачан", False), ("Группа крови", True)]
     playlist = (await c.get(f"/api/playlists/{await new_playlist(c, 'Тот же вид')}")).json()
     assert playlist["tracks"] == []
     pid = await new_playlist(c, "Сверка")

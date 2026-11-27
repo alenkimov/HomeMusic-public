@@ -51,9 +51,6 @@ class User(Base):
     nd_password_enc: Mapped[str] = mapped_column(Text)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    # Google account linked to this user ("sub" of its ID token): sign-in with Google in the app
-    google_sub: Mapped[str | None] = mapped_column(String(255), unique=True)
-    google_email: Mapped[str | None] = mapped_column(String(320))
     # the confirmed email the account registered with (lower case): sign-in by it, too
     email: Mapped[str | None] = mapped_column(String(320), unique=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)

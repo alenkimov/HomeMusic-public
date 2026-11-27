@@ -471,7 +471,6 @@ export const api = {
   authOptions: (signal?: AbortSignal) => request<AuthOptionsOut>('GET', '/api/auth/options', { signal }),
   emailCode: (body: { email: string }) => request<EmailCodeOut>('POST', '/api/auth/email/code', { json: body }),
   emailRegister: (body: EmailRegisterIn) => request<MeOut>('POST', '/api/auth/email/register', { json: body }),
-  unlinkGoogle: () => request<MeOut>('DELETE', '/api/auth/google/link'),
 
   // admin
   adminUsers: (signal?: AbortSignal) => request<AdminUsersOut>('GET', '/api/admin/users', { signal }),
@@ -829,7 +828,7 @@ export const api = {
   dropPlaylistCover: (id: string) => request<PlaylistOut>('DELETE', `/api/playlists/${enc(id)}/cover`),
   deletePlaylist: (id: string) => request<OkOut>('DELETE', `/api/playlists/${enc(id)}`),
 
-  // the Navidrome library (a browser shows it; the app has it natively)
+  // the Navidrome library
   ndLiked: (signal?: AbortSignal) => request<NdLikedOut>('GET', '/api/nd/liked', { signal }),
   trackCards: (ids: number[]) => request<NdSongOut[]>('POST', '/api/tracks/cards', { json: { ids } }),
   ndArtists: (signal?: AbortSignal) => cachedGet<NdArtistOut[]>('/api/nd/artists', signal),

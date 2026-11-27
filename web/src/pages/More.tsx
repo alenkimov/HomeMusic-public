@@ -1,6 +1,5 @@
 import { openTelegramSetup, TELEGRAM_LINK_EVENT } from '../lib/telegram';
 import { useEffect, useState, type ReactNode } from 'react';
-import { STANDALONE } from '../lib/embedded';
 import { useSession } from '../lib/session';
 import { api } from '../api/client';
 import { useDislikes } from '../lib/dislikes';
@@ -9,7 +8,6 @@ import { useAsync, useWindowEvent } from '../lib/hooks';
 import { useKeptLists } from '../lib/offline';
 import { BrandIcon } from '../components/BrandIcon';
 import { Icon, type IconName } from '../components/Icon';
-import { ServiceBadge } from '../components/ServiceBadge';
 import { PageHeader, cx, Badge } from '../components/ui';
 import { notifyPermission, requestNotifyPermission, useActiveDownloads, type NotifyPermission } from '../lib/notify';
 import { Link } from '../lib/router';
@@ -34,9 +32,9 @@ export function MorePage() {
   const [canInstall, setCanInstall] = useState(!!deferredInstall);
   const downloads = useActiveDownloads();
   // what stands now behind the lines: asked once the menu opens, kept between visits — a line waits for none of it
-  const quality = useAsync((s) => (STANDALONE ? api.quality(s) : Promise.resolve(null)), [], true, 'menu:quality');
+  const quality = useAsync((s) => api.quality(s), [], true, 'menu:quality');
   // what «Наведение порядка» found and waits for an answer: a count draws the eye to it
-  const tidy = useAsync((s) => (STANDALONE ? api.tidy(s) : Promise.resolve(null)), [], true, 'menu:tidy');
+  const tidy = useAsync((s) => api.tidy(s), [], true, 'menu:tidy');
   const tidyWaiting = tidy.data?.total ?? 0;
   // the backups, for an admin: a red word when they are not going off the server
   const version = useVersion(); // the number at the bottom, and a dot while a release is not opened yet
@@ -47,7 +45,7 @@ export function MorePage() {
   const checksWrong = useAsync((s) => (me.is_admin ? api.serviceChecks(s) : Promise.resolve(null)), [], true, 'menu:checks').data?.attention ?? 0;
   const backupWord = !backup ? undefined : !backup.connected ? 'не настроены' : backup.stale || backup.error ? 'не отправляются' : undefined;
   // what waits for the user in «Загрузки»: files to choose, failed ones — a transfer's too
-  const review = useAsync((s) => (STANDALONE ? api.downloadsOverview(s) : Promise.resolve(null)), [], true, 'menu:downloads')?.data?.review ?? 0;
+  const review = useAsync((s) => api.downloadsOverview(s), [], true, 'menu:downloads')?.data?.review ?? 0;
   const telegram = useAsync(api.telegram, []);
   useWindowEvent(TELEGRAM_LINK_EVENT, () => telegram.reload(true));
   const kept = useKeptLists().tracks;
@@ -105,31 +103,27 @@ export function MorePage() {
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-lg font-bold uppercase text-on-accent">{me.username.slice(0, 1)}</span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-semibold">{me.username}</span>
-                <span className="block truncate text-[13px] text-muted">{[me.is_admin ? 'Администратор' : 'Пользователь', me.email].filter(Boolean).join(' · ')}{me.google_email && <> · <ServiceBadge service="google" />: {me.google_email}</>}</span>
+                <span className="block truncate text-[13px] text-muted">{[me.is_admin ? 'Администратор' : 'Пользователь', me.email].filter(Boolean).join(' · ')}</span>
               </span>
               <button type="button" onClick={doLogout} aria-label="Выйти из аккаунта" title="Выйти из аккаунта" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-danger hover:bg-danger/10">
                 <Icon name="logout" size={20} />
               </button>
             </li>
           </Group>
-          {STANDALONE && (
-            <Group>
-              <Item icon="download" tint="bg-[#3d8ef0]" to="/downloads" title="Загрузки" value={downloads > 0 ? `качается ${downloads > 99 ? '99+' : downloads}` : undefined} badge={review ? (review > 999 ? '999+' : String(review)) : undefined} badgeTone="warn" />
-              <Item icon="folder" tint="bg-[#ef8b3a]" to="/files" title={me.is_admin ? 'Все файлы' : 'Мои файлы'} />
-              <Item icon="sparkle" tint="bg-[#1f9d55]" to="/tidy" title="Наведение порядка" badge={tidyWaiting ? (tidyWaiting > 99 ? '99+' : String(tidyWaiting)) : undefined} />
-              <Item icon="sliders" tint="bg-[#30b85c]" to="/quality" title="Качество звука" value={waiting ? `ждут решения: ${waiting}` : weak ? `слабых: ${weak}` : undefined} />
-            </Group>
-          )}
-          {STANDALONE && (
-            <Group>
-              <Item icon="chart" tint="bg-[#2ba6bc]" to="/stats" title="Статистика" />
-              <Item icon="history" tint="bg-[#7b61d9]" to="/history" title="История" />
-              <Item icon="user" tint="bg-[#a45ad6]" to="/taste" title="Мои исполнители" />
-              {me.artist_map && <Item icon="wave" tint="bg-[#d5483f]" to="/map" title="Карта похожих" />}
-              <Item icon="download" tint="bg-[#1f9d55]" to="/offline" title="Офлайн" value={kept ? tracksWord(kept) : undefined} />
-              <Item icon="ban" tint="bg-[#b0483f]" to="/hidden" title="Скрытое" value={hiddenCount ? String(hiddenCount) : undefined} />
-            </Group>
-          )}
+          <Group>
+            <Item icon="download" tint="bg-[#3d8ef0]" to="/downloads" title="Загрузки" value={downloads > 0 ? `качается ${downloads > 99 ? '99+' : downloads}` : undefined} badge={review ? (review > 999 ? '999+' : String(review)) : undefined} badgeTone="warn" />
+            <Item icon="folder" tint="bg-[#ef8b3a]" to="/files" title={me.is_admin ? 'Все файлы' : 'Мои файлы'} />
+            <Item icon="sparkle" tint="bg-[#1f9d55]" to="/tidy" title="Наведение порядка" badge={tidyWaiting ? (tidyWaiting > 99 ? '99+' : String(tidyWaiting)) : undefined} />
+            <Item icon="sliders" tint="bg-[#30b85c]" to="/quality" title="Качество звука" value={waiting ? `ждут решения: ${waiting}` : weak ? `слабых: ${weak}` : undefined} />
+          </Group>
+          <Group>
+            <Item icon="chart" tint="bg-[#2ba6bc]" to="/stats" title="Статистика" />
+            <Item icon="history" tint="bg-[#7b61d9]" to="/history" title="История" />
+            <Item icon="user" tint="bg-[#a45ad6]" to="/taste" title="Мои исполнители" />
+            {me.artist_map && <Item icon="wave" tint="bg-[#d5483f]" to="/map" title="Карта похожих" />}
+            <Item icon="download" tint="bg-[#1f9d55]" to="/offline" title="Офлайн" value={kept ? tracksWord(kept) : undefined} />
+            <Item icon="ban" tint="bg-[#b0483f]" to="/hidden" title="Скрытое" value={hiddenCount ? String(hiddenCount) : undefined} />
+          </Group>
         </div>
         <div className="space-y-5">
           <Group title="Администрирование">
@@ -155,8 +149,6 @@ export function MorePage() {
           <Group title="Это устройство">
             <Item icon="bell" tint="bg-[#d9534f]" title="Уведомления" value={permText[perm]} onClick={notifications} />
             {canInstall && !standalone && <Item icon="install" tint="bg-[#30b85c]" title="Установить приложение" onClick={install} />}
-            {/* the player is here: in the browser, and the app's own on Android */}
-            <Item icon="install" tint="bg-[#1f9d55]" href="/app/latest.apk" title="Приложение для Android" />
           </Group>
         </div>
       </div>

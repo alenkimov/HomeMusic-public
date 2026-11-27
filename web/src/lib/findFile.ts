@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { HubEventMap, ImportReviewOut, TrackOut } from '../api/types';
+import type { HubEventMap, ImportDoubt, TrackOut } from '../api/types';
 
 export function needsTrackFile(track: Pick<TrackOut, 'owned' | 'unknown' | 'unavailable'>): boolean {
   return !track.owned && !!(track.unknown || track.unavailable);
@@ -19,7 +19,8 @@ export type FileSought = FilePickerIdentity & {
   artist: string;
   has_file: boolean;
   cover_url?: string | null;
-  import_review?: ImportReviewOut;
+  /** a transfer's song this file is picked for: the question of «Наведение порядка» it answers */
+  doubt?: ImportDoubt;
 };
 
 export function filePickerTarget(track: {
@@ -29,11 +30,11 @@ export function filePickerTarget(track: {
   artist: string;
   cover_url?: string | null;
   cover_small_url?: string | null;
-  import_review?: ImportReviewOut | null;
+  doubt?: ImportDoubt | null;
 }): FileSought | null {
   const file = {
     title: track.title, artist: track.artist, has_file: false, cover_url: track.cover_small_url || track.cover_url,
-    import_review: track.import_review ?? undefined,
+    doubt: track.doubt ?? undefined,
   };
   if (track.library_track_id != null) return { ...file, library_track_id: track.library_track_id, ref: track.ref };
   return track.ref && /^(dz|ym|sp):[^:]+$/.test(track.ref) ? { ...file, ref: track.ref } : null;

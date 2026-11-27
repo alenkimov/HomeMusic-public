@@ -11,7 +11,7 @@ type Phase = { kind: 'working'; text: string } | { kind: 'empty' } | { kind: 'er
 let running: Promise<void> | null = null;
 
 /**
- * Android "Share" → HomeMusic. The service worker stored the shared payload in IndexedDB and redirected here:
+ * «Поделиться» → HomeMusic on a phone (the installed web app is a share target). The service worker stored the shared payload in IndexedDB and redirected here:
  * a Spotify link opens as one, audio goes to the upload form, other text or a link becomes a search.
  */
 export function SharePage() {

@@ -45,7 +45,6 @@ import { isUpload,
   creditedOf,
 } from '../lib/listen';
 import { Link, albumPath, enc, goBack } from '../lib/router';
-import { STANDALONE } from '../lib/embedded';
 import type { ListenOut } from '../api/types';
 import { openShare } from '../lib/shareTrack';
 import { addRec, hideRec } from '../lib/smartShuffle';
@@ -112,7 +111,7 @@ export function MobilePlayerSheet() {
  * text in its place), ♥, seek, the controls; under them ⋯ on the left, «Поделиться» and the queue's button on the
  * right; below — «Участники»: who plays it, a tap away from their pages and their ♥. The queue is shown when asked
  * for: a sheet from below on a phone, the right column on a wide screen — the column of the text too: an open queue stands over
- * the text, which is back when the queue is closed; with neither, the player is one column in the middle. Inside the app the player is the app's own. */
+ * the text, which is back when the queue is closed; with neither, the player is one column in the middle. */
 export function PlayerPage() {
   const track = useListen((s) => s.track);
   const phase = useListen((s) => s.phase);
@@ -373,7 +372,7 @@ function SpotifyTrackPlays({ track, songId }: { track: ListenTrack; songId?: str
 function Credits({ track, info }: { track: ListenTrack; info: ListenOut | null | undefined }) {
   const people = creditedOf(track);
   const albumTo = track.album_ref || track.release_id ? albumPath({ ref: track.album_ref ?? '', release_id: track.release_id })
-    : STANDALONE && track.nd_album_id ? `/lib/album/${enc(track.nd_album_id)}` : null;
+    : track.nd_album_id ? `/lib/album/${enc(track.nd_album_id)}` : null;
   const album = track.album ? (
     <>
       <Cover src={track.cover_small_url ?? track.cover_url} size={48} alt="" icon="disc" />
