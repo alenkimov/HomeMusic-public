@@ -136,14 +136,57 @@ export function TidyPage() {
  * too. */
 const pairOf = (p: TidyProposalOut) => (p.kind === 'double' ? p.show.keep_id : p.kind === 'version' ? p.show.of_id : null) ?? null;
 
-function useTrackCards(rows: readonly TidyProposalOut[] | null | undefined): Map<number, TrackOut> {
+/** The cards of a list's tracks not had: said once, over the list, with the way to ask again. */
+function CardsFailed({ cards }: { cards: TrackCards }) {
+  if (cards.state !== 'failed') return null;
+  return (
+    <div className="mx-2 mt-3 flex flex-wrap items-center gap-3 rounded-xl bg-danger/10 px-3 py-3 sm:px-4 lg:mx-4" role="alert">
+      <Icon name="alert" size={20} className="shrink-0 text-danger" />
+      <span className="min-w-0 flex-1 text-[14px]">
+        <span className="block font-medium">Не удалось загрузить треки</span>
+        <span className="block text-[13px] text-muted">{cards.error ?? 'Хаб не ответил'}. Без них предложения не показать.</span>
+      </span>
+      <Button small variant="outline" icon="refresh" onClick={cards.retry}>Повторить</Button>
+    </div>
+  );
+}
+
+/** How long the cards of a list's tracks are waited for. */
+const CARDS_WAIT_MS = 30_000;
+
+/** How the cards of a list's tracks came: still asked, not had (the Hub did not answer), or here. */
+type CardsState = 'loading' | 'failed' | 'ready';
+
+interface TrackCards {
+  get: (id: number | null | undefined) => TrackOut | undefined;
+  state: CardsState;
+  error?: string;
+  retry: () => void;
+}
+
+function useTrackCards(rows: readonly TidyProposalOut[] | null | undefined): TrackCards {
   const ids = [...new Set((rows ?? []).flatMap((p) => [
     ...(p.subject_type === 'track' ? [p.subject_id] : []),
     ...(pairOf(p) ? [pairOf(p) as number] : []), // a double's copy that stays, a version's original
   ]))].sort((a, b) => a - b);
   const key = ids.join(',');
-  const res = useAsync(() => (ids.length ? api.trackCards(ids) : Promise.resolve([])), [key], true, `tidy:cards:${key}`);
-  return new Map((res.data ?? []).filter((t) => t.library_track_id != null).map((t) => [t.library_track_id as number, t]));
+  const res = useAsync(async (signal) => {
+    if (!ids.length) return [];
+    try {
+      return await api.trackCards(ids, AbortSignal.any([signal, AbortSignal.timeout(CARDS_WAIT_MS)]));
+    } catch (e) {
+      // waited for long enough: the Hub is stuck on them — said, not waited for without end
+      if (!signal.aborted && e instanceof DOMException && e.name === 'TimeoutError') throw new Error('Хаб не ответил');
+      throw e;
+    }
+  }, [key], true, `tidy:cards:${key}`);
+  const map = new Map((res.data ?? []).filter((t) => t.library_track_id != null).map((t) => [t.library_track_id as number, t]));
+  return {
+    get: (id) => (id == null ? undefined : map.get(id)),
+    state: res.data ? 'ready' : res.error ? 'failed' : 'loading',
+    error: res.error,
+    retry: () => res.reload(),
+  };
 }
 
 function Proposals({ section, sure, focus, checked, onChange }: { section: TidyProposalSection; sure: number; focus: number | null; checked: string | null; onChange: () => void }) {
@@ -206,14 +249,17 @@ function Proposals({ section, sure, focus, checked, onChange }: { section: TidyP
       ) : shown.length === 0 ? (
         <Empty icon="check" title="Здесь всё в порядке" text={checked ? `Хаб проверил библиотеку ${fmtWhen(checked)} и ничего не нашёл.` : 'Хаб проверяет библиотеку каждую ночь.'} />
       ) : (
-        <ul className="mt-3 space-y-2 px-2 lg:px-4">
-          {shown.map((p) => (
-            <li key={p.id} ref={p.id === focus ? lit : undefined}>
-              <ProposalCard p={p} lit={p.id === focus} busy={busy === p.id} onDecide={(what) => decide(p, what)}
-                track={p.subject_type === 'track' ? tracks.get(p.subject_id) : undefined} pair={pairOf(p) ? tracks.get(pairOf(p) as number) : undefined} />
-            </li>
-          ))}
-        </ul>
+        <>
+          <CardsFailed cards={tracks} />
+          <ul className="mt-3 space-y-2 px-2 lg:px-4">
+            {shown.map((p) => (
+              <li key={p.id} ref={p.id === focus ? lit : undefined}>
+                <ProposalCard p={p} lit={p.id === focus} busy={busy === p.id} onDecide={(what) => decide(p, what)}
+                  cards={tracks} />
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );
@@ -228,16 +274,38 @@ function subjectLink(p: TidyProposalOut): string | null {
 const WHAT: Record<TidyProposalOut['subject_type'], string> = { track: 'Трек', album: 'Альбом', artist: 'Исполнитель' };
 
 /** The subject as the proposal names it: its picture, what it is and whose; then «было → станет» in the kind's words. */
-export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
+export function ProposalCard({ p, busy, onDecide, journal, lit, cards }: {
   p: TidyProposalOut; busy: boolean; onDecide: (what: TidyDecision) => void; journal?: boolean;
   /** the one a mark on a page led to */
   lit?: boolean;
-  /** the track it is about, as every list shows a track (`useTrackCards`): its row heads the card */
-  track?: TrackOut;
-  /** the other track (`pairOf`): a double's copy that stays — under the one that goes — or a version's original —
-   * above the version; each row plays, to be compared */
-  pair?: TrackOut;
+  /** the tracks of the list as every list shows a track (`useTrackCards`): the track it is about heads the card;
+   * the other one (`pairOf`) — a double's copy that stays, under the one that goes, or a version's original, above
+   * the version — has its row too; each row plays, to be compared */
+  cards: TrackCards;
 }) {
+  const track = p.subject_type === 'track' ? cards.get(p.subject_id) : undefined;
+  const pair = cards.get(pairOf(p));
+  const frame = cx('rounded-xl bg-raised/60 pb-2 pt-1 transition', lit && 'bg-ai/10 ring-2 ring-ai', p.state !== 'open' && !journal && 'opacity-60');
+  const lacking = p.subject_type === 'track' && (!track || (pairOf(p) != null && !pair));
+  if (lacking && cards.state === 'loading') {
+    return <div className={frame} aria-busy="true"><SkeletonRows n={pairOf(p) != null ? 2 : 1} /></div>;
+  }
+  if (lacking && cards.state === 'failed') {
+    // the rows are what is compared: without them there is nothing to answer — said so, not drawn some other way
+    return (
+      <div className={cx(frame, 'flex flex-wrap items-center gap-3 px-3 py-3 sm:px-4')} role="alert">
+        <Icon name="alert" size={20} className="shrink-0 text-dim" />
+        <span className="min-w-0 flex-1 text-[14px]">
+          <span className="block text-muted">Не загрузилось</span>
+          <span className="block truncate text-[13px] text-muted">{[p.show.title_now || p.show.title || p.was, p.show.line].filter(Boolean).join(' · ')}</span>
+        </span>
+      </div>
+    );
+  }
+  // a track the Hub has no more (the copy a double deleted, in the journal): its row as the proposal names it
+  const row = (t: TrackOut | undefined, title: string | undefined) => t
+    ? <TrackRow track={t} showAlbum />
+    : <GoneRow title={title || p.was} artist={p.show.line} cover={p.show.cover} />;
   const to = subjectLink(p);
   const head = [WHAT[p.subject_type], p.show.line].filter(Boolean).join(' · ');
   const decided = p.state !== 'open';
@@ -272,14 +340,6 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
         </span>
       </>
     );
-  } else if (p.kind === 'double') {
-    body = (
-      <>
-        <span className="block truncate text-[15px] font-semibold">{p.show.title_now}</span>
-        <span className="mt-0.5 line-clamp-2 block break-words text-[13px] text-muted line-through decoration-danger/70">Удалить копию: {p.was}</span>
-        <span className="line-clamp-2 block break-words text-[13px] font-semibold">Оставить: {p.to}</span>
-      </>
-    );
   } else {
     body = (
       <>
@@ -303,11 +363,6 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
         <span className="block break-words text-[13px] font-semibold"><span className="text-dim">→ </span>{x.to}</span>
       </span>
     ))
-  ) : p.kind === 'double' ? (
-    <>
-      <span className="line-clamp-2 block break-words text-[13px] text-muted line-through decoration-danger/70">Удалить копию: {p.was}</span>
-      <span className="line-clamp-2 block break-words text-[13px] font-semibold">Оставить: {p.to}</span>
-    </>
   ) : (
     <>
       <span className="line-clamp-2 block break-words text-[14px] text-muted line-through decoration-danger/70">{p.was}</span>
@@ -406,17 +461,17 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
     );
   }
 
-  if (p.kind === 'import_match' && track) {
+  if (p.kind === 'import_match') {
     // a transfer's song and the library's track it was taken for, not surely: «Совпадает», or another file for it
     const review = { id: p.show.item_id ?? 0, source: (p.show.source ?? 'yandex') as ImportSource, title: p.show.title ?? '', artist: p.show.artist ?? '',
       duration_s: p.show.duration_s ?? null, cover_url: p.show.cover ?? null };
-    const target = filePickerTarget({ ...track, doubt: review });
+    const target = track ? filePickerTarget({ ...track, doubt: review }) : null;
     const label = (text: ReactNode, tone: string) => <p className={cx('px-3 pt-2 text-[12px] font-semibold sm:px-4', tone)}>{text}</p>;
     const answers = journal ? actions : decided ? actions : (
       <span className="flex gap-2 max-sm:w-full">
         {target && (
           <Button small variant="outline" disabled={busy} className="whitespace-nowrap max-sm:flex-1"
-            onClick={() => openFindFile({ ...target, has_file: !!track.owned, doubt: review })}>
+            onClick={() => openFindFile({ ...target, has_file: !!track?.owned, doubt: review })}>
             Найти другой файл
           </Button>
         )}
@@ -435,7 +490,7 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
           {review.duration_s ? <span className="shrink-0 text-[13px] text-muted tabular-nums">{fmtDuration(review.duration_s)}</span> : null}
         </div>
         {label(p.state === 'accepted' ? 'Совпадает' : 'Взято из библиотеки', p.state === 'accepted' ? 'text-accent' : 'text-ai')}
-        <TrackRow track={track} showAlbum />
+        {row(track, p.show.title_now)}
         <div className="mt-1 flex flex-wrap items-center gap-3 px-3 sm:px-4">
           <div className="min-w-0 flex-1 basis-60">
             <span className="flex min-w-0 items-center gap-2">
@@ -454,7 +509,7 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
     );
   }
 
-  if (track && pair) {
+  if (p.subject_type === 'track' && pairOf(p) != null) {
     // both tracks as rows: a double's copy that goes and the one that stays, a version's original and the version
     const label = (text: string, more: string | undefined, tone: string) => (
       <p className={cx('px-3 pt-2 text-[12px] font-semibold sm:px-4', tone)}>{text}{more ? <span className="font-normal text-muted"> · {more}</span> : null}</p>
@@ -465,16 +520,16 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
         {version ? (
           <>
             {label('Оригинал', undefined, 'text-muted')}
-            <TrackRow track={pair} showAlbum />
+            {row(pair, p.show.of_title)}
             {label(p.state === 'accepted' ? 'Его версия' : 'Похоже на его версию', p.show.label ? `«${p.show.label}»` : undefined, 'text-ai')}
-            <TrackRow track={track} showAlbum />
+            {row(track, p.show.title_now)}
           </>
         ) : (
           <>
             {label(p.state === 'accepted' ? 'Удалена копия' : 'Удалить копию', p.show.file, 'text-danger')}
-            <TrackRow track={track} showAlbum />
+            {row(track, p.show.title_now)}
             {label('Оставить', p.show.keep_file, 'text-accent')}
-            <TrackRow track={pair} showAlbum />
+            {row(pair, p.show.keep_title || p.show.title_now)}
           </>
         )}
         <div className="mt-1 flex flex-wrap items-center gap-3 px-3 sm:px-4">
@@ -495,14 +550,14 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
     );
   }
 
-  if (track) {
+  if (p.subject_type === 'track') {
     // the track's own row, as in a playlist or an album; under it what changes
     const text = p.kind === 'lyrics' || p.kind === 'uncensor';
     return (
       <div className={cx('rounded-xl bg-raised/60 pb-2 pt-1 transition', lit && 'bg-ai/10 ring-2 ring-ai', decided && !journal && 'opacity-60')}>
-        <TrackRow track={track} showAlbum />
+        {row(track, p.show.title_now)}
         <div className="mt-2 px-2 sm:px-3">
-          {text && !journal ? (
+          {text && !journal && track ? (
             <LyricsExcerpt p={p} track={track} actions={actions} />
           ) : (
             <div className="flex flex-wrap items-center gap-3 rounded-xl bg-raised px-3 py-2.5 sm:px-4">
@@ -543,6 +598,20 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
         )}
       </div>
       {actions && <div className="shrink-0 max-sm:w-full max-sm:pl-[60px]">{actions}</div>}
+    </div>
+  );
+}
+
+/** The row of a track the Hub has no more, drawn as a list draws a track: the picture, the name, whose — dimmed,
+ * nothing to play. */
+function GoneRow({ title, artist, cover }: { title: string; artist?: string | null; cover?: string | null }) {
+  return (
+    <div className="flex min-h-14 items-center gap-3 px-3 py-1.5 opacity-60 sm:px-4">
+      <Cover src={cover} size={40} icon="note" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[15px]">{title}</span>
+        <span className="block truncate text-[13px] text-muted">{[artist, 'трека уже нет в библиотеке'].filter(Boolean).join(' · ')}</span>
+      </span>
     </div>
   );
 }
@@ -593,10 +662,11 @@ export function TidyJournalPage() {
       ) : (
         <div className="max-w-4xl">
           <p className="px-4 text-[13px] text-muted lg:px-6">{rows.length} {plural(rows.length, ['изменение', 'изменения', 'изменений'])}{more ? ' и раньше' : ''}</p>
+          <CardsFailed cards={tracks} />
           <ul className="mt-3 space-y-2 px-2 lg:px-4">
             {rows.map((p) => (
               <li key={p.id}><ProposalCard p={p} journal busy={busy === p.id} onDecide={(what) => void decide(p, what)}
-                track={p.subject_type === 'track' ? tracks.get(p.subject_id) : undefined} pair={pairOf(p) ? tracks.get(pairOf(p) as number) : undefined} /></li>
+                cards={tracks} /></li>
             ))}
           </ul>
           {more && (
