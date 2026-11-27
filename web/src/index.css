@@ -320,7 +320,8 @@
 }
 
 @media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
-  html {
+  /* :root, as the phone's values above: the later rule of the same weight is the one that holds */
+  :root {
     --app-w: 72rem;
     --side-w: 16rem;
     --tabbar-h: 84px; /* a computer has the player bar (`DesktopPlayer`) where a phone has the tab bar */
