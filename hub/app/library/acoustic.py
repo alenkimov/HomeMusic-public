@@ -249,45 +249,96 @@ async def twin(s: AsyncSession, chroma: bytes | None, duration_s: float | None) 
     return (rows[at][0], rows[at][1], top) if at >= 0 and top >= ALIKE else None
 
 
-_doubles: tuple[tuple[int, int], list[list[int]]] | None = None  # (how many pictures, the newest file) -> the groups
+_STATE = "acoustic:doubles"  # catalog_cache: {"done": file ids compared, "edges": [[file, track, file, track], …] alike}
+_FOREVER = 10 * 365 * 86400
+_BATCH = 200  # new files compared at a go; what was found is written down after each
+API_BUDGET = 30  # new files a page's request compares itself; more — the worker's pass does it (`refresh`)
+_lock = asyncio.Lock()
 
 
-async def doubles(s: AsyncSession) -> list[list[int]]:
+def _pairs(new: list[tuple[int, int, int, bytes]], every: list[tuple[int, int, int, bytes]], known: set[int]) -> list[list[int]]:
+    """The pairs of files that sound the same — [file, track, file, track] — each of a new file and another of about
+    its length (`every` is sorted by length): (file id, track id, seconds, picture) each. A new file is compared with
+    the ones compared before (`known`) and the new ones before it — so a pair is compared once."""
+    import bisect
+
+    lengths = [d for _, _, d, _ in every]
+    fresh = {f for f, _, _, _ in new}
+    out = []
+    for fa, ta, da, ca in new:
+        lo, hi = (0, len(every)) if not da else (bisect.bisect_left(lengths, da - NEAR_S), bisect.bisect_right(lengths, da + NEAR_S))
+        for fb, tb, db, cb in every[lo:hi]:
+            if ta == tb or not (fb in known or (fb in fresh and fb < fa)) or (da and db and abs(db - da) > NEAR_S):
+                continue
+            if likeness(ca, cb) >= SAME:
+                out.append([fa, ta, fb, tb])
+    return out
+
+
+async def doubles(s: AsyncSession | None = None, *, budget: int | None = API_BUDGET) -> list[list[int]]:
     """The tracks that are one recording twice or more: groups of track ids, each of files that sound the same
-    (`SAME`). A library is gone through in seconds, not at once, so what was found is kept until a file with a
-    picture comes or goes."""
-    global _doubles
-    count, newest = (await s.execute(select(func.count(TrackFile.id), func.max(TrackFile.id))
-                                     .where(TrackFile.chroma.is_not(None)))).one()
-    if _doubles is not None and _doubles[0] == (count, newest or 0):
-        return _doubles[1]
-    rows = [(tid, dur or 0, chroma) for tid, dur, chroma in (await s.execute(
-        select(TrackFile.track_id, Track.duration_s, TrackFile.chroma).join(Track, Track.id == TrackFile.track_id)
-        .where(TrackFile.chroma.is_not(None)).order_by(Track.duration_s))).all() if chroma]
+    (`SAME`). Each file is compared once, when it is new, with the files of about its length — what was found is
+    written down (`_STATE`), so a library of thousands is not gone through again whenever a file comes. `budget`:
+    at most so many new files are compared now (a page's request: a few; the worker's pass: all, by batches) — the
+    rest wait, and the groups are of what was compared. `s` is not used: the comparing holds no connection."""
+    from app.catalog.cache import cache_get, cache_set
+    from app.db import session_scope
 
-    def find() -> list[list[int]]:
-        group = {tid: tid for tid, _, _ in rows}
+    async with _lock:  # one comparing at a time; who comes meanwhile gets what it found
+        async with session_scope() as db:
+            files = (await db.execute(select(TrackFile.id, TrackFile.track_id, Track.duration_s)
+                                      .join(Track, Track.id == TrackFile.track_id).where(TrackFile.chroma.is_not(None)))).all()
+        state = await cache_get(_STATE) or {}
+        done, edges = set(state.get("done") or []), [tuple(e) for e in state.get("edges") or [] if len(e) == 4]
+        new = sorted(f for f, _, _ in files if f not in done)
+        if new and (budget is None or len(new) <= budget):
+            async with session_scope() as db:
+                pictures = dict((await db.execute(select(TrackFile.id, TrackFile.chroma).where(TrackFile.chroma.is_not(None)))).all())
+            every = sorted(((f, t, d or 0, pictures[f]) for f, t, d in files if pictures.get(f)), key=lambda x: x[2])
+            by_id = {x[0]: x for x in every}
+            for k in range(0, len(new), _BATCH):
+                batch = [by_id[f] for f in new[k:k + _BATCH] if f in by_id]
+                found = await asyncio.to_thread(_pairs, batch, every, set(done))
+                edges += [tuple(e) for e in found]
+                done.update(new[k:k + _BATCH])
+                alive = {f for f, _, _ in files}  # a file gone takes what was found of it along
+                edges = [e for e in edges if e[0] in alive and e[2] in alive]
+                await cache_set(_STATE, {"done": sorted(done & alive), "edges": [list(e) for e in edges]}, _FOREVER)
+                if len(new) > _BATCH:
+                    log.info("doubles: %d of %d new files compared", min(k + _BATCH, len(new)), len(new))
+                    await asyncio.sleep(1)  # the rest of the process breathes between batches
+    alive = {f for f, _, _ in files}
+    group: dict[int, int] = {}
 
-        def top(x: int) -> int:
-            while group[x] != x:
-                group[x] = group[group[x]]
-                x = group[x]
-            return x
+    def top(x: int) -> int:
+        group.setdefault(x, x)
+        while group[x] != x:
+            group[x] = group[group[x]]
+            x = group[x]
+        return x
 
-        for i, (a, da, ca) in enumerate(rows):
-            for b, db, cb in rows[i + 1:]:
-                if da and db and db - da > NEAR_S:
-                    break  # by length: the rest are longer still
-                if a != b and top(a) != top(b) and likeness(ca, cb) >= SAME:
-                    group[top(b)] = top(a)
-        out: dict[int, list[int]] = {}
-        for tid in group:
-            out.setdefault(top(tid), []).append(tid)
-        return sorted(sorted(g) for g in out.values() if len(g) > 1)
+    for fa, a, fb, b in edges:
+        if fa in alive and fb in alive:
+            group[top(b)] = top(a)
+    out: dict[int, list[int]] = {}
+    for tid in list(group):
+        out.setdefault(top(tid), []).append(tid)
+    return sorted(sorted(g) for g in out.values() if len(g) > 1)
 
-    found = await asyncio.to_thread(find)
-    _doubles = ((count, newest or 0), found)
-    return found
+
+async def refresh() -> list[list[int]]:
+    """The worker's pass: every new file compared (`doubles` with no budget)."""
+    return await doubles(budget=None)
+
+
+async def loop() -> None:
+    """The worker compares the new files now and then, so a page's request finds the groups ready."""
+    while True:
+        try:
+            await refresh()
+        except Exception:
+            log.exception("doubles: the pass failed")
+        await asyncio.sleep(600)
 
 
 async def fill(s: AsyncSession, limit: int = 100) -> int:

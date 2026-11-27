@@ -230,3 +230,31 @@ def test_where_two_files_of_one_recording_part():
     assert 58 <= late["at"] <= 61 and 56 <= late["other_at"] <= 59
     # another recording altogether: nothing to lay side by side
     assert acoustic.parts(one, 200.0, [rnd.getrandbits(32) for _ in range(1600)], 200.0) == []
+
+
+async def test_doubles_compares_each_new_file_once_and_keeps_what_it_found(hub_env, monkeypatch):
+    """A file is compared when it is new; the next asking finds the groups written down, and a page's request leaves
+    many new files to the worker's pass."""
+    from app.db import session_scope
+    from app.library import acoustic
+    from app.models import Track, TrackFile
+
+    picture = acoustic.pack([0x5A5A5A5A ^ (i * 2654435761 & 0xFFFFFFFF) for i in range(400)])
+    async with session_scope() as s:
+        ids = []
+        for title in ("A", "A again", "B"):
+            t = Track(title=title, artist="X", fingerprint=f"fp-{title}", duration_s=200 if title != "B" else 300)
+            s.add(t)
+            await s.flush()
+            s.add(TrackFile(track_id=t.id, uid=f"u-{title}", path=f"x/{title}.mp3", chroma=picture))
+            ids.append(t.id)
+    calls = []
+    real = acoustic.likeness
+    monkeypatch.setattr(acoustic, "likeness", lambda a, b: calls.append(1) or real(a, b))
+
+    assert await acoustic.doubles(budget=1) == []  # three new: too many for a page's request
+    assert calls == []
+    assert await acoustic.refresh() == [sorted(ids[:2])]  # «B» is of another length: not compared at all
+    assert len(calls) == 1
+    assert await acoustic.doubles() == [sorted(ids[:2])]  # written down: nothing compared again
+    assert len(calls) == 1

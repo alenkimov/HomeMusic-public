@@ -116,6 +116,9 @@ async def lifespan(app: FastAPI):
         from app.artist_pages import loop as artist_pages_loop
 
         tasks.append(_loop_task(artist_pages_loop(), "artist-pages"))
+        from app.library.acoustic import loop as doubles_loop
+
+        tasks.append(_loop_task(doubles_loop(), "doubles"))
     from app.version import build, version
 
     log.info("hub %s (%s) started (%s)", version(), build()["commit"] or "?", s.hub_role)

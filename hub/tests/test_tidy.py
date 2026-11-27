@@ -243,7 +243,7 @@ async def test_the_worse_of_two_copies_goes_to_the_trash_and_comes_back(env, mon
         library_abs(p).parent.mkdir(parents=True, exist_ok=True)
         library_abs(p).write_bytes(b"sound")
 
-    async def doubles(s):
+    async def doubles(s=None, *, budget=None):
         return [[good, bad]]
 
     monkeypatch.setattr(acoustic, "doubles", doubles)

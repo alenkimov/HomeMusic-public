@@ -271,7 +271,7 @@ async def _doubles(s: AsyncSession) -> int:
     from app.library import acoustic
 
     busy = await _busy(s, "versions")
-    groups = await acoustic.doubles(s)
+    groups = await acoustic.doubles(budget=None)  # the worker: every new file compared
     if not groups:
         return 0
     ids = [i for g in groups for i in g]
