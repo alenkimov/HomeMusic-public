@@ -1876,6 +1876,9 @@ export interface TidyShow {
   fix_at?: number[];
   /** an artist joined: who into */
   into_id?: number | null;
+  /** an artist joined: the small photos of the one that joins and of the one it joins */
+  picture?: string | null;
+  into_picture?: string | null;
 }
 
 export interface TidyProposalOut {

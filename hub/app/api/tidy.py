@@ -97,6 +97,21 @@ def _words(p: TidyProposal, show: dict[str, Any]) -> tuple[str, str]:
     return "", ""
 
 
+async def _pictures(s: AsyncSession, artist_id: int | None) -> str | None:
+    """An artist's small photo for a card of joining two (`app/library/looks.py`); None: none, or it could not be had."""
+    from app.library import looks
+    from app.models import Artist
+
+    a = await s.get(Artist, artist_id) if artist_id else None
+    if a is None:
+        return None
+    try:
+        found = await looks.photo(s, a)
+    except Exception:
+        return None
+    return found[1] if found else None
+
+
 async def _out(s: AsyncSession, rows: list[TidyProposal]) -> list[TidyProposalOut]:
     from app.models import Track
 
@@ -120,6 +135,7 @@ async def _out(s: AsyncSession, rows: list[TidyProposal]) -> list[TidyProposalOu
             show["fix_at"] = sorted(int(k) for k in (p.to_json.get("replace") or {}))
         elif p.kind == "artist":
             show["into_id"] = p.to_json.get("into")
+            show["picture"], show["into_picture"] = await _pictures(s, p.subject_id), await _pictures(s, p.to_json.get("into"))
         elif p.kind == "double":
             show["keep_id"] = p.to_json.get("keep")  # the copy that stays: its own row beside the one that goes
         elif p.kind == "version":

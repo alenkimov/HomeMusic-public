@@ -338,6 +338,56 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
     </span>
   );
 
+  if (p.kind === 'artist' && p.show.into_id) {
+    // two artists that are one: the two photos overlapping, their names and tracks, an arrow, the one they become
+    const count = (line?: string | null) => Number(/\d+/.exec(line ?? '')?.[0] ?? 0);
+    const total = count(p.show.line) + count(p.show.into_line);
+    const ring = 'rounded-full ring-[3px] ring-surface';
+    const other = artistPath({ ref: '', hub_artist_id: p.show.artist_id ?? p.subject_id });
+    const into = artistPath({ ref: '', hub_artist_id: p.show.into_id });
+    return (
+      <div className={cx('rounded-xl bg-raised/60 p-4 transition sm:p-5', lit && 'bg-ai/10 ring-2 ring-ai', decided && !journal && 'opacity-60')}>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
+          <div className="flex min-w-0 flex-1 items-center gap-4">
+            <span className="relative h-14 w-[92px] shrink-0">
+              <Cover src={p.show.picture} size={56} round icon="user" className={cx('absolute left-0 top-0', ring)} />
+              <Cover src={p.show.into_picture} size={56} round icon="user" className={cx('absolute left-9 top-0', ring)} />
+            </span>
+            <span className="flex min-w-0 flex-col gap-1">
+              <Link to={other} className="flex min-w-0 items-baseline gap-2 text-[15px] font-semibold hover:underline">
+                <span className="truncate">{p.show.name || p.was}</span>
+                <span className="shrink-0 text-[12px] font-medium text-muted">{count(p.show.line)}</span>
+              </Link>
+              <Link to={into} className="flex min-w-0 items-baseline gap-2 text-[15px] font-semibold hover:underline">
+                <span className="truncate">{p.show.into_name || p.to}</span>
+                <span className="shrink-0 text-[12px] font-medium text-muted">{count(p.show.into_line)}</span>
+              </Link>
+            </span>
+          </div>
+          <Icon name="chevron" size={28} className="shrink-0 self-center text-ai max-sm:rotate-90" />
+          <Link to={into} className="flex min-w-0 flex-1 items-center gap-4">
+            <Cover src={p.show.into_picture} size={64} round icon="user" className="shrink-0 rounded-full ring-2 ring-ai ring-offset-[3px] ring-offset-surface" />
+            <span className="flex min-w-0 flex-col gap-1">
+              <span className="truncate text-lg font-bold">{p.show.into_name || p.to}</span>
+              {total > 0 && <span className="text-[13px] font-semibold text-ai">{total} {plural(total, ['трек', 'трека', 'треков'])}</span>}
+            </span>
+          </Link>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <span className="flex min-w-0 flex-1 basis-40 flex-col gap-1">
+            <span title={p.why || undefined} className="w-fit"><ByMark p={p} /></span>
+            {journal && (
+              <span className="text-[12px] text-dim">
+                {stateWord}{p.decided_by ? ` · ${p.decided_by}` : ''}{p.decided_at ? ` · ${fmtWhen(p.decided_at)}` : ''}
+              </span>
+            )}
+          </span>
+          {actions && <div className="shrink-0 max-sm:w-full">{actions}</div>}
+        </div>
+      </div>
+    );
+  }
+
   if (track && pair) {
     // both tracks as rows: a double's copy that goes and the one that stays, a version's original and the version
     const label = (text: string, more: string | undefined, tone: string) => (
