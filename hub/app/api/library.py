@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from pathlib import PurePosixPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -22,13 +23,17 @@ from app.api.schemas import (
     AlbumMergeIn,
     AlbumPatchIn,
     AlbumRenameIn,
-    FileJournalOut,
+    DownloadStepsOut,
+    FileEventOut,
+    FileOut,
     FileRowOut,
     LibAlbumOut,
     LibTrackOut,
     StarIn,
     StarredOut,
     TrackEditOut,
+    TrackFileOut,
+    TrackFilesOut,
     TrackPatchIn,
     TracksDeleteIn,
     TracksDeleteOut,
@@ -40,17 +45,18 @@ from app.api.schemas import (
 )
 from app.auth import current_user, user_navidrome
 from app.catalog.models import CatalogAlbum, split_ref
+from app.config import get_settings
 from app.db import get_session
 from app.events import bus
 from app.jobs.downloads import enqueue_scan
 from app.jobs.queue import notify
 from app.library import access, album_names, artists, editor, edits, tagger, trash
 from app.library.artwork import album_cover_url
+from app.library.files import main_of, mains
 from app.library.importer import album_reldir, get_or_create_album, library_abs, library_lock
 from app.library.owned import file_out
-from app.library.tracks import current_file, current_files
 from app.matching.normalize import normalize_title
-from app.models import Album, DownloadItem, Track, TrackFile, User
+from app.models import Album, DownloadItem, Track, TrackFile, TrackFileEvent, User
 
 router = APIRouter(tags=["library"])
 log = logging.getLogger(__name__)
@@ -77,7 +83,7 @@ async def album_out(s: AsyncSession, a: Album, user: User, *, with_tracks: bool 
         await s.execute(select(Track).where(Track.album_id == a.id, access.tracks_of(user))
                         .order_by(Track.disc_no, Track.track_no, Track.id))
     ).scalars().all()
-    files = await current_files(s, [t.id for t in tracks]) if with_tracks else {}
+    files = await mains(s, [t.id for t in tracks]) if with_tracks else {}
     return LibAlbumOut(
         id=a.id, uid=a.uid, title=a.title, album_artist=a.album_artist, year=a.year, release_type=a.release_type,
         genre=a.genre, deezer_album_id=a.deezer_album_id, track_count=len(tracks), has_cover=_has_cover(a),
@@ -522,7 +528,7 @@ async def patch_track(track_id: int, body: TrackPatchIn, user: User = Depends(cu
         raise HTTPException(422, str(e)) from e
     await _after_edit(s, user, t.album_id)
     await s.refresh(t)
-    return track_out(t, await current_file(s, t.id))
+    return track_out(t, await main_of(s, t.id))
 
 
 @router.get("/api/library/track-edit", response_model=TrackEditOut)
@@ -657,28 +663,117 @@ async def track_keeping(track_id: int, user: User = Depends(current_user),
     on their own side, to take it out of there instead."""
     t = await _track(s, track_id)
     may, others, mine = await access.keeping(s, user, t.id)
-    return {"can_delete": may, "others": others, "has_file": await current_file(s, t.id) is not None,
+    return {"can_delete": may, "others": others, "has_file": await main_of(s, t.id) is not None,
             "mine": [{"id": str(p.id), "name": p.name, "liked": p.kind == "liked"} for p in mine]}
 
 
-@router.get("/api/library/tracks/{track_id}/journal", response_model=FileJournalOut)
-async def track_journal(track_id: int, user: User = Depends(current_user),
-                        s: AsyncSession = Depends(get_session, scope="function")):
-    """How the track's file came to the library: the journal of the download that brought it (the last one that
-    kept a journal). The library is everybody's, so anybody may read how a file of it was picked."""
-    t = await s.get(Track, track_id)
-    if t is None:
-        raise HTTPException(404, "Трек не найден")
-    f = await current_file(s, t.id)
-    item = (await s.execute(select(DownloadItem).where(
-        DownloadItem.track_id == t.id, func.jsonb_array_length(DownloadItem.log_json) > 0)
-        .order_by(DownloadItem.id.desc()).limit(1))).scalar_one_or_none()
-    file = file_out(f) if f else None
-    if file:
-        file.journal = item is not None
-    return FileJournalOut(track_id=t.id, artist=t.artist, title=t.title, file=file,
-                          steps=list(item.log_json or []) if item else [],
-                          download_id=item.id if item and item.user_id == user.id and not item.hidden else None)
+async def _files_out(s: AsyncSession, t: Track) -> TrackFilesOut:
+    from app.library import files as library_files
+
+    have = await library_files.of_track(s, t.id)
+    events = await library_files.history(s, t.id)
+    came = {e.file_id: e.download_item_id for e in events if e.kind == "added" and e.file_id and e.download_item_id}
+    told = set((await s.execute(select(DownloadItem.id).where(
+        DownloadItem.id.in_(set(came.values())), func.jsonb_array_length(DownloadItem.log_json) > 0))).scalars()) if came else set()
+    people = dict((await s.execute(select(User.id, User.nd_username).where(
+        User.id.in_({e.user_id for e in events if e.user_id})))).all()) if events else {}
+    out = []
+    for f in have:
+        row = file_out(f)
+        out.append(TrackFileOut(**row.model_dump(), id=f.id, main=f.main, name=PurePosixPath(f.path).name,
+                                acquired_at=f.acquired_at, source_url=f.source_url,
+                                download_id=came.get(f.id) if came.get(f.id) in told else None))
+    lines = []
+    for e in events:
+        data = e.file or {}
+        lines.append(FileEventOut(
+            id=e.id, kind=e.kind, why=e.why, at=e.at, who=people.get(e.user_id), file_id=e.file_id,
+            file=FileOut(source=data.get("source"), codec=data.get("codec"), bitrate_kbps=data.get("bitrate_kbps"),
+                         uid=data.get("uid")),
+            name=PurePosixPath(data["path"]).name if data.get("path") else None,
+            can_restore=library_files.kept(e) is not None))
+    return TrackFilesOut(track_id=t.id, artist=t.artist, title=t.title, files=out, events=lines,
+                         trash_days=get_settings().cfg.library.trash_days)
+
+
+@router.get("/api/library/tracks/{track_id}/files", response_model=TrackFilesOut)
+async def track_files(track_id: int, user: User = Depends(current_user),
+                      s: AsyncSession = Depends(get_session, scope="function")):
+    """The track's files and their journal (`library.files`). The library is everybody's: anybody may read it."""
+    return await _files_out(s, await _track(s, track_id))
+
+
+@router.get("/api/library/tracks/{track_id}/files/{file_id}/steps", response_model=DownloadStepsOut)
+async def file_steps(track_id: int, file_id: int, user: User = Depends(current_user),
+                     s: AsyncSession = Depends(get_session, scope="function")):
+    """How a file of the track came: the journal of the download that brought it."""
+    item = (await s.execute(select(DownloadItem).join(TrackFileEvent, TrackFileEvent.download_item_id == DownloadItem.id)
+                            .where(TrackFileEvent.track_id == track_id, TrackFileEvent.file_id == file_id,
+                                   TrackFileEvent.kind == "added")
+                            .order_by(TrackFileEvent.id.desc()).limit(1))).scalar_one_or_none()
+    if item is None:
+        raise HTTPException(404, "Журнала загрузки нет")
+    return DownloadStepsOut(steps=list(item.log_json or []),
+                            download_id=item.id if item.user_id == user.id and not item.hidden else None)
+
+
+async def _after_files(s: AsyncSession, user: User, t: Track) -> TrackFilesOut:
+    from app.listen import forget
+
+    await enqueue_scan(s)
+    await s.commit()
+    notify()
+    await forget(f"lib:{t.id}")  # what was ready to play of it was the old main file
+    bus.publish(user.id, "library", {"kind": "imported", "track_id": t.id})
+    return await _files_out(s, t)
+
+
+@router.post("/api/library/tracks/{track_id}/files/{file_id}/main", response_model=TrackFilesOut)
+async def make_file_main(track_id: int, file_id: int, user: User = Depends(current_user),
+                         s: AsyncSession = Depends(get_session, scope="function")):
+    """This file of the track plays from now on; the one that did stays beside it."""
+    from app.library import files as library_files
+
+    t = await _track(s, track_id)
+    f = await s.get(TrackFile, file_id)
+    if f is None or f.track_id != t.id:
+        raise HTTPException(404, "Файла у трека уже нет")
+    await library_files.make_main(s, f, why="listener", user_id=user.id)
+    return await _after_files(s, user, t)
+
+
+@router.post("/api/library/tracks/{track_id}/files/{file_id}/trash", response_model=TrackFilesOut)
+async def trash_file(track_id: int, file_id: int, user: User = Depends(current_user),
+                     s: AsyncSession = Depends(get_session, scope="function")):
+    """A file kept beside the main one goes to the trash folder (it is brought back from the journal while it is
+    kept there). The main one is not: another is made the main one first, or the track is deleted."""
+    from app.library import files as library_files
+
+    t = await _track(s, track_id)
+    f = await s.get(TrackFile, file_id)
+    if f is None or f.track_id != t.id:
+        raise HTTPException(404, "Файла у трека уже нет")
+    if f.main:
+        raise HTTPException(409, "Это главный файл трека: сначала сделайте главным другой")
+    await library_files.trash(s, f, why="listener", user_id=user.id)
+    return await _after_files(s, user, t)
+
+
+@router.post("/api/library/tracks/{track_id}/files/restore/{event_id}", response_model=TrackFilesOut)
+async def restore_file(track_id: int, event_id: int, user: User = Depends(current_user),
+                       s: AsyncSession = Depends(get_session, scope="function")):
+    """A file of the track that went to the trash folder comes back as its main file."""
+    from app.library import files as library_files
+
+    t = await _track(s, track_id)
+    event = await s.get(TrackFileEvent, event_id)
+    if event is None or event.track_id != t.id:
+        raise HTTPException(404, "Записи нет")
+    try:
+        await library_files.restore(s, event, why="listener", user_id=user.id)
+    except library_files.FileGone as e:
+        raise HTTPException(410, str(e)) from e
+    return await _after_files(s, user, t)
 
 
 @router.post("/api/library/tracks/delete", response_model=TracksDeleteOut)
@@ -689,7 +784,7 @@ async def delete_tracks(body: TracksDeleteIn, user: User = Depends(current_user)
     out = TracksDeleteOut(deleted=0, kept=0, others=0, mine=0)
     for track_id in dict.fromkeys(body.track_ids):
         t = await s.get(Track, track_id)
-        if t is None or await current_file(s, t.id) is None:
+        if t is None or await main_of(s, t.id) is None:
             continue
         may, others, mine = await access.keeping(s, user, t.id)
         if not may:

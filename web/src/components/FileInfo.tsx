@@ -83,12 +83,12 @@ function Looking({ className }: { className?: string }) {
 }
 
 /** The file's row of the full player's card (`pages/Player.tsx`, under the artists and the album): the source
- * with its mark, the file's words, what the check after the download said of it. The row opens «Как скачан» — the
- * journal of the download that brought the file — when there is one; no arrow, as the rows above it have none. */
+ * with its mark, the file's words, what the check after the download said of it. An own file's row opens «Файлы
+ * трека» — the track's files and their journal, how each came; no arrow, as the rows above it have none. */
 export function FileRow({ info }: { info: ListenOut | null | undefined }) {
   if (!info?.source) return null;
   const words = fileWords(info);
-  const journal = info.journal && info.track_id ? `/file/${info.track_id}` : null;
+  const journal = info.kind === 'library' && info.track_id ? `/file/${info.track_id}` : null;
   const body = (
     <>
       <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-fg/10">
@@ -106,6 +106,6 @@ export function FileRow({ info }: { info: ListenOut | null | undefined }) {
   );
   const row = 'group/file flex min-h-16 items-center gap-3 py-2';
   return journal
-    ? <Link to={journal} className={row} title="Как скачан этот файл">{body}</Link>
+    ? <Link to={journal} className={row} title="Файлы трека: откуда каждый, какой играет">{body}</Link>
     : <div className={row}>{body}</div>;
 }

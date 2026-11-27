@@ -246,7 +246,7 @@ async def test_doubles_compares_each_new_file_once_and_keeps_what_it_found(hub_e
             t = Track(title=title, artist="X", fingerprint=f"fp-{title}", duration_s=200 if title != "B" else 300)
             s.add(t)
             await s.flush()
-            s.add(TrackFile(track_id=t.id, uid=f"u-{title}", path=f"x/{title}.mp3", chroma=picture))
+            s.add(TrackFile(track_id=t.id, uid=f"u-{title}", path=f"x/{title}.mp3", chroma=picture, main=True))
             ids.append(t.id)
     calls = []
     real = acoustic.likeness

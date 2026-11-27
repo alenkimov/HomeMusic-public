@@ -310,14 +310,15 @@ async def _track_subjects(s: AsyncSession, events: Iterable[Any] = (), *, refs: 
                                     .where(Track.id.in_(part)))).all():
             tracks[row[0]] = row
         for track_id, song in (await s.execute(select(TrackFile.track_id, TrackFile.nd_song_id).where(
-                TrackFile.track_id.in_(part), TrackFile.nd_song_id.is_not(None)).order_by(TrackFile.id))).all():
+                TrackFile.track_id.in_(part), TrackFile.nd_song_id.is_not(None))
+                .order_by(TrackFile.main, TrackFile.id))).all():
             files.setdefault(track_id, []).append(song)
     for track_id, ref, title, artist, duration in tracks.values():
         own = files.get(track_id, [])
         names = [f"t:{track_id}", *([f"ref:{ref}"] if ref else []), *(f"nd:{x}" for x in own)]
         data = {k: v for k, v in (("title", title), ("artist", artist), ("duration_s", duration)) if v}
         out.append(FavoriteSubject(target_type="track", canonical_key=f"t:{track_id}", ref=ref,
-                                   nd_id=own[-1] if own else None,  # the newest file's song is the one that plays
+                                   nd_id=own[-1] if own else None,  # the main file's song (the last) is the one that plays
                                    aliases=sorted(names), data=data))
     return out
 

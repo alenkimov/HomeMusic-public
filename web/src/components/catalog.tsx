@@ -521,8 +521,8 @@ export function TrackRow({
         {visible.file && (
           <span className="truncate text-xs text-muted">
             {track.file &&
-              (track.file.journal && track.library_track_id ? (
-                <Link to={`/file/${track.library_track_id}`} onClick={(e) => e.stopPropagation()} className="hover:text-fg hover:underline" title="Как скачан этот файл">
+              (track.library_track_id ? (
+                <Link to={`/file/${track.library_track_id}`} onClick={(e) => e.stopPropagation()} className="hover:text-fg hover:underline" title="Файлы трека: откуда каждый, какой играет">
                   <FileInfo info={track.file} />
                 </Link>
               ) : track.page_url ? (

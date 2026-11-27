@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import session_scope
 from app.jobs.queue import handler
 from app.library import artists as artists_
+from app.library import files as library_files
 from app.library.artwork import album_cover_url
 from app.library.quality import rank
 from app.matching.normalize import has_cyrillic
@@ -276,9 +277,7 @@ async def _doubles(s: AsyncSession) -> int:
         return 0
     ids = [i for g in groups for i in g]
     tracks = {t.id: t for t in (await s.execute(select(Track).where(Track.id.in_(ids)))).scalars()}
-    files: dict[int, TrackFile] = {}
-    for f in (await s.execute(select(TrackFile).where(TrackFile.track_id.in_(ids)).order_by(TrackFile.id))).scalars():
-        files[f.track_id] = f  # the newest is the one that plays
+    files = await library_files.mains(s, ids)  # the one that plays
     albums = await _albums(s)
 
     def worth(i: int) -> tuple:

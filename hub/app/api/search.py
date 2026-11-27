@@ -47,9 +47,9 @@ from app.events import bus
 from app.library import artists as artist_names
 from app.library import edits, tagger
 from app.library.artwork import cover_info
+from app.library.files import mains
 from app.library.importer import library_abs
 from app.library.owned import annotate_albums, annotate_tracks
-from app.library.tracks import current_files
 from app.matching.normalize import has_cyrillic, normalize_title
 from app.matching.select import rank_candidates
 from app.models import Album, SearchHistory, Track, User, utcnow
@@ -146,7 +146,7 @@ async def _library_results(q: str, user: User) -> SearchOut:
 
     async with session_scope() as s:
         owned = await artist_names.found(s, q)
-        files = await current_files(s, [t.id for t, _ in owned])
+        files = await mains(s, [t.id for t, _ in owned])
         owned = await versions.once(s, owned, lambda x: x[0].id)
         many = await versions.counts(s, [t.id for t, _ in owned])
         library = [track_out(t, files.get(t.id)).model_copy(update={"found_by": by, "versions": many.get(t.id, 0)}) for t, by in owned]

@@ -20,6 +20,7 @@ from sqlalchemy import Date, DateTime, LargeBinary, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.library import files as library_files
 from app.library import versions
 from app.library.importer import _move, library_abs, library_lock
 from app.library.layout import unique_path
@@ -31,6 +32,7 @@ from app.models import (
     Track,
     TrackCover,
     TrackFile,
+    TrackFileEvent,
     TrackTag,
     TrashedTrack,
     User,
@@ -77,9 +79,10 @@ async def remember(s: AsyncSession, track: Track, moved: dict[int, str], user_id
     tags = [{"tag_id": t.tag_id, "auto": t.auto}
             for t in (await s.execute(select(TrackTag).where(TrackTag.track_id == track.id))).scalars()]
     cover = (await s.execute(select(TrackCover.image).where(TrackCover.track_id == track.id))).scalar_one_or_none()
+    journal = [_row(e) for e in await library_files.history(s, track.id)]
     s.add(TrashedTrack(
         track_id=track.id, title=track.title, artist=track.artist, album=track.album, deleted_by=user_id,
-        data_json={"track": _row(track), "files": files, "playlists": places, "tags": tags,
+        data_json={"track": _row(track), "files": files, "journal": journal, "playlists": places, "tags": tags,
                    "version_label": await versions.label_of(s, track.id),
                    "album": _row(album) if album is not None else None},
         cover=cover))
@@ -118,6 +121,7 @@ async def restore(s: AsyncSession, row: TrashedTrack) -> Track:
         track = Track(**tr)
         s.add(track)
         await s.flush()
+        new_ids: dict[int, int] = {}
         for f in kept:
             dest = library_abs(f["path"])
             if dest.exists():
@@ -125,8 +129,26 @@ async def restore(s: AsyncSession, row: TrashedTrack) -> Track:
             await asyncio.to_thread(_move, Path(f["trash_path"]), dest)
             cols = _back(TrackFile, f)
             cols.pop("id", None)
-            cols.update(track_id=track.id, path=dest.relative_to(library_abs("")).as_posix(), nd_song_id=None)
-            s.add(TrackFile(**cols))
+            cols.update(track_id=track.id, path=dest.relative_to(library_abs("")).as_posix(), nd_song_id=None, main=False)
+            back = TrackFile(**cols)
+            s.add(back)
+            await s.flush()
+            new_ids[f["id"]] = back.id
+        # its journal comes back with it, the files in it named by their new rows; the main one is the one that was,
+        # else (it was not kept) the newest of those back
+        journal = data.get("journal") or []
+        people = set((await s.execute(select(User.id).where(User.id.in_({e["user_id"] for e in journal if e.get("user_id")})))).scalars())
+        for e in reversed(journal):  # written latest first
+            cols = _back(TrackFileEvent, e)
+            cols.pop("id", None)
+            cols.update(track_id=track.id, file_id=new_ids.get(e.get("file_id")), download_item_id=None, star_from=None,
+                        user_id=e.get("user_id") if e.get("user_id") in people else None)
+            s.add(TrackFileEvent(**cols))
+        was_main = next((new_ids[f["id"]] for f in kept if f.get("main")), None)
+        main = await s.get(TrackFile, was_main or max(new_ids.values()))
+        main.main = True
+        await s.flush()
+        await library_files.note(s, track.id, "restored", file=main, why="listener")
         lists = set((await s.execute(select(Playlist.id).where(
             Playlist.id.in_({p["playlist_id"] for p in data.get("playlists") or []})))).scalars())
         for p in data.get("playlists") or []:

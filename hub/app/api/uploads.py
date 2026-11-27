@@ -25,9 +25,9 @@ from app.jobs.queue import notify
 from app.library import acoustic, artists, probe, quality, recognize, tagger
 from app.library.artwork import cover_info
 from app.library.credits import main_artist, split_artists
+from app.library.files import main_of
 from app.library.importer import ImportSpec, copy_limited, import_file
 from app.library.owned import find_owned
-from app.library.tracks import current_file
 from app.models import Track, Upload, User
 
 log = logging.getLogger(__name__)
@@ -90,7 +90,7 @@ async def _twin(s: AsyncSession, u: Upload) -> UploadTwin | None:
     track = await s.get(Track, found["track_id"]) if found else None
     if track is None:
         return None
-    f = await current_file(s, track.id)
+    f = await main_of(s, track.id)
     if f is None:
         return None
     sure = found["by"] == "name" or (found.get("likeness") or 0) >= acoustic.SAME
@@ -419,11 +419,12 @@ async def commit(body: UploadCommitIn, user: User = Depends(current_user),
             wanted = meta.get("cover_url") if meta and tr.cover != "file" else None
             if spec.cover is None:
                 spec.cover = own
-        # the file of a track the library has (the upload is the better one): it becomes that track's file
+        # the file of a track the library has (the upload is the better one): it becomes that track's main file,
+        # the one it had kept beside it (`library.files`)
         replaced = await s.get(Track, tr.replace_track_id) if tr.replace_track_id else None
         spec.track_id = replaced.id if replaced is not None else None
         spec.chroma = await _chroma(s, u)
-        spec.source, spec.source_url, spec.added_by = "upload", u.orig_name, user.id
+        spec.source, spec.source_url, spec.added_by, spec.why = "upload", u.orig_name, user.id, "upload"
         spec.duration_s = round(info.duration_s) if info and info.duration_s else None
         spec.bitrate_kbps, spec.codec = (info.bitrate_kbps, info.codec) if info else (None, None)
         try:

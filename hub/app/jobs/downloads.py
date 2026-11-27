@@ -28,11 +28,12 @@ from app.covers import fetch_cover
 from app.db import session_scope
 from app.events import bus
 from app.jobs.queue import PermanentError, enqueue, handler, notify, on_final_failure, on_retry
-from app.library import probe, upgrade
+from app.library import files, probe, upgrade
+from app.library.files import main_of
 from app.library.importer import ImportSpec, cleanup_dir, import_file, staging_dir_for
 from app.library.navidrome import admin_client
 from app.library.owned import find_owned, origin, quiet
-from app.library.tracks import current_file, has_file
+from app.library.tracks import has_file
 from app.matching.select import (
     classify,
     needs_uncensored,
@@ -40,7 +41,7 @@ from app.matching.select import (
     trusted_original,
     uploaded_in_time,
 )
-from app.models import DownloadBatch, DownloadItem, Job, PlayEvent, PlaylistItem, Track, TrackFile, User, utcnow
+from app.models import DownloadBatch, DownloadItem, Job, PlayEvent, Track, TrackFile, utcnow
 from app.net import in_background
 from app.providers.base import Candidate, Provider, ProviderError, TrackQuery, file_ref
 from app.services import svc
@@ -434,18 +435,15 @@ async def _handle_download_item(job: Job, prepared: Path | None) -> None:
                 s, artist=q.artist, title=q.title, duration_s=q.duration_s, isrc=q.isrc,
                 catalog_ref=meta.get("track_ref"),
             )
-            have = await current_file(s, existing.id) if existing else None
+            have = await main_of(s, existing.id) if existing else None
             existing_id = existing.id if existing and have else None
             linked = bool(existing_id and existing.nd_song_id)
-            old_song = have.nd_song_id if have else None
             other_file = bool(have and chosen and have.source_url != chosen.get("page_url"))
         if other_file:
             # the user picked another file of a song the library has (an uncensored re-upload of a censored copy):
-            # it goes next to the old one as one more file of the same track (PLAN 8.6), and the ♥ in Navidrome
-            # moves from the old file's song over to the new one's
+            # it goes next to the old one as one more file of the same track, and is its main file from now on
+            # (`library.files`: the ♥ in Navidrome moves to its song once it is scanned)
             force = True
-            qj["replaces_song"] = old_song
-            await update_item(item_id, query_json=qj)
             await step(item_id, "info", "Трек уже есть в библиотеке, но выбран другой файл: он ляжет рядом со старым")
         elif existing_id:
             await step(item_id, "ok", "Уже есть в библиотеке — скачивать не нужно")
@@ -810,6 +808,8 @@ async def import_downloaded(item_id: int, user_id: int, q: TrackQuery, meta: dic
         warnings=list(check.warnings or []) + ([warning] if warning else []),
         added_by=user_id,
         force=force,
+        why="download",
+        download_item_id=item_id,
     )
     await update_item(item_id, status="importing")
     async with session_scope() as s:
@@ -919,7 +919,7 @@ async def handle_scan(job: Job) -> None:
 
         await attach_tracks(s)  # what was listened to from the catalog is this track's history now
         await deliver_pending(s)
-        await restar_replaced(s, done_items)
+        await files.move_stars(s)  # a track whose main file changed: the ♥ on it moves to the new file's song
         await imports_done(s, done_items)
         await mixes_done(s, done_items)
         still = (
@@ -1003,36 +1003,6 @@ async def mixes_done(s: AsyncSession, items: list[DownloadItem]) -> None:
         from app.mixes.core import downloads_changed
 
         await downloads_changed(s, items)
-
-
-async def restar_replaced(s: AsyncSession, items: list[DownloadItem]) -> None:
-    """A picked file imported as one more file of a track (`replaces_song`: the song of the file before it): a ♥
-    the user has on the track moves, in Navidrome, from that song to the new file's."""
-    from app import playlists
-    from app.auth import user_navidrome
-
-    for i in items:
-        old = (i.query_json or {}).get("replaces_song")
-        row = None
-        if old and i.track_id:
-            row = (await s.execute(select(Track.nd_song_id, Track.ref).where(Track.id == i.track_id))).first()
-        if row is None or not row[0] or row[0] == old:
-            continue
-        new = row[0]
-        liked = await playlists.liked(s, i.user_id)
-        user = await s.get(User, i.user_id)
-        if user is None or (await s.execute(select(PlaylistItem.id).where(
-                PlaylistItem.playlist_id == liked.id, PlaylistItem.track_id == i.track_id).limit(1))).first() is None:
-            continue
-        nd = user_navidrome(user)
-        try:
-            await nd.star(song_ids=[new])
-            await nd.unstar(song_ids=[old])
-            bus.publish(i.user_id, "library", {"kind": "starred", "song_ids": [new]})
-        except Exception as e:
-            log.warning("♥ not moved to the new file of track %s: %r", i.track_id, e)
-        finally:
-            await nd.aclose()
 
 
 async def into_playlists(s: AsyncSession, user_id: int, playlist_ids: list[Any], track_ids: list[int]) -> None:

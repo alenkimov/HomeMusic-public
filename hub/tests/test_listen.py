@@ -681,7 +681,7 @@ async def test_unavailable_catalog_track_can_open_the_file_picker(env, monkeypat
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(AUDIO)
     async with session_scope() as s:
-        s.add(TrackFile(track_id=track_id, uid="manual-pick", path="picked.mp3"))
+        s.add(TrackFile(track_id=track_id, uid="manual-pick", path="picked.mp3", main=True))
 
     async def catalog_offline(_):
         raise RuntimeError("catalog offline")
@@ -704,7 +704,7 @@ async def test_file_picker_keeps_cover_from_the_selected_recording(env, monkeypa
     from app.library import tagger
     from app.library.cards import draw_songs as songs_out
     from app.library.probe import ProbeInfo
-    from app.library.tracks import current_file
+    from app.library.files import main_of
 
     image = io.BytesIO()
     Image.new("RGB", (360, 360), "seagreen").save(image, "PNG")
@@ -734,7 +734,7 @@ async def test_file_picker_keeps_cover_from_the_selected_recording(env, monkeypa
     assert take.status_code == 200, take.text
     # which file the track has now: a device that keeps another fetches it anew (`web/src/lib/offline.ts`)
     async with session_scope() as s:
-        uid = (await current_file(s, track_id)).uid
+        uid = (await main_of(s, track_id)).uid
     assert (await c.get("/api/listen", params={"ref": f"lib:{track_id}"})).json()["file_uid"] == uid
     row, = (await c.get(page)).json()["tracks"]
     assert row["cover_url"].startswith("/api/library/albums/")
@@ -743,7 +743,7 @@ async def test_file_picker_keeps_cover_from_the_selected_recording(env, monkeypa
     assert Image.open(io.BytesIO(cover.content)).size == (360, 360)
 
     async with session_scope() as s:
-        file = await current_file(s, track_id)
+        file = await main_of(s, track_id)
         assert tagger.read_cover(env["music"] / "library" / file.path) == cover.content
         file.nd_song_id = "picked-song"
         await s.flush()
@@ -1213,7 +1213,7 @@ async def test_picker_uploads_compares_and_attaches_without_replacing_the_track(
 
     from app.db import session_scope
     from app.library import probe
-    from app.library.tracks import current_file
+    from app.library.files import main_of
     from app.models import Track
 
     if not shutil.which(probe.ffmpeg_bin()) or not shutil.which(probe.ffprobe_bin()):
@@ -1263,10 +1263,10 @@ async def test_picker_uploads_compares_and_attaches_without_replacing_the_track(
     assert response.status_code == 200, response.text
     async with session_scope() as s:
         track = await s.get(Track, tid)
-        file = await current_file(s, tid)
+        file = await main_of(s, tid)
         assert (track.title, track.artist) == ("Track", "Artist")
         assert file and file.source == "upload"
-        assert (await current_file(s, other_id)) is None
+        assert (await main_of(s, other_id)) is None
     attached = await client.get("/api/listen/stream", params={"ref": f"lib:{tid}"})
     assert attached.status_code == 200 and attached.content.startswith(b"RIFF")
 

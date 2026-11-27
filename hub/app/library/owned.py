@@ -16,7 +16,8 @@ from app.api.schemas import AlbumOut, FileOut, TrackOut
 from app.catalog.identity import same_recording
 from app.catalog.models import CatalogAlbum, CatalogTrack
 from app.library.artwork import album_cover_url
-from app.library.tracks import by_ref as track_by_ref, tracks_by_refs
+from app.library.tracks import by_ref as track_by_ref
+from app.library.tracks import tracks_by_refs
 from app.matching.normalize import fingerprint, normalize_artist, normalize_title
 from app.models import Album, DownloadItem, Track, TrackFile, TrackLink
 from app.providers.base import TrackQuery
@@ -56,18 +57,16 @@ def file_out(f: TrackFile) -> FileOut:
 
 async def with_files(s: AsyncSession, tracks: list[Any]) -> None:
     """The owned tracks of a list (`TrackOut`s) are told their files."""
-    from app.library.tracks import current_files
+    from app.library.files import mains
 
     owned = [t for t in tracks if t.owned and t.library_track_id and t.file is None]
     if not owned:
         return
     ids = [t.library_track_id for t in owned]
-    files = await current_files(s, ids)
-    told = await with_journal(s, ids)
+    files = await mains(s, ids)
     for t in owned:
         if f := files.get(t.library_track_id):
             t.file = file_out(f)
-            t.file.journal = t.library_track_id in told
 
 
 async def _track_variants(s: AsyncSession, tracks: Iterable[CatalogTrack]) -> dict[str, list[str]]:
@@ -120,16 +119,6 @@ async def with_cover_fallbacks(s: AsyncSession, pairs: list[tuple[TrackOut, Trac
             # as the window that changes it shows (`edits.info`)
             out.cover_url = catalog.get("cover_url") or catalog.get("cover_small_url")
             out.cover_small_url = catalog.get("cover_small_url") or out.cover_url
-
-
-async def with_journal(s: AsyncSession, track_ids: list[int]) -> set[int]:
-    """The tracks whose file came by a download that kept its journal."""
-    out: set[int] = set()
-    for i in range(0, len(track_ids), 500):
-        out.update((await s.execute(select(DownloadItem.track_id).where(
-            DownloadItem.track_id.in_(track_ids[i:i + 500]), func.jsonb_array_length(DownloadItem.log_json) > 0)
-            .distinct())).scalars())
-    return out
 
 
 def _duration_ok(a: int | None, b: int | None, tol: int = 3) -> bool:

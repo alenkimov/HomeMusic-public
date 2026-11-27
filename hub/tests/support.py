@@ -212,7 +212,7 @@ def filed_track(**fields):
     file.setdefault("path", f"{file['uid']}.mp3")
     if "added_by" in file:
         fields.setdefault("created_by", file["added_by"])
-    return Track(**fields, files=[TrackFile(**file)])
+    return Track(**fields, files=[TrackFile(**file, main=True)])
 
 
 async def tids(*songs: str) -> list[int]:

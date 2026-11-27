@@ -817,18 +817,22 @@ async def test_search_finds_what_the_library_has(env):
 
 
 async def test_a_file_tells_how_it_came(env):
-    """A downloaded track's file says its download kept a journal, and the journal is read by the track."""
+    """A downloaded track's file is in the journal of its files, as come by its download — whose own journal of
+    steps is read by the file."""
     c = env["client"]
     item = await download_one(c, {"artist": "Кино", "title": "Группа крови"})
     assert item["status"] == "done", item
-    got = (await c.get(f"/api/library/tracks/{item['track_id']}/journal")).json()
-    assert (got["artist"], got["title"], got["download_id"]) == ("Кино", "Группа крови", item["id"])
-    assert got["file"]["source"] == "hitmoz" and got["file"]["journal"]
-    assert got["steps"][0]["text"].startswith("Запрос") and got["steps"][-1]["kind"] == "ok"
-    assert (await c.get("/api/library/tracks/99999/journal")).status_code == 404
-    # the player's answer says so too
+    got = (await c.get(f"/api/library/tracks/{item['track_id']}/files")).json()
+    assert (got["artist"], got["title"]) == ("Кино", "Группа крови")
+    [f] = got["files"]
+    assert f["source"] == "hitmoz" and f["main"] and f["download_id"] == item["id"]
+    assert [(e["kind"], e["why"], e["file_id"]) for e in got["events"]] == [("added", "download", f["id"])]
+    steps = (await c.get(f"/api/library/tracks/{item['track_id']}/files/{f['id']}/steps")).json()
+    assert steps["download_id"] == item["id"]
+    assert steps["steps"][0]["text"].startswith("Запрос") and steps["steps"][-1]["kind"] == "ok"
+    assert (await c.get("/api/library/tracks/99999/files")).status_code == 404
     r = (await c.get("/api/listen", params={"ref": f"nd:{item['nd_song_id']}"})).json()
-    assert r["kind"] == "library" and r["journal"] and r["track_id"] == item["track_id"]
+    assert r["kind"] == "library" and r["track_id"] == item["track_id"]
 
 
 async def test_an_album_is_said_once_for_its_files(env, tmp_path):

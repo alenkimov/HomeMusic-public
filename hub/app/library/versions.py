@@ -20,7 +20,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.library import edits
-from app.library.tracks import current_files
+from app.library.files import mains
 from app.matching.normalize import split_version
 from app.models import Album, Edit, Song, SongTrack, Track, TrackFile
 
@@ -153,14 +153,14 @@ async def card(s: AsyncSession, track: Track) -> dict[str, Any]:
     joined — with what each is and what it plays from. A track that is nobody's version is the only one."""
     row = await _row(s, track.id)
     if row is None:
-        files = await current_files(s, [track.id])
+        files = await mains(s, [track.id])
         return {"track_id": track.id, "song_id": None, "title": track.title,
                 "versions": [await _out(s, track, None, True, files.get(track.id))]}
     song = await s.get(Song, row.song_id)
     rows = (await s.execute(select(SongTrack, Track).join(Track, Track.id == SongTrack.track_id)
                             .where(SongTrack.song_id == row.song_id).order_by(SongTrack.joined_at, SongTrack.track_id))).all()
     preferred = song.preferred_track_id if song is not None and any(t.id == song.preferred_track_id for _, t in rows) else rows[0][1].id
-    files = await current_files(s, [t.id for _, t in rows])
+    files = await mains(s, [t.id for _, t in rows])
     out = [await _out(s, t, r, t.id == preferred, files.get(t.id)) for r, t in rows]
     out.sort(key=lambda v: not v["preferred"])
     return {"track_id": track.id, "song_id": row.song_id, "title": next(v["title"] for v in out if v["preferred"]), "versions": out}
@@ -247,5 +247,5 @@ async def candidates(s: AsyncSession, track: Track, q: str, limit: int = 12) -> 
     row = await _row(s, track.id)
     taken = set((await s.execute(select(SongTrack.track_id).where(SongTrack.song_id == row.song_id))).scalars()) if row else {track.id}
     found = [t for t, _ in await artists.found(s, q, limit + len(taken)) if t.id not in taken][:limit]
-    files = await current_files(s, [t.id for t in found])
+    files = await mains(s, [t.id for t in found])
     return [await _out(s, t, None, False, files.get(t.id)) for t in found]

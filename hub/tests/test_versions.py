@@ -179,5 +179,5 @@ async def test_yes_to_a_record_keeps_the_file_unless_told_otherwise(env, tmp_pat
     async with session_scope() as s:
         row = await s.get(Upgrade, row_id)
         f = (await s.execute(select(TrackFile).where(TrackFile.track_id == row.track_id).order_by(TrackFile.id.desc()))).scalars().first()
-        assert f.codec == "flac" and row.was_path  # taken by the listener's word; the old one is kept to be brought back
+        assert f.codec == "flac" and f.main and row.was_event_id  # taken by the listener's word; the old one is kept to be brought back
 

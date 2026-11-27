@@ -22,8 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.library import album_names, editor, tagger
 from app.library.artwork import album_cover_url
+from app.library.files import main_of
 from app.library.importer import library_abs
-from app.library.tracks import current_file
 from app.models import Album, Edit, Track, TrackCover, User, utcnow
 
 NAMES = ("title", "artist")
@@ -90,7 +90,7 @@ async def set_track_cover(s: AsyncSession, user: User, track: Track, image: byte
         s.add(TrackCover(track_id=track.id, image=cover))
     else:
         track.cover_key = None
-    file = await current_file(s, track.id)
+    file = await main_of(s, track.id)
     if file is not None:
         p = library_abs(file.path)
         if p.is_file():
@@ -133,7 +133,7 @@ async def info(s: AsyncSession, track: Track) -> dict[str, Any]:
         "cover_url": cover_url(track) or (album_cover_url(album) if album else None)
                      or cat.get("cover_url") or cat.get("cover_small_url"),
         "album_id": album.id if album is not None else None, "album_title": album.title if album is not None else None,
-        "has_file": await current_file(s, track.id) is not None,
+        "has_file": await main_of(s, track.id) is not None,
         "producer": track.producer,
         "names": await _other_names(s, track),
     }

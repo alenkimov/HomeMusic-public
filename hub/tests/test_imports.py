@@ -114,9 +114,10 @@ async def add_library_track(raw: dict, nd_song_id: str) -> int:
         known = (await s.execute(select(Track).where(
             Track.fingerprint == fingerprint(raw["artist"], raw["title"])).order_by(Track.id).limit(1))).scalar_one_or_none()
         if known is not None:
-            s.add(TrackFile(track_id=known.id, uid=str(uuid.uuid4()), path=f"{raw['artist']}/{raw['title']}.mp3",
-                            nd_song_id=nd_song_id))
-            await s.flush()
+            from app.library import files
+
+            await files.added(s, TrackFile(track_id=known.id, uid=str(uuid.uuid4()), path=f"{raw['artist']}/{raw['title']}.mp3",
+                                           nd_song_id=nd_song_id), why="download", user_id=None)
             return known.id
         t = filed_track(uid=str(uuid.uuid4()), path=f"{raw['artist']}/{raw['title']}.mp3", nd_song_id=nd_song_id,
                   artist=raw["artist"], title=raw["title"], duration_s=raw["duration_s"],

@@ -183,10 +183,10 @@ async def _version_revert(s: AsyncSession, user: User, p: TidyProposal, after: A
 
 
 async def _double_now(s: AsyncSession, p: TidyProposal) -> dict[str, Any] | None:
-    from app.library.tracks import current_files
+    from app.library.files import mains
 
     ids = [p.subject_id, p.to_json["keep"]]
-    files = await current_files(s, ids)
+    files = await mains(s, ids)
     return {"both": True} if all(i in files for i in ids) else None
 
 

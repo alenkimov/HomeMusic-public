@@ -267,10 +267,14 @@ class TrackCard(Base):
 
 
 class TrackFile(Base):
-    """A file of the library that plays a track. `uid` is written into the file as HOMEMUSIC_TRACK_ID (Navidrome's
-    track PID); `nd_song_id` — the song Navidrome made of the file, known after its scan."""
+    """A file of the library of a track. `uid` is written into the file as HOMEMUSIC_TRACK_ID (Navidrome's track
+    PID); `nd_song_id` — the song Navidrome made of the file, known after its scan. One file of a track is its main
+    one (`main`): the one that plays, goes to the offline copies and is the track's song in Navidrome; the others
+    are kept beside it (a version without the censor's cuts picked next to the old one). What happens to a track's
+    files is written in their journal (`TrackFileEvent`, `app.library.files`)."""
 
     __tablename__ = "track_files"
+    __table_args__ = (Index("uq_track_files_main", "track_id", unique=True, postgresql_where=text("main")),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), index=True)
@@ -288,16 +292,41 @@ class TrackFile(Base):
     # the picture of its sound (app/library/acoustic.py): None — not drawn yet, empty — it could not be
     chroma: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
     added_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    main: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
-# What plays a track, read with the track: the Navidrome song and the path of its newest file (none: the track has
-# no file, or Navidrome has not scanned it yet). Read-only — a file is changed through its own row.
+class TrackFileEvent(Base):
+    """The journal of a track's files (`app.library.files`): a file came (`added`: downloaded, uploaded, picked,
+    found better), was made the main one (`main`), went to the trash folder (`trashed`: where it lies, while it is
+    kept there) or came back from it (`restored`), or was found gone from the disk (`lost`). `file` is the file as it was then (its row's fields): a file in
+    the trash has no row of its own, and is brought back from this. `why` — what did it: `download`, `upload`,
+    `picked`, `upgrade`, `listener`, `revert`, `missing`."""
+
+    __tablename__ = "track_file_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    kind: Mapped[str] = mapped_column(String(12))  # added / main / trashed / restored / lost
+    file_id: Mapped[int | None] = mapped_column(ForeignKey("track_files.id", ondelete="SET NULL"), index=True)
+    file: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    why: Mapped[str] = mapped_column(String(16), default="")
+    trash_path: Mapped[str | None] = mapped_column(String(2048))  # `trashed`: where the file lies (absolute)
+    # the main file before (`added` as the main one, `main`): its song — the ♥ of the track moves to the new one in
+    # Navidrome once it has scanned it (`files.move_stars`); None once moved, or when there was none
+    star_from: Mapped[str | None] = mapped_column(String(64))
+    download_item_id: Mapped[int | None] = mapped_column(ForeignKey("download_items.id", ondelete="SET NULL"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+# What plays a track, read with the track: the Navidrome song and the path of its main file (none: the track has
+# no file, or Navidrome has not scanned it yet). Read-only — a file is changed through `app.library.files`.
 Track.nd_song_id = column_property(
-    select(TrackFile.nd_song_id).where(TrackFile.track_id == Track.id, TrackFile.nd_song_id.is_not(None))
-    .order_by(TrackFile.id.desc()).limit(1).correlate_except(TrackFile).scalar_subquery())
+    select(TrackFile.nd_song_id).where(TrackFile.track_id == Track.id, TrackFile.main)
+    .correlate_except(TrackFile).scalar_subquery())
 Track.path = column_property(
-    select(TrackFile.path).where(TrackFile.track_id == Track.id)
-    .order_by(TrackFile.id.desc()).limit(1).correlate_except(TrackFile).scalar_subquery())
+    select(TrackFile.path).where(TrackFile.track_id == Track.id, TrackFile.main)
+    .correlate_except(TrackFile).scalar_subquery())
 
 
 class CatalogCache(Base):
@@ -415,8 +444,9 @@ class Upgrade(Base):
     note: Mapped[str | None] = mapped_column(Text)
     was_codec: Mapped[str | None] = mapped_column(String(16))  # of the file it had
     was_kbps: Mapped[int | None] = mapped_column(Integer)
-    # where that file lies now, in the trash folder (absolute): heard beside the new one, and brought back, while kept
-    was_path: Mapped[str | None] = mapped_column(String(1024))
+    # that file gone to the trash folder (`TrackFileEvent` «trashed»): heard beside the new one, and brought back
+    # from there while it is kept
+    was_event_id: Mapped[int | None] = mapped_column(ForeignKey("track_file_events.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 

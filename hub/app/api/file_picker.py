@@ -31,8 +31,9 @@ from app.imports import review
 from app.jobs.downloads import enqueue_scan
 from app.jobs.queue import notify
 from app.library import acoustic, probe, tagger, upgrade
+from app.library.files import main_of
 from app.library.importer import TrackAlreadyFiled, cleanup_dir, copy_limited, library_abs, staging_dir_for
-from app.library.tracks import by_ref, current_file, of_catalog
+from app.library.tracks import by_ref, of_catalog
 from app.models import ImportItem, Track, User
 from app.providers.base import Candidate, TrackQuery, file_ref
 
@@ -133,7 +134,7 @@ async def resolve_target(body: TargetIn, user: User = Depends(current_user),
 async def track_file(track_id: int, user: User = Depends(current_user),
                      s: AsyncSession = Depends(get_session, scope="function")):
     track = await _track(s, track_id)
-    file = await current_file(s, track_id)
+    file = await main_of(s, track_id)
     return TrackFileOut(track_id=track_id, file_uid=file.uid if file else None, title=track.title, artist=track.artist,
                         duration_s=track.duration_s, cover_url=_cover(track), codec=file.codec if file else None,
                         bitrate_kbps=file.bitrate_kbps if file else None, source=file.source if file else None)
@@ -179,7 +180,7 @@ async def _audio_file(audio: listen.PreparedAudio, start: float | None, end: flo
 async def track_audio(track_id: int, start: float | None = None, end: float | None = None,
                       file_uid: str | None = None, user: User = Depends(current_user),
                       s: AsyncSession = Depends(get_session, scope="function")):
-    file = await current_file(s, track_id)
+    file = await main_of(s, track_id)
     if file is None or (file_uid is not None and file.uid != file_uid):
         raise HTTPException(404, "Файл трека изменился")
     path = library_abs(file.path)
@@ -298,7 +299,7 @@ async def compare(track_id: int, body: CompareIn, user: User = Depends(current_u
     if body.baseline_ref:
         mine = _prepared_file(user.id, track_id, body.baseline_ref).path
     else:
-        file = await current_file(s, track_id)
+        file = await main_of(s, track_id)
         if file is None:
             raise HTTPException(400, "Выберите основной файл")
         if body.expected_file_uid is not None and body.expected_file_uid != file.uid:
@@ -350,7 +351,7 @@ async def take(track_id: int, body: TakeIn, user: User = Depends(current_user),
         if body.expected_file_uid is None and not track.cover_key:
             fallback_cover = await _attachment_cover(path, source_cover, catalog_cover)
         async with _take_lock:
-            file = await current_file(s, track_id)
+            file = await main_of(s, track_id)
             if (file.uid if file else None) != body.expected_file_uid:
                 raise HTTPException(409, "Файл трека уже изменился. Откройте окно заново.")
             fields = dict(codec=info.codec, bitrate_kbps=info.bitrate_kbps, provider=provider,

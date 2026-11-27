@@ -20,9 +20,9 @@ from app.db import get_session
 from app.events import bus
 from app.jobs.downloads import enqueue_scan
 from app.jobs.queue import notify
-from app.library import access, upgrade
+from app.library import access, files, upgrade
+from app.library.files import main_of, mains
 from app.library.importer import library_abs
-from app.library.tracks import current_file, current_files
 from app.models import DownloadItem, Track, TrackFile, Upgrade, User
 
 router = APIRouter(prefix="/api/quality", tags=["quality"])
@@ -83,7 +83,7 @@ def _cover(t: Track) -> str | None:
 
 async def _weak_ids(s: AsyncSession, user: User) -> list[int]:
     ids = list((await s.execute(select(Track.id).join(TrackFile, TrackFile.track_id == Track.id).where(access.tracks_of(user)).distinct())).scalars())
-    files = await current_files(s, ids)
+    files = await mains(s, ids)
     return [i for i in ids if upgrade.wanted(files.get(i))]
 
 
@@ -95,9 +95,9 @@ async def listed(user: User = Depends(current_user), s: AsyncSession = Depends(g
         .join(DownloadItem, DownloadItem.id == Upgrade.item_id, isouter=True)
         .where(Upgrade.user_id == user.id).order_by(Upgrade.updated_at.desc(), Upgrade.id.desc()))).all()
     from app.library import acoustic, quality
-    from app.library.tracks import current_files
+    from app.library.files import mains
 
-    files = await current_files(s, [t.id for row, t, *_ in rows if row.state == "found"])
+    files = await mains(s, [t.id for row, t, *_ in rows if row.state == "found"])
     seen: set[int] = set()
     out = []
     for row, t, status, progress, active_provider, sources in rows:  # of a track looked for twice, the last time
@@ -120,7 +120,7 @@ async def listed(user: User = Depends(current_user), s: AsyncSession = Depends(g
             note=row.note, duration_s=t.duration_s,
             sure=row.likeness is not None and row.likeness >= acoustic.SAME,
             better=row.state == "found" and (f := files.get(t.id)) is not None and quality.better(row.codec, row.bitrate_kbps, f.codec, f.bitrate_kbps),
-            can_revert=row.state == "replaced" and upgrade.was(row) is not None, updated_at=row.updated_at))
+            can_revert=row.state == "replaced" and await upgrade.was(s, row) is not None, updated_at=row.updated_at))
     return QualityOut(rows=out, weak=len([i for i in await _weak_ids(s, user) if i not in seen]))
 
 
@@ -200,9 +200,10 @@ async def _file(s: AsyncSession, row: Upgrade, which: str):
     if which == "found":
         path = upgrade.staged(row)
     elif which == "was":
-        path = upgrade.was(row)
+        event = await upgrade.was(s, row)
+        path = files.kept(event) if event is not None else None
     else:
-        f = await current_file(s, row.track_id)
+        f = await main_of(s, row.track_id)
         path = library_abs(f.path) if f else None
     if path is None or not path.is_file():
         raise HTTPException(404, "Файла нет")

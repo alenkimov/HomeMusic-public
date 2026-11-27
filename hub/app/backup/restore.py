@@ -133,6 +133,7 @@ async def put_back_files(s: AsyncSession, d: drive.Drive) -> tuple[int, int]:
 async def queue_missing(s: AsyncSession) -> int:
     """The files the database names and the disk has not: their rows go, and the tracks left with no file are
     downloaded again — in the background, each for who brought it (else the first admin). Returns how many."""
+    from app.library import files as library_files
     from app.library.importer import library_abs
     from app.providers.base import TrackQuery
 
@@ -141,7 +142,7 @@ async def queue_missing(s: AsyncSession) -> int:
     for f in (await s.execute(select(TrackFile))).scalars().all():
         if not library_abs(f.path).is_file():
             gone.setdefault(f.track_id, f.added_by)
-            await s.delete(f)
+            await library_files.lost(s, f)
     await s.flush()
     left = set((await s.execute(select(TrackFile.track_id).where(TrackFile.track_id.in_(list(gone))))).scalars()) if gone else set()
     by_user: dict[int, list[Track]] = defaultdict(list)

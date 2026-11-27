@@ -11,8 +11,18 @@ from sqlalchemy import and_, func, not_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import listen
-from app.api.schemas import (DownloadBatchOut, DownloadGroupIn, DownloadGroupOut, DownloadIdsIn, DownloadIn, DownloadItemOut,
-                             DownloadLinkIn, DownloadsOverviewOut, DownloadTrackIn, RetryIn)
+from app.api.schemas import (
+    DownloadBatchOut,
+    DownloadGroupIn,
+    DownloadGroupOut,
+    DownloadIdsIn,
+    DownloadIn,
+    DownloadItemOut,
+    DownloadLinkIn,
+    DownloadsOverviewOut,
+    DownloadTrackIn,
+    RetryIn,
+)
 from app.auth import current_user
 from app.catalog.models import split_ref
 from app.config import get_settings
@@ -20,9 +30,9 @@ from app.db import get_session
 from app.events import bus
 from app.jobs.downloads import create_items, item_links, item_out, item_ref
 from app.jobs.queue import enqueue, notify
+from app.library.files import main_of
 from app.library.importer import cleanup_dir
 from app.library.owned import ACTIVE_STATUSES, ORIGINS, find_owned, quiet
-from app.library.tracks import current_file
 from app.models import DownloadBatch, DownloadItem, Import, ImportCollection, Job, User
 from app.providers.base import Candidate, TrackQuery, file_ref
 from app.services import svc
@@ -124,7 +134,7 @@ async def create_batch(
             s, artist=q.artist, title=q.title, duration_s=q.duration_s, isrc=q.isrc,
             catalog_ref=meta.get("track_ref"))
         # a picked file the library has not got is downloaded next to the song's older version (`jobs.downloads`)
-        file = await current_file(s, have.id) if have else None
+        file = await main_of(s, have.id) if have else None
         if have and (it.candidate is None or (file is not None and file.source_url == it.candidate.page_url)):
             owned += 1
         entries.append((q, meta, it.candidate))

@@ -423,17 +423,50 @@ class FileOut(BaseModel):
     codec: str | None = None
     bitrate_kbps: int | None = None
     sounds_like_kbps: int | None = None
-    journal: bool = False  # the download that brought it kept its journal (`GET /api/library/tracks/<id>/journal`)
     uid: str | None = None  # which file it is: a file put in its place (another one picked, an upgrade) has another
 
 
-class FileJournalOut(BaseModel):
-    """How a track's file came to the library: the journal of the download that brought it."""
+class TrackFileOut(FileOut):
+    """A file of a track in the library (`library.files`): the main one plays, the others are kept beside it."""
+
+    id: int
+    main: bool = False
+    name: str  # the file's name in the library
+    acquired_at: datetime
+    source_url: str | None = None
+    download_id: int | None = None  # the download that brought it, when it kept its journal (`steps`)
+
+
+class FileEventOut(BaseModel):
+    """A line of the journal of a track's files: `kind` added / main / trashed / restored / lost; `why` download /
+    upload / picked / upgrade / listener / revert / missing."""
+
+    id: int
+    kind: str
+    why: str
+    at: datetime
+    who: str | None = None
+    file: FileOut
+    name: str | None = None
+    file_id: int | None = None  # the file, while the track has it
+    can_restore: bool = False  # «trashed»: the trash folder keeps it still
+
+
+class TrackFilesOut(BaseModel):
+    """A track's files (`/file/<track>`): the files it has, the main one first, and their journal, the latest
+    first."""
 
     track_id: int
     artist: str
     title: str
-    file: FileOut | None = None
+    files: list[TrackFileOut] = []
+    events: list[FileEventOut] = []
+    trash_days: int
+
+
+class DownloadStepsOut(BaseModel):
+    """How a file came: the journal of the download that brought it."""
+
     steps: list[dict[str, Any]] = []
     download_id: int | None = None  # the download itself, when it is the asker's own (its page has more: the files found)
 
@@ -638,7 +671,6 @@ class ListenOut(BaseModel):
     source: str | None = None
     codec: str | None = None
     sounds_like_kbps: int | None = None
-    journal: bool = False  # an own file whose download kept its journal
     file_uid: str | None = None  # an own file: which one (`FileOut.uid`)
     page_url: str | None = None
     nd_song_id: str | None = None  # "library": the Navidrome song (♥, the app's player)

@@ -19,7 +19,8 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.library.tracks import current_file, dz_id
+from app.library.files import main_of
+from app.library.tracks import dz_id
 from app.models import Track, TrackLink, utcnow
 
 log = logging.getLogger(__name__)
@@ -96,7 +97,7 @@ async def of_track(s: AsyncSession, track: Track) -> dict[str, Any]:
     if spotify:
         ids["spotify"] = spotify
     urls: dict[str, str] = {}
-    file = await current_file(s, track.id)
+    file = await main_of(s, track.id)
     src = (file.source_url if file else None) or ""
     if m := YOUTUBE_ID.search(src):  # the upload the file is from
         urls["youtube"] = f"https://www.youtube.com/watch?v={m.group(1)}"

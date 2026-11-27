@@ -19,8 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.library import tagger
+from app.library.files import main_of
 from app.library.layout import album_dirname, next_version_path, sanitize_component, track_filename, unique_path
-from app.library.tracks import bind_refs, by_ref, current_file, dz_id, dz_ref
+from app.library.tracks import bind_refs, by_ref, dz_id, dz_ref
 from app.matching.normalize import fingerprint, normalize_artist, normalize_title
 from app.models import Album, AlbumName, CatalogRelease, CatalogReleaseRef, Track, TrackFile, utcnow
 
@@ -66,6 +67,10 @@ class ImportSpec(BaseModel):
     added_by: int | None = None
     force: bool = False  # explicit re-download: keep the old file, add a "[vN]" version next to it
     chroma: bytes | None = None  # the picture of the file's sound, when it is drawn already (an upload)
+    # what brings the file, for the journal of the track's files (`library.files`): download / upload / picked /
+    # upgrade; and the download it came by
+    why: str = "download"
+    download_item_id: int | None = None
 
 
 def album_reldir(album: Album) -> PurePosixPath:
@@ -249,7 +254,7 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec, *, require_m
     met = await by_ref(s, ref)
     # Take the filesystem lock before acquiring database write locks for the import.
     async with library_lock:
-        if require_missing and spec.track_id is not None and await current_file(s, spec.track_id) is not None:
+        if require_missing and spec.track_id is not None and await main_of(s, spec.track_id) is not None:
             raise TrackAlreadyFiled()
         # who the music is by — by the catalog's records of them where the catalog said, else by the names — and the
         # lines in their names: a spelling that is somebody's is filed under their name
@@ -290,7 +295,7 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec, *, require_m
             fingerprint=fingerprint(spec.artist, spec.title),
             created_by=spec.added_by,
         )
-        if known is not None:  # the file is filed under this album: the track follows its newest file
+        if known is not None:  # the file is filed under this album: the track follows its main file, this one
             known.album_id, known.album, known.album_artist = album.id, album.title, album.album_artist
             known.track_no, known.disc_no = spec.track_no or known.track_no, spec.disc_no or known.disc_no
             known.year, known.genre = album.year or known.year, spec.genre or album.genre or known.genre
@@ -366,8 +371,10 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec, *, require_m
         if album_by and album.album_artist == spec.album_artist:
             await artists.credit_album(s, album, album_by)
         file.track_id = track.id
-        s.add(file)
-        await s.flush()
+        from app.library import files
+
+        # the main file of its track from now on (the one before stays beside it), written in the track's journal
+        await files.added(s, file, why=spec.why, user_id=spec.added_by, download_item_id=spec.download_item_id)
         if track.genre or genres_changed:
             await tags.sync(s, [track.id])
         log.info("imported %s", file.path, extra={"user_id": spec.added_by})

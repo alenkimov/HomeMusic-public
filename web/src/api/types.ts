@@ -219,18 +219,47 @@ export interface FileOut {
   codec?: string | null;
   bitrate_kbps?: number | null;
   sounds_like_kbps?: number | null;
-  /** the download that brought it kept its journal (`/file/<track>`) */
-  journal?: boolean;
   /** which file it is: a file put in its place (another one picked, an upgrade) has another */
   uid?: string | null;
 }
 
-/** How a track's file came to the library: the journal of the download that brought it. */
-export interface FileJournalOut {
+/** A file of a track in the library: the main one plays, the others are kept beside it. */
+export interface TrackFileOut extends FileOut {
+  id: number;
+  main: boolean;
+  name: string;
+  acquired_at: string;
+  source_url?: string | null;
+  /** the download that brought it, when it kept the journal of its steps */
+  download_id?: number | null;
+}
+
+/** A line of the journal of a track's files. */
+export interface FileEventOut {
+  id: number;
+  kind: 'added' | 'main' | 'trashed' | 'restored' | 'lost';
+  why: string;
+  at: string;
+  who?: string | null;
+  file: FileOut;
+  name?: string | null;
+  file_id?: number | null;
+  /** «trashed»: the trash folder keeps it still */
+  can_restore: boolean;
+}
+
+/** A track's files (`/file/<track>`): the main one first, and their journal, the latest first. */
+export interface TrackFilesOut {
   track_id: number;
   artist: string;
   title: string;
-  file?: FileOut | null;
+  files: TrackFileOut[];
+  events: FileEventOut[];
+  trash_days: number;
+}
+
+/** How a file came: the journal of the download that brought it. */
+export interface DownloadStepsOut {
   steps: DownloadStep[];
   /** the download itself, when it is one's own */
   download_id?: number | null;
@@ -573,8 +602,6 @@ export interface ListenOut {
   source?: string | null;
   codec?: string | null;
   sounds_like_kbps?: number | null;
-  /** an own file whose download kept its journal */
-  journal?: boolean;
   /** an own file: which one (`FileOut.uid`) */
   file_uid?: string | null;
   page_url?: string | null;

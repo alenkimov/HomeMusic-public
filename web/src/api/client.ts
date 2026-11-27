@@ -59,7 +59,8 @@ import type {
   TrackAudienceRequest,
   CatalogPlaylistOut,
   NamesakeOut,
-  FileJournalOut,
+  DownloadStepsOut,
+  TrackFilesOut,
   HistoryOut,
   ForYouItem,
   ForYouOut,
@@ -732,7 +733,12 @@ export const api = {
   catalogArtistPhoto: (ref: string, signal?: AbortSignal) =>
     cachedGet<{ url?: string | null }>(`/api/catalog/artist/${enc(ref)}/photo`, signal),
   /** How a track's file came to the library: the journal of its download. */
-  fileJournal: (trackId: number, signal?: AbortSignal) => request<FileJournalOut>('GET', `/api/library/tracks/${trackId}/journal`, { signal }),
+  trackFiles: (trackId: number, signal?: AbortSignal) => request<TrackFilesOut>('GET', `/api/library/tracks/${trackId}/files`, { signal }),
+  fileSteps: (trackId: number, fileId: number, signal?: AbortSignal) =>
+    request<DownloadStepsOut>('GET', `/api/library/tracks/${trackId}/files/${fileId}/steps`, { signal }),
+  makeFileMain: (trackId: number, fileId: number) => request<TrackFilesOut>('POST', `/api/library/tracks/${trackId}/files/${fileId}/main`),
+  trashFile: (trackId: number, fileId: number) => request<TrackFilesOut>('POST', `/api/library/tracks/${trackId}/files/${fileId}/trash`),
+  restoreFile: (trackId: number, eventId: number) => request<TrackFilesOut>('POST', `/api/library/tracks/${trackId}/files/restore/${eventId}`),
   /** «Для вас»: the lists the Hub makes by itself, and one of them as its page shows it. */
   forYou: (signal?: AbortSignal) => request<ForYouItem[]>('GET', '/api/for-you', { signal }),
   /** The list's latest mix or issue was opened: it is not «новый» any more. */

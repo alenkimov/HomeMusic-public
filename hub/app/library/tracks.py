@@ -226,28 +226,6 @@ async def bind_refs(s: AsyncSession, track: Track, refs: Iterable[str | None]) -
         await s.execute(insert(TrackCatalogRef).on_conflict_do_nothing(), rows)
 
 
-async def current_file(s: AsyncSession, track_id: int) -> TrackFile | None:
-    """The file that plays the track: the newest one."""
-    return (await s.execute(select(TrackFile).where(TrackFile.track_id == track_id)
-                            .order_by(TrackFile.id.desc()).limit(1))).scalar_one_or_none()
-
-
-async def current_files(s: AsyncSession, track_ids: Iterable[int]) -> dict[int, TrackFile]:
-    """track id -> the file that plays it, for the tracks that have one."""
-    ids = list(dict.fromkeys(track_ids))
-    out: dict[int, TrackFile] = {}
-    for i in range(0, len(ids), 500):
-        for f in (await s.execute(select(TrackFile).where(TrackFile.track_id.in_(ids[i:i + 500]))
-                                  .order_by(TrackFile.id))).scalars():
-            out[f.track_id] = f  # ordered by id: the newest stays
-    return out
-
-
-async def files_of(s: AsyncSession, track_id: int) -> list[TrackFile]:
-    return list((await s.execute(select(TrackFile).where(TrackFile.track_id == track_id)
-                                 .order_by(TrackFile.id))).scalars())
-
-
 async def merge_into(s: AsyncSession, gone: Track, keep: Track) -> dict[str, Any]:
     """`gone` is `keep`: one song under two of the Hub's tracks (a copy by the sound, a track without a file of a
     record whose song the library has). Everything of `gone` that is the listener's goes to `keep`, and what moved is

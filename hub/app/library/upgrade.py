@@ -30,8 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from array import array
-from datetime import datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -40,12 +39,11 @@ from sqlalchemy.orm import undefer
 
 from app.config import get_settings
 from app.db import session_scope
-from app.library import acoustic, quality
+from app.library import acoustic, files, quality
 from app.library.credits import split_artists
-from app.library.importer import ImportSpec, TrackAlreadyFiled, _move, import_file, library_abs, library_lock
-from app.library.layout import unique_path
-from app.library.tracks import current_files
-from app.models import DownloadBatch, DownloadItem, Track, TrackCover, TrackFile, Upgrade
+from app.library.files import mains
+from app.library.importer import ImportSpec, _move, import_file, library_abs, library_lock
+from app.models import DownloadBatch, DownloadItem, Track, TrackCover, TrackFile, TrackFileEvent, Upgrade
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +65,7 @@ async def start(s: AsyncSession, user_id: int, track_ids: list[int]) -> int:
 
     ids = list(dict.fromkeys(track_ids))
     busy = set((await s.execute(select(Upgrade.track_id).where(Upgrade.state.in_(OPEN)))).scalars())
-    files = await current_files(s, ids)
+    files = await mains(s, ids)
     tracks = [t for t in [await s.get(Track, i) for i in ids if i not in busy] if t is not None and wanted(files.get(t.id))]
     tracks.sort(key=lambda t: (t.ref or "").partition(":")[0] not in CATALOGS)
     if not tracks:
@@ -87,7 +85,7 @@ async def start(s: AsyncSession, user_id: int, track_ids: list[int]) -> int:
                 meta["deezer_track_id"] = t.ref.split(":", 1)[1]
         q = TrackQuery(artist=t.artist, title=t.title, duration_s=t.duration_s, isrc=t.isrc, explicit=t.explicit)
         item = DownloadItem(batch_id=batch.id, user_id=user_id, force=True, query_json={
-            "query": q.model_dump(), "upgrade": row.id, "replaces_song": f.nd_song_id, "meta": meta})
+            "query": q.model_dump(), "upgrade": row.id, "meta": meta})
         s.add(item)
         await s.flush()
         row.item_id = item.id
@@ -100,7 +98,7 @@ async def start_identify(s: AsyncSession, user_id: int, track: Track, meta: dict
     from app.jobs.queue import enqueue as enqueue_job
     from app.providers.base import TrackQuery
 
-    f = (await current_files(s, [track.id])).get(track.id)
+    f = (await mains(s, [track.id])).get(track.id)
     batch = DownloadBatch(user_id=user_id, origin="upgrade", title="Качество звука")
     s.add(batch)
     await s.flush()
@@ -111,7 +109,7 @@ async def start_identify(s: AsyncSession, user_id: int, track: Track, meta: dict
     q = TrackQuery(artist=str(meta.get("artist") or track.artist), title=str(meta.get("title") or track.title),
                    duration_s=meta.get("duration_s"), isrc=meta.get("isrc"), explicit=meta.get("explicit"))
     item = DownloadItem(batch_id=batch.id, user_id=user_id, force=True, query_json={
-        "query": q.model_dump(), "upgrade": row.id, "replaces_song": f.nd_song_id if f else None,
+        "query": q.model_dump(), "upgrade": row.id,
         "meta": {**meta, "upgrade_of": track.id, "upgrade_row": row.id, "identify": True}})
     s.add(item)
     await s.flush()
@@ -140,8 +138,8 @@ async def mark(meta: dict[str, Any], **fields: Any) -> None:
 async def judge(s: AsyncSession, track_id: int, path: Path, codec: str | None, kbps: int | None,
                 duration_s: float | None) -> tuple[str, str, float | None]:
     """What a file found is to the track's own: ("replace" | "ask" | "no", in words, how alike they sound)."""
-    old = (await s.execute(select(TrackFile).where(TrackFile.track_id == track_id).options(undefer(TrackFile.chroma))
-                           .order_by(TrackFile.id.desc()).limit(1))).scalar_one_or_none()
+    old = (await s.execute(select(TrackFile).where(TrackFile.track_id == track_id, TrackFile.main)
+                           .options(undefer(TrackFile.chroma)))).scalar_one_or_none()
     if old is None:
         return "no", "у трека нет файла", None
     if not quality.better(codec, kbps, old.codec, old.bitrate_kbps):
@@ -190,7 +188,7 @@ async def take(meta: dict[str, Any], path: Path, check: Any, cand: Any, user_id:
         if verdict == "replace":
             was = await put(s, track_id, path, user_id=user_id, **{k: found[k] for k in ("codec", "bitrate_kbps", "provider", "source_url")},
                             duration_s=info.duration_s if info else None)
-            await mark_in(s, meta, state="replaced", staged_path=None, was_path=was, **found)
+            await mark_in(s, meta, state="replaced", staged_path=None, was_event_id=was.id if was is not None else None, **found)
             return "replaced", words
         rel = Path("upgrades") / f"{meta.get('upgrade_row') or track_id}{path.suffix.lower()}"
         dest = get_settings().staging_dir / rel
@@ -204,8 +202,8 @@ async def take(meta: dict[str, Any], path: Path, check: Any, cand: Any, user_id:
 async def _settle(s: AsyncSession, meta: dict[str, Any], track_id: int, path: Path, codec: str | None, kbps: int | None,
                   duration_s: float | None, cand: Any, user_id: int) -> tuple[str | None, str]:
     """The file of the record the track may be, against the track's own: see the module's last paragraph."""
-    old = (await s.execute(select(TrackFile).where(TrackFile.track_id == track_id).options(undefer(TrackFile.chroma))
-                           .order_by(TrackFile.id.desc()).limit(1))).scalar_one_or_none()
+    old = (await s.execute(select(TrackFile).where(TrackFile.track_id == track_id, TrackFile.main)
+                           .options(undefer(TrackFile.chroma)))).scalar_one_or_none()
     track = await s.get(Track, track_id)
     if old is None or track is None:
         return None, "у трека нет файла"
@@ -235,7 +233,7 @@ async def _settle(s: AsyncSession, meta: dict[str, Any], track_id: int, path: Pa
         else:
             path.unlink(missing_ok=True)
         words = f"та же запись (сходство по звуку {alike:.2f}): взяты данные каталога" + (", файл заменён лучшим" if better else ", файл оставлен ваш")
-        await mark_in(s, meta, state="replaced", staged_path=None, note=words, was_path=was, **found)
+        await mark_in(s, meta, state="replaced", staged_path=None, note=words, was_event_id=was.id if was is not None else None, **found)
         return "replaced", words
     rel = Path("upgrades") / f"{meta.get('upgrade_row') or track_id}{path.suffix.lower()}"
     dest = get_settings().staging_dir / rel
@@ -303,11 +301,13 @@ async def mark_in(s: AsyncSession, meta: dict[str, Any], **fields: Any) -> None:
 
 
 async def put(s: AsyncSession, track_id: int, path: Path, *, user_id: int | None, codec: str | None,
-              bitrate_kbps: int | None, provider: str | None, source_url: str | None, duration_s: float | None = None,
-              attach: bool = False, expected_file_uid: str | None = None,
-              fallback_cover: bytes | None = None) -> str | None:
-    """Put the file under the track, in the place of the files it has: tagged as the track is named, in the track's
-    album. The old files go to the trash folder; if the new one does not come in, they are put back."""
+              bitrate_kbps: int | None, provider: str | None, source_url: str | None, why: str = "upgrade",
+              duration_s: float | None = None, attach: bool = False, expected_file_uid: str | None = None,
+              fallback_cover: bytes | None = None) -> TrackFileEvent | None:
+    """Put the file under the track, tagged as the track is named, in the track's album, in the place of its main
+    file (`files.replace_main`: that one goes to the trash folder, the track's other files stay). Returns the old
+    main file's «trashed» event — what takes the replacement back. `attach`: the track has no file, this is its
+    first."""
     track = await s.get(Track, track_id)
     if track is None:
         raise ValueError("трек удалён")
@@ -318,50 +318,17 @@ async def put(s: AsyncSession, track_id: int, path: Path, *, user_id: int | None
         track_no=track.track_no, disc_no=track.disc_no, genre=track.genre, isrc=track.isrc, explicit=track.explicit,
         track_id=track.id, cover=cover, source=provider, source_url=source_url,
         duration_s=round(duration_s) if duration_s else track.duration_s, bitrate_kbps=bitrate_kbps, codec=codec,
-        added_by=user_id)
+        added_by=user_id, why=why)
     if attach:
         await import_file(s, path, spec, require_missing=True, fallback_cover=fallback_cover)
         return None
-    moved = await shelve(s, track_id, expected_file_uid=expected_file_uid)
-    try:
-        await import_file(s, path, spec)
-    except Exception:
-        await unshelve(moved)
-        raise
-    return str(moved[-1][0]) if moved else None  # where the file it had lies now
-
-
-async def shelve(s: AsyncSession, track_id: int, *, expected_file_uid: str | None = None) -> list[tuple[Path, Path]]:
-    """Take the track's files out of the library into the trash folder, their rows with them. [(where it went,
-    where it was)]: `unshelve` puts them back if the new file does not come."""
-    moved: list[tuple[Path, Path]] = []
-    async with library_lock:
-        files = (await s.execute(select(TrackFile).where(TrackFile.track_id == track_id).order_by(TrackFile.id))).scalars().all()
-        if expected_file_uid is not None and (not files or files[-1].uid != expected_file_uid):
-            raise TrackAlreadyFiled()
-        for f in files:
-            src = library_abs(f.path)
-            if src.is_file():
-                dest = get_settings().trash_dir / datetime.now().strftime("%Y-%m-%d") / Path(*PurePosixPath(f.path).parts)
-                if dest.exists():
-                    dest = unique_path(dest.parent, dest.name)
-                await asyncio.to_thread(_move, src, dest)
-                moved.append((dest, src))
-            await s.delete(f)
-        await s.flush()
-    return moved
-
-
-async def unshelve(moved: list[tuple[Path, Path]]) -> None:
-    for trashed, home in moved:
-        if trashed.is_file() and not home.exists():
-            await asyncio.to_thread(_move, trashed, home)
+    return await files.replace_main(s, track_id, path, spec, why=why, user_id=user_id, expected_file_uid=expected_file_uid)
 
 
 async def likeness_to(s: AsyncSession, track_id: int, path: Path) -> float | None:
     """How alike a file sounds to the one the track has, 0…1 (None: it could not be told)."""
-    old = (await s.execute(select(TrackFile).where(TrackFile.track_id == track_id).options(undefer(TrackFile.chroma))
-                           .order_by(TrackFile.id.desc()).limit(1))).scalar_one_or_none()
+    old = (await s.execute(select(TrackFile).where(TrackFile.track_id == track_id, TrackFile.main)
+                           .options(undefer(TrackFile.chroma)))).scalar_one_or_none()
     if old is None:
         return None
     mine = old.chroma
@@ -381,13 +348,14 @@ async def take_picked(s: AsyncSession, user_id: int, track: Track, path: Path, *
     """Put a file the listener picked themself in the place of the track's own — whatever it sounds like: a version
     without the censor's cuts, another master, are picked on purpose. It is written down as any replacement, so the
     two can be heard side by side and the old one taken back («Качество звука» → «Заменено»)."""
-    old = (await current_files(s, [track.id])).get(track.id)
+    old = (await mains(s, [track.id])).get(track.id)
     row = Upgrade(user_id=user_id, track_id=track.id, kind="picked", state="replaced", codec=codec, bitrate_kbps=bitrate_kbps,
                   likeness=likeness, provider=provider, source_url=source_url, note="файл выбран вручную",
                   was_codec=old.codec if old else None, was_kbps=old.bitrate_kbps if old else None)
     s.add(row)
-    row.was_path = await put(s, track.id, path, user_id=user_id, codec=codec, bitrate_kbps=bitrate_kbps, provider=provider,
-                             source_url=source_url, duration_s=duration_s, expected_file_uid=expected_file_uid)
+    gone = await put(s, track.id, path, user_id=user_id, codec=codec, bitrate_kbps=bitrate_kbps, provider=provider,
+                     source_url=source_url, why="picked", duration_s=duration_s, expected_file_uid=expected_file_uid)
+    row.was_event_id = gone.id if gone is not None else None
     await s.flush()
     return row
 
@@ -411,7 +379,7 @@ async def accept(s: AsyncSession, row: Upgrade, user_id: int, *, take_file: bool
     if row.state != "found" or path is None:
         raise ValueError("Файл уже не ждёт решения")
     track = await s.get(Track, row.track_id)
-    old = (await current_files(s, [row.track_id])).get(row.track_id)
+    old = (await mains(s, [row.track_id])).get(row.track_id)
     if row.kind == "identify" and track is not None:  # «это она»: the record's names — and its file if it is better
         await adopt(s, track, row.meta_json or {})
         if not take_file or (old is not None and not quality.better(row.codec, row.bitrate_kbps, old.codec, old.bitrate_kbps)):
@@ -419,26 +387,29 @@ async def accept(s: AsyncSession, row: Upgrade, user_id: int, *, take_file: bool
             row.state, row.staged_path = "replaced", None
             row.note = "вы подтвердили запись: взяты данные каталога, файл оставлен ваш"
             return
-    row.was_path = await put(s, row.track_id, path, user_id=user_id, codec=row.codec, bitrate_kbps=row.bitrate_kbps,
-                             provider=row.provider, source_url=row.source_url)
+    gone = await put(s, row.track_id, path, user_id=user_id, codec=row.codec, bitrate_kbps=row.bitrate_kbps,
+                     provider=row.provider, source_url=row.source_url)
+    row.was_event_id = gone.id if gone is not None else None
     row.state, row.staged_path = "replaced", None
 
 
-def was(row: Upgrade) -> Path | None:
-    """The file the track had before, while it is kept in the trash folder."""
-    p = Path(row.was_path) if row.was_path else None
-    return p if p is not None and p.is_file() else None
+async def was(s: AsyncSession, row: Upgrade) -> TrackFileEvent | None:
+    """The file the track had before (its «trashed» event in the journal), while the trash folder keeps it."""
+    event = await s.get(TrackFileEvent, row.was_event_id) if row.was_event_id else None
+    return event if event is not None and files.kept(event) is not None else None
 
 
 async def revert(s: AsyncSession, row: Upgrade, user_id: int) -> None:
-    """The listener takes back the file the track had: it comes out of the trash folder into the new one's place
-    (the new one goes there in its turn)."""
-    path = was(row)
-    if row.state != "replaced" or path is None:
+    """The listener takes back the file the track had: it comes out of the trash folder as the main file, and the
+    one put in its place goes there in its turn (the journal keeps it, to be brought back as well)."""
+    event = await was(s, row)
+    if row.state != "replaced" or event is None:
         raise ValueError("Прежнего файла уже нет — он хранится 30 дней")
-    await put(s, row.track_id, path, user_id=user_id, codec=row.was_codec, bitrate_kbps=row.was_kbps, provider="upload",
-              source_url=None)
-    row.state, row.was_path, row.note = "kept", None, "вы вернули свой файл"
+    now = await files.main_of(s, row.track_id)
+    await files.restore(s, event, why="revert", user_id=user_id)
+    if now is not None:
+        await files.trash(s, now, why="revert", user_id=user_id)
+    row.state, row.was_event_id, row.note = "kept", None, "вы вернули свой файл"
 
 
 async def decline(s: AsyncSession, row: Upgrade) -> None:

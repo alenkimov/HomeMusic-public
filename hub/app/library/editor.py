@@ -19,9 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.library import tagger
+from app.library.files import main_of, of_track
 from app.library.importer import _move, _write_cover_file, album_reldir, library_abs, library_lock, tagdata_for
 from app.library.layout import unique_path
-from app.library.tracks import current_file, files_of
 from app.matching.normalize import fingerprint
 from app.models import Album, Track, TrackCover, TrackFile, utcnow
 
@@ -58,7 +58,7 @@ async def relocate_track(s: AsyncSession, track: Track, album: Album, *, cover: 
     A file is moved when its album changes (another folder), not when the track itself is renamed (`move` False):
     Navidrome meets a moved file as a new song first and learns only at the end of its scan that it is the old one,
     so for a while the library showed the track twice. A file's own name is nobody's to read; it stays."""
-    file = await current_file(s, track.id)
+    file = await main_of(s, track.id)
     track.album_id = album.id
     track.album = album.title
     track.album_artist = album.album_artist
@@ -167,7 +167,7 @@ async def update_track(s: AsyncSession, track: Track, **fields) -> Track:
         album = await s.get(Album, track.album_id) if track.album_id else None
         if album is None:
             track.fingerprint = fingerprint(track.artist, track.title)
-            file = await current_file(s, track.id)
+            file = await main_of(s, track.id)
             p = library_abs(file.path) if file else None
             if p is not None and p.is_file():
                 await asyncio.to_thread(tagger.update_tags, p, **{k: v for k, v in fields.items() if v is not None})
@@ -186,7 +186,7 @@ async def trash_track(s: AsyncSession, track: Track, user_id: int | None = None,
 
     async with library_lock:
         moved: dict[int, str] = {}
-        for file in await files_of(s, track.id):
+        for file in await of_track(s, track.id):
             src = library_abs(file.path)
             if src.is_file():
                 dest = get_settings().trash_dir / datetime.now().strftime("%Y-%m-%d") / Path(*PurePosixPath(file.path).parts)
@@ -194,7 +194,7 @@ async def trash_track(s: AsyncSession, track: Track, user_id: int | None = None,
                     dest = unique_path(dest.parent, dest.name)
                 await asyncio.to_thread(_move, src, dest)
                 await asyncio.to_thread(_remove_empty_dirs, src.parent)
-                moved[file.id] = str(dest)
+                moved[file.id] = str(dest.resolve())
         album_id = track.album_id
         last = album_id is not None and (await s.execute(select(func.count(Track.id)).where(
             Track.album_id == album_id, Track.id != track.id))).scalar_one() == 0

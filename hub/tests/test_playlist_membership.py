@@ -243,7 +243,7 @@ async def test_a_track_without_a_file_is_tagged_like_any_other(env):
     from app.models import TrackFile
 
     async with session_scope() as s:
-        s.add(TrackFile(track_id=waiting, uid="u-555", path="a/555.mp3", nd_song_id="nd555"))
+        s.add(TrackFile(track_id=waiting, uid="u-555", path="a/555.mp3", nd_song_id="nd555", main=True))
     tags = (await c.get("/api/tags")).json()["map"]
     assert tag in tags[str(waiting)]
 
