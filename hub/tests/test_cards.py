@@ -135,11 +135,27 @@ async def test_a_card_marked_while_it_was_drawn_stays_marked(env, monkeypatch):
         await cards.read(s, [bare])
         await s.execute(update(Track).where(Track.id == bare).values(title="Changed"))
     monkeypatch.setattr(cards, "draw", meanwhile)
-    await cards.build([bare])
+    async with db.session_scope() as s:
+        await cards.build(s, [bare])
     monkeypatch.setattr(cards, "draw", draw)
     assert await stale(bare)
     async with db.session_scope() as s:
         assert (await cards.read(s, [bare]))[bare]["title"] == "Changed meanwhile"
+
+
+async def test_a_card_is_drawn_in_the_transaction_that_marked_it(env):
+    """A request that changed what a card is drawn from (the database marked the card stale in its transaction)
+    reads the card before it commits: drawn in that transaction, not waited for by another that waits for it."""
+    import asyncio
+
+    _, bare = env
+    async with db.session_scope() as s:
+        await cards.read(s, [bare])
+    async with db.session_scope() as s:
+        await s.execute(update(Track).where(Track.id == bare).values(title="Renamed"))
+        got = await asyncio.wait_for(cards.read(s, [bare]), timeout=10)
+        assert got[bare]["title"] == "Renamed"
+    assert not await stale(bare)
 
 
 async def test_a_card_whose_search_runs_out_is_drawn_anew(env):
@@ -176,7 +192,9 @@ async def test_a_card_that_changed_is_told_to_everybody_and_one_that_did_not_is_
         async with db.session_scope() as s:
             await s.execute(update(Track).where(Track.id == bare).values(title="Renamed"))
             await s.execute(text("UPDATE track_cards SET dirty = true WHERE track_id = :i"), {"i": owned})
-        await cards.build([owned, bare])
+        async with db.session_scope() as s:
+            await cards.build(s, [owned, bare])
+            assert one.empty()  # not before they are there to take: after the commit
         for q in (one, other):
             said = json.loads(q.get_nowait())
             assert said == {"event": "cards", "data": {"ids": [bare]}}  # drawn again the same: not told

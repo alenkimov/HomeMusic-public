@@ -177,16 +177,19 @@ def _digest(song: dict | None) -> str | None:
     return hashlib.md5(json.dumps(song, sort_keys=True, default=str).encode()).hexdigest() if song else None
 
 
-async def build(track_ids: list[int]) -> dict[int, dict]:
-    """Draw the cards of these tracks and keep them; returns them by track. In a session of its own: a card is kept
-    whatever becomes of the request that needed it. A card the database marked stale again while it was being drawn
-    stays marked (`gen`): it is drawn again."""
+async def build(s: AsyncSession, track_ids: list[int]) -> dict[int, dict]:
+    """Draw the cards of these tracks and keep them, in the caller's transaction; returns them by track. A card the
+    database marked stale again while it was being drawn stays marked (`gen`): it is drawn again. Once the
+    transaction is committed, whoever shows these tracks is told their cards changed (event `cards`).
+
+    In the caller's transaction, not in a session of its own: what the caller has written marks cards stale (the
+    triggers of `track_cards`) and holds those rows until it commits — a session of its own writing them waits for
+    that commit, and the caller waits for it: neither ever went on."""
     from datetime import timedelta
 
     from sqlalchemy import select
     from sqlalchemy.dialects.postgresql import insert
 
-    from app.db import session_scope
     from app.library import artists as artist_names
     from app.library import songs as library_songs
     from app.library.owned import _track_variants
@@ -203,55 +206,76 @@ async def build(track_ids: list[int]) -> dict[int, dict]:
         index = None
     for k in range(0, len(ids), BATCH):
         part = ids[k:k + BATCH]
-        async with session_scope() as s:
-            before = {i: (gen, card) for i, gen, card in (await s.execute(
-                select(TrackCard.track_id, TrackCard.gen, TrackCard.card).where(TrackCard.track_id.in_(part)))).all()}
-            gens = {i: gen for i, (gen, _) in before.items()}
-            rows = list((await s.execute(select(Track).where(Track.id.in_(part)))).scalars())
-            drawn = await draw(s, rows, songs=index or {})
-            pending = [o for o in drawn if not o.owned and not o.unknown]
-            variants = await _track_variants(s, pending)
-            checks = {o.library_track_id: [check_key(r) for r in (o.ref, *variants.get(o.ref, []), f"lib:{o.library_track_id}")]
-                      for o in pending}
-            wanted = [c for cs in checks.values() for c in cs]
-            ends = {key: at + timedelta(seconds=ttl) for key, at, ttl in (await s.execute(
-                select(CatalogCache.key, CatalogCache.fetched_at, CatalogCache.ttl_s)
-                .where(CatalogCache.key.in_(wanted)))).all()} if wanted else {}
-            now = utcnow()
-            values = []
-            for t, o in zip(rows, drawn, strict=True):
-                deps = {f"k:{artist_names.key(n)}" for n in (o.artist, *o.artists) if n}
-                deps |= {f"r:{r}" for r in artist_names.refs_of(t.catalog).values()}
-                deps |= {f"a:{i}" for i in (o.hub_artist_id, *o.hub_artist_ids) if i}
-                deps |= {f"c:{c}" for c in checks.get(t.id, ())}
-                if o.album_ref:
-                    deps.add(f"g:{o.album_ref}")
-                live = [ends[c] for c in checks.get(t.id, ()) if c in ends and ends[c] >= now]
-                card = o.model_dump(mode="json", exclude=NOT_CARD)
-                out[t.id] = card
-                if t.id in before and before[t.id][1] != card:
-                    changed.append(t.id)
-                values.append({"track_id": t.id, "card": card, "deps": sorted(deps),
-                               "nd_digest": _digest(index.get(t.nd_song_id)) if index and t.nd_song_id else None,
-                               "valid_until": min(live) if live else None,
-                               # drawn without Navidrome (no digest): the next look at its songs draws it again
-                               "dirty": False, "gen": gens.get(t.id, 0), "built_at": now})
-            if values:
-                q = insert(TrackCard).values(values)
-                await s.execute(q.on_conflict_do_update(index_elements=[TrackCard.track_id], set_={
-                    "card": q.excluded.card, "deps": q.excluded.deps, "nd_digest": q.excluded.nd_digest,
-                    "valid_until": q.excluded.valid_until, "built_at": q.excluded.built_at,
-                    # marked again while it was drawn: it stays to be drawn again
-                    "dirty": TrackCard.gen != q.excluded.gen,
-                    "gen": TrackCard.gen,
-                }))
-        # kept now (the session is over): whoever shows these tracks takes their new cards (`POST /api/tracks/cards`)
-        if changed:
-            from app.events import bus
-
-            bus.broadcast("cards", {"ids": changed})
-            changed = []
+        before = {i: (gen, card) for i, gen, card in (await s.execute(
+            select(TrackCard.track_id, TrackCard.gen, TrackCard.card).where(TrackCard.track_id.in_(part)))).all()}
+        gens = {i: gen for i, (gen, _) in before.items()}
+        rows = list((await s.execute(select(Track).where(Track.id.in_(part)))).scalars())
+        drawn = await draw(s, rows, songs=index or {})
+        pending = [o for o in drawn if not o.owned and not o.unknown]
+        variants = await _track_variants(s, pending)
+        checks = {o.library_track_id: [check_key(r) for r in (o.ref, *variants.get(o.ref, []), f"lib:{o.library_track_id}")]
+                  for o in pending}
+        wanted = [c for cs in checks.values() for c in cs]
+        ends = {key: at + timedelta(seconds=ttl) for key, at, ttl in (await s.execute(
+            select(CatalogCache.key, CatalogCache.fetched_at, CatalogCache.ttl_s)
+            .where(CatalogCache.key.in_(wanted)))).all()} if wanted else {}
+        now = utcnow()
+        values = []
+        for t, o in zip(rows, drawn, strict=True):
+            deps = {f"k:{artist_names.key(n)}" for n in (o.artist, *o.artists) if n}
+            deps |= {f"r:{r}" for r in artist_names.refs_of(t.catalog).values()}
+            deps |= {f"a:{i}" for i in (o.hub_artist_id, *o.hub_artist_ids) if i}
+            deps |= {f"c:{c}" for c in checks.get(t.id, ())}
+            if o.album_ref:
+                deps.add(f"g:{o.album_ref}")
+            live = [ends[c] for c in checks.get(t.id, ()) if c in ends and ends[c] >= now]
+            card = o.model_dump(mode="json", exclude=NOT_CARD)
+            out[t.id] = card
+            if t.id in before and before[t.id][1] != card:
+                changed.append(t.id)
+            values.append({"track_id": t.id, "card": card, "deps": sorted(deps),
+                           "nd_digest": _digest(index.get(t.nd_song_id)) if index and t.nd_song_id else None,
+                           "valid_until": min(live) if live else None,
+                           # drawn without Navidrome (no digest): the next look at its songs draws it again
+                           "dirty": False, "gen": gens.get(t.id, 0), "built_at": now})
+        if values:
+            q = insert(TrackCard).values(values)
+            await s.execute(q.on_conflict_do_update(index_elements=[TrackCard.track_id], set_={
+                "card": q.excluded.card, "deps": q.excluded.deps, "nd_digest": q.excluded.nd_digest,
+                "valid_until": q.excluded.valid_until, "built_at": q.excluded.built_at,
+                # marked again while it was drawn: it stays to be drawn again
+                "dirty": TrackCard.gen != q.excluded.gen,
+                "gen": TrackCard.gen,
+            }))
+    await s.flush()
+    if changed:
+        _tell_when_committed(s, changed)
     return out
+
+
+def _tell_when_committed(s: AsyncSession, ids: list[int]) -> None:
+    """Whoever shows these tracks takes their new cards (`POST /api/tracks/cards`) — once they are there to take:
+    after the commit (a rollback, and there is nothing to tell)."""
+    from sqlalchemy import event
+
+    from app.events import bus
+
+    waiting: list[int] | None = s.info.get("cards_changed")
+    if waiting is not None:
+        waiting.extend(ids)
+        return
+    s.info["cards_changed"] = waiting = list(ids)
+
+    def committed(_session) -> None:
+        told = s.info.pop("cards_changed", None)
+        if told:
+            bus.broadcast("cards", {"ids": sorted(set(told))})
+
+    def rolled_back(_session) -> None:
+        s.info.pop("cards_changed", None)
+
+    event.listen(s.sync_session, "after_commit", committed, once=True)
+    event.listen(s.sync_session, "after_soft_rollback", rolled_back, once=True)
 
 
 async def read(s: AsyncSession, track_ids: list[int]) -> dict[int, dict]:
@@ -269,7 +293,7 @@ async def read(s: AsyncSession, track_ids: list[int]) -> dict[int, dict]:
             TrackCard.track_id.in_(part), TrackCard.dirty.is_(False),
             or_(TrackCard.valid_until.is_(None), TrackCard.valid_until >= now)))).all())
     if stale := [i for i in ids if i not in out]:
-        out.update(await build(stale))
+        out.update(await build(s, stale))
     return out
 
 
@@ -288,7 +312,7 @@ async def ensure(s: AsyncSession, track_ids: list[int]) -> None:
             TrackCard.track_id.in_(ids[k:k + 5000]), TrackCard.dirty.is_(False),
             or_(TrackCard.valid_until.is_(None), TrackCard.valid_until >= now)))).scalars())
     if stale := [i for i in ids if i not in fresh]:
-        await build(stale)
+        await build(s, stale)
 
 
 async def list_json(s: AsyncSession, playlist_id: int, user_id: int, *, extra: list[dict] | None = None) -> str:
@@ -416,8 +440,8 @@ async def refresh_some(limit: int = BATCH) -> int:
             due += list((await s.execute(select(Track.id).where(
                 ~select(TrackCard.track_id).where(TrackCard.track_id == Track.id).exists())
                 .limit(limit - len(due)))).scalars())
-    if due:
-        await build(due)
+        if due:
+            await build(s, due)
     return len(due)
 
 
