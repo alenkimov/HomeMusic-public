@@ -1190,10 +1190,12 @@ class Playlist(Base):
 
 
 class PlaylistItem(Base):
-    """A track's place in a playlist. A track may stand in a playlist more than once."""
+    """A track's place in a playlist — one at most: a playlist holds a track once (two tracks found to be one song
+    are one place: `library.tracks.merge_into`)."""
 
     __tablename__ = "playlist_items"
-    __table_args__ = (Index("ix_playlist_items_order", "playlist_id", "position"),)
+    __table_args__ = (Index("ix_playlist_items_order", "playlist_id", "position"),
+                      UniqueConstraint("playlist_id", "track_id", name="uq_playlist_items_track"))
 
     id: Mapped[int] = mapped_column(primary_key=True)
     playlist_id: Mapped[int] = mapped_column(ForeignKey("playlists.id", ondelete="CASCADE"))

@@ -318,7 +318,7 @@ async def test_what_waits_shows_in_its_playlist_and_extras_follow_the_tracks(env
     tags = await by_songs(tag_map)
     assert tag in tags["ndA"] and tag in tags["ndB"]
     assert {"ndA", "ndB"} <= set(state["stars"])
-    assert (await c.post(f"/api/playlists/{mine}/remove", json={"indexes": [3]})).status_code == 200
+    assert (await c.post(f"/api/playlists/{mine}/remove", json={"track_ids": [rows[3]["library_track_id"]]})).status_code == 200
 
     # the track that waited gets its file: it gets the same; nothing is done twice
     await c.post("/api/plays/events", json={"events": [{
@@ -475,7 +475,8 @@ async def test_import_sync_does_not_restore_a_track_removed_by_the_listener(env)
     await c.post(f"/api/imports/{imp['id']}/start", json={"collection_ids": [collection]})
     await run_imports()
     pid = next(p["id"] for p in (await c.get("/api/playlists")).json() if p["name"] == "Дорога")
-    assert (await c.post(f"/api/playlists/{pid}/remove", json={"indexes": [1]})).status_code == 200
+    second = (await c.get(f"/api/playlists/{pid}")).json()["tracks"][1]["library_track_id"]
+    assert (await c.post(f"/api/playlists/{pid}/remove", json={"track_ids": [second]})).status_code == 200
     async with session_scope() as s:
         s.add(ImportItem(import_id=imp["id"], collection_id=collection, external_id="new",
                          position=4, raw_json={"title": "Новый трек", "artist": "Исполнитель"},

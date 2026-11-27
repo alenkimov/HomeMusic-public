@@ -111,7 +111,7 @@ async def mirror(playlist_id: int) -> None:
                 want_tracks = [ids[x] for x in now if x in ids]
                 if want_tracks != await playlists.track_ids(s, p.id):
                     await s.execute(delete(PlaylistItem).where(PlaylistItem.playlist_id == p.id))
-                    await playlists.add(s, p, want_tracks, again=True)
+                    await playlists.add(s, p, want_tracks)  # a song Navidrome has twice: once
                     changed = True
                 want = now
             else:

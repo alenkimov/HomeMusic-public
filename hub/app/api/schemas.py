@@ -923,7 +923,7 @@ class PlaylistCreateIn(BaseModel):
 
 
 class PlaylistRemoveIn(BaseModel):
-    indexes: list[int] = Field(min_length=1, max_length=500)  # positions in the playlist, from 0
+    track_ids: list[int] = Field(min_length=1, max_length=500)  # the Hub's tracks to take out
 
 
 # --- the Navidrome library as the player sees it (the PWA in a browser, app/api/medialib.py) ----------------------

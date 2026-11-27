@@ -817,8 +817,9 @@ export const api = {
   playlistsOfTracks: (tracks: string[]) => request<PlaylistOfSongsOut[]>('POST', '/api/playlists/of-tracks', { json: { track_ids: tracks.map(Number) } }),
   playlistMembershipMany: (body: { tracks: string[]; add: string[]; remove: string[] }) => request<PlaylistOfSongsOut[]>('POST', '/api/playlists/membership-many', { json: { track_ids: body.tracks.map(Number), add: body.add, remove: body.remove } }),
   playlist: (id: string, signal?: AbortSignal) => request<PlaylistPageOut>('GET', `/api/playlists/${enc(id)}`, { signal }),
-  removeFromPlaylist: (id: string, indexes: number[]) =>
-    request<OkOut>('POST', `/api/playlists/${enc(id)}/remove`, { json: { indexes } }),
+  /** Takes these tracks (the Hub's ids) out of the playlist: it holds a track once. */
+  removeFromPlaylist: (id: string, trackIds: number[]) =>
+    request<OkOut>('POST', `/api/playlists/${enc(id)}/remove`, { json: { track_ids: trackIds } }),
   renamePlaylist: (id: string, name: string) => request<PlaylistOut>('PUT', `/api/playlists/${enc(id)}`, { json: { name } }),
   setPlaylistCover: (id: string, file: File) => {
     const form = new FormData();

@@ -231,10 +231,9 @@ async def get_playlist(playlist_id: str, request: Request, user: User = Depends(
 @router.post("/{playlist_id}/remove")
 async def remove(playlist_id: str, body: PlaylistRemoveIn, user: User = Depends(current_user),
                  s: AsyncSession = Depends(get_session, scope="function")):
-    """Takes tracks out by their positions (a track may be in a playlist twice)."""
+    """Takes these tracks out (a playlist holds a track once: the track is its place)."""
     p = await _own(s, user, playlist_id, change=True)
-    rows = await playlists.items(s, p.id)
-    await playlists.remove_items(s, p, [rows[i][0].id for i in set(body.indexes) if 0 <= i < len(rows)])
+    await playlists.remove_tracks(s, p, body.track_ids)
     await _changed(s, p)
     return {"ok": True}
 

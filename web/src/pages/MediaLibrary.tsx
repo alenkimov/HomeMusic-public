@@ -420,9 +420,11 @@ export function PlaylistPage({ id }: { id: string }) {
   }));
   useHubEvent('reconnect', () => res.reload(true));
 
-  const remove = async (i: number, t: NdSongOut) => {
-    if (await attempt(() => api.removeFromPlaylist(id, [i]), `«${titleWithVersion(t.title, t)}» убран из плейлиста`))
-      res.setData((prev) => (prev ? { ...prev, song_count: prev.song_count - (t.owned ? 1 : 0), duration_s: Math.max(0, prev.duration_s - (t.duration_s ?? 0)), tracks: prev.tracks.filter((_, j) => j !== i) } : prev));
+  const remove = async (t: NdSongOut) => {
+    const trackId = t.library_track_id;
+    if (trackId == null) return;
+    if (await attempt(() => api.removeFromPlaylist(id, [trackId]), `«${titleWithVersion(t.title, t)}» убран из плейлиста`))
+      res.setData((prev) => (prev ? { ...prev, song_count: prev.song_count - (t.owned ? 1 : 0), duration_s: Math.max(0, prev.duration_s - (t.duration_s ?? 0)), tracks: prev.tracks.filter((x) => x.library_track_id !== trackId) } : prev));
   };
 
   if (res.loading && !p) return (<><PageHeader hero title="Плейлист" back="/library" /><HeroSkeleton /></>);
@@ -447,7 +449,7 @@ export function PlaylistPage({ id }: { id: string }) {
         <>
           {saving && <SaveSelection scope={`playlist:${id}`} filter={filter} onClose={() => setSaving(false)} onSaved={(r) => navigate(`/selection/${r.id}`)} />}
           <TagFilterChips filter={filter} onChange={setFilter} count={shown ? shown.length : all.length} />
-          <SongList tracks={all} found={shown} sort={sort} onSort={setSort} extra={(t, i) => [{ icon: 'x', label: 'Убрать из плейлиста', shortcut: 'Del', onClick: () => void remove(i, t) }]} />
+          <SongList tracks={all} found={shown} sort={sort} onSort={setSort} extra={(t) => [{ icon: 'x', label: 'Убрать из плейлиста', shortcut: 'Del', onClick: () => void remove(t) }]} />
         </>
       ) : (
         <Empty icon="playlist" title="Плейлист пуст" text="Добавляйте треки через ⋯ → «Добавить в плейлист»." />

@@ -234,7 +234,7 @@ async def test_the_worse_of_two_copies_goes_to_the_trash_and_comes_back(env, mon
     from app.db import session_scope
     from app.library import acoustic
     from app.library.importer import library_abs
-    from app.models import PlaylistItem, Track, User
+    from app.models import PlaylistItem, Track, User, utcnow
 
     c = env["client"]
     good = await _add(artist="X", title="Song", path="x/good.flac", codec="flac", bitrate_kbps=900)
@@ -247,23 +247,46 @@ async def test_the_worse_of_two_copies_goes_to_the_trash_and_comes_back(env, mon
         return [[good, bad]]
 
     monkeypatch.setattr(acoustic, "doubles", doubles)
+    from app.library import tracks
+    from app.models import PlayEvent, TrackCatalogRef
+
+    other = await _add(artist="Y", title="Другая")
     async with session_scope() as s:
         admin = (await s.execute(select(User))).scalars().first()
-        mine = await playlists.create(s, admin.id, "Моё")
+        (await s.get(Track, bad)).ref = "dz:777"  # the copy is the song as Deezer has it
+        mine = await playlists.create(s, admin.id, "Моё")  # the copy alone
         await playlists.add(s, mine, [bad])
-        mine_id = mine.id
+        both = await playlists.create(s, admin.id, "Оба")  # the copy above the one that stays
+        await playlists.add(s, both, [bad, other, good])
+        mine_id, both_id = mine.id, both.id
+        s.add(PlayEvent(user_id=admin.id, event_id="e1", ts=utcnow(), kind="finish", track_id=bad, client="pwa",
+                        received_at=utcnow()))
+
+    async def places(pid):
+        async with session_scope() as s:
+            return list((await s.execute(select(PlaylistItem.track_id).where(PlaylistItem.playlist_id == pid)
+                                         .order_by(PlaylistItem.position, PlaylistItem.id))).scalars())
+
     await _scan()
     (p,) = await _open(c, "versions")
     assert (p["kind"], p["subject_id"], p["sure"], p["was"], p["to"]) == ("double", bad, True, "MP3 · 128 kbps · без альбома", "FLAC · 900 kbps · без альбома")
     assert (await c.post(f"/api/tidy/proposals/{p['id']}/accept")).status_code == 200
+    assert await places(mine_id) == [good]
+    assert await places(both_id) == [good, other]  # once, at the copy's earlier place
     async with session_scope() as s:
         assert await s.get(Track, bad) is None
-        assert list((await s.execute(select(PlaylistItem.track_id).where(PlaylistItem.playlist_id == mine_id))).scalars()) == [good]
+        assert (await s.execute(select(PlayEvent.track_id).where(PlayEvent.event_id == "e1"))).scalar_one() == good
+        assert (await tracks.by_ref(s, "dz:777")).id == good  # a like of Deezer's record finds the library's track
     r = await c.post(f"/api/tidy/proposals/{p['id']}/revert")
     assert r.status_code == 200, r.text
     async with session_scope() as s:
         back = (await s.execute(select(Track).where(Track.title == "Song", Track.id != good))).scalar_one()
-        assert list((await s.execute(select(PlaylistItem.track_id).where(PlaylistItem.playlist_id == mine_id))).scalars()) == [back.id]
+        assert (await s.execute(select(PlayEvent.track_id).where(PlayEvent.event_id == "e1"))).scalar_one() == back.id
+        assert (await tracks.by_ref(s, "dz:777")).id == back.id
+        assert (await s.execute(select(TrackCatalogRef).where(TrackCatalogRef.track_id == good,
+                                                              TrackCatalogRef.ref == "dz:777"))).first() is None
+    assert await places(mine_id) == [back.id]
+    assert await places(both_id) == [back.id, other, good]  # as it was
 
 
 async def test_the_lines_of_a_text_that_are_not_the_song_are_dropped_and_come_back(env):

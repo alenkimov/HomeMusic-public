@@ -94,15 +94,15 @@ async def lock(s: AsyncSession, playlist_id: int) -> None:
 
 
 async def add(s: AsyncSession, p: Playlist, tracks: Iterable[int], *, at: datetime | None = None,
-              again: bool = False, first: bool = False) -> list[int]:
+              first: bool = False) -> list[int]:
     """Put tracks into the playlist, in the order given: after the last one, or — `first` — before the first (a
-    like goes on top of «Любимое»). A track that is in it already is left where it is unless `again`. `at`: when
-    they were added, if not now (an import brings the dates of the service). Returns the tracks that went in."""
-    want = list(dict.fromkeys(tracks)) if not again else list(tracks)
+    like goes on top of «Любимое»). A track that is in it already is left where it is: a playlist holds a track once.
+    `at`: when they were added, if not now (an import brings the dates of the service). Returns the tracks that
+    went in."""
+    want = list(dict.fromkeys(tracks))
     await lock(s, p.id)
-    if not again:
-        there = set(await track_ids(s, p.id))
-        want = [t for t in want if t not in there]
+    there = set(await track_ids(s, p.id))
+    want = [t for t in want if t not in there]
     if not want:
         return []
     edge = (await s.execute(select(func.min(PlaylistItem.position) if first else func.max(PlaylistItem.position))
@@ -114,18 +114,6 @@ async def add(s: AsyncSession, p: Playlist, tracks: Iterable[int], *, at: dateti
     p.updated_at = utcnow()
     await s.flush()
     return want
-
-
-async def remove_items(s: AsyncSession, p: Playlist, item_ids: Iterable[int]) -> int:
-    """Take places out of the playlist (a track that stands in it twice keeps the other place)."""
-    ids = list(item_ids)
-    if not ids:
-        return 0
-    await lock(s, p.id)
-    res = await s.execute(delete(PlaylistItem).where(PlaylistItem.playlist_id == p.id, PlaylistItem.id.in_(ids)))
-    if res.rowcount:
-        p.updated_at = utcnow()
-    return res.rowcount or 0
 
 
 async def remove_tracks(s: AsyncSession, p: Playlist, tracks: Iterable[int]) -> int:

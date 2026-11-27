@@ -191,33 +191,23 @@ async def _double_now(s: AsyncSession, p: TidyProposal) -> dict[str, Any] | None
 
 
 async def _double_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
-    """The other copy goes to the trash; where it stood in a playlist the kept one stands now (unless it is there
-    already), and its tags are the kept one's."""
+    """The other copy goes to the trash, and all that was the listener's of it is the kept one's
+    (`tracks.merge_into`): its places in playlists (once each, the earlier place), tags, listens, the transfers'
+    rows, its catalog records."""
     from app.library import access, editor
+    from app.library import tracks as registry
 
     gone, keep = await s.get(Track, p.subject_id), await s.get(Track, p.to_json["keep"])
     may, _others, _mine = await access.keeping(s, user, gone.id)
     if not may:
         raise PermissionError("Этот файл хранит кто-то ещё: удалить его может только администратор")
-    there = set((await s.execute(select(PlaylistItem.playlist_id).where(PlaylistItem.track_id == keep.id))).scalars())
-    moved, playlists = [], set()
-    for item in (await s.execute(select(PlaylistItem).where(PlaylistItem.track_id == gone.id))).scalars():
-        playlists.add(item.playlist_id)
-        if item.playlist_id not in there:
-            item.track_id = keep.id
-            there.add(item.playlist_id)
-            moved.append(item.id)
-    have = set((await s.execute(select(TrackTag.tag_id).where(TrackTag.track_id == keep.id))).scalars())
-    tags = [t for t, auto in (await s.execute(select(TrackTag.tag_id, TrackTag.auto).where(TrackTag.track_id == gone.id))).all()
-            if t not in have and not auto]
-    for tag_id in tags:
-        s.add(TrackTag(track_id=keep.id, tag_id=tag_id, auto=False))
-    await s.flush()
+    merged = await registry.merge_into(s, gone, keep)
     await editor.trash_track(s, gone, user.id)
+    await registry.bind_merged(s, keep, merged)
     trashed = (await s.execute(select(TrashedTrack.id).where(TrashedTrack.track_id == gone.id)
                                .order_by(TrashedTrack.id.desc()).limit(1))).scalar_one()
-    after.scan, after.playlists = True, playlists
-    return {"trashed": trashed, "moved": moved, "tags": tags}
+    after.scan, after.playlists = True, set(merged["playlists"])
+    return {"trashed": trashed, "merged": merged}
 
 
 async def _double_revert(s: AsyncSession, user: User, p: TidyProposal, after: After) -> None:
@@ -234,6 +224,15 @@ async def _double_revert(s: AsyncSession, user: User, p: TidyProposal, after: Af
     except ValueError as e:
         raise Changed(str(e)) from e
     keep = p.to_json["keep"]
+    if "merged" in undo:
+        from app.library import tracks as registry
+
+        kept = await s.get(Track, keep)
+        if kept is None:
+            raise Changed("Оставленного трека уже нет")
+        after.scan, after.playlists = True, await registry.unmerge(s, back, kept, undo["merged"])
+        return
+    # a copy deleted before the listener's all went with the places (its places and tags only)
     playlists = set()
     if undo.get("moved"):
         for item in (await s.execute(select(PlaylistItem).where(PlaylistItem.id.in_(undo["moved"]),

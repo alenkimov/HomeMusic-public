@@ -125,10 +125,13 @@ async def test_a_track_without_a_file_stands_in_its_place(env):
     listed = next(x for x in (await c.get("/api/playlists")).json() if x["id"] == pid)
     assert (listed["song_count"], listed["pending_count"]) == (2, 1)
 
-    # taken out by its place, like any other
-    assert (await c.post(f"/api/playlists/{pid}/remove", json={"indexes": [1, 1]})).json() == {"ok": True}
+    # taken out, like any other (a playlist holds a track once: the track is its place)
+    assert (await c.post(f"/api/playlists/{pid}/remove", json={"track_ids": [waiting, waiting]})).json() == {"ok": True}
     assert [t["title"] for t in (await c.get(f"/api/playlists/{pid}")).json()["tracks"]] == ["Группа крови", "Своё"]
-    assert (await c.post(f"/api/playlists/{pid}/remove", json={"indexes": []})).status_code == 422
+    assert (await c.post(f"/api/playlists/{pid}/remove", json={"track_ids": []})).status_code == 422
+    # put in twice: once
+    await c.post(f"/api/playlists/{pid}/add", json={"track_ids": await tids("ndK")})
+    assert [t["title"] for t in (await c.get(f"/api/playlists/{pid}")).json()["tracks"]] == ["Группа крови", "Своё"]
 
 
 async def test_a_playlist_is_renamed_given_a_picture_and_deleted(env):

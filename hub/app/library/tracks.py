@@ -8,6 +8,7 @@ has not met the song yet. The track has no file then; a download adds one later 
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
@@ -247,38 +248,103 @@ async def files_of(s: AsyncSession, track_id: int) -> list[TrackFile]:
                                  .order_by(TrackFile.id))).scalars())
 
 
-async def fold(s: AsyncSession, stub: Track, into: Track) -> set[int]:
-    """A track without a file (made of a catalog's record: a like, a transfer's row) found to be a track the library
-    has (its download found the song there already): it becomes that track. Where it stood in a playlist the track
-    stands (unless it is there already), its listens, its transfer's and downloads' rows and its own tags are the
-    track's, its catalog records are records of the track — a like or a row naming them finds the track — and it is
-    gone. Returns the playlists that changed. A track with a file is not folded."""
+async def merge_into(s: AsyncSession, gone: Track, keep: Track) -> dict[str, Any]:
+    """`gone` is `keep`: one song under two of the Hub's tracks (a copy by the sound, a track without a file of a
+    record whose song the library has). Everything of `gone` that is the listener's goes to `keep`, and what moved is
+    written down (the record returned) to be taken back (`unmerge`):
+
+    - its places in playlists: where `keep` is not, `gone`'s place is `keep`'s now; where both are, one place stays —
+      the earlier one of the two (the listener's order), and `gone`'s goes with it (a playlist holds a track once);
+    - its own tags (not the ones made by rule);
+    - its listens, its transfers' and downloads' rows;
+    - its catalog records — written down here; they are `keep`'s once `gone` is no more (`bind_merged`).
+
+    The caller then deletes `gone` (or puts it in the trash) and calls `bind_merged`."""
+    from sqlalchemy import update
+
+    from app.models import DownloadItem, ImportItem, PlayEvent, PlaylistItem, TrackTag
+
+    record: dict[str, Any] = {"moved": [], "shifted": [], "tags": [], "events": [], "imports": [], "downloads": [],
+                              "ref": gone.ref, "refs": [], "playlists": []}
+    mine = {i.playlist_id: i for i in (await s.execute(select(PlaylistItem).where(PlaylistItem.track_id == keep.id))).scalars()}
+    for item in (await s.execute(select(PlaylistItem).where(PlaylistItem.track_id == gone.id))).scalars():
+        record["playlists"].append(item.playlist_id)
+        there = mine.get(item.playlist_id)
+        if there is None:
+            item.track_id = keep.id
+            mine[item.playlist_id] = item
+            record["moved"].append(item.id)
+        elif item.position < there.position:  # the copy stood earlier: the one that stays takes its place
+            record["shifted"].append([there.id, there.position])
+            there.position = item.position
+    await s.flush()
+    have = set((await s.execute(select(TrackTag.tag_id).where(TrackTag.track_id == keep.id))).scalars())
+    for tag_id, auto in (await s.execute(select(TrackTag.tag_id, TrackTag.auto).where(TrackTag.track_id == gone.id))).all():
+        if tag_id not in have and not auto:
+            s.add(TrackTag(track_id=keep.id, tag_id=tag_id, auto=False))
+            record["tags"].append(tag_id)
+    for key, model in (("events", PlayEvent), ("imports", ImportItem), ("downloads", DownloadItem)):
+        ids = list((await s.execute(update(model).where(model.track_id == gone.id).values(track_id=keep.id)
+                                    .returning(model.id))).scalars())
+        record[key] = ids
+    record["refs"] = sorted({r for r in (gone.ref, *(await s.execute(
+        select(TrackCatalogRef.ref).where(TrackCatalogRef.track_id == gone.id))).scalars()) if r})
+    record["playlists"] = sorted(set(record["playlists"]))
+    await s.flush()
+    return record
+
+
+async def bind_merged(s: AsyncSession, keep: Track, record: dict[str, Any]) -> None:
+    """After `merge_into`, once the track that went is no more: its catalog records name `keep` — a like, a
+    transfer's row, a page of the catalog finds the library's track, not a new one without a file."""
+    before = set((await s.execute(select(TrackCatalogRef.ref).where(TrackCatalogRef.track_id == keep.id))).scalars())
+    await bind_refs(s, keep, record.get("refs") or [])
+    after = set((await s.execute(select(TrackCatalogRef.ref).where(TrackCatalogRef.track_id == keep.id))).scalars())
+    record["bound"] = sorted(after - before)
+
+
+async def unmerge(s: AsyncSession, back: Track, keep: Track, record: dict[str, Any]) -> set[int]:
+    """`merge_into` taken back: `back` (the track that went, brought back) has its own again — its places in the
+    playlists (`keep`'s moved back to theirs), tags, listens, rows and catalog records. Returns the playlists."""
     from sqlalchemy import delete, update
 
     from app.models import DownloadItem, ImportItem, PlayEvent, PlaylistItem, TrackTag
 
+    for item in (await s.execute(select(PlaylistItem).where(PlaylistItem.id.in_(record.get("moved") or []),
+                                                            PlaylistItem.track_id == keep.id))).scalars():
+        item.track_id = back.id
+    for item_id, position in record.get("shifted") or []:
+        if (item := await s.get(PlaylistItem, item_id)) is not None and item.track_id == keep.id:
+            item.position = position
+    if record.get("tags"):
+        await s.execute(delete(TrackTag).where(TrackTag.track_id == keep.id, TrackTag.tag_id.in_(record["tags"]),
+                                               TrackTag.auto.is_(False)))
+    for key, model in (("events", PlayEvent), ("imports", ImportItem), ("downloads", DownloadItem)):
+        if record.get(key):
+            await s.execute(update(model).where(model.id.in_(record[key]), model.track_id == keep.id)
+                            .values(track_id=back.id))
+    if record.get("bound"):
+        await s.execute(delete(TrackCatalogRef).where(TrackCatalogRef.track_id == keep.id,
+                                                      TrackCatalogRef.ref.in_(record["bound"])))
+    await s.flush()
+    if record.get("ref") and not back.ref and (await by_ref(s, record["ref"])) is None:
+        back.ref = record["ref"]
+    await bind_refs(s, back, [r for r in record.get("refs") or [] if r != back.ref])
+    await s.flush()
+    return set(record.get("playlists") or [])
+
+
+async def fold(s: AsyncSession, stub: Track, into: Track) -> set[int]:
+    """A track without a file (made of a catalog's record: a like, a transfer's row) found to be a track the library
+    has (its download found the song there already): it becomes that track (`merge_into`) and is gone. Returns the
+    playlists that changed. A track with a file is not folded."""
     if stub.id == into.id or await has_file(s, stub.id):
         return set()
-    there = set((await s.execute(select(PlaylistItem.playlist_id).where(PlaylistItem.track_id == into.id))).scalars())
-    playlists: set[int] = set()
-    for item in (await s.execute(select(PlaylistItem).where(PlaylistItem.track_id == stub.id))).scalars():
-        playlists.add(item.playlist_id)
-        if item.playlist_id not in there:
-            item.track_id = into.id
-            there.add(item.playlist_id)
-    have = set((await s.execute(select(TrackTag.tag_id).where(TrackTag.track_id == into.id))).scalars())
-    for tag_id, auto in (await s.execute(select(TrackTag.tag_id, TrackTag.auto).where(TrackTag.track_id == stub.id))).all():
-        if tag_id not in have and not auto:
-            s.add(TrackTag(track_id=into.id, tag_id=tag_id, auto=False))
-    for model in (PlayEvent, ImportItem, DownloadItem):
-        await s.execute(update(model).where(model.track_id == stub.id).values(track_id=into.id))
-    refs = {stub.ref, *(await s.execute(select(TrackCatalogRef.ref).where(TrackCatalogRef.track_id == stub.id))).scalars()}
-    await s.flush()
-    await s.execute(delete(TrackCatalogRef).where(TrackCatalogRef.track_id == stub.id))
+    record = await merge_into(s, stub, into)
     await s.delete(stub)
     await s.flush()
-    await bind_refs(s, into, refs)
-    return playlists
+    await bind_merged(s, into, record)
+    return set(record["playlists"])
 
 
 async def fold_known() -> int:
