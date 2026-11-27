@@ -1845,6 +1845,8 @@ export interface TidyOverviewOut {
 
 /** What a page draws of a proposal's subject; which of the keys there are depends on the kind. */
 export interface TidyShow {
+  /** two artists: «Это его проект» was the answer (accepted, not joined) */
+  answer?: 'project';
   what?: string;
   line?: string | null;
   cover?: string | null;

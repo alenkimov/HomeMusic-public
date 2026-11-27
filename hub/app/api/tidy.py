@@ -136,6 +136,8 @@ async def _out(s: AsyncSession, rows: list[TidyProposal]) -> list[TidyProposalOu
         elif p.kind == "artist":
             show["into_id"] = p.to_json.get("into")
             show["picture"], show["into_picture"] = await _pictures(s, p.subject_id), await _pictures(s, p.to_json.get("into"))
+            if p.state == "accepted" and (p.undo_json or {}).get("project"):
+                show["answer"] = "project"  # «Это его проект», not joined
         elif p.kind == "double":
             show["keep_id"] = p.to_json.get("keep")  # the copy that stays: its own row beside the one that goes
         elif p.kind == "version":
@@ -230,6 +232,8 @@ async def _decide(s: AsyncSession, user: User, proposal_id: int, what: str) -> T
             after = await kinds.accept(s, user, p)
         elif what == "reject":
             await kinds.reject(s, user, p)
+        elif what == "project":
+            await kinds.project(s, user, p)
         elif what == "reopen":
             await kinds.reopen(s, p)
         elif what == "review":
@@ -257,6 +261,13 @@ async def accept(proposal_id: int, user: User = Depends(current_user), s: AsyncS
 @router.post("/proposals/{proposal_id}/reject", response_model=TidyProposalOut)
 async def reject(proposal_id: int, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     return await _decide(s, user, proposal_id, "reject")
+
+
+@router.post("/proposals/{proposal_id}/project", response_model=TidyProposalOut)
+async def as_project(proposal_id: int, user: User = Depends(current_user),
+                     s: AsyncSession = Depends(get_session, scope="function")):
+    """«Это его проект»: of two artists offered to be joined — two projects of one person."""
+    return await _decide(s, user, proposal_id, "project")
 
 
 @router.post("/proposals/{proposal_id}/reopen", response_model=TidyProposalOut)

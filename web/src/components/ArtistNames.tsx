@@ -83,6 +83,22 @@ function useRun(onChange: (next: ArtistCardOut) => void) {
   return { busy, run };
 }
 
+/** The three answers to «are these two one artist?», the same wherever it is asked — the artist's window and
+ * «Наведение порядка» (one question there and here: `hub/app/tidy/kinds.py` `answered`): «Привязать» — one artist;
+ * «Это его проект» — two projects of one person; «Это другой» — two people, not offered again. */
+export function ArtistAnswers({ onMerge, onProject, onApart, busy, className }: {
+  onMerge: () => void; onProject: () => void; onApart: () => void; busy?: boolean; className?: string;
+}) {
+  const quiet = cx(pill, 'flex-1 whitespace-nowrap bg-ai/15 text-ai hover:bg-ai/25 disabled:opacity-50');
+  return (
+    <div className={cx('flex gap-1.5', className)}>
+      <button type="button" disabled={busy} className={cx(pill, 'flex-1 bg-ai text-bg hover:opacity-90 disabled:opacity-50')} onClick={onMerge}>Привязать</button>
+      <button type="button" disabled={busy} className={quiet} onClick={onProject}>Это его проект</button>
+      <button type="button" disabled={busy} className={quiet} onClick={onApart}>Это другой</button>
+    </div>
+  );
+}
+
 /** «Соцсети, проекты и псевдонимы» of an artist's ⋯: who the artist is, in one window — the services' profiles tied
  * to them (and, marked as «Наведение порядка» marks what it offers, the ones that look like the same artist), the
  * other projects of the same person, the names with a star on the one everybody sees, and one field that adds a
@@ -167,11 +183,8 @@ function Window({ card, onChange, onClose, onProfileDetached }: {
                   </span>
                 </span>
               </Link>
-              <div className="flex gap-1.5">
-                <button type="button" className={cx(pill, 'flex-1 bg-ai text-bg hover:opacity-90')} onClick={() => void merge({ other_id: x.id }, x.name)}>Привязать</button>
-                <button type="button" className={cx(pill, 'flex-1 whitespace-nowrap bg-ai/15 text-ai hover:bg-ai/25')} onClick={() => void project({ other_id: x.id })}>Это его проект</button>
-                <button type="button" className={cx(pill, 'flex-1 whitespace-nowrap bg-ai/15 text-ai hover:bg-ai/25')} onClick={() => void run(() => api.artistApart(card.id, { other_id: x.id }))}>Это другой</button>
-              </div>
+              <ArtistAnswers onMerge={() => void merge({ other_id: x.id }, x.name)} onProject={() => void project({ other_id: x.id })}
+                onApart={() => void run(() => api.artistApart(card.id, { other_id: x.id }))} />
             </div>
           ))}
         </section>

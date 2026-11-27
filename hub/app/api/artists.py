@@ -21,6 +21,7 @@ from app.library import artists
 from app.library.looks import profile_card
 from app.models import Artist, User
 from app.services import svc
+from app.tidy import kinds
 
 router = APIRouter(prefix="/api/artists", tags=["artists"])
 
@@ -168,6 +169,27 @@ async def set_main(artist_id: int, body: NameIdIn, user: User = Depends(current_
     return await _done(s, user, a, rewrite=changed)
 
 
+async def _answer(s: AsyncSession, user: User, a: Artist, other: Artist, how: str) -> bool:
+    """«Наведение порядка» asks the same of the two (`kinds.answered`): the window's answer is its answer — written in
+    its journal, taken back there — so the question is closed, not left to be asked again. «Это он» joins `other`
+    into `a`, as the window does. False: no such question open (or no longer what it was): the caller does it."""
+    p = await kinds.answered(s, a.id, other.id)
+    if p is None:
+        return False
+    try:
+        if how == "merge":
+            p.subject_id, p.to_json = other.id, {**(p.to_json or {}), "into": a.id}
+            await kinds.accept(s, user, p)
+        elif how == "project":
+            await kinds.project(s, user, p)
+        else:
+            await kinds.reject(s, user, p)
+    except kinds.Changed:
+        return False
+    bus.broadcast("tidy", {"kind": "decided"})
+    return True
+
+
 @router.post("/{artist_id}/merge", response_model=ArtistCardOut)
 async def merge(artist_id: int, body: OtherIn, user: User = Depends(current_user),
                 s: AsyncSession = Depends(get_session, scope="function")):
@@ -176,7 +198,8 @@ async def merge(artist_id: int, body: OtherIn, user: User = Depends(current_user
     other = await _other(s, body)
     if other.id == a.id:
         raise HTTPException(422, "Это тот же исполнитель")
-    await artists.merge(s, user.id, a, other)
+    if not await _answer(s, user, a, other, "merge"):
+        await artists.merge(s, user.id, a, other)
     return await _done(s, user, a, rewrite=True)
 
 
@@ -184,8 +207,10 @@ async def merge(artist_id: int, body: OtherIn, user: User = Depends(current_user
 async def add_project(artist_id: int, body: OtherIn, user: User = Depends(current_user),
                       s: AsyncSession = Depends(get_session, scope="function")):
     a = await _artist(s, artist_id)
+    other = await _other(s, body)
     try:
-        await artists.link(s, user.id, a, await _other(s, body))
+        if not await _answer(s, user, a, other, "project"):
+            await artists.link(s, user.id, a, other)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     return await _done(s, user, a)
@@ -204,7 +229,9 @@ async def apart(artist_id: int, body: OtherIn, user: User = Depends(current_user
                 s: AsyncSession = Depends(get_session, scope="function")):
     """«Это другой»: not offered to be joined with this one again."""
     a = await _artist(s, artist_id)
-    await artists.apart(s, a, await _other(s, body))
+    other = await _other(s, body)
+    if not await _answer(s, user, a, other, "apart"):
+        await artists.apart(s, a, other)
     return await _done(s, user, a)
 
 

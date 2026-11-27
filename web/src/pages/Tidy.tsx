@@ -3,6 +3,7 @@ import { api, type TidyDecision } from '../api/client';
 import type { TidyOverviewOut, TidyProposalOut, TidyProposalSection, TidySectionId, TrackOut } from '../api/types';
 import { TrackRow } from '../components/catalog';
 import { LyricsExcerpt } from '../components/LyricsExcerpt';
+import { ArtistAnswers } from '../components/ArtistNames';
 import { Icon } from '../components/Icon';
 import { ByMark } from '../components/TidyMark';
 import { Button, Cover, Empty, ErrorState, IconButton, PageHeader, SkeletonRows, Segmented, cx } from '../components/ui';
@@ -162,7 +163,7 @@ function Proposals({ section, sure, focus, checked, onChange }: { section: TidyP
     setBusy(p.id);
     try {
       const next = await api.tidyDecide(p.id, what);
-      if (what === 'accept' || what === 'reject') dropMark(p.id);
+      if (what === 'accept' || what === 'reject' || what === 'project') dropMark(p.id);
       setRows((xs) => (xs ?? []).map((x) => (x.id === p.id ? next : x)));
     } catch (e) {
       // what changed since is gone from the list: the Hub said why
@@ -339,7 +340,21 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
   );
 
   if (p.kind === 'artist' && p.show.into_id) {
-    // two artists that are one: the two photos overlapping, their names and tracks, an arrow, the one they become
+    // two artists that are one: the two photos overlapping, their names and tracks, an arrow, the one they become;
+    // answered as the artist's window answers it (`ArtistAnswers`): one artist, his project, another person
+    const said = p.state === 'accepted' ? (p.show.answer === 'project' ? 'Его проект' : 'Объединено')
+      : p.state === 'rejected' ? 'Это другой' : stateWord;
+    const answers = journal ? actions : decided ? (
+      <span className="flex items-center gap-2 text-[13px] text-muted">
+        {said}
+        <button type="button" disabled={busy} onClick={() => onDecide(p.state === 'accepted' ? 'revert' : 'reopen')} className="min-h-9 px-2 underline hover:text-fg disabled:opacity-50">
+          Отменить
+        </button>
+      </span>
+    ) : (
+      <ArtistAnswers busy={busy} className="w-full sm:w-auto sm:min-w-[420px]"
+        onMerge={() => onDecide('accept')} onProject={() => onDecide('project')} onApart={() => onDecide('reject')} />
+    );
     const count = (line?: string | null) => Number(/\d+/.exec(line ?? '')?.[0] ?? 0);
     const total = count(p.show.line) + count(p.show.into_line);
     const ring = 'rounded-full ring-[3px] ring-surface';
@@ -378,11 +393,11 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track, pair }: {
             <span title={p.why || undefined} className="w-fit"><ByMark p={p} /></span>
             {journal && (
               <span className="text-[12px] text-dim">
-                {stateWord}{p.decided_by ? ` · ${p.decided_by}` : ''}{p.decided_at ? ` · ${fmtWhen(p.decided_at)}` : ''}
+                {said}{p.decided_by ? ` · ${p.decided_by}` : ''}{p.decided_at ? ` · ${fmtWhen(p.decided_at)}` : ''}
               </span>
             )}
           </span>
-          {actions && <div className="shrink-0 max-sm:w-full">{actions}</div>}
+          {answers && <div className="shrink-0 max-sm:w-full">{answers}</div>}
         </div>
       </div>
     );

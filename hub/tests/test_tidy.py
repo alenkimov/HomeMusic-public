@@ -554,15 +554,12 @@ async def test_a_proposal_of_something_gone_since_is_no_question(env):
     assert (await c.get("/api/tidy")).json()["total"] == 0
 
 
-async def test_two_artists_answered_in_their_window_are_no_question(env):
-    """«Это он — объединить», «Его проект», «Это другой» in the artist's window answer what «Наведение порядка» asks
-    of the two: its proposal is gone as the list opens, not at the next look-through."""
+
+async def _three_pairs():
     from app.db import session_scope
-    from app.library import artists
     from app.models import Artist
     from app.tidy import kinds
 
-    c = env["client"]
     async with session_scope() as s:
         made = [Artist(name=f"курящих нет {i}") for i in range(6)]
         s.add_all(made)
@@ -571,13 +568,55 @@ async def test_two_artists_answered_in_their_window_are_no_question(env):
         for other, into in ((ids[0], ids[1]), (ids[2], ids[3]), (ids[4], ids[5])):
             await kinds.offer(s, kind="artist", subject_type="artist", subject_id=other, was={"apart": True},
                               to={"into": into}, show={"line": "курящих нет"}, by="rule", sure=True, why="Пишутся одинаково")
+    return ids
+
+
+async def test_the_window_of_an_artist_answers_the_question_of_tidy(env):
+    """«Привязать», «Это его проект», «Это другой» in the artist's window and in «Наведение порядка» are one answer
+    to one question: given in the window, the proposal is answered — in the journal, to be taken back there."""
+    from app.db import session_scope
+    from app.models import Artist, ArtistApart, ArtistLink
+    from app.tidy import kinds
+
+    c = env["client"]
+    ids = await _three_pairs()
     section = kinds.KINDS["artist"].section
     assert len(await _open(c, section)) == 3
-    async with session_scope() as s:
-        a = {i: await s.get(Artist, i) for i in ids}
-        await artists.merge(s, None, a[ids[1]], a[ids[0]])  # «Это он — объединить»
-        await artists.link(s, None, a[ids[3]], a[ids[2]])  # «Его проект»
-    assert len(await _open(c, section)) == 1
-    async with session_scope() as s:
-        await artists.apart(s, await s.get(Artist, ids[5]), await s.get(Artist, ids[4]))  # «Это другой»
+    # joined into the artist whose window it is — the other way round from how the proposal asked
+    assert (await c.post(f"/api/artists/{ids[0]}/merge", json={"other_id": ids[1]})).status_code == 200
+    assert (await c.post(f"/api/artists/{ids[3]}/projects", json={"other_id": ids[2]})).status_code == 200
+    assert (await c.post(f"/api/artists/{ids[5]}/apart", json={"other_id": ids[4]})).status_code == 200
     assert await _open(c, section) == []
+    journal = {x["subject_id"]: x["state"] for x in (await c.get("/api/tidy/journal")).json()}
+    assert journal == {ids[1]: "accepted", ids[2]: "accepted", ids[4]: "rejected"}
+    async with session_scope() as s:
+        assert (await s.get(Artist, ids[1])).merged_into_id == ids[0]
+        assert await s.get(ArtistLink, tuple(sorted((ids[2], ids[3])))) is not None
+        assert await s.get(ArtistApart, tuple(sorted((ids[4], ids[5])))) is not None
+
+
+async def test_tidy_answers_two_artists_as_their_window_does(env):
+    """The card of two artists has the window's three answers; each is taken back in the journal."""
+    from app.db import session_scope
+    from app.models import ArtistApart, ArtistLink
+    from app.tidy import kinds
+
+    c = env["client"]
+    ids = await _three_pairs()
+    section = kinds.KINDS["artist"].section
+    by = {x["subject_id"]: x["id"] for x in await _open(c, section)}
+    r = await c.post(f"/api/tidy/proposals/{by[ids[2]]}/project")
+    assert r.status_code == 200 and r.json()["state"] == "accepted", r.text
+    assert (await c.post(f"/api/tidy/proposals/{by[ids[4]]}/reject")).json()["state"] == "rejected"
+    async with session_scope() as s:
+        assert await s.get(ArtistLink, tuple(sorted((ids[2], ids[3])))) is not None
+        assert await s.get(ArtistApart, tuple(sorted((ids[4], ids[5])))) is not None
+    # the window does not offer «Это другой» again; both taken back, both are questions again
+    assert (await c.post(f"/api/tidy/proposals/{by[ids[2]]}/review")).json()["state"] == "open"
+    assert (await c.post(f"/api/tidy/proposals/{by[ids[4]]}/review")).json()["state"] == "open"
+    async with session_scope() as s:
+        assert await s.get(ArtistLink, tuple(sorted((ids[2], ids[3])))) is None
+        assert await s.get(ArtistApart, tuple(sorted((ids[4], ids[5])))) is None
+    assert len(await _open(c, section)) == 3
+    assert (await c.post(f"/api/tidy/proposals/{by[ids[0]]}/project")).status_code == 200
+    assert (await c.post(f"/api/tidy/proposals/{by[ids[2]]}/accept")).status_code == 200

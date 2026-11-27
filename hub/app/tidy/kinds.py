@@ -276,6 +276,11 @@ async def _artist_revert(s: AsyncSession, user: User, p: TidyProposal, after: Af
     from app.library import artists
 
     other, into = await s.get(Artist, p.subject_id), await s.get(Artist, p.to_json["into"])
+    if (p.undo_json or {}).get("project"):  # «Это его проект»: the two are not projects of one person any more
+        if other is None or into is None:
+            raise Changed("Одного из исполнителей уже нет")
+        await artists.link(s, user.id, into, other, on=False)
+        return
     if other is None or into is None or other.merged_into_id != into.id:
         raise Changed("Исполнителей с тех пор разъединили или объединили с другими")
     try:
@@ -397,18 +402,69 @@ async def accept(s: AsyncSession, user: User, p: TidyProposal) -> After:
 
 
 async def reject(s: AsyncSession, user: User, p: TidyProposal) -> None:
+    """«Отклонить». Of two artists it is «Это другой»: they are not offered to be joined again — here, nor in the
+    window of either of them (`artists.apart`)."""
     if p.state != "open":
         raise Changed("Это предложение уже решено")
+    if p.kind == "artist":
+        from app.library import artists
+
+        other, into = await s.get(Artist, p.subject_id), await s.get(Artist, p.to_json["into"])
+        if other is not None and into is not None:
+            await artists.apart(s, into, other)
     p.state, p.decided_at, p.decided_by = "rejected", utcnow(), user.id
     await s.flush()
+
+
+async def project(s: AsyncSession, user: User, p: TidyProposal) -> None:
+    """«Это его проект» of two artists: not one artist — two projects of one person, each named on the other's page
+    (`artists.link`). Taken back (`revert`), they are apart again."""
+    from app.library import artists
+
+    if p.kind != "artist":
+        raise ValueError("Так можно ответить только про исполнителей")
+    if p.state != "open":
+        raise Changed("Это предложение уже решено")
+    if not await holds(s, p):
+        await s.delete(p)
+        await s.flush()
+        raise Changed("С тех пор это уже изменили — предложение снято")
+    other, into = await s.get(Artist, p.subject_id), await s.get(Artist, p.to_json["into"])
+    await artists.link(s, user.id, into, other)
+    p.undo_json, p.state, p.decided_at, p.decided_by = {"project": True}, "accepted", utcnow(), user.id
+    await s.flush()
+
+
+async def _unreject(s: AsyncSession, p: TidyProposal) -> None:
+    """A rejection of two artists taken back: they may be offered to be joined again (`reject`)."""
+    if p.kind == "artist":
+        from sqlalchemy import delete
+
+        from app.models import ArtistApart
+
+        low, high = sorted((p.subject_id, int(p.to_json["into"])))
+        await s.execute(delete(ArtistApart).where(ArtistApart.low_id == low, ArtistApart.high_id == high))
 
 
 async def reopen(s: AsyncSession, p: TidyProposal) -> None:
     """A rejection taken back: the proposal is open again."""
     if p.state != "rejected":
         raise Changed("Это предложение не отклонено")
+    await _unreject(s, p)
     p.state, p.decided_at, p.decided_by = "open", None, None
     await s.flush()
+
+
+async def answered(s: AsyncSession, a: int, b: int) -> TidyProposal | None:
+    """The open question of joining these two artists, whichever way it was asked (the window of an artist answers
+    it: `app.api.artists`)."""
+    from sqlalchemy import or_
+
+    return (await s.execute(select(TidyProposal).where(
+        TidyProposal.kind == "artist", TidyProposal.state == "open",
+        or_((TidyProposal.subject_id == a) & (TidyProposal.to_json["into"].as_integer() == b),
+            (TidyProposal.subject_id == b) & (TidyProposal.to_json["into"].as_integer() == a)))
+        .limit(1))).scalar_one_or_none()
 
 
 async def revert(s: AsyncSession, user: User, p: TidyProposal) -> After:
@@ -428,6 +484,8 @@ async def review(s: AsyncSession, user: User, p: TidyProposal) -> After | None:
     the proposal was made of any more (an accepted one is then undone all the same and stays «Откачено»)."""
     if p.state == "open":
         raise Changed("Это предложение уже на рассмотрении")
+    if p.state == "rejected":
+        await _unreject(s, p)
     after = await revert(s, user, p) if p.state == "accepted" else None
     if not await holds(s, p):
         if after is not None:

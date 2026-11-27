@@ -451,7 +451,7 @@ const enc = encodeURIComponent;
 // --- typed endpoints ------------------------------------------------------------------------------
 
 /** what can be done to a proposal of «Наведение порядка» (`review`: any decision taken back, the proposal open again) */
-export type TidyDecision = 'accept' | 'reject' | 'reopen' | 'revert' | 'review';
+export type TidyDecision = 'accept' | 'reject' | 'reopen' | 'revert' | 'review' | 'project';
 
 export const api = {
   manualQueue: () => request<ManualQueueEntry[]>('GET', '/api/playback/queue'),
