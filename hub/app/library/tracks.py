@@ -245,3 +245,72 @@ async def current_files(s: AsyncSession, track_ids: Iterable[int]) -> dict[int, 
 async def files_of(s: AsyncSession, track_id: int) -> list[TrackFile]:
     return list((await s.execute(select(TrackFile).where(TrackFile.track_id == track_id)
                                  .order_by(TrackFile.id))).scalars())
+
+
+async def fold(s: AsyncSession, stub: Track, into: Track) -> set[int]:
+    """A track without a file (made of a catalog's record: a like, a transfer's row) found to be a track the library
+    has (its download found the song there already): it becomes that track. Where it stood in a playlist the track
+    stands (unless it is there already), its listens, its transfer's and downloads' rows and its own tags are the
+    track's, its catalog records are records of the track — a like or a row naming them finds the track — and it is
+    gone. Returns the playlists that changed. A track with a file is not folded."""
+    from sqlalchemy import delete, update
+
+    from app.models import DownloadItem, ImportItem, PlayEvent, PlaylistItem, TrackTag
+
+    if stub.id == into.id or await has_file(s, stub.id):
+        return set()
+    there = set((await s.execute(select(PlaylistItem.playlist_id).where(PlaylistItem.track_id == into.id))).scalars())
+    playlists: set[int] = set()
+    for item in (await s.execute(select(PlaylistItem).where(PlaylistItem.track_id == stub.id))).scalars():
+        playlists.add(item.playlist_id)
+        if item.playlist_id not in there:
+            item.track_id = into.id
+            there.add(item.playlist_id)
+    have = set((await s.execute(select(TrackTag.tag_id).where(TrackTag.track_id == into.id))).scalars())
+    for tag_id, auto in (await s.execute(select(TrackTag.tag_id, TrackTag.auto).where(TrackTag.track_id == stub.id))).all():
+        if tag_id not in have and not auto:
+            s.add(TrackTag(track_id=into.id, tag_id=tag_id, auto=False))
+    for model in (PlayEvent, ImportItem, DownloadItem):
+        await s.execute(update(model).where(model.track_id == stub.id).values(track_id=into.id))
+    refs = {stub.ref, *(await s.execute(select(TrackCatalogRef.ref).where(TrackCatalogRef.track_id == stub.id))).scalars()}
+    await s.flush()
+    await s.execute(delete(TrackCatalogRef).where(TrackCatalogRef.track_id == stub.id))
+    await s.delete(stub)
+    await s.flush()
+    await bind_refs(s, into, refs)
+    return playlists
+
+
+async def fold_known() -> int:
+    """The tracks without a file whose song a download or a transfer's row found in the library under another track
+    (before `fold` was done there): folded into it. Quick — by the rows that say so — and safe to run again: at the
+    worker's start."""
+    from sqlalchemy import text
+
+    from app.db import session_scope
+
+    async with session_scope() as s:
+        pairs = (await s.execute(text("""
+            SELECT DISTINCT ON (stub.id) stub.id, x.track_id FROM tracks stub
+            JOIN (SELECT ref, track_id FROM import_items WHERE ref IS NOT NULL AND track_id IS NOT NULL
+                  UNION SELECT query_json->'meta'->>'track_ref', track_id FROM download_items
+                        WHERE status = 'done' AND track_id IS NOT NULL AND query_json->'meta'->>'track_ref' IS NOT NULL) x
+              ON x.ref = stub.ref AND x.track_id <> stub.id
+            WHERE NOT EXISTS (SELECT 1 FROM track_files f WHERE f.track_id = stub.id)
+              AND EXISTS (SELECT 1 FROM track_files f WHERE f.track_id = x.track_id)
+            ORDER BY stub.id, x.track_id"""))).all()
+        n, changed = 0, set()
+        for stub_id, into_id in pairs:
+            stub, into = await s.get(Track, stub_id), await s.get(Track, into_id)
+            if stub is None or into is None:
+                continue
+            changed |= await fold(s, stub, into)
+            n += 1
+        if changed:
+            from app.models import Playlist
+            from app.playlists_mirror import enqueue_mirror
+
+            for p in (await s.execute(select(Playlist).where(Playlist.id.in_(changed), Playlist.kind == "user"))).scalars():
+                await enqueue_mirror(s, p.id)
+        await s.commit()
+    return n

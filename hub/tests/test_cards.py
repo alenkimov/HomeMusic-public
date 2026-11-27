@@ -207,3 +207,36 @@ async def test_a_track_without_a_file_is_named_by_the_artists_here(env):
     async with db.session_scope() as s:
         card = (await cards.read(s, [tid]))[tid]
     assert card["artists"] == ["Михаил Круг", "Ирина Круг"] and card["hub_artist_ids"][0] == krug_id
+
+
+async def test_a_track_without_a_file_found_in_the_library_becomes_that_track(env):
+    """A like made a track of a catalog's record before its song was downloaded; the download found the song in the
+    library under another record of it: the two are one — «Любимое» has the track with its file, once, and the record
+    names that track from now on."""
+    from app import playlists
+    from app.library import tracks
+    from app.models import PlaylistItem, User
+
+    owned, _ = env
+    async with db.session_scope() as s:
+        user = User(nd_username="u", nd_password_enc="x")
+        s.add(user)
+        await s.flush()
+        stub = Track(artist="Mikhail Krug", title="With a file", ref="dz:99", fingerprint="artist|with a file", catalog={})
+        s.add(stub)
+        await s.flush()
+        liked = await playlists.liked(s, user.id)
+        await playlists.add(s, liked, [stub.id])
+        other = await playlists.create(s, user.id, "Both")
+        await playlists.add(s, other, [owned, stub.id])
+        stub_id, liked_id, other_id = stub.id, liked.id, other.id
+    async with db.session_scope() as s:
+        changed = await tracks.fold(s, await s.get(Track, stub_id), await s.get(Track, owned))
+    assert changed == {liked_id, other_id}
+    async with db.session_scope() as s:
+        assert await s.get(Track, stub_id) is None
+        rows = (await s.execute(select(PlaylistItem.playlist_id, PlaylistItem.track_id).order_by(PlaylistItem.playlist_id))).all()
+        assert sorted(rows) == sorted([(liked_id, owned), (other_id, owned)])  # once in each
+        assert (await tracks.by_ref(s, "dz:99")).id == owned
+        # a track with a file is never folded
+        assert await tracks.fold(s, await s.get(Track, owned), await s.get(Track, env[1])) == set()

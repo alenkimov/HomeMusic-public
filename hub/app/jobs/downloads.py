@@ -425,6 +425,7 @@ async def _handle_download_item(job: Job, prepared: Path | None) -> None:
             await step(item_id, "info", "Трек уже есть в библиотеке, но выбран другой файл: он ляжет рядом со старым")
         elif existing_id:
             await step(item_id, "ok", "Уже есть в библиотеке — скачивать не нужно")
+            await _fold_into(existing_id, meta.get("track_ref"), user_id)
             item = await update_item(item_id, status="done" if linked else "importing", progress=1,
                                      track_id=existing_id, warnings=["Уже есть в библиотеке"])
             if linked and item is not None:
@@ -539,6 +540,34 @@ async def _handle_download_item(job: Job, prepared: Path | None) -> None:
         verdict = f"Ни один кандидат не подошёл ({last_reason})"
     await update_item(item_id, status="needs_review", error=verdict)
     await step(item_id, "bad", f"Итог: {verdict[0].lower()}{verdict[1:]}. Нужен ваш выбор")
+
+
+async def _fold_into(track_id: int, ref: str | None, user_id: int) -> None:
+    """The song asked for by `ref` is the library's track `track_id`: the record is the track's from now on, and a
+    track without a file made of it before (a like, a transfer's row — «Любимое» showed it apart, without its file,
+    named as the catalog spells it) becomes the track (`tracks.fold`)."""
+    from app.events import bus
+    from app.library import tracks as registry
+    from app.models import Playlist
+    from app.playlists_mirror import enqueue_mirror
+
+    if not ref:
+        return
+    async with session_scope() as s:
+        into = await s.get(Track, track_id)
+        stub = await registry.by_ref(s, ref)
+        if into is None:
+            return
+        changed = await registry.fold(s, stub, into) if stub is not None and stub.id != into.id else set()
+        if stub is None or stub.id != into.id:
+            await registry.bind_refs(s, into, [ref])
+        for p in (await s.execute(select(Playlist).where(Playlist.id.in_(changed)))).scalars() if changed else []:
+            if p.kind == "user":
+                await enqueue_mirror(s, p.id)
+        await s.commit()
+    if changed:
+        notify()
+        bus.publish(user_id, "library", {"kind": "changed", "album_id": None})
 
 
 # a source of files as a service of `app.errors` (whose words say who failed)
