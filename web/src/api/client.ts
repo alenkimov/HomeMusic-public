@@ -448,6 +448,9 @@ const enc = encodeURIComponent;
 
 // --- typed endpoints ------------------------------------------------------------------------------
 
+/** what can be done to a proposal of «Наведение порядка» (`review`: any decision taken back, the proposal open again) */
+export type TidyDecision = 'accept' | 'reject' | 'reopen' | 'revert' | 'review';
+
 export const api = {
   manualQueue: () => request<ManualQueueEntry[]>('GET', '/api/playback/queue'),
   appendManualQueue: (tracks: readonly ListenTrack[], expected_user_id: number, request_id: string) =>
@@ -604,7 +607,7 @@ export const api = {
   tidyJournal: (before?: number, signal?: AbortSignal) =>
     request<TidyProposalOut[]>('GET', withQuery('/api/tidy/journal', { before }), { signal }),
   /** accept / reject / reopen (a rejection taken back) / revert (what an accepted one did, taken back) */
-  tidyDecide: (id: number, what: 'accept' | 'reject' | 'reopen' | 'revert') =>
+  tidyDecide: (id: number, what: TidyDecision) =>
     request<TidyProposalOut>('POST', `/api/tidy/proposals/${id}/${what}`),
   tidyAcceptSure: (section: TidyProposalSection) =>
     request<{ accepted: number; failed: number }>('POST', '/api/tidy/accept-sure', { json: { section } }),

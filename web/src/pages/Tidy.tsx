@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { api } from '../api/client';
+import { api, type TidyDecision } from '../api/client';
 import type { TidyOverviewOut, TidyProposalOut, TidyProposalSection, TidySectionId, TrackOut } from '../api/types';
 import { TrackRow } from '../components/catalog';
 import { LyricsExcerpt } from '../components/LyricsExcerpt';
@@ -39,8 +39,8 @@ function statusLine(o: TidyOverviewOut): string {
 }
 
 /** «Наведение порядка» (from «Меню»): what the Hub found to put right in the library, by sections — names, versions and
- * doubles, artists, albums in pieces, lyrics. Nothing changes until it is accepted; what was accepted is in «Журнал»,
- * where it can be taken back. The admins start a look-through by hand; it also runs every night. */
+ * doubles, artists, albums in pieces, lyrics. Nothing changes until it is accepted; what was decided is in «Журнал» (the
+ * header's button), where it can be taken back. The admins start a look-through by hand; it also runs every night. */
 export function TidyPage() {
   const route = useRoute();
   const asked = route.query.get('tab');
@@ -73,15 +73,20 @@ export function TidyPage() {
       <PageHeader
         title="Наведение порядка"
         back="/more"
-        right={o?.can_scan ? (
-          // a phone has the room for the title only: the button is its icon there
+        right={
+          // a phone has the room for the title only: the buttons are their icons there
           <>
-            <Button small icon="refresh" busy={scanning || o.running} disabled={o.running} onClick={scan} className="mr-2 whitespace-nowrap max-sm:hidden">
-              {o.running ? 'Проверяю' : 'Проверить сейчас'}
-            </Button>
-            <IconButton icon="refresh" label="Проверить сейчас" busy={scanning || o.running} disabled={o.running} onClick={scan} className="sm:hidden" />
+            {o?.can_scan && (
+              <>
+                <Button small icon="refresh" busy={scanning || o.running} disabled={o.running} onClick={scan} className="mr-1 whitespace-nowrap max-sm:hidden">
+                  {o.running ? 'Проверяю' : 'Проверить сейчас'}
+                </Button>
+                <IconButton icon="refresh" label="Проверить сейчас" busy={scanning || o.running} disabled={o.running} onClick={scan} className="sm:hidden" />
+              </>
+            )}
+            <IconButton icon="history" label="Журнал" title="Журнал: принятое и отклонённое" onClick={() => navigate('/tidy/journal')} className="mr-1" />
           </>
-        ) : undefined}
+        }
       />
       {!o ? (
         overview.error ? <ErrorState text={overview.error} onRetry={() => overview.reload()} /> : <SkeletonRows n={6} />
@@ -114,14 +119,6 @@ export function TidyPage() {
               onChange={() => overview.reload(true)}
             />
           )}
-          <Link to="/tidy/journal" className="mx-4 mt-6 flex max-w-3xl items-center gap-3 rounded-xl bg-raised px-4 py-3.5 hover:bg-hover lg:mx-6">
-            <Icon name="history" size={20} className="text-muted" />
-            <span className="min-w-0 flex-1">
-              <span className="block font-semibold">Журнал</span>
-              <span className="block text-[13px] text-muted">Всё принятое — с возможностью откатить</span>
-            </span>
-            <Icon name="chevron" size={18} className="text-muted" />
-          </Link>
         </>
       )}
     </div>
@@ -154,7 +151,7 @@ function Proposals({ section, sure, focus, checked, onChange }: { section: TidyP
     lit.current.scrollIntoView({ block: 'center', behavior: 'smooth' });
   });
 
-  const decide = async (p: TidyProposalOut, what: 'accept' | 'reject' | 'reopen' | 'revert') => {
+  const decide = async (p: TidyProposalOut, what: TidyDecision) => {
     setBusy(p.id);
     try {
       const next = await api.tidyDecide(p.id, what);
@@ -221,7 +218,7 @@ const WHAT: Record<TidyProposalOut['subject_type'], string> = { track: 'Трек
 
 /** The subject as the proposal names it: its picture, what it is and whose; then «было → станет» in the kind's words. */
 export function ProposalCard({ p, busy, onDecide, journal, lit, track }: {
-  p: TidyProposalOut; busy: boolean; onDecide: (what: 'accept' | 'reject' | 'reopen' | 'revert') => void; journal?: boolean;
+  p: TidyProposalOut; busy: boolean; onDecide: (what: TidyDecision) => void; journal?: boolean;
   /** the one a mark on a page led to */
   lit?: boolean;
   /** the track it is about, as every list shows a track (`useTrackCards`): its row heads the card */
@@ -304,10 +301,18 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track }: {
     </>
   );
 
-  const stateWord = p.state === 'accepted' ? 'Принято' : p.state === 'rejected' ? 'Отклонено' : p.state === 'reverted' ? 'Откачено' : '';
+  const stateWord = p.state === 'accepted' ? 'Принято' : p.state === 'rejected' ? 'Отклонено' : p.state === 'reverted' ? 'Откачено' : journal ? 'Снова на рассмотрении' : '';
   const actions = journal ? (
-    p.state === 'accepted' && (
-      <Button small variant="outline" busy={busy} onClick={() => onDecide('revert')} className="whitespace-nowrap">Откатить</Button>
+    p.state !== 'open' && (
+      <span className="flex flex-wrap gap-2 max-sm:w-full">
+        {p.state === 'accepted' && (
+          <Button small variant="outline" disabled={busy} onClick={() => onDecide('revert')} className="whitespace-nowrap max-sm:flex-1">Откатить</Button>
+        )}
+        <Button small variant="outline" busy={busy} onClick={() => onDecide('review')} className="whitespace-nowrap max-sm:flex-1"
+          title={p.state === 'accepted' ? 'Откатить и снова показать в «Наведении порядка»' : 'Снова показать в «Наведении порядка»'}>
+          Вернуть на рассмотрение
+        </Button>
+      </span>
     )
   ) : decided ? (
     <span className="flex items-center gap-2 text-[13px] text-muted">
@@ -377,7 +382,8 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, track }: {
 
 const PAGE = 50;
 
-/** «Журнал» of «Наведение порядка»: everything accepted, the latest first, each with «Откатить» while it can be. */
+/** «Журнал» of «Наведение порядка»: everything decided, the latest first — an accepted one with «Откатить», and each
+ * with «Вернуть на рассмотрение» (the proposal back in its section's list, an accepted one undone first). */
 export function TidyJournalPage() {
   const first = useAsync((s) => api.tidyJournal(undefined, s), []);
   const [rows, setRows] = useState<TidyProposalOut[] | null>(null);
@@ -391,9 +397,9 @@ export function TidyJournalPage() {
     }
   }, [first.data]);
 
-  const revert = async (p: TidyProposalOut) => {
+  const decide = async (p: TidyProposalOut, what: TidyDecision) => {
     setBusy(p.id);
-    const next = await attempt(() => api.tidyDecide(p.id, 'revert'), 'Откачено');
+    const next = await attempt(() => api.tidyDecide(p.id, what), what === 'review' ? 'Снова в «Наведении порядка»' : 'Откачено');
     setBusy(null);
     if (next) setRows((xs) => (xs ?? []).map((x) => (x.id === p.id ? next : x)));
   };
@@ -416,13 +422,13 @@ export function TidyJournalPage() {
       {!rows ? (
         first.error ? <ErrorState text={first.error} onRetry={() => first.reload()} /> : <SkeletonRows n={6} />
       ) : rows.length === 0 ? (
-        <Empty icon="history" title="Пока ничего не принято" text="Здесь появится всё, что вы примете в «Наведении порядка»." />
+        <Empty icon="history" title="Пока ничего не решено" text="Здесь появится всё, что примут или отклонят в «Наведении порядка»." />
       ) : (
         <div className="max-w-4xl">
           <p className="px-4 text-[13px] text-muted lg:px-6">{rows.length} {plural(rows.length, ['изменение', 'изменения', 'изменений'])}{more ? ' и раньше' : ''}</p>
           <ul className="mt-3 space-y-2 px-2 lg:px-4">
             {rows.map((p) => (
-              <li key={p.id}><ProposalCard p={p} journal busy={busy === p.id} onDecide={() => revert(p)}
+              <li key={p.id}><ProposalCard p={p} journal busy={busy === p.id} onDecide={(what) => void decide(p, what)}
                 track={p.subject_type === 'track' ? tracks.get(p.subject_id) : undefined} /></li>
             ))}
           </ul>

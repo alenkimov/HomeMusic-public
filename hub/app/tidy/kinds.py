@@ -414,6 +414,22 @@ async def revert(s: AsyncSession, user: User, p: TidyProposal) -> After:
     return after
 
 
+async def review(s: AsyncSession, user: User, p: TidyProposal) -> After | None:
+    """A decision taken back whatever it was — the proposal is a question again, in its section's list: an accepted one
+    is undone first, a rejected or a reverted one is just open. `Changed`: open already, or the subject is not what
+    the proposal was made of any more (an accepted one is then undone all the same and stays «Откачено»)."""
+    if p.state == "open":
+        raise Changed("Это предложение уже на рассмотрении")
+    after = await revert(s, user, p) if p.state == "accepted" else None
+    if not await holds(s, p):
+        if after is not None:
+            return after  # undone, but what it was made of is gone: it stays «Откачено»
+        raise Changed("С тех пор это уже изменили — вернуть на рассмотрение нельзя")
+    p.state, p.decided_at, p.decided_by = "open", None, None
+    await s.flush()
+    return after
+
+
 async def offer(s: AsyncSession, *, kind: str, subject_type: str, subject_id: int, was: dict[str, Any],
                 to: dict[str, Any], show: dict[str, Any], by: str, sure: bool, why: str) -> bool:
     """Write a proposal down, unless the same question was asked before (whatever the answer). Returns whether it

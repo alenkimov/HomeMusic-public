@@ -138,6 +138,33 @@ async def test_rejecting_and_taking_the_rejection_back(env):
     assert [x["id"] for x in await _open(c, "names")] == [p["id"]]
 
 
+async def test_a_decision_is_put_back_for_review(env):
+    from app.db import session_scope
+    from app.models import Track
+
+    c = env["client"]
+    tid = await _add(artist="X", title="Song (HD)")
+    await _add(artist="X", title="Other (Lyrics)")
+    await _scan()
+    a, b = await _open(c, "names")
+    assert (await c.post(f"/api/tidy/proposals/{a['id']}/accept")).status_code == 200
+    assert (await c.post(f"/api/tidy/proposals/{b['id']}/reject")).status_code == 200
+    # the journal has both: what was accepted and what was rejected
+    assert {x["id"]: x["state"] for x in (await c.get("/api/tidy/journal")).json()} == {a["id"]: "accepted", b["id"]: "rejected"}
+
+    # accepted: undone, and a question again
+    r = await c.post(f"/api/tidy/proposals/{a['id']}/review")
+    assert r.status_code == 200 and r.json()["state"] == "open", r.text
+    async with session_scope() as s:
+        assert (await s.get(Track, a["subject_id"])).title == a["was"]
+    # rejected: a question again
+    assert (await c.post(f"/api/tidy/proposals/{b['id']}/review")).json()["state"] == "open"
+    assert {x["id"] for x in await _open(c, "names")} == {a["id"], b["id"]}
+    assert (await c.get("/api/tidy/journal")).json() == []
+    assert (await c.post(f"/api/tidy/proposals/{a['id']}/review")).status_code == 409  # open already
+    assert tid in (a["subject_id"], b["subject_id"])
+
+
 async def test_artists_that_read_the_same_are_joined_and_parted_again(env):
     from sqlalchemy import select
 

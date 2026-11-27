@@ -187,8 +187,9 @@ async def marks(user: User = Depends(current_user), s: AsyncSession = Depends(ge
 @router.get("/journal", response_model=list[TidyProposalOut])
 async def journal(section: Section | None = None, before: int | None = None, limit: int = Query(50, ge=1, le=200),
                   user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    """What was accepted (and taken back), the latest decided first; `before`: the page after that proposal."""
-    q = select(TidyProposal).where(TidyProposal.state.in_(("accepted", "reverted")))
+    """What was decided — accepted, rejected, taken back — the latest decided first; `before`: the page after that
+    proposal."""
+    q = select(TidyProposal).where(TidyProposal.state.in_(("accepted", "rejected", "reverted")))
     if section:
         q = q.where(TidyProposal.section == section)
     if before and (last := await s.get(TidyProposal, before)) is not None and last.decided_at is not None:
@@ -207,6 +208,8 @@ async def _decide(s: AsyncSession, user: User, proposal_id: int, what: str) -> T
             await kinds.reject(s, user, p)
         elif what == "reopen":
             await kinds.reopen(s, p)
+        elif what == "review":
+            after = await kinds.review(s, user, p)
         else:
             after = await kinds.revert(s, user, p)
     except kinds.Changed as e:
@@ -236,6 +239,12 @@ async def reject(proposal_id: int, user: User = Depends(current_user), s: AsyncS
 async def reopen(proposal_id: int, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
     """A rejection taken back."""
     return await _decide(s, user, proposal_id, "reopen")
+
+
+@router.post("/proposals/{proposal_id}/review", response_model=TidyProposalOut)
+async def review(proposal_id: int, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
+    """«Вернуть на рассмотрение»: any decision taken back, the proposal open again (an accepted one undone first)."""
+    return await _decide(s, user, proposal_id, "review")
 
 
 @router.post("/proposals/{proposal_id}/revert", response_model=TidyProposalOut)
