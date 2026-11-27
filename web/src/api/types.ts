@@ -1859,6 +1859,8 @@ export interface TidyShow {
   keep_title?: string;
   keep_file?: string;
   keep_album?: string | null;
+  /** a double: the library track that stays */
+  keep_id?: number | null;
   /** an artist joined: who into */
   name?: string;
   into_name?: string;
