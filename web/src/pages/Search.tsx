@@ -241,7 +241,7 @@ function RecentSearches({ onPick }: { onPick: (q: string) => void }) {
       {(clearError || res.error) && <div className="px-4 pb-3"><Notice>{clearError || res.error}</Notice></div>}
       <ul id="recent-searches-list">
         {(expanded ? recent : recent.slice(0, 8)).map((r) => (
-          <li key={r.key} className="flex items-center pr-1 hover:bg-fg/5">
+          <li key={r.key} className="flex items-center pr-4 hover:bg-fg/5">
             <button type="button" className="flex min-h-16 min-w-0 flex-1 items-center gap-3 py-2 pl-4 text-left" onClick={() => (r.link ? navigate(r.link) : onPick(r.title))}>
               {r.kind === 'query' ? (
                 <span className="flex h-12 w-12 shrink-0 items-center justify-center text-dim">
