@@ -191,6 +191,9 @@ export function setTranslatePrefs(next: Partial<TranslatePrefs>) {
   prefSubs.forEach((f) => f());
 }
 
+/** The translation as it is set now, outside a component (`lib/offline.ts`: a kept track's text is kept with it). */
+export const translatePrefs = (): TranslatePrefs => prefs;
+
 export const useTranslatePrefs = (): TranslatePrefs =>
   useSyncExternalStore(
     (cb) => {

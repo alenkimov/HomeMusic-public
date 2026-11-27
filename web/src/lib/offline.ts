@@ -5,6 +5,7 @@ import { AS_IT_IS, cantPlayType } from './formats';
 import { hubEvents } from './events';
 import { needsTrackFile } from './findFile';
 import { hubFetch, hubReachable, onHubBack } from './reach';
+import { translatePrefs } from './lyrics';
 
 /** «Офлайн»: lists kept on the device — a playlist, «Любимое», a list of «Для вас» — so they play without the network.
  *
@@ -24,7 +25,11 @@ import { hubFetch, hubReachable, onHubBack } from './reach';
  * service worker, so a secure address (https or localhost).
  *
  * A copy in a format this browser does not play (`cantPlayType`: Ogg Opus kept on an iPhone before the Hub served it
- * Opus in MP4 or AAC) is fetched anew as well, in the format the Hub serves it now; until then it is not played. */
+ * Opus in MP4 or AAC) is fetched anew as well, in the format the Hub serves it now; until then it is not played.
+ *
+ * A kept track's text is asked for as it is kept (`keepText`) — and its translation, when the translation is on —
+ * under the very address the player asks it by: the service worker keeps the answer (`/api/lyrics`), so the text
+ * shows offline. The tracks kept before that are given theirs by the next `syncKept`. */
 
 export interface KeptTrack {
   ref: string;
@@ -34,6 +39,8 @@ export interface KeptTrack {
   at: number;
   /** the copy's `Content-Type` (missing in what was kept before it was written down: read from the cache once) */
   type?: string;
+  /** its text (and translation) was asked for, so the service worker has it */
+  texted?: boolean;
 }
 export interface KeptList {
   key: string; // "playlist:12", "liked", "foryou:mix"
@@ -168,6 +175,33 @@ async function fetchOne(ref: string): Promise<void> {
   stale.delete(ref);
   // its covers go through the service worker, which keeps them
   for (const url of new Set([track.cover_small_url, track.cover_url])) if (url?.startsWith('/')) void hubFetch(url, { credentials: 'include' }).catch(() => undefined);
+  void keepText(kept);
+}
+
+/** Ask for the track's text — by the song the player asks it by (`pages/Player.tsx`: the file's, else the
+ * track's) — and, with the translation on, for its translation as the player asks for it; the service worker keeps
+ * both. A text not found is an answer as well: the track is not asked again. A failure: asked by the next sync. */
+async function keepText(kept: KeptTrack): Promise<void> {
+  try {
+    const text = await api.lyrics({ nd_song_id: kept.info.nd_song_id ?? kept.track.nd_song_id ?? null, ref: kept.ref });
+    const tr = translatePrefs();
+    if (tr.on && text.track_id != null && text.kind !== 'none')
+      await api.lyricsTranslation(text.track_id, tr.lang, tr.skip).catch(() => undefined);
+    if (tracks.get(kept.ref) !== kept) return; // let go or fetched anew meanwhile
+    kept.texted = true;
+    await tx('tracks', 'readwrite', (s) => s.put(kept));
+  } catch (e) {
+    console.info('offline: a kept track\'s text was not asked for', kept.ref, e);
+  }
+}
+
+/** The kept tracks whose text is not on the device yet (kept before it was asked for, or asked without the Hub),
+ * one after another while the Hub is reached. */
+async function keepTexts(): Promise<void> {
+  for (const kept of [...tracks.values()]) {
+    if (!hubReachable()) return;
+    if (!kept.texted && tracks.get(kept.ref) === kept) await keepText(kept);
+  }
 }
 
 function pump() {
@@ -406,6 +440,7 @@ export function syncKept(): Promise<void> {
         console.info('offline: a kept list was not brought up to date', list.key, e);
       }
     }
+    await keepTexts();
   })().finally(() => { syncing = null; });
   return syncing;
 }
