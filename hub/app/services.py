@@ -52,6 +52,10 @@ class Services:
             from app.providers.yandex import YandexProvider
 
             self.providers["yandex"] = YandexProvider()  # finds nothing without an account with Plus
+        from app.checks import watch
+
+        # each search, download and opening of a file is a check of its source (`app.checks`)
+        self.providers = {name: watch(p) for name, p in self.providers.items()}
         self.deezer = DeezerClient(cfg.catalog) if get_settings().deezer_catalog else None
         self.hitmoz_catalog = HitmozCatalog(hitmoz)
         from app.catalog.yandex_catalog import YandexCatalog

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextvars
+import time
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any
@@ -59,14 +61,43 @@ async def cache_delete(key: str) -> None:
         await s.execute(delete(CatalogCache).where(CatalogCache.key == key))
 
 
+# the nightly check of the services (`app.checks.probes`) reads anew what it asks: the service, not the cache
+fresh: contextvars.ContextVar[bool] = contextvars.ContextVar("catalog_fresh", default=False)
+
+
 async def cached(key: str, ttl_s: int, producer: Callable[[], Awaitable[Any]]) -> Any:
-    """Return the cached JSON-able value or produce, store and return it. None results are not cached."""
-    hit = await cache_get(key)
-    if hit is not None:
-        return hit
-    value = await producer()
+    """Return the cached JSON-able value or produce, store and return it. None results are not cached. What is
+    read anew is the check of its catalog (`app.checks`): it worked, with the fields it came with, or it failed."""
+    if not fresh.get():
+        hit = await cache_get(key)
+        if hit is not None:
+            return hit
+    value = await produced(key, producer)
     if value is not None:
         await cache_set(key, value, ttl_s)
+    return value
+
+
+async def produced(key: str, producer: Callable[[], Awaitable[Any]]) -> Any:
+    """`producer()`, its result noted as the check of the record's catalog (`app.checks`). A record the catalog has
+    not got is no failure of it."""
+    from app import checks
+    from app.catalog.models import CatalogNotFound
+
+    check = checks.check_of_cache_key(key)
+    if check is None:
+        return await producer()
+    t0 = time.monotonic()
+    try:
+        value = await producer()
+    except CatalogNotFound:
+        raise
+    except Exception as e:
+        checks.note(check, False, checks.error_words(e), int((time.monotonic() - t0) * 1000))
+        raise
+    if value:  # nothing found tells nothing
+        checks.note(check, True, None, int((time.monotonic() - t0) * 1000))
+        checks.observe(check, value)
     return value
 
 

@@ -9,6 +9,7 @@ import type { TelegramChat, TelegramStatus } from '../lib/telegram';
 import type {
   AboutOut,
   UpdatesOut,
+  ServiceChecksOut,
   HubVersionOut,
   OutboundFilter,
   OutboundRequestOut,
@@ -588,6 +589,9 @@ export const api = {
   /** What the Hub is built of that is behind (the worker asks PyPI and GitHub once a day). */
   updates: (signal?: AbortSignal) => request<UpdatesOut>('GET', '/api/admin/updates', { signal }),
   checkUpdates: () => request<UpdatesOut>('POST', '/api/admin/updates/check'),
+  /** «Проверка сервисов»: each outside service's checks (`hub/app/checks`). */
+  serviceChecks: (signal?: AbortSignal) => request<ServiceChecksOut>('GET', '/api/admin/checks', { signal }),
+  runServiceChecks: () => request<ServiceChecksOut>('POST', '/api/admin/checks/run'),
   proxies: (signal?: AbortSignal) => request<ProxiesOut>('GET', '/api/admin/proxies', { signal }),
   addProxy: (url: string, name: string | null) => request<ProxyOut>('POST', '/api/admin/proxies', { json: { url, name } }),
   changeProxy: (id: number, url: string, name: string | null) => request<ProxyOut>('PATCH', `/api/admin/proxies/${id}`, { json: { url, name } }),

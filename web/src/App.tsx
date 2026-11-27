@@ -49,6 +49,7 @@ import { FilesPage } from './pages/Files';
 import { TidyJournalPage, TidyPage } from './pages/Tidy';
 import { BackupPage } from './pages/Backup';
 import { OutboundPage } from './pages/Outbound';
+import { ServiceChecksPage } from './pages/ServiceChecks';
 import { AboutPage, WhatsNewPage } from './pages/WhatsNew';
 import { PlayerLightPage } from './pages/PlayerLightPage';
 import { QualityPage } from './pages/Quality';
@@ -149,6 +150,7 @@ const ROUTES: RouteDef[] = [
   ['/admin/backup', 'more', () => <BackupPage />, 'text'],
   ['/admin/outbound', 'more', () => <OutboundPage />, 'wide'],
   ['/admin/about', 'more', () => <AboutPage />, 'text'],
+  ['/admin/checks', 'more', () => <ServiceChecksPage />, 'text'],
   ['/whats-new', 'more', () => <WhatsNewPage />, 'text'],
   ['/settings/player-light', 'more', () => <PlayerLightPage />, 'text'],
   ['/lyrics-sources', 'more', () => <LyricsSettingsPage />, 'text'],

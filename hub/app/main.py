@@ -28,6 +28,7 @@ def _import_handlers() -> None:
     import app.mixes.discover
     import app.playlists_mirror
     import app.tidy.scan
+    import app.checks.probes  # noqa: F401  (its job)
 
 
 @asynccontextmanager
@@ -50,6 +51,9 @@ async def lifespan(app: FastAPI):
     from app import outbound
 
     await outbound.start(sweeping=s.hub_role != "api")  # the proxies of outside requests, and their journal
+    from app import checks
+
+    checks.start()  # what the work says of each outside service (`app.checks`), written down every minute
     worker = s.hub_role != "api"  # the jobs and the scheduled loops; the api only answers
 
     from app import listen, telegram_chats
@@ -122,6 +126,9 @@ async def lifespan(app: FastAPI):
         from app.updates import loop as updates_loop
 
         tasks.append(_loop_task(updates_loop(), "updates"))
+        from app.checks.probes import loop as checks_loop
+
+        tasks.append(_loop_task(checks_loop(), "service-checks"))
     from app.version import build, version
 
     log.info("hub %s (%s) started (%s)", version(), build()["commit"] or "?", s.hub_role)
@@ -136,6 +143,7 @@ async def lifespan(app: FastAPI):
         await wave.reset()
         await smart.reset()
         await svc.stop()
+        await checks.stop()
         await outbound.stop()
         await relay.stop()
         await db.dispose()
@@ -230,6 +238,7 @@ def create_app() -> FastAPI:
     from app.api import (
         version as version_api,
     )
+    from app.api import checks as checks_api
 
     # no page that lists the Hub's commands: it is reached from the internet, and nobody but a guesser reads it
     from app.version import version as hub_version
@@ -238,7 +247,7 @@ def create_app() -> FastAPI:
                   redoc_url=None)
     for r in (auth.router, search.router, catalog.router, downloads.router, listen.router, library.router, medialib.router, file_picker.router,
               uploads.router, playlists.router, plays.router, playback_queue.router, playback_devices.router, mixes.router, wave.router, smart_shuffle.router, imports.router, events.router, system.router, admin.router,
-              artists.router, insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, quality.router, discoveries.router, listenbrainz.router, for_you.router, subsonic.router, integrations.router, tidy.router, backup.router, outbound_api.router, version_api.router):
+              artists.router, insights.router, telegram.router, lyrics.router, links.router, tags.router, stats.router, releases.router, quality.router, discoveries.router, listenbrainz.router, for_you.router, subsonic.router, integrations.router, tidy.router, backup.router, outbound_api.router, version_api.router, checks_api.router):
         app.include_router(r)
     app.include_router(integrations.callback_router)
 

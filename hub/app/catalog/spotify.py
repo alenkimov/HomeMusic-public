@@ -341,9 +341,12 @@ class SpotifyCatalog:
                            fresh: bool = False) -> dict:
         """Share one read per resource; cancelling a caller does not cancel the shared work."""
         async def load() -> tuple[dict, bool]:
-            if not fresh and (hit := await cache_get(key)) is not None:
+            from app.catalog.cache import fresh as read_anew
+            from app.catalog.cache import produced
+
+            if not fresh and not read_anew.get() and (hit := await cache_get(key)) is not None:
                 return hit, False
-            result = await read()
+            result = await produced(key, read)
             await cache_set(key, result, ttl_s)
             return result, True
 

@@ -2014,3 +2014,36 @@ export interface UpdatesOut {
   checked_at: string | null;
   outdated: { name: string; installed: string; latest: string; why: string }[];
 }
+
+/** «Проверка сервисов» (admins, `hub/app/checks`): is each outside service working, and answering as it used to. */
+export type CheckState = 'ok' | 'flaky' | 'changed' | 'broken' | 'off' | 'none';
+export interface ServiceCheckOut {
+  key: string;
+  title: string;
+  state: CheckState;
+  /** how its last result is known: the real work, or the nightly check */
+  source: 'live' | 'probe' | null;
+  at: string | null;
+  detail: string | null;
+  elapsed_ms: number | null;
+  /** fields its answers stopped coming with */
+  missing: string[];
+  /** why it is not checked here */
+  off: string | null;
+}
+export interface ServiceStateOut {
+  key: string;
+  name: string;
+  state: CheckState;
+  /** the last 14 days, the oldest first */
+  nights: ('ok' | 'flaky' | 'broken' | 'none')[];
+  checks: ServiceCheckOut[];
+}
+export interface ServiceChecksOut {
+  checked_at: string | null;
+  took_s: number | null;
+  running: boolean;
+  /** services broken or answering otherwise: the count by the menu's line */
+  attention: number;
+  services: ServiceStateOut[];
+}

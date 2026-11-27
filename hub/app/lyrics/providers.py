@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -297,11 +298,18 @@ PROVIDERS: dict[str, Callable[[Query], Awaitable[Found | None]]] = {
 
 async def ask(source: str, q: Query) -> Found | None:
     """One provider; its failure is logged and reads as «nothing found»."""
+    from app import checks
+
     fn = PROVIDERS.get(source)
     if fn is None:
         return None
+    t0 = time.monotonic()
     try:
-        return await fn(q)
+        found = await fn(q)
     except Exception as e:
         log.info("lyrics: %s failed for %s - %s: %r", source, q.artist, q.title, e)
+        checks.note(f"lyrics.{source}", False, checks.error_words(e), int((time.monotonic() - t0) * 1000))
         return None
+    if found is not None:  # nothing found tells nothing
+        checks.note(f"lyrics.{source}", True, None, int((time.monotonic() - t0) * 1000))
+    return found

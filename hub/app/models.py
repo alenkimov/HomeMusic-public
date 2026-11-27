@@ -515,6 +515,36 @@ class OutboundRequest(Base):
     process: Mapped[str | None] = mapped_column(String(10))  # «api» | «worker» | «all»
 
 
+class ServiceCheck(Base):
+    """What a check of an outside service found (`app.checks`): the real work of the Hub (`source` «live»: a
+    download, a catalog page, a text found — a minute's worth in one row, `count`) or the nightly check of what the
+    day did not show (`source` «probe»). Kept `checks.KEEP_DAYS`."""
+
+    __tablename__ = "service_checks"
+    __table_args__ = (Index("ix_service_checks_check_at", "check", "at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    check: Mapped[str] = mapped_column(String(64))  # «youtube.search», «spotify.album», «lyrics.lrclib»
+    at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    ok: Mapped[bool] = mapped_column(Boolean)
+    source: Mapped[str] = mapped_column(String(8))  # «live» | «probe»
+    detail: Mapped[str | None] = mapped_column(String(300))  # what went wrong, or what was found
+    elapsed_ms: Mapped[int | None] = mapped_column(Integer)
+    count: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class ServiceShape(Base):
+    """The fields a service's answers came with (`app.checks.paths`), each with when it was last there and how many
+    answers had been seen then: a field no answer has had for a while is one the service stopped sending."""
+
+    __tablename__ = "service_shapes"
+
+    check: Mapped[str] = mapped_column(String(64), primary_key=True)
+    seen: Mapped[int] = mapped_column(Integer, default=0)  # answers looked at
+    paths: Mapped[dict[str, Any]] = mapped_column(default=dict)  # path -> [last seen (iso), `seen` then]
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class IntegrationCredential(Base):
     __tablename__ = "integration_credentials"
 

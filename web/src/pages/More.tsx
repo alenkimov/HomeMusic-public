@@ -45,6 +45,8 @@ export function MorePage() {
   const backup = useAsync((s) => (me.is_admin ? api.backup(s) : Promise.resolve(null)), [], true, 'menu:backup').data;
   // what the Hub is built of that is behind (yt-dlp first): a count by «О сервере»
   const behind = useAsync((s) => (me.is_admin ? api.updates(s) : Promise.resolve(null)), [], true, 'menu:updates').data?.outdated.length ?? 0;
+  // the outside services broken or answering otherwise («Проверка сервисов»)
+  const checksWrong = useAsync((s) => (me.is_admin ? api.serviceChecks(s) : Promise.resolve(null)), [], true, 'menu:checks').data?.attention ?? 0;
   const backupWord = !backup ? undefined : !backup.connected ? 'не настроены' : backup.stale || backup.error ? 'не отправляются' : undefined;
   // what waits for the user in «Загрузки»: files to choose, failed ones — a transfer's too
   const review = useAsync((s) => (STANDALONE ? api.downloadsOverview(s) : Promise.resolve(null)), [], true, 'menu:downloads')?.data?.review ?? 0;
@@ -136,6 +138,7 @@ export function MorePage() {
             {me.is_admin && <Item icon="user" tint="bg-[#3d8ef0]" to="/admin" title="Пользователи и приглашения" />}
             {me.is_admin && <Item icon="install" tint="bg-[#6b7a8f]" to="/admin/backup" title="Резервные копии" badge={backupWord} badgeTone="warn" />}
             {me.is_admin && <Item icon="chart" tint="bg-[#7a5af0]" to="/admin/outbound" title="Прокси и запросы" />}
+            {me.is_admin && <Item icon="check" tint="bg-[#1f9d8a]" to="/admin/checks" title="Проверка сервисов" badge={checksWrong ? String(checksWrong) : undefined} badgeTone="warn" />}
             {me.is_admin && <Item icon="help" tint="bg-[#6b7a8f]" to="/admin/about" title="О сервере" badge={behind ? String(behind) : undefined} badgeTone="warn" />}
             <Item icon="link" tint="bg-[#537fe2]" to="/integrations" title="Сторонние сервисы" />
             {me.is_admin && <Item icon="lyrics" tint="bg-[#c2528b]" to="/lyrics-sources" title="Тексты и перевод" />}
