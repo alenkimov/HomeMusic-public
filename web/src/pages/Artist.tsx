@@ -100,7 +100,7 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
   const status = sources.length > 0 && <SourceStatuses sources={sources} label="Статусы источников исполнителя" />;
   const canMap = !!useSession().me.artist_map; // «Карта похожих» is there
   const menu = useContextMenu();
-  const [naming, setNaming] = useState<'names' | 'projects' | 'looks' | null>(null); // a window of the artist's ⋯
+  const [naming, setNaming] = useState<'names' | 'looks' | null>(null); // a window of the artist's ⋯
   const [busy, setBusy] = useState<string | null>(null);
   const d: ArtistPageOut | undefined = res.data;
   const artist = d?.artist;
@@ -191,8 +191,8 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
           {/* the ⋯ of the artist: at the top right, and there still when the page is scrolled */}
           <button type="button" onClick={menu.fromButton} aria-label="Ещё" title="Ещё" className="relative mr-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-bg/40 text-fg hover:bg-bg/70">
             <Icon name="more" size={22} />
-            {/* somebody looks like the same artist under another spelling: «Имя и написания» says who */}
-            {artistHint(names.card) && <span aria-hidden="true" className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-info" />}
+            {/* somebody looks like the same artist under another spelling: «Соцсети, проекты и псевдонимы» says who */}
+            {artistHint(names.card) && <span aria-hidden="true" className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-ai" />}
           </button>
           </>
         }
@@ -291,8 +291,7 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
             { icon: 'download', label: 'Скачать всё', shortcut: 'D', onSelect: () => void downloadAll() },
             followed && { icon: 'x', label: 'Отписаться', onSelect: () => void unfollow() },
             'sep',
-            names.card && { icon: 'edit', label: 'Имя и написания', shortcut: 'F2', dot: !!artistHint(names.card), onSelect: () => setNaming('names') },
-            names.card && { icon: 'user', label: 'Другие проекты', onSelect: () => setNaming('projects') },
+            names.card && { icon: 'user', label: 'Соцсети, проекты и псевдонимы', shortcut: 'F2', dot: !!artistHint(names.card), onSelect: () => setNaming('names') },
             names.card && { icon: 'image', label: 'Фото и обложка', onSelect: () => setNaming('looks') },
             'sep',
             { icon: 'link', label: 'Скопировать ссылку', shortcut: 'C', onSelect: () => void share() },
@@ -302,7 +301,7 @@ export function ArtistPage({ refId, initialPath }: { refId: string; initialPath?
         />
       )}
       <ArtistWindow
-        which={naming === 'looks' ? null : naming}
+        open={naming === 'names'}
         card={names.card}
         onChange={names.set}
         onClose={() => setNaming(null)}

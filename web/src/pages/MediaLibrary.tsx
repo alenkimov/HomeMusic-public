@@ -527,7 +527,7 @@ export function NdArtistPage({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const row = useRememberScrollX(`nd-artist:${id}`);
   const names = useArtistCard(d && !d.catalog_ref ? d.artist.name : null);
-  const [naming, setNaming] = useState<'names' | 'projects' | 'looks' | 'menu' | null>(null);
+  const [naming, setNaming] = useState<'names' | 'looks' | 'menu' | null>(null);
   const [namingAt, setNamingAt] = useState<MenuAt | null>(null);
   if (res.loading && !d) return (<><PageHeader hero title="Исполнитель" back="/artists" /><HeroSkeleton round buttons /></>);
   if (!d) return (<><PageHeader hero title="Исполнитель" back="/artists" /><ErrorState text={res.error ?? 'Исполнитель не найден'} onRetry={() => res.reload()} /></>);
@@ -586,7 +586,7 @@ export function NdArtistPage({ id }: { id: string }) {
             setNaming('menu');
           }} aria-label="Ещё" title="Ещё" className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-muted hover:text-fg">
             <Icon name="more" size={24} />
-            {artistHint(names.card) && <span aria-hidden="true" className="absolute right-2 top-2 h-2 w-2 rounded-full bg-info" />}
+            {artistHint(names.card) && <span aria-hidden="true" className="absolute right-2 top-2 h-2 w-2 rounded-full bg-ai" />}
           </button>
         )}
       </div>
@@ -596,13 +596,12 @@ export function NdArtistPage({ id }: { id: string }) {
           head={{ title: artist.name, sub: 'Исполнитель' }}
           onClose={() => setNaming(null)}
           entries={[
-            { icon: 'edit', label: 'Имя и написания', shortcut: 'F2', dot: !!artistHint(names.card), onSelect: () => setNaming('names') },
-            { icon: 'user', label: 'Другие проекты', onSelect: () => setNaming('projects') },
+            { icon: 'user', label: 'Соцсети, проекты и псевдонимы', shortcut: 'F2', dot: !!artistHint(names.card), onSelect: () => setNaming('names') },
             { icon: 'image', label: 'Фото и обложка', onSelect: () => setNaming('looks') },
           ]}
         />
       )}
-      <ArtistWindow which={naming === 'names' || naming === 'projects' ? naming : null} card={names.card} onChange={names.set} onClose={() => setNaming(null)} />
+      <ArtistWindow open={naming === 'names'} card={names.card} onChange={names.set} onClose={() => setNaming(null)} />
       {naming === 'looks' && names.card && <ArtistLooksWindow artistId={names.card.id} onChanged={() => res.reload()} onClose={() => setNaming(null)} />}
 
       {tracks.length > 0 && (

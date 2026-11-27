@@ -26,9 +26,9 @@ const SOURCE: Record<string, string> = { catalog: 'каталог', library: 'и
 const enc = encodeURIComponent;
 
 /** An artist's round picture in a button: the catalog's or an album's cover — else the first letter of the name. */
-function Avatar({ name, src }: { name: string; src?: string | null }) {
+function Avatar({ name, src, big }: { name: string; src?: string | null; big?: boolean }) {
   return (
-    <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-fg/15 text-xs font-semibold text-muted">
+    <span className={cx(big ? 'h-10 w-10 text-sm' : 'h-7 w-7 text-xs', 'flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-fg/15 font-semibold text-muted')}>
       {src ? <img src={imageUrl(src) as string} alt="" loading="lazy" className="h-full w-full object-cover" /> : name.trim().charAt(0).toUpperCase()}
     </span>
   );
@@ -57,25 +57,16 @@ export function ArtistProjects({ card }: { card: ArtistCardOut | null }) {
 /** Somebody looks like the same artist under another spelling: the page's ⋯ says so with a dot. */
 export const artistHint = (card: ArtistCardOut | null) => (card?.suggestions.length ?? 0) > 0;
 
-/** The two windows of an artist's ⋯: «Имя и написания» and «Другие проекты». */
 type OnProfileDetached = (ref: string, card: ArtistCardOut) => void;
 
-export function ArtistWindow({ which, card, onChange, onClose, onProfileDetached }: {
-  which: 'names' | 'projects' | null;
-  card: ArtistCardOut | null;
-  onChange: (next: ArtistCardOut) => void;
-  onClose: () => void;
-  onProfileDetached?: OnProfileDetached;
-}) {
-  if (!which || !card) return null;
-  return which === 'names'
-    ? <NamesWindow card={card} onChange={onChange} onClose={onClose} onProfileDetached={onProfileDetached} />
-    : <ProjectsWindow card={card} onChange={onChange} onClose={onClose} />;
-}
-
 const REWRITE = 'Библиотека переписывается: треки, альбомы и теги файлов. Это займёт немного времени';
-const chip = 'inline-flex max-w-full items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-sm';
-const mini = 'flex h-5 w-5 items-center justify-center rounded-full text-dim hover:bg-fg/10 hover:text-fg';
+const heading = 'pb-1 text-[12px] font-semibold uppercase tracking-wider text-muted';
+const cross = 'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-dim hover:bg-fg/10 hover:text-fg';
+const pill = 'min-h-9 rounded-full px-3 text-[13px] font-semibold transition active:scale-95';
+/** a catalog's record -> its service (`app/catalog/models.py` CATALOG_SERVICES) */
+const SERVICE_OF: Record<string, string> = { dz: 'deezer', ym: 'yandex', sp: 'spotify', hm: 'hitmoz', mb: 'musicbrainz' };
+const fans = (n: number) => `${n.toLocaleString('ru-RU')} ${plural(n, ['поклонник', 'поклонника', 'поклонников'])}`;
+const pageOf = (x: { ref?: string | null; name: string }) => (x.ref ? `/artist/${enc(x.ref)}` : `/artist-named/${enc(x.name)}`);
 
 /** What a window does to the artist: said to the page, with a word when it worked. */
 function useRun(onChange: (next: ArtistCardOut) => void) {
@@ -92,61 +83,41 @@ function useRun(onChange: (next: ArtistCardOut) => void) {
   return { busy, run };
 }
 
-/** Another artist, looked for as the name is typed: the ones the Hub knows, and the name itself when nobody is
- * called so yet. */
-function OtherPicker({ card, placeholder, action, onPick }: { card: ArtistCardOut; placeholder: string; action: string; onPick: (who: ArtistOtherIn, name: string) => Promise<boolean> }) {
-  const [text, setText] = useState('');
-  const typed = text.trim();
-  const picks = useAsync((s) => (typed.length > 1 ? api.artistFind(typed, s) : Promise.resolve([] as ArtistPickOut[])), [typed]);
-  const taken = new Set([card.id, ...card.projects.map((p) => p.id)]);
-  const found = (picks.data ?? []).filter((x) => !taken.has(x.id));
-  const rows = [...found.map((x) => ({ who: { other_id: x.id } as ArtistOtherIn, name: x.name, known: true })), ...(found.some((x) => x.name.toLocaleLowerCase() === typed.toLocaleLowerCase()) ? [] : [{ who: { name: typed } as ArtistOtherIn, name: typed, known: false }])];
-  return (
-    <>
-      <input className="input w-full" placeholder={placeholder} aria-label={placeholder} value={text} onChange={(e) => setText(e.target.value)} maxLength={300} autoComplete="off" />
-      {typed.length > 1 && (
-        <div className="space-y-1 pt-2 text-[13px]">
-          {rows.map((x) => (
-            <p key={`${x.known}:${x.name}`} className="flex flex-wrap items-center gap-x-3 rounded-lg px-2 py-1 hover:bg-fg/5">
-              <span className="min-w-0 flex-1 truncate text-sm">
-                {x.name}
-                {!x.known && <span className="text-dim"> — пока нет в библиотеке</span>}
-              </span>
-              <button type="button" className="text-info hover:underline" onClick={() => void onPick(x.who, x.name).then((ok) => ok && setText(''))}>
-                {action}
-              </button>
-            </p>
-          ))}
-        </div>
-      )}
-    </>
-  );
+/** «Соцсети, проекты и псевдонимы» of an artist's ⋯: who the artist is, in one window — the services' profiles tied
+ * to them (and, marked as «Наведение порядка» marks what it offers, the ones that look like the same artist), the
+ * other projects of the same person, the names with a star on the one everybody sees, and one field that adds a
+ * name, a project or the same artist under another name. Whatever is changed here is changed for everyone; a new
+ * main name, or an artist joined, rewrites the library — its tracks, albums and the files' tags. */
+export function ArtistWindow({ open, card, onChange, onClose, onProfileDetached }: {
+  open: boolean;
+  card: ArtistCardOut | null;
+  onChange: (next: ArtistCardOut) => void;
+  onClose: () => void;
+  onProfileDetached?: OnProfileDetached;
+}) {
+  if (!open || !card) return null;
+  return <Window card={card} onChange={onChange} onClose={onClose} onProfileDetached={onProfileDetached} />;
 }
 
-/** «Имя и написания»: the artist's one name among their spellings, and the artists that are the same one. Whatever
- * is changed here is changed for everyone; a new name, or an artist joined, rewrites the library — its tracks,
- * albums and the files' tags — which takes the Hub a little while. */
-function NamesWindow({ card, onChange, onClose, onProfileDetached }: {
+function Window({ card, onChange, onClose, onProfileDetached }: {
   card: ArtistCardOut;
   onChange: (next: ArtistCardOut) => void;
   onClose: () => void;
   onProfileDetached?: OnProfileDetached;
 }) {
   const { busy, run } = useRun(onChange);
-  const [spelling, setSpelling] = useState('');
   const makeMain = async (id: number, name: string) => {
     const ok = await confirmDialog({ title: `Основное имя — «${name}»?`, body: `Все увидят исполнителя под этим именем. Треки и альбомы, где он записан как «${card.name}», будут переписаны, в том числе теги в файлах.`, okLabel: 'Сделать основным' });
     if (ok) await run(() => api.artistMain(card.id, id), REWRITE);
   };
   const dropName = async (id: number, name: string, source: string) => {
-    const ok = source === 'manual' || (await confirmDialog({ title: `«${name}» — другой исполнитель?`, body: 'Написание станет отдельным исполнителем: музыка, которая придёт под ним дальше, будет его. Треки, уже переписанные под основным именем, останутся как есть.', okLabel: 'Отделить' }));
+    const ok = source === 'manual' || (await confirmDialog({ title: `«${name}» — другой исполнитель?`, body: 'Имя станет отдельным исполнителем: музыка, которая придёт под ним дальше, будет его. Треки, уже переписанные под основным именем, останутся как есть.', okLabel: 'Отделить' }));
     if (ok) await run(() => api.artistDropName(card.id, id));
   };
   const detach = async (profile: ArtistProfileOut) => {
-    const label = serviceName(profile.service);
     const ok = await confirmDialog({
       title: `Отвязать профиль «${profile.name}»?`,
-      body: `${label} · ${profile.ref}. Профиль получит отдельную карточку с релизами каталога. Операция действует для всех пользователей Хаба.`,
+      body: `${serviceName(profile.service)} · ${profile.ref}. Профиль получит отдельную карточку с релизами каталога. Операция действует для всех пользователей Хаба.`,
       okLabel: 'Отвязать',
       danger: true,
     });
@@ -163,77 +134,162 @@ function NamesWindow({ card, onChange, onClose, onProfileDetached }: {
     });
   };
   const merge = async (who: ArtistOtherIn, name: string) => {
-    const ok = await confirmDialog({ title: `«${name}» — это ${card.name}?`, body: `Они станут одним исполнителем под именем «${card.name}». Треки и альбомы «${name}» будут переписаны под этим именем, в том числе теги в файлах. Отдельный проект того же человека со своими релизами добавляется иначе — в «Другие проекты».`, okLabel: 'Объединить' });
+    const ok = await confirmDialog({ title: `«${name}» — это ${card.name}?`, body: `Они станут одним исполнителем под именем «${card.name}». Треки и альбомы «${name}» будут переписаны под этим именем, в том числе теги в файлах. Если это отдельный проект того же человека со своими релизами — выберите «Его проект».`, okLabel: 'Объединить' });
     return ok ? run(() => api.artistMerge(card.id, who), REWRITE) : false;
   };
-  const addSpelling = async () => {
-    const name = spelling.trim();
-    if (!name) return;
-    // a spelling that is somebody's: the two are joined, by the listener's word
+  const project = (who: ArtistOtherIn) => run(() => api.artistAddProject(card.id, who), 'Проект добавлен');
+  const addName = async (name: string) => {
+    // a name that is somebody's: the two are joined, by the listener's word
     const theirs = (await api.artistFind(name).catch(() => [] as ArtistPickOut[])).find((x) => x.id !== card.id && x.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase());
-    if (theirs ? await merge({ other_id: theirs.id }, theirs.name) : await run(() => api.artistAddName(card.id, name))) setSpelling('');
+    return theirs ? merge({ other_id: theirs.id }, theirs.name) : run(() => api.artistAddName(card.id, name));
   };
+
   return (
-    <Sheet open onClose={onClose} title="Имя и написания">
-      <div className={cx('space-y-4 text-fg', busy && 'pointer-events-none opacity-60')}>
-        {card.suggestions.length > 0 && (
-          <section className="rounded-xl bg-info/10 px-3 py-2 text-[13px]">
-            <p className="pb-1 text-muted">Похоже на того же исполнителя:</p>
-            {card.suggestions.map((x) => (
-              <p key={x.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1">
-                {/* who it is: their own page, to look before the two are joined */}
-                <Link to={x.ref ? `/artist/${enc(x.ref)}` : `/artist-named/${enc(x.name)}`} onClick={onClose} title="Открыть страницу этого исполнителя" className="flex h-9 min-w-0 max-w-full items-center gap-2 rounded-full border border-fg/40 pl-1 pr-3 text-sm text-fg transition hover:border-fg">
-                  <Avatar name={x.name} src={x.picture_url} />
-                  <span className="truncate">{x.name}</span>
-                  {x.nb_fans ? <span className="shrink-0 text-[12px] text-dim">{x.nb_fans.toLocaleString('ru-RU')} в каталоге</span> : null}
-                </Link>
-                <button type="button" className="text-info hover:underline" onClick={() => void merge({ other_id: x.id }, x.name)}>объединить</button>
-                <button type="button" className="text-info hover:underline" onClick={() => void run(() => api.artistAddProject(card.id, { other_id: x.id }))}>это его проект</button>
-                <button type="button" className="text-muted hover:underline" onClick={() => void run(() => api.artistApart(card.id, { other_id: x.id }))}>это другой</button>
+    <Sheet open onClose={onClose} title="Соцсети, проекты и псевдонимы">
+      <div className={cx('space-y-6 text-fg', busy && 'pointer-events-none opacity-60')}>
+        <section aria-labelledby="artist-profiles">
+          <h3 id="artist-profiles" className={heading}>Соцсети и профили</h3>
+          <LinkedProfiles card={card} onDetach={(profile) => void detach(profile)} />
+          {card.suggestions.map((x) => (
+            <div key={x.id} className="mt-2 space-y-2 rounded-2xl bg-ai/10 px-3 pb-3 pt-2.5 ring-1 ring-ai/35">
+              <p className="flex items-center gap-1.5 text-[12px] font-semibold text-ai">
+                <Icon name="sparkle" size={13} filled stroke={0} />
+                Похоже на того же исполнителя
               </p>
-            ))}
+              {/* who it is: their own page, to look before the two are joined */}
+              <Link to={pageOf(x)} onClick={onClose} title="Открыть страницу этого исполнителя" className="flex min-w-0 items-center gap-3 rounded-lg hover:bg-fg/5">
+                <Avatar name={x.name} src={x.picture_url} big />
+                <span className="min-w-0">
+                  <span className="block truncate text-[15px] font-semibold">{x.name}</span>
+                  <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted">
+                    {x.ref && SERVICE_OF[x.ref.split(':')[0]] ? <ServiceBadge service={SERVICE_OF[x.ref.split(':')[0]]} size={13} /> : <span>В библиотеке</span>}
+                    {x.nb_fans ? <span>· {fans(x.nb_fans)}</span> : null}
+                  </span>
+                </span>
+              </Link>
+              <div className="flex gap-1.5">
+                <button type="button" className={cx(pill, 'flex-1 bg-ai text-bg hover:opacity-90')} onClick={() => void merge({ other_id: x.id }, x.name)}>Привязать</button>
+                <button type="button" className={cx(pill, 'flex-1 whitespace-nowrap bg-ai/15 text-ai hover:bg-ai/25')} onClick={() => void project({ other_id: x.id })}>Это его проект</button>
+                <button type="button" className={cx(pill, 'flex-1 whitespace-nowrap bg-ai/15 text-ai hover:bg-ai/25')} onClick={() => void run(() => api.artistApart(card.id, { other_id: x.id }))}>Это другой</button>
+              </div>
+            </div>
+          ))}
+        </section>
+
+        {card.projects.length > 0 && (
+          <section aria-labelledby="artist-projects">
+            <h3 id="artist-projects" className={heading}>Другие проекты</h3>
+            <ul>
+              {card.projects.map((p) => (
+                <li key={p.id} className="flex min-h-14 items-center gap-2">
+                  <Link to={pageOf(p)} onClick={onClose} className="flex min-w-0 flex-1 items-center gap-3 rounded-lg py-1.5 hover:bg-fg/5">
+                    <Avatar name={p.name} src={p.picture_url} big />
+                    <span className="min-w-0">
+                      <span className="block truncate text-[15px] font-semibold">{p.name}</span>
+                      <span className="block truncate text-xs text-muted">{p.also.length ? p.also.join(', ') : 'Своя страница и свои релизы'}</span>
+                    </span>
+                  </Link>
+                  <button type="button" className={cross} aria-label={`Больше не проект: ${p.name}`} title="Больше не проект" onClick={() => void run(() => api.artistDropProject(card.id, p.id))}>
+                    <Icon name="x" size={16} />
+                  </button>
+                </li>
+              ))}
+            </ul>
           </section>
         )}
-        <section>
-          <p className="pb-1.5 text-[13px] text-muted">Имя, под которым исполнителя видят все, и другие написания — по ним он тоже находится.</p>
-          <div className="flex flex-wrap gap-1.5">
+
+        <section aria-labelledby="artist-names">
+          <h3 id="artist-names" className={heading}>Имена</h3>
+          <ul>
             {card.names.map((n) => (
-              <span key={n.id ?? n.name} className={cx(chip, n.main && 'border-accent text-accent')}>
-                <span className="truncate">{n.name}</span>
-                <span className={cx('text-[11px]', n.main ? 'text-accent' : 'text-dim')}>{n.main ? 'основное' : (SOURCE[n.source] ?? n.source)}</span>
-                {!n.main && n.id != null && (
-                  <>
-                    <button type="button" className="rounded-full px-1.5 text-[11px] text-info hover:bg-fg/10 hover:underline" onClick={() => void makeMain(n.id as number, n.name)}>
-                      сделать основным
-                    </button>
-                    <button type="button" className={mini} aria-label={`Убрать написание: ${n.name}`} title={n.source === 'manual' ? 'Убрать' : 'Это другой исполнитель — отделить'} onClick={() => void dropName(n.id as number, n.name, n.source)}>
-                      <Icon name="x" size={12} />
-                    </button>
-                  </>
-                )}
-              </span>
+              <li key={n.id ?? n.name} className="flex min-h-12 items-center gap-1">
+                <button
+                  type="button"
+                  aria-pressed={n.main}
+                  disabled={n.main || n.id == null}
+                  aria-label={n.main ? `Основное имя: ${n.name}` : `Сделать основным: ${n.name}`}
+                  title={n.main ? 'Основное имя' : 'Сделать основным'}
+                  onClick={() => void makeMain(n.id as number, n.name)}
+                  className={cx('flex h-10 w-10 shrink-0 items-center justify-center rounded-full', n.main ? 'text-warn' : 'text-dim hover:bg-fg/10 hover:text-warn')}
+                >
+                  <Icon name="star" size={20} filled={n.main} />
+                </button>
+                <span className={cx('min-w-0 flex-1 truncate text-[15px]', n.main ? 'font-bold' : 'font-medium')}>{n.name}</span>
+                <span className={cx('shrink-0 text-[12px]', n.main ? 'text-warn' : 'text-dim')}>{n.main ? 'основное' : (SOURCE[n.source] ?? n.source)}</span>
+                {!n.main && n.id != null ? (
+                  <button type="button" className={cross} aria-label={`Убрать имя: ${n.name}`} title={n.source === 'manual' ? 'Убрать' : 'Это другой исполнитель — отделить'} onClick={() => void dropName(n.id as number, n.name, n.source)}>
+                    <Icon name="x" size={14} />
+                  </button>
+                ) : <span className="w-9 shrink-0" />}
+              </li>
             ))}
-          </div>
+          </ul>
+          <p className="pt-1 text-[12px] text-dim">Звезда — имя, под которым исполнителя видят все и которое пишется в файлы. По остальным он тоже находится.</p>
           {card.held_by && (
             <p className="pt-2 text-[12px] text-dim">
               Так же пишется «{card.held_by}». Музыка из каталога приходит к своему исполнителю, а файл, в котором указано только это имя, считается музыкой «{card.held_by}».
             </p>
           )}
-          <div className="flex gap-2 pt-2">
-            <input className="input min-w-0 flex-1" placeholder="Ещё написание: LSP" aria-label="Ещё написание" value={spelling} onChange={(e) => setSpelling(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void addSpelling()} maxLength={300} autoComplete="off" />
-            <Button small disabled={!spelling.trim()} onClick={() => void addSpelling()}>
-              Добавить
-            </Button>
-          </div>
         </section>
-        <LinkedProfiles card={card} onDetach={(profile) => void detach(profile)} />
-        <section>
-          <p className="pb-1.5 text-[13px] text-muted">Тот же исполнитель есть под другим именем — объединить их в одного.</p>
-          <OtherPicker card={card} placeholder="Имя другого исполнителя" action="это тот же исполнитель" onPick={merge} />
-        </section>
+
+        <AddField card={card} onMerge={merge} onProject={project} onName={addName} />
+
         <p className="text-[12px] text-dim">Изменения видят все на этом сервере. Основное имя записывается и в файлы — так же исполнитель называется в Navidrome и других плеерах.</p>
       </div>
     </Sheet>
+  );
+}
+
+/** The one field: a name typed is looked for among the artists at once — each found one the same artist or a project
+ * of theirs — and can be added as one more name of this one. */
+function AddField({ card, onMerge, onProject, onName }: {
+  card: ArtistCardOut;
+  onMerge: (who: ArtistOtherIn, name: string) => Promise<boolean>;
+  onProject: (who: ArtistOtherIn) => Promise<boolean>;
+  onName: (name: string) => Promise<boolean>;
+}) {
+  const [text, setText] = useState('');
+  const typed = text.trim();
+  const picks = useAsync((s) => (typed.length > 1 ? api.artistFind(typed, s) : Promise.resolve([] as ArtistPickOut[])), [typed]);
+  const taken = new Set([card.id, ...card.projects.map((p) => p.id)]);
+  const found = (picks.data ?? []).filter((x) => !taken.has(x.id));
+  const known = card.names.some((n) => n.name.toLocaleLowerCase() === typed.toLocaleLowerCase());
+  const done = (ok: boolean) => ok && setText('');
+  const btn = 'min-h-9 rounded-full border border-line px-3 text-[13px] font-semibold hover:border-fg/60 active:scale-95';
+  return (
+    <section>
+      <label htmlFor="artist-add" className={cx(heading, 'block')}>Добавить</label>
+      <input
+        id="artist-add"
+        className="input w-full"
+        placeholder="Имя, другое написание или проект"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && typed && !known && void onName(typed).then(done)}
+        maxLength={300}
+        autoComplete="off"
+      />
+      {typed.length > 1 && (
+        <div className="space-y-1.5 pt-2">
+          {found.length > 0 && <p className="px-1 text-[12px] text-dim">Есть в библиотеке</p>}
+          {found.map((x) => (
+            <div key={x.id} className="space-y-2 rounded-xl bg-raised px-3 py-2.5">
+              <p className="truncate text-sm font-semibold">{x.name}</p>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className={btn} onClick={() => void onMerge({ other_id: x.id }, x.name).then(done)}>Это он — объединить</button>
+                <button type="button" className={btn} onClick={() => void onProject({ other_id: x.id }).then(done)}>Его проект</button>
+              </div>
+            </div>
+          ))}
+          {!known && (
+            <button type="button" className="flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 text-left text-sm hover:bg-fg/5" onClick={() => void onName(typed).then(done)}>
+              <Icon name="plus" size={16} className="shrink-0 text-muted" />
+              <span className="min-w-0 truncate">Добавить «{typed}» как имя</span>
+            </button>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -242,66 +298,35 @@ function LinkedProfiles({ card, onDetach }: { card: ArtistCardOut; onDetach: (pr
   const res = useAsync((signal) => api.artistProfiles(card.id, signal), [card.id, refs.join(',')], refs.length > 0);
   const profiles = (res.data ?? []).filter((p) => refs.includes(p.ref));
   return (
-    <section aria-label="Привязанные профили">
-      <h3 className="pb-1 text-sm font-semibold">Привязанные профили</h3>
+    <>
       {!refs.length && <p className="text-sm text-muted">Привязанных профилей нет</p>}
       {res.loading && !profiles.length && <p className="text-sm text-muted" role="status">Загружаю профили…</p>}
       {res.error && <Button small variant="ghost" onClick={() => res.reload()}>Повторить загрузку</Button>}
-      <ul className="divide-y divide-line">
+      <ul>
         {profiles.map((profile) => {
           const details = (
             <>
-              <Avatar name={profile.name} src={profile.picture_url} />
+              <Avatar name={profile.name} src={profile.picture_url} big />
               <span className="min-w-0">
-                <span className="block truncate text-sm font-medium">{profile.name}</span>
+                <span className="block truncate text-[15px] font-semibold">{profile.name}</span>
                 <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted">
                   <ServiceBadge service={profile.service} size={13} />
-                  {profile.followers != null
-                    ? <span>{profile.followers.toLocaleString('ru-RU')} {plural(profile.followers, ['поклонник', 'поклонника', 'поклонников'])}</span>
-                    : <span>{profile.ref}</span>}
+                  {profile.followers != null ? <span>· {fans(profile.followers)}</span> : <span>· {profile.ref}</span>}
                 </span>
               </span>
             </>
           );
-          const layout = 'flex min-w-0 flex-1 items-center gap-2 rounded-lg py-1.5';
+          const layout = 'flex min-w-0 flex-1 items-center gap-3 rounded-lg py-1.5';
           return (
-            <li key={profile.ref} className="flex min-h-12 items-center gap-2">
+            <li key={profile.ref} className="flex min-h-14 items-center gap-2">
               {profile.url ? <a href={profile.url} target="_blank" rel="noreferrer" className={cx(layout, 'hover:bg-fg/5')} title={profile.ref}>
                 {details}<Icon name="external" size={14} className="shrink-0 text-dim" />
               </a> : <span className={layout}>{details}</span>}
-              <Button small variant="ghost" icon="unlink" onClick={() => onDetach(profile)}>Отвязать</Button>
+              <Button small variant="ghost" onClick={() => onDetach(profile)}>Отвязать</Button>
             </li>
           );
         })}
       </ul>
-    </section>
-  );
-}
-
-/** «Другие проекты»: the other artists that are the same person — each with releases and a page of its own. The
- * music is not mixed; the pages name one another. Named on one page, a project is on the pages of all. */
-function ProjectsWindow({ card, onChange, onClose }: { card: ArtistCardOut; onChange: (next: ArtistCardOut) => void; onClose: () => void }) {
-  const { busy, run } = useRun(onChange);
-  return (
-    <Sheet open onClose={onClose} title="Другие проекты">
-      <div className={cx('space-y-3 text-fg', busy && 'pointer-events-none opacity-60')}>
-        <p className="text-[13px] text-muted">Другие проекты того же человека. У проекта свои релизы и своя страница — музыка не смешивается, страницы ссылаются друг на друга.</p>
-        {card.projects.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {card.projects.map((p) => (
-              <span key={p.id} className={chip}>
-                <span className="truncate">{p.name}</span>
-                {p.also.length > 0 && <span className="truncate text-[11px] text-dim">{p.also.join(', ')}</span>}
-                <button type="button" className={mini} aria-label={`Убрать проект: ${p.name}`} title="Больше не проект" onClick={() => void run(() => api.artistDropProject(card.id, p.id))}>
-                  <Icon name="x" size={12} />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        <OtherPicker card={card} placeholder="Имя проекта" action="добавить проект" onPick={(who) => run(() => api.artistAddProject(card.id, who))} />
-        <p className="text-[12px] text-dim">Изменения видят все на этом сервере. Проект появится на страницах всех проектов этого человека.</p>
-      </div>
-    </Sheet>
+    </>
   );
 }

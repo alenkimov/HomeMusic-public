@@ -319,7 +319,7 @@ export function MenuLine({ item, big = false, open = false, onRun, onHover }: { 
         : item.icon ? <Icon name={item.icon} size={big ? 22 : 18} className={cx('shrink-0', iconTone)} /> : <span className={cx('shrink-0', big ? 'w-[22px]' : 'w-[18px]')} />}
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <span className="truncate">{item.label}</span>
-        {item.dot && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-info" />}
+        {item.dot && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-ai" />}
       </span>
       {item.shortcut && !big && <span className="shrink-0 text-xs text-muted">{item.shortcut.replace('+', ' ')}</span>}
       {item.done && <Icon name="check" size={big ? 20 : 18} stroke={3} className="shrink-0 text-accent" />}
