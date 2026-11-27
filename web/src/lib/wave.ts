@@ -4,7 +4,7 @@ import type { PlayEventIn, WaveOrigin, WaveOut, WaveSeedIn, WaveTrackOut } from 
 import { ofHiddenArtist } from './dislikes';
 import { EMBEDDED } from './embedded';
 import { hubEvents } from './events';
-import { getListenState, listenAll, next, onListeningRestored, replaceUpcoming, subscribeListening, type ListenTrack } from './listen';
+import { getListenState, listStamp, listenAll, next, onListeningRestored, replaceUpcoming, subscribeListening, type ListenTrack } from './listen';
 import { heardWaveTrack, notePersonalWave, OFFLINE_WAVE, offlineWaveTracks, waveAudio, waveReserveEnabled } from './offlineWave';
 import { canPlayAll, canPlayWave, playWave } from './player';
 import { onPlayEvent } from './plays';
@@ -199,8 +199,11 @@ export async function startWave(seed: WaveSeedIn | null | undefined, origin: Wav
   }
   starting = seedKey(seed);
   emit();
+  const stamp = listStamp();
   try {
     const w = await api.waveStart({ seed: seed ?? null, origin, client: EMBEDDED ? 'pwa-app' : 'pwa' });
+    // something else was started while the wave was being picked: that is what the listener wants now
+    if (listStamp() !== stamp) return false;
     if (!w.tracks.length) {
       toast('Волна пока пустая: попробуйте чуть позже', 'error');
       return false;
@@ -220,6 +223,7 @@ export async function startWave(seed: WaveSeedIn | null | undefined, origin: Wav
     if (s.personal) notePersonalWave(s.id);
     return true;
   } catch (e) {
+    if (listStamp() !== stamp) return false;
     if (!seed && !EMBEDDED && e instanceof ApiError && e.status === 0 && startOfflineWave()) return true;
     // the user's own wave has nothing to start from: the artists are picked first, and the wave starts from there
     if (!seed && e instanceof ApiError && e.status === 409) navigate(tastePath('wave'));

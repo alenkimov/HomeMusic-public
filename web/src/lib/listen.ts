@@ -332,6 +332,9 @@ let listPage = '';
 let listContext = 'other';
 /** The launch of the playing list: its tracks' events carry it (INSIGHTS.md 6.5). */
 let listLaunch: Launch = newLaunch(listContext);
+/** Which list was last started — another one each time the listener starts something: a thing that answers later
+ * (a wave being picked) can tell it is no longer wanted. */
+export const listStamp = () => listLaunch.id;
 
 function metadata() {
   const t = state.track;
