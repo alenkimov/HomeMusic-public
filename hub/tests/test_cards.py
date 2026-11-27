@@ -184,3 +184,26 @@ async def test_a_card_that_changed_is_told_to_everybody_and_one_that_did_not_is_
     finally:
         bus.unsubscribe(1, one)
         bus.unsubscribe(2, other)
+
+
+async def test_a_track_without_a_file_is_named_by_the_artists_here(env):
+    """A track the library has no file of speaks as its catalog spoke («Mikhail Krug»): its card names the artists
+    as the Hub knows them — the artist that spelling is of («Михаил Круг») — and the change of a name draws it anew."""
+    from app.library import artists
+
+    async with db.session_scope() as s:
+        krug = Artist(name="Михаил Круг")
+        irina = Artist(name="Ирина Круг")
+        s.add_all([krug, irina])
+        await s.flush()
+        s.add_all([ArtistName(artist_id=krug.id, name="Михаил Круг", key=artists.key("Михаил Круг"), source="catalog"),
+                   ArtistName(artist_id=krug.id, name="Mikhail Krug", key=artists.key("Mikhail Krug"), source="catalog"),
+                   ArtistName(artist_id=irina.id, name="Ирина Круг", key=artists.key("Ирина Круг"), source="catalog")])
+        t = Track(artist="Mikhail Krug, Ирина Круг", title="Тебе, моя последняя любовь", ref="sp:t1",
+                  fingerprint="круг|тебе", catalog={"artists": ["Mikhail Krug", "Ирина Круг"], "artist_ref": None})
+        s.add(t)
+        await s.flush()
+        tid, krug_id = t.id, krug.id
+    async with db.session_scope() as s:
+        card = (await cards.read(s, [tid]))[tid]
+    assert card["artists"] == ["Михаил Круг", "Ирина Круг"] and card["hub_artist_ids"][0] == krug_id

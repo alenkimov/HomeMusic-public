@@ -58,7 +58,8 @@ def artist_out(a: dict) -> NdArtistOut:
 
 
 async def with_artist_links(s: AsyncSession, pairs: Iterable[tuple[NdSongOut, Track | None]]) -> None:
-    """Resolve each displayed credit using its own spelling and any catalog record for that spelling."""
+    """Resolve each displayed credit using its own spelling and any catalog record for that spelling; a track
+    without a file is named by the artists' names here."""
     entries = [(out, artist_names.refs_of(track.catalog if track is not None else None)) for out, track in pairs]
     reader = await artist_names.reader(s, (name for out, _ in entries for name in [out.artist, *out.artists]),
                                       (ref for _, refs in entries for ref in refs.values()))
@@ -76,6 +77,10 @@ async def with_artist_links(s: AsyncSession, pairs: Iterable[tuple[NdSongOut, Tr
         links = [address(name) for name in out.artists]
         out.hub_artist_ids = [ident for ident, _ in links]
         out.artist_refs = [ref for _, ref in links]
+        if not out.owned:
+            # a track without a file speaks as the catalog spoke («Mikhail Krug»): in the names of the artists here
+            # («Михаил Круг», the one that spelling is of), as a file's tags are written once the artists are joined
+            artist_names.put_right(out, reader)
 
 
 async def nd_call(user: User, fn, not_found: str = "Не найдено в библиотеке"):
