@@ -2008,3 +2008,9 @@ export interface AboutOut {
   role: string;
   components: { name: string; version: string | null }[];
 }
+
+/** What is behind of what the Hub is built of: the libraries and the Hub itself (`app.updates`). */
+export interface UpdatesOut {
+  checked_at: string | null;
+  outdated: { name: string; installed: string; latest: string; why: string }[];
+}

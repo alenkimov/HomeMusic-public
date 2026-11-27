@@ -43,6 +43,18 @@ class AboutOut(BaseModel):
     components: list[Component]
 
 
+class Outdated(BaseModel):
+    name: str
+    installed: str
+    latest: str
+    why: str
+
+
+class UpdatesOut(BaseModel):
+    checked_at: str | None
+    outdated: list[Outdated]
+
+
 @router.get("/api/version", response_model=VersionOut)
 async def current(_: User = Depends(current_user)):
     return VersionOut(version=version.version(), releases=[Release.model_validate(r) for r in version.releases()])
@@ -54,3 +66,21 @@ async def about(_: User = Depends(admin_user)):
     return AboutOut(version=version.version(), commit=b["commit"], built_at=b["built_at"],
                     role=get_settings().hub_role,
                     components=[Component.model_validate(c) for c in await version.components()])
+
+
+@router.get("/api/admin/updates", response_model=UpdatesOut)
+async def outdated(_: User = Depends(admin_user)):
+    """What is behind (`app.updates`): the worker asks once a day; read here, nothing is asked."""
+    from app import updates
+
+    st = await updates.state()
+    return UpdatesOut(checked_at=(st or {}).get("checked_at"), outdated=[Outdated.model_validate(i) for i in updates.outdated(st)])
+
+
+@router.post("/api/admin/updates/check", response_model=UpdatesOut)
+async def check_now(_: User = Depends(admin_user)):
+    """«Проверить сейчас»: a few requests to PyPI and GitHub, a second or two."""
+    from app import updates
+
+    st = await updates.check()
+    return UpdatesOut(checked_at=st["checked_at"], outdated=[Outdated.model_validate(i) for i in updates.outdated(st)])

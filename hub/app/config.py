@@ -174,6 +174,9 @@ class Settings(BaseSettings):
     # hands the track over to the visitor's own HomeMusic. One page for everyone, so a link made on any server opens
     # for anyone; a fork may publish the page itself and name its address here. Empty: no such links.
     share_page_url: str = "https://alenkimov.github.io/HomeMusic-public/"
+    # The GitHub repository whose release tags tell «О сервере» that a newer Hub is out (app/updates.py); a fork
+    # names its own. Empty: the Hub is not compared.
+    release_repo: str = "alenkimov/HomeMusic-public"
 
     hub_secret_key: str = ""
     telegram_bot_token: str = ""
