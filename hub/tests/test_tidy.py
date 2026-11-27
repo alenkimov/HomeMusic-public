@@ -552,3 +552,32 @@ async def test_a_proposal_of_something_gone_since_is_no_question(env):
         await s.delete(await s.get(Track, ids[3]))  # the one that would stay: gone
     assert await _open(c, section) == []
     assert (await c.get("/api/tidy")).json()["total"] == 0
+
+
+async def test_two_artists_answered_in_their_window_are_no_question(env):
+    """«Это он — объединить», «Его проект», «Это другой» in the artist's window answer what «Наведение порядка» asks
+    of the two: its proposal is gone as the list opens, not at the next look-through."""
+    from app.db import session_scope
+    from app.library import artists
+    from app.models import Artist
+    from app.tidy import kinds
+
+    c = env["client"]
+    async with session_scope() as s:
+        made = [Artist(name=f"курящих нет {i}") for i in range(6)]
+        s.add_all(made)
+        await s.flush()
+        ids = [a.id for a in made]
+        for other, into in ((ids[0], ids[1]), (ids[2], ids[3]), (ids[4], ids[5])):
+            await kinds.offer(s, kind="artist", subject_type="artist", subject_id=other, was={"apart": True},
+                              to={"into": into}, show={"line": "курящих нет"}, by="rule", sure=True, why="Пишутся одинаково")
+    section = kinds.KINDS["artist"].section
+    assert len(await _open(c, section)) == 3
+    async with session_scope() as s:
+        a = {i: await s.get(Artist, i) for i in ids}
+        await artists.merge(s, None, a[ids[1]], a[ids[0]])  # «Это он — объединить»
+        await artists.link(s, None, a[ids[3]], a[ids[2]])  # «Его проект»
+    assert len(await _open(c, section)) == 1
+    async with session_scope() as s:
+        await artists.apart(s, await s.get(Artist, ids[5]), await s.get(Artist, ids[4]))  # «Это другой»
+    assert await _open(c, section) == []

@@ -249,9 +249,17 @@ async def _double_revert(s: AsyncSession, user: User, p: TidyProposal, after: Af
 
 
 async def _artist_now(s: AsyncSession, p: TidyProposal) -> dict[str, Any] | None:
+    """Two artists still apart — not joined, nor said to be two projects of one person or two people (the window
+    of the artist answers the same question: «Это он», «Его проект», «Это другой»)."""
+    from app.models import ArtistApart, ArtistLink
+
     other, into = await s.get(Artist, p.subject_id), await s.get(Artist, p.to_json["into"])
     if other is None or into is None or other.merged_into_id is not None or into.merged_into_id is not None:
         return None
+    low, high = sorted((other.id, into.id))
+    for model in (ArtistLink, ArtistApart):
+        if await s.get(model, (low, high)) is not None:
+            return None
     return {"apart": True}
 
 
@@ -447,9 +455,9 @@ async def offer(s: AsyncSession, *, kind: str, subject_type: str, subject_id: in
 
 async def drop_gone(s: AsyncSession) -> int:
     """The open proposals of something no longer there — the track, album or artist they are about, or the other
-    one of them (a double's copy that stays, a version's original, the artist to join): gone between two
-    look-throughs (deleted from «Файлы», joined), they are not questions any more. Quick, by ids alone: asked as a
-    list opens; `drop_stale` sees the rest at the next look-through."""
+    one of them (a double's copy that stays, a version's original, the artist to join) — and of two artists answered
+    in their own window since (joined, projects of one person, two people): not questions any more. Quick (by ids;
+    the artists' few rows): asked as a list opens; `drop_stale` sees the rest at the next look-through."""
     rows = list((await s.execute(select(TidyProposal).where(TidyProposal.state == "open"))).scalars())
     if not rows:
         return 0
@@ -467,8 +475,10 @@ async def drop_gone(s: AsyncSession) -> int:
     for p in rows:
         o = others.get(p.kind)
         other = (p.to_json or {}).get(o[1]) if o else None
-        if (p.subject_type in there and p.subject_id not in there[p.subject_type]) or \
-                (o and isinstance(other, int) and other not in there[o[0]]):
+        gone = (p.subject_type in there and p.subject_id not in there[p.subject_type]) or \
+            (o and isinstance(other, int) and other not in there[o[0]])
+        # two artists answered already in their window (joined, projects, two people): a few rows each, so asked
+        if gone or (p.kind == "artist" and not await holds(s, p)):
             await s.delete(p)
             n += 1
     if n:
