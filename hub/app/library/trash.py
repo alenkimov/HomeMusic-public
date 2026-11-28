@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.library import files as library_files
 from app.library import versions
-from app.library.importer import _move, library_abs, library_lock
+from app.library.importer import _move, library_abs, lock_library
 from app.library.layout import unique_path
 from app.models import (
     Album,
@@ -106,65 +106,65 @@ async def restore(s: AsyncSession, row: TrashedTrack) -> Track:
     kept = [f for f in data.get("files") or [] if f.get("trash_path") and Path(f["trash_path"]).is_file()]
     if not kept:
         raise ValueError("Файл уже стёрт из корзины — вернуть нечего")
-    async with library_lock:
-        tr = _back(Track, data["track"])
-        album = data.get("album")
-        if tr.get("album_id") and await s.get(Album, tr["album_id"]) is None:
-            if album:
-                s.add(Album(**_back(Album, album)))  # it went with its last track: it comes back with it
-            else:
-                tr["album_id"] = None
-        if await s.get(Track, tr["id"]) is not None:  # the id was taken since: a track of its own, then
-            tr.pop("id")
-        if tr.get("ref") and (await s.execute(select(Track.id).where(Track.ref == tr["ref"]))).first():
-            tr["ref"] = None  # the song was met anew meanwhile; this is the file's track
-        track = Track(**tr)
-        s.add(track)
+    await lock_library(s)
+    tr = _back(Track, data["track"])
+    album = data.get("album")
+    if tr.get("album_id") and await s.get(Album, tr["album_id"]) is None:
+        if album:
+            s.add(Album(**_back(Album, album)))  # it went with its last track: it comes back with it
+        else:
+            tr["album_id"] = None
+    if await s.get(Track, tr["id"]) is not None:  # the id was taken since: a track of its own, then
+        tr.pop("id")
+    if tr.get("ref") and (await s.execute(select(Track.id).where(Track.ref == tr["ref"]))).first():
+        tr["ref"] = None  # the song was met anew meanwhile; this is the file's track
+    track = Track(**tr)
+    s.add(track)
+    await s.flush()
+    new_ids: dict[int, int] = {}
+    for f in kept:
+        dest = library_abs(f["path"])
+        if dest.exists():
+            dest = unique_path(dest.parent, dest.name)
+        await asyncio.to_thread(_move, Path(f["trash_path"]), dest)
+        cols = _back(TrackFile, f)
+        cols.pop("id", None)
+        cols.update(track_id=track.id, path=dest.relative_to(library_abs("")).as_posix(), nd_song_id=None, main=False)
+        back = TrackFile(**cols)
+        s.add(back)
         await s.flush()
-        new_ids: dict[int, int] = {}
-        for f in kept:
-            dest = library_abs(f["path"])
-            if dest.exists():
-                dest = unique_path(dest.parent, dest.name)
-            await asyncio.to_thread(_move, Path(f["trash_path"]), dest)
-            cols = _back(TrackFile, f)
-            cols.pop("id", None)
-            cols.update(track_id=track.id, path=dest.relative_to(library_abs("")).as_posix(), nd_song_id=None, main=False)
-            back = TrackFile(**cols)
-            s.add(back)
-            await s.flush()
-            new_ids[f["id"]] = back.id
-        # its journal comes back with it, the files in it named by their new rows; the main one is the one that was,
-        # else (it was not kept) the newest of those back
-        journal = data.get("journal") or []
-        people = set((await s.execute(select(User.id).where(User.id.in_({e["user_id"] for e in journal if e.get("user_id")})))).scalars())
-        for e in reversed(journal):  # written latest first
-            cols = _back(TrackFileEvent, e)
-            cols.pop("id", None)
-            cols.update(track_id=track.id, file_id=new_ids.get(e.get("file_id")), download_item_id=None, star_from=None,
-                        user_id=e.get("user_id") if e.get("user_id") in people else None)
-            s.add(TrackFileEvent(**cols))
-        was_main = next((new_ids[f["id"]] for f in kept if f.get("main")), None)
-        main = await s.get(TrackFile, was_main or max(new_ids.values()))
-        main.main = True
-        await s.flush()
-        await library_files.note(s, track.id, "restored", file=main, why="listener")
-        lists = set((await s.execute(select(Playlist.id).where(
-            Playlist.id.in_({p["playlist_id"] for p in data.get("playlists") or []})))).scalars())
-        for p in data.get("playlists") or []:
-            if p["playlist_id"] in lists:
-                s.add(PlaylistItem(playlist_id=p["playlist_id"], track_id=track.id, position=p["position"],
-                                   added_at=datetime.fromisoformat(p["added_at"])))
-        tags = set((await s.execute(select(Tag.id).where(Tag.id.in_({t["tag_id"] for t in data.get("tags") or []})))).scalars())
-        for t in data.get("tags") or []:
-            if t["tag_id"] in tags:
-                s.add(TrackTag(track_id=track.id, tag_id=t["tag_id"], auto=bool(t.get("auto"))))
-        if row.cover and track.cover_key:
-            s.add(TrackCover(track_id=track.id, image=row.cover))
-        elif track.cover_key:
-            track.cover_key = None
-        await s.delete(row)
-        await s.flush()
+        new_ids[f["id"]] = back.id
+    # its journal comes back with it, the files in it named by their new rows; the main one is the one that was,
+    # else (it was not kept) the newest of those back
+    journal = data.get("journal") or []
+    people = set((await s.execute(select(User.id).where(User.id.in_({e["user_id"] for e in journal if e.get("user_id")})))).scalars())
+    for e in reversed(journal):  # written latest first
+        cols = _back(TrackFileEvent, e)
+        cols.pop("id", None)
+        cols.update(track_id=track.id, file_id=new_ids.get(e.get("file_id")), download_item_id=None, star_from=None,
+                    user_id=e.get("user_id") if e.get("user_id") in people else None)
+        s.add(TrackFileEvent(**cols))
+    was_main = next((new_ids[f["id"]] for f in kept if f.get("main")), None)
+    main = await s.get(TrackFile, was_main or max(new_ids.values()))
+    main.main = True
+    await s.flush()
+    await library_files.note(s, track.id, "restored", file=main, why="listener")
+    lists = set((await s.execute(select(Playlist.id).where(
+        Playlist.id.in_({p["playlist_id"] for p in data.get("playlists") or []})))).scalars())
+    for p in data.get("playlists") or []:
+        if p["playlist_id"] in lists:
+            s.add(PlaylistItem(playlist_id=p["playlist_id"], track_id=track.id, position=p["position"],
+                               added_at=datetime.fromisoformat(p["added_at"])))
+    tags = set((await s.execute(select(Tag.id).where(Tag.id.in_({t["tag_id"] for t in data.get("tags") or []})))).scalars())
+    for t in data.get("tags") or []:
+        if t["tag_id"] in tags:
+            s.add(TrackTag(track_id=track.id, tag_id=t["tag_id"], auto=bool(t.get("auto"))))
+    if row.cover and track.cover_key:
+        s.add(TrackCover(track_id=track.id, image=row.cover))
+    elif track.cover_key:
+        track.cover_key = None
+    await s.delete(row)
+    await s.flush()
     return track
 
 

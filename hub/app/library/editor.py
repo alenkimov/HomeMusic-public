@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.library import tagger
 from app.library.files import main_of, of_track
-from app.library.importer import _move, _write_cover_file, album_reldir, library_abs, library_lock, tagdata_for
+from app.library.importer import _move, _write_cover_file, album_reldir, library_abs, lock_library, tagdata_for
 from app.library.layout import unique_path
 from app.matching.normalize import fingerprint
 from app.models import Album, Track, TrackCover, TrackFile, utcnow
@@ -84,64 +84,64 @@ async def relocate_track(s: AsyncSession, track: Track, album: Album, *, cover: 
 
 
 async def update_album(s: AsyncSession, album: Album, **fields) -> Album:
-    async with library_lock:
-        old_dir = library_abs(album_reldir(album))
-        for k, v in fields.items():
-            if v is not None:
-                setattr(album, k, v)
-        new_dir = library_abs(album_reldir(album))
-        cover = await asyncio.to_thread((old_dir / "cover.jpg").read_bytes) if (old_dir / "cover.jpg").is_file() else None
-        tracks = (await s.execute(select(Track).where(Track.album_id == album.id))).scalars().all()
-        for t in tracks:
-            await relocate_track(s, t, album, cover=cover)
-        if cover and old_dir != new_dir:
-            await asyncio.to_thread(_write_cover_file, new_dir, cover)
-            await asyncio.to_thread(_remove_empty_dirs, old_dir)
-        album.cover_path = (album_reldir(album) / "cover.jpg").as_posix() if cover else album.cover_path
-        await s.flush()
-        return album
+    await lock_library(s)
+    old_dir = library_abs(album_reldir(album))
+    for k, v in fields.items():
+        if v is not None:
+            setattr(album, k, v)
+    new_dir = library_abs(album_reldir(album))
+    cover = await asyncio.to_thread((old_dir / "cover.jpg").read_bytes) if (old_dir / "cover.jpg").is_file() else None
+    tracks = (await s.execute(select(Track).where(Track.album_id == album.id))).scalars().all()
+    for t in tracks:
+        await relocate_track(s, t, album, cover=cover)
+    if cover and old_dir != new_dir:
+        await asyncio.to_thread(_write_cover_file, new_dir, cover)
+        await asyncio.to_thread(_remove_empty_dirs, old_dir)
+    album.cover_path = (album_reldir(album) / "cover.jpg").as_posix() if cover else album.cover_path
+    await s.flush()
+    return album
 
 
 async def set_album_cover(s: AsyncSession, album: Album, image: bytes) -> Album:
     cover = await asyncio.to_thread(tagger.prepare_cover, image)
-    async with library_lock:
-        d = library_abs(album_reldir(album))
-        await asyncio.to_thread(_write_cover_file, d, cover)
-        album.cover_path = (album_reldir(album) / "cover.jpg").as_posix()
-        album.updated_at = utcnow()
-        # a track with a cover of its own keeps it
-        paths = (await s.execute(select(TrackFile.path).join(Track, Track.id == TrackFile.track_id)
-                                 .where(Track.album_id == album.id, Track.cover_key.is_(None)))).scalars().all()
-        for rel in paths:
-            p = library_abs(rel)
-            if p.is_file():
-                await asyncio.to_thread(tagger.update_tags, p, cover=cover)
-        await s.flush()
-        return album
+    await lock_library(s)
+    d = library_abs(album_reldir(album))
+    await asyncio.to_thread(_write_cover_file, d, cover)
+    album.cover_path = (album_reldir(album) / "cover.jpg").as_posix()
+    album.updated_at = utcnow()
+    # a track with a cover of its own keeps it
+    paths = (await s.execute(select(TrackFile.path).join(Track, Track.id == TrackFile.track_id)
+                             .where(Track.album_id == album.id, Track.cover_key.is_(None)))).scalars().all()
+    for rel in paths:
+        p = library_abs(rel)
+        if p.is_file():
+            await asyncio.to_thread(tagger.update_tags, p, cover=cover)
+    await s.flush()
+    return album
 
 
 async def move_tracks(s: AsyncSession, track_ids: list[int], target: Album) -> list[Album]:
     """Move tracks into `target`; returns source albums that became empty (already deleted)."""
-    async with library_lock:
-        cover = await _album_cover(target)
-        tracks = (await s.execute(select(Track).where(Track.id.in_(track_ids)))).scalars().all()
-        sources = {t.album_id for t in tracks if t.album_id and t.album_id != target.id}
-        for t in tracks:
-            if t.album_id == target.id:
-                continue
-            await relocate_track(s, t, target, cover=cover)
-        await s.flush()
-        removed = []
-        for aid in sources:
-            n = (await s.execute(select(func.count(Track.id)).where(Track.album_id == aid))).scalar_one()
-            if n == 0:
-                a = await s.get(Album, aid)
-                if a:
-                    await asyncio.to_thread(_remove_empty_dirs, library_abs(album_reldir(a)))
-                    removed.append(a)
-                    await s.delete(a)
-        await s.flush()
-        return removed
+    await lock_library(s)
+    cover = await _album_cover(target)
+    tracks = (await s.execute(select(Track).where(Track.id.in_(track_ids)))).scalars().all()
+    sources = {t.album_id for t in tracks if t.album_id and t.album_id != target.id}
+    for t in tracks:
+        if t.album_id == target.id:
+            continue
+        await relocate_track(s, t, target, cover=cover)
+    await s.flush()
+    removed = []
+    for aid in sources:
+        n = (await s.execute(select(func.count(Track.id)).where(Track.album_id == aid))).scalar_one()
+        if n == 0:
+            a = await s.get(Album, aid)
+            if a:
+                await asyncio.to_thread(_remove_empty_dirs, library_abs(album_reldir(a)))
+                removed.append(a)
+                await s.delete(a)
+    await s.flush()
+    return removed
 
 
 async def merge_albums(s: AsyncSession, source_ids: list[int], target: Album) -> Album:
@@ -160,22 +160,22 @@ async def merge_albums(s: AsyncSession, source_ids: list[int], target: Album) ->
 
 
 async def update_track(s: AsyncSession, track: Track, **fields) -> Track:
-    async with library_lock:
-        for k, v in fields.items():
-            if v is not None:
-                setattr(track, k, v)
-        album = await s.get(Album, track.album_id) if track.album_id else None
-        if album is None:
-            track.fingerprint = fingerprint(track.artist, track.title)
-            file = await main_of(s, track.id)
-            p = library_abs(file.path) if file else None
-            if p is not None and p.is_file():
-                await asyncio.to_thread(tagger.update_tags, p, **{k: v for k, v in fields.items() if v is not None})
-            await s.flush()
-            return track
-        await relocate_track(s, track, album, cover=await _album_cover(album), move=False)
+    await lock_library(s)
+    for k, v in fields.items():
+        if v is not None:
+            setattr(track, k, v)
+    album = await s.get(Album, track.album_id) if track.album_id else None
+    if album is None:
+        track.fingerprint = fingerprint(track.artist, track.title)
+        file = await main_of(s, track.id)
+        p = library_abs(file.path) if file else None
+        if p is not None and p.is_file():
+            await asyncio.to_thread(tagger.update_tags, p, **{k: v for k, v in fields.items() if v is not None})
         await s.flush()
         return track
+    await relocate_track(s, track, album, cover=await _album_cover(album), move=False)
+    await s.flush()
+    return track
 
 
 async def trash_track(s: AsyncSession, track: Track, user_id: int | None = None, *, kept: bool = True) -> None:
@@ -184,27 +184,27 @@ async def trash_track(s: AsyncSession, track: Track, user_id: int | None = None,
     `kept` is False: what the Hub clears by itself (a mix's tracks nobody took) is nobody's to bring back."""
     from app.library import trash
 
-    async with library_lock:
-        moved: dict[int, str] = {}
-        for file in await of_track(s, track.id):
-            src = library_abs(file.path)
-            if src.is_file():
-                dest = get_settings().trash_dir / datetime.now().strftime("%Y-%m-%d") / Path(*PurePosixPath(file.path).parts)
-                if dest.exists():
-                    dest = unique_path(dest.parent, dest.name)
-                await asyncio.to_thread(_move, src, dest)
-                await asyncio.to_thread(_remove_empty_dirs, src.parent)
-                moved[file.id] = str(dest.resolve())
-        album_id = track.album_id
-        last = album_id is not None and (await s.execute(select(func.count(Track.id)).where(
-            Track.album_id == album_id, Track.id != track.id))).scalar_one() == 0
-        album = await s.get(Album, album_id) if last else None
-        if kept:
-            await trash.remember(s, track, moved, user_id, album)
-        await s.delete(track)
-        await s.flush()
-        if album is not None:  # its last track is gone: the album goes with it
-            await s.delete(album)
+    await lock_library(s)
+    moved: dict[int, str] = {}
+    for file in await of_track(s, track.id):
+        src = library_abs(file.path)
+        if src.is_file():
+            dest = get_settings().trash_dir / datetime.now().strftime("%Y-%m-%d") / Path(*PurePosixPath(file.path).parts)
+            if dest.exists():
+                dest = unique_path(dest.parent, dest.name)
+            await asyncio.to_thread(_move, src, dest)
+            await asyncio.to_thread(_remove_empty_dirs, src.parent)
+            moved[file.id] = str(dest.resolve())
+    album_id = track.album_id
+    last = album_id is not None and (await s.execute(select(func.count(Track.id)).where(
+        Track.album_id == album_id, Track.id != track.id))).scalar_one() == 0
+    album = await s.get(Album, album_id) if last else None
+    if kept:
+        await trash.remember(s, track, moved, user_id, album)
+    await s.delete(track)
+    await s.flush()
+    if album is not None:  # its last track is gone: the album goes with it
+        await s.delete(album)
 
 
 def purge_trash(days: int) -> int:

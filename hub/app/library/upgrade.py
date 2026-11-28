@@ -42,7 +42,7 @@ from app.db import session_scope
 from app.library import acoustic, files, quality
 from app.library.credits import split_artists
 from app.library.files import mains
-from app.library.importer import ImportSpec, _move, import_file, library_abs, library_lock
+from app.library.importer import ImportSpec, _move, import_file, library_abs, lock_library
 from app.models import DownloadBatch, DownloadItem, Track, TrackCover, TrackFile, TrackFileEvent, Upgrade
 
 log = logging.getLogger(__name__)
@@ -264,17 +264,17 @@ async def adopt(s: AsyncSession, track: Track, meta: dict[str, Any]) -> None:
         year=meta.get("year") or (released.year if released else None), release_date=released,
         release_type={"compile": "compilation"}.get(meta.get("record_type", ""), meta.get("record_type")) or ("single" if single else "album"),
         deezer_album_id=meta.get("deezer_album_id"), upc=meta.get("upc"), genre=meta.get("genre"))
-    async with library_lock:
-        album = await get_or_create_album(s, spec)
-        await s.flush()
-        folder = library_abs(album_reldir(album))
-        if not (folder / "cover.jpg").is_file():
-            cover = await fetch_cover(meta.get("cover_url"))
-            if cover:
-                from app.library import tagger
+    await lock_library(s)
+    album = await get_or_create_album(s, spec)
+    await s.flush()
+    folder = library_abs(album_reldir(album))
+    if not (folder / "cover.jpg").is_file():
+        cover = await fetch_cover(meta.get("cover_url"))
+        if cover:
+            from app.library import tagger
 
-                await asyncio.to_thread(lambda: _write_cover_file(folder, tagger.prepare_cover(cover)))
-                album.cover_path = (album_reldir(album) / "cover.jpg").as_posix()
+            await asyncio.to_thread(lambda: _write_cover_file(folder, tagger.prepare_cover(cover)))
+            album.cover_path = (album_reldir(album) / "cover.jpg").as_posix()
     # a name the catalog only writes in other letters' case stays as the file has it
     if spec.title.casefold() != track.title.casefold():
         track.title = spec.title

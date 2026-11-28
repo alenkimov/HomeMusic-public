@@ -126,21 +126,21 @@ async def trash(s: AsyncSession, file: TrackFile, *, why: str, user_id: int | No
     """The file goes to the trash folder (kept there `library.trash_days`), its row with it; the journal keeps what
     it was and where it lies. The main one gone, the newest of the track's others is the main one (unless
     `promote` is False: one comes in its place)."""
-    from app.library.importer import _move, library_abs, library_lock
+    from app.library.importer import _move, library_abs, lock_library
 
     was_main, track_id, data = file.main, file.track_id, snapshot(file)
     src = library_abs(file.path)
-    async with library_lock:
-        dest: Path | None = None
-        if await asyncio.to_thread(src.is_file):
-            dest = _trash_place(file.path)
-            await asyncio.to_thread(dest.parent.mkdir, parents=True, exist_ok=True)
-            await asyncio.to_thread(_move, src, dest)
-            from app.library.editor import _remove_empty_dirs
+    await lock_library(s)
+    dest: Path | None = None
+    if await asyncio.to_thread(src.is_file):
+        dest = _trash_place(file.path)
+        await asyncio.to_thread(dest.parent.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(_move, src, dest)
+        from app.library.editor import _remove_empty_dirs
 
-            await asyncio.to_thread(_remove_empty_dirs, src.parent)
-        await s.delete(file)
-        await s.flush()
+        await asyncio.to_thread(_remove_empty_dirs, src.parent)
+    await s.delete(file)
+    await s.flush()
     event = await note(s, track_id, "trashed", data=data, why=why, user_id=user_id,
                        trash_path=str(dest.resolve()) if dest is not None else None)
     if was_main and promote:
@@ -172,7 +172,7 @@ def kept(event: TrackFileEvent) -> Path | None:
 async def restore(s: AsyncSession, event: TrackFileEvent, *, why: str = "listener", user_id: int | None = None) -> TrackFile:
     """A file of the trash folder (its «trashed» event) back into the library, beside the track's other files, as
     the main one. `FileGone`: the trash folder keeps it no more."""
-    from app.library.importer import _move, library_abs, library_lock
+    from app.library.importer import _move, library_abs, lock_library
     from app.library.layout import unique_path
     from app.models import Track
 
@@ -190,25 +190,25 @@ async def restore(s: AsyncSession, event: TrackFileEvent, *, why: str = "listene
         rel = (PurePosixPath(main.path).parent / src.name).as_posix()
     if not rel:
         raise FileGone("Неизвестно, куда вернуть файл: у трека нет других файлов")
-    async with library_lock:
-        dest = library_abs(rel)
-        if await asyncio.to_thread(dest.exists):
-            dest = unique_path(dest.parent, dest.name)
-        await asyncio.to_thread(dest.parent.mkdir, parents=True, exist_ok=True)
-        await asyncio.to_thread(_move, src, dest)
-        uid = data.get("uid")
-        if not uid or (await s.execute(select(TrackFile.id).where(TrackFile.uid == uid))).first() is not None:
-            uid = str(uuid.uuid4())
-        acquired = data.get("acquired_at")
-        uploaded = data.get("source_upload_date")
-        file = TrackFile(track_id=track.id, uid=uid, path=dest.relative_to(library_abs("")).as_posix(), nd_song_id=None,
-                         codec=data.get("codec"), bitrate_kbps=data.get("bitrate_kbps"), source=data.get("source"),
-                         source_url=data.get("source_url"), locked=bool(data.get("locked")),
-                         source_upload_date=date.fromisoformat(uploaded) if uploaded else None,
-                         acquired_at=datetime.fromisoformat(acquired) if acquired else utcnow(),
-                         warnings=list(data.get("warnings") or []), added_by=data.get("added_by"), main=False)
-        s.add(file)
-        await s.flush()
+    await lock_library(s)
+    dest = library_abs(rel)
+    if await asyncio.to_thread(dest.exists):
+        dest = unique_path(dest.parent, dest.name)
+    await asyncio.to_thread(dest.parent.mkdir, parents=True, exist_ok=True)
+    await asyncio.to_thread(_move, src, dest)
+    uid = data.get("uid")
+    if not uid or (await s.execute(select(TrackFile.id).where(TrackFile.uid == uid))).first() is not None:
+        uid = str(uuid.uuid4())
+    acquired = data.get("acquired_at")
+    uploaded = data.get("source_upload_date")
+    file = TrackFile(track_id=track.id, uid=uid, path=dest.relative_to(library_abs("")).as_posix(), nd_song_id=None,
+                     codec=data.get("codec"), bitrate_kbps=data.get("bitrate_kbps"), source=data.get("source"),
+                     source_url=data.get("source_url"), locked=bool(data.get("locked")),
+                     source_upload_date=date.fromisoformat(uploaded) if uploaded else None,
+                     acquired_at=datetime.fromisoformat(acquired) if acquired else utcnow(),
+                     warnings=list(data.get("warnings") or []), added_by=data.get("added_by"), main=False)
+    s.add(file)
+    await s.flush()
     event.trash_path = None  # it is not there any more: brought back
     await note(s, track.id, "restored", file=file, why=why, user_id=user_id)
     await make_main(s, file, why=why, user_id=user_id)
@@ -222,7 +222,7 @@ async def replace_main(s: AsyncSession, track_id: int, path: Path, spec: Any, *,
     takes the replacement back (`restore`). If the new file does not come in, the old one is put back where it
     was, and the caller's rollback brings its row back. `expected_file_uid`: the main file the caller saw — another
     one there is `TrackAlreadyFiled`."""
-    from app.library.importer import TrackAlreadyFiled, _move, import_file, library_abs, library_lock
+    from app.library.importer import TrackAlreadyFiled, _move, import_file, library_abs
 
     main = await main_of(s, track_id)
     if expected_file_uid is not None and (main is None or main.uid != expected_file_uid):
@@ -233,11 +233,11 @@ async def replace_main(s: AsyncSession, track_id: int, path: Path, spec: Any, *,
         await import_file(s, path, spec)
     except Exception:
         if gone is not None and (src := kept(gone)) is not None:
+            # the library is still this transaction's (`trash` took it); the session may be broken: the disk alone
             home = library_abs(gone.file["path"])
-            async with library_lock:
-                if not await asyncio.to_thread(home.exists):
-                    await asyncio.to_thread(home.parent.mkdir, parents=True, exist_ok=True)
-                    await asyncio.to_thread(_move, src, home)
+            if not await asyncio.to_thread(home.exists):
+                await asyncio.to_thread(home.parent.mkdir, parents=True, exist_ok=True)
+                await asyncio.to_thread(_move, src, home)
         raise
     if gone is not None:
         # the new file is the main one in the old one's place: the ♥ moves from the old file's song to it

@@ -98,8 +98,8 @@ async def set_track_cover(s: AsyncSession, user: User, track: Track, image: byte
             if shown is None and track.album_id:  # back to the album's picture
                 album = await s.get(Album, track.album_id)
                 shown = await editor._album_cover(album) if album is not None else None
-            async with editor.library_lock:
-                await asyncio.to_thread(tagger.update_tags, p, cover=shown)
+            await editor.lock_library(s)
+            await asyncio.to_thread(tagger.update_tags, p, cover=shown)
     _journal(s, user.id, "track", track.id, {"cover": [None, "new" if cover is not None else "album"]})
     await s.flush()
     return track

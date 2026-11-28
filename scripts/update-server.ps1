@@ -153,6 +153,8 @@ try {
     }
     # up -d применяет и новые образы, и правки docker-compose.yml/.env; чужие контейнеры не трогает
     Invoke-Native 'docker compose up' { docker compose up -d } | Out-Null
+    # -Force перезапускает Хаб и в том случае, когда образ вышел тем же (up -d такой контейнер не трогает)
+    if ($Force) { Invoke-Native 'docker compose up --force-recreate' { docker compose up -d --force-recreate hub hub-worker } | Out-Null }
 
     $ok = $false
     for ($i = 0; $i -lt 36; $i++) {

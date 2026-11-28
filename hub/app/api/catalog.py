@@ -43,7 +43,7 @@ from app.catalog.yandex import split_suffix
 from app.db import get_session, session_scope
 from app.errors import http_error
 from app.library import tagger
-from app.library.importer import ImportSpec, find_album, get_or_create_album, library_lock
+from app.library.importer import ImportSpec, find_album, get_or_create_album, lock_library
 from app.library.owned import annotate_albums, annotate_tracks
 from app.models import Album, AlbumArtist, ArtistRef, CatalogRelease, Track, TrackArtist, User
 from app.services import svc
@@ -932,7 +932,7 @@ async def put_catalog_cover(ref: str, file: UploadFile = File(...), user: User =
             await asyncio.to_thread(tagger.prepare_cover, data)
         except ValueError as e:
             raise HTTPException(400, "Не удалось прочитать картинку") from e
-        async with library_lock:
-            local = await get_or_create_album(s, release_spec(release, user))
-            await s.commit()
+        await lock_library(s)
+        local = await get_or_create_album(s, release_spec(release, user))
+        await s.commit()
     return await save_album_cover(s, user, local, data)

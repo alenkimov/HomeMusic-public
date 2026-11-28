@@ -14,7 +14,7 @@ from datetime import date
 from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -27,8 +27,18 @@ from app.models import Album, AlbumName, CatalogRelease, CatalogReleaseRef, Trac
 
 log = logging.getLogger(__name__)
 
-# one import / library edit at a time: they touch the same folders and album rows
-library_lock = asyncio.Lock()
+LIBRARY_LOCK = 7013427
+
+
+async def lock_library(s: AsyncSession) -> None:
+    """One import / library edit at a time — they touch the same folders and album rows — held by the transaction
+    that makes it until it ends (it is not let go before: what the edit wrote stays locked till then as well).
+
+    Not a lock of the process let go at the end of its block: the rows written under it were locked on till commit,
+    so the next edit took the lock and waited on those rows, while the first one, in the same transaction, waited
+    for the lock — out of sight of the database, forever. Here every wait is the database's, and a circle of them is
+    broken by it with an error."""
+    await s.execute(select(func.pg_advisory_xact_lock(LIBRARY_LOCK)))
 
 
 class ImportSpec(BaseModel):
@@ -253,132 +263,132 @@ async def import_file(s: AsyncSession, src: Path, spec: ImportSpec, *, require_m
     ref = spec.ref or dz_ref(spec.deezer_track_id)
     met = await by_ref(s, ref)
     # Take the filesystem lock before acquiring database write locks for the import.
-    async with library_lock:
-        if require_missing and spec.track_id is not None and await main_of(s, spec.track_id) is not None:
-            raise TrackAlreadyFiled()
-        # who the music is by — by the catalog's records of them where the catalog said, else by the names — and the
-        # lines in their names: a spelling that is somebody's is filed under their name
-        refs = artists.beside(spec.artists, spec.artist_refs) or artists.refs_of(met.catalog if met else None)
-        spec.artist, by = await artists.credits(s, spec.artist, refs)
-        if spec.artists:
-            spec.artists = [a.name for a in [await artists.who(s, n, refs.get(artists.key(n))) for n in spec.artists] if a is not None]
-        album_by = None
-        if spec.album_artist:
-            spec.album_artist, album_by = await artists.credits(s, spec.album_artist, refs)
-        album = await get_or_create_album(s, spec)
-        # decoding, scaling and encoding a picture holds the loop for a while (more so on a weak CPU): not on it
-        cover = await asyncio.to_thread(tagger.prepare_cover, spec.cover) if spec.cover else None
-        album_dir_rel = album_reldir(album)
-        album_dir = library_abs(album_dir_rel)
-        if cover is None and (album_dir / "cover.jpg").is_file():
-            cover = await asyncio.to_thread((album_dir / "cover.jpg").read_bytes)
-        if cover is None:
-            cover = fallback_cover
+    await lock_library(s)
+    if require_missing and spec.track_id is not None and await main_of(s, spec.track_id) is not None:
+        raise TrackAlreadyFiled()
+    # who the music is by — by the catalog's records of them where the catalog said, else by the names — and the
+    # lines in their names: a spelling that is somebody's is filed under their name
+    refs = artists.beside(spec.artists, spec.artist_refs) or artists.refs_of(met.catalog if met else None)
+    spec.artist, by = await artists.credits(s, spec.artist, refs)
+    if spec.artists:
+        spec.artists = [a.name for a in [await artists.who(s, n, refs.get(artists.key(n))) for n in spec.artists] if a is not None]
+    album_by = None
+    if spec.album_artist:
+        spec.album_artist, album_by = await artists.credits(s, spec.album_artist, refs)
+    album = await get_or_create_album(s, spec)
+    # decoding, scaling and encoding a picture holds the loop for a while (more so on a weak CPU): not on it
+    cover = await asyncio.to_thread(tagger.prepare_cover, spec.cover) if spec.cover else None
+    album_dir_rel = album_reldir(album)
+    album_dir = library_abs(album_dir_rel)
+    if cover is None and (album_dir / "cover.jpg").is_file():
+        cover = await asyncio.to_thread((album_dir / "cover.jpg").read_bytes)
+    if cover is None:
+        cover = fallback_cover
 
-        # a file of a song the Hub knows is one more file of that track: its tags, lyrics and places stay with it
-        known = await s.get(Track, spec.track_id) if spec.track_id else met
-        track = known or Track(
-            album_id=album.id,
-            artist=spec.artist,
-            title=spec.title,
-            album=album.title,
-            album_artist=album.album_artist,
-            track_no=spec.track_no,
-            disc_no=spec.disc_no,
-            year=album.year,
-            genre=spec.genre or album.genre,
-            duration_s=spec.duration_s,
-            isrc=spec.isrc.upper() if spec.isrc else None,
-            ref=ref,
-            explicit=spec.explicit,
-            producer=spec.producer,
-            fingerprint=fingerprint(spec.artist, spec.title),
-            created_by=spec.added_by,
-        )
-        if known is not None:  # the file is filed under this album: the track follows its main file, this one
-            known.album_id, known.album, known.album_artist = album.id, album.title, album.album_artist
-            known.track_no, known.disc_no = spec.track_no or known.track_no, spec.disc_no or known.disc_no
-            known.year, known.genre = album.year or known.year, spec.genre or album.genre or known.genre
-            known.duration_s = spec.duration_s or known.duration_s
-            known.explicit = spec.explicit if spec.explicit is not None else known.explicit
-            known.producer = known.producer or spec.producer
-            if known.title == known.ref or not known.artist:
-                # met by its ref alone (a like that said nothing of the song): the file says what the song is
-                known.artist, known.title = spec.artist, spec.title
-                known.fingerprint = fingerprint(spec.artist, spec.title)
-                known.isrc = known.isrc or (spec.isrc.upper() if spec.isrc else None)
-        sources = dict(track.genre_sources or {})
-        if file_genres:
-            sources["file"] = file_genres
-        else:
-            sources.pop("file", None)
-        if spec.genre_source and spec.genre:
-            sources[spec.genre_source] = tags.genre_names([spec.genre])
-        genres_changed = sources != (track.genre_sources or {})
-        if genres_changed:
-            track.genre_sources = sources
-        track.genres_checked_at = None
-        file = TrackFile(
-            uid=str(uuid.uuid4()),
-            path="",
-            bitrate_kbps=spec.bitrate_kbps,
-            codec=spec.codec,
-            source=spec.source,
-            source_url=spec.source_url,
-            source_upload_date=spec.source_upload_date,
-            acquired_at=utcnow(),
-            locked=is_original(spec.source_upload_date, spec.explicit),
-            warnings=list(spec.warnings),
-            added_by=spec.added_by,
-            chroma=spec.chroma,
-        )
+    # a file of a song the Hub knows is one more file of that track: its tags, lyrics and places stay with it
+    known = await s.get(Track, spec.track_id) if spec.track_id else met
+    track = known or Track(
+        album_id=album.id,
+        artist=spec.artist,
+        title=spec.title,
+        album=album.title,
+        album_artist=album.album_artist,
+        track_no=spec.track_no,
+        disc_no=spec.disc_no,
+        year=album.year,
+        genre=spec.genre or album.genre,
+        duration_s=spec.duration_s,
+        isrc=spec.isrc.upper() if spec.isrc else None,
+        ref=ref,
+        explicit=spec.explicit,
+        producer=spec.producer,
+        fingerprint=fingerprint(spec.artist, spec.title),
+        created_by=spec.added_by,
+    )
+    if known is not None:  # the file is filed under this album: the track follows its main file, this one
+        known.album_id, known.album, known.album_artist = album.id, album.title, album.album_artist
+        known.track_no, known.disc_no = spec.track_no or known.track_no, spec.disc_no or known.disc_no
+        known.year, known.genre = album.year or known.year, spec.genre or album.genre or known.genre
+        known.duration_s = spec.duration_s or known.duration_s
+        known.explicit = spec.explicit if spec.explicit is not None else known.explicit
+        known.producer = known.producer or spec.producer
+        if known.title == known.ref or not known.artist:
+            # met by its ref alone (a like that said nothing of the song): the file says what the song is
+            known.artist, known.title = spec.artist, spec.title
+            known.fingerprint = fingerprint(spec.artist, spec.title)
+            known.isrc = known.isrc or (spec.isrc.upper() if spec.isrc else None)
+    sources = dict(track.genre_sources or {})
+    if file_genres:
+        sources["file"] = file_genres
+    else:
+        sources.pop("file", None)
+    if spec.genre_source and spec.genre:
+        sources[spec.genre_source] = tags.genre_names([spec.genre])
+    genres_changed = sources != (track.genre_sources or {})
+    if genres_changed:
+        track.genre_sources = sources
+    track.genres_checked_at = None
+    file = TrackFile(
+        uid=str(uuid.uuid4()),
+        path="",
+        bitrate_kbps=spec.bitrate_kbps,
+        codec=spec.codec,
+        source=spec.source,
+        source_url=spec.source_url,
+        source_upload_date=spec.source_upload_date,
+        acquired_at=utcnow(),
+        locked=is_original(spec.source_upload_date, spec.explicit),
+        warnings=list(spec.warnings),
+        added_by=spec.added_by,
+        chroma=spec.chroma,
+    )
 
-        await asyncio.to_thread(
-            tagger.write_tags, src, tagdata_for(track, album, file, cover=cover, artists=spec.artists,
-                                                track_total=spec.track_total)
-        )
+    await asyncio.to_thread(
+        tagger.write_tags, src, tagdata_for(track, album, file, cover=cover, artists=spec.artists,
+                                            track_total=spec.track_total)
+    )
 
-        ext = src.suffix.lstrip(".").lower() or "mp3"
-        name = track_filename(spec.disc_no, spec.track_no, spec.title, ext)
-        dest = album_dir / name
-        if dest.exists():
-            dest = next_version_path(dest) if spec.force else unique_path(album_dir, name)
-        await asyncio.to_thread(_move, src, dest)
-        if cover and not (album_dir / "cover.jpg").is_file():
-            await asyncio.to_thread(_write_cover_file, album_dir, cover)
-            album.cover_path = (album_dir_rel / "cover.jpg").as_posix()
-        elif not album.cover_path and (album_dir / "cover.jpg").is_file():
-            album.cover_path = (album_dir_rel / "cover.jpg").as_posix()  # the folder has its picture: so has the album
+    ext = src.suffix.lstrip(".").lower() or "mp3"
+    name = track_filename(spec.disc_no, spec.track_no, spec.title, ext)
+    dest = album_dir / name
+    if dest.exists():
+        dest = next_version_path(dest) if spec.force else unique_path(album_dir, name)
+    await asyncio.to_thread(_move, src, dest)
+    if cover and not (album_dir / "cover.jpg").is_file():
+        await asyncio.to_thread(_write_cover_file, album_dir, cover)
+        album.cover_path = (album_dir_rel / "cover.jpg").as_posix()
+    elif not album.cover_path and (album_dir / "cover.jpg").is_file():
+        album.cover_path = (album_dir_rel / "cover.jpg").as_posix()  # the folder has its picture: so has the album
 
-        file.path = PurePosixPath(album_dir_rel, dest.name).as_posix()
-        if file.chroma is None:  # the picture of its sound: the next file that is this recording is known by it
-            from app.library import acoustic
+    file.path = PurePosixPath(album_dir_rel, dest.name).as_posix()
+    if file.chroma is None:  # the picture of its sound: the next file that is this recording is known by it
+        from app.library import acoustic
 
-            got = await acoustic.of_file(dest)
-            file.chroma = got[0] if got else None
-        s.add(track)
-        await s.flush()
-        await bind_refs(s, track, [ref])
-        catalog_album = spec.catalog_album_ref or dz_ref(spec.deezer_album_id) or (track.catalog or {}).get("album_ref")
-        if catalog_album:
-            group = (await release_matches.groups_for(s, [catalog_album])).get(catalog_album)
-            if group:
-                versions = release_matches.track_versions(group, ref or track.ref)
-                await bind_refs(s, track, [other.ref for other in versions])
-                for other in versions:
-                    await artists.add_title(s, track, other.title, "catalog")
-        await artists.credit_track(s, track, by if track.artist == spec.artist else None)
-        if album_by and album.album_artist == spec.album_artist:
-            await artists.credit_album(s, album, album_by)
-        file.track_id = track.id
-        from app.library import files
+        got = await acoustic.of_file(dest)
+        file.chroma = got[0] if got else None
+    s.add(track)
+    await s.flush()
+    await bind_refs(s, track, [ref])
+    catalog_album = spec.catalog_album_ref or dz_ref(spec.deezer_album_id) or (track.catalog or {}).get("album_ref")
+    if catalog_album:
+        group = (await release_matches.groups_for(s, [catalog_album])).get(catalog_album)
+        if group:
+            versions = release_matches.track_versions(group, ref or track.ref)
+            await bind_refs(s, track, [other.ref for other in versions])
+            for other in versions:
+                await artists.add_title(s, track, other.title, "catalog")
+    await artists.credit_track(s, track, by if track.artist == spec.artist else None)
+    if album_by and album.album_artist == spec.album_artist:
+        await artists.credit_album(s, album, album_by)
+    file.track_id = track.id
+    from app.library import files
 
-        # the main file of its track from now on (the one before stays beside it), written in the track's journal
-        await files.added(s, file, why=spec.why, user_id=spec.added_by, download_item_id=spec.download_item_id)
-        if track.genre or genres_changed:
-            await tags.sync(s, [track.id])
-        log.info("imported %s", file.path, extra={"user_id": spec.added_by})
-        return track
+    # the main file of its track from now on (the one before stays beside it), written in the track's journal
+    await files.added(s, file, why=spec.why, user_id=spec.added_by, download_item_id=spec.download_item_id)
+    if track.genre or genres_changed:
+        await tags.sync(s, [track.id])
+    log.info("imported %s", file.path, extra={"user_id": spec.added_by})
+    return track
 
 
 def staging_dir_for(kind: str, key: str | int) -> Path:

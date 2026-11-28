@@ -53,7 +53,7 @@ from app.jobs.queue import notify
 from app.library import access, album_names, artists, editor, edits, tagger, trash
 from app.library.artwork import album_cover_url
 from app.library.files import main_of, mains
-from app.library.importer import album_reldir, get_or_create_album, library_abs, library_lock
+from app.library.importer import album_reldir, get_or_create_album, library_abs, lock_library
 from app.library.owned import file_out
 from app.matching.normalize import normalize_title
 from app.models import Album, DownloadItem, Track, TrackFile, TrackFileEvent, User
@@ -362,9 +362,9 @@ async def _ensure_album_edit(
         from app.api.catalog import release_spec
 
         assert release is not None
-        async with library_lock:
-            local = await get_or_create_album(s, release_spec(release, user))
-            await s.commit()
+        await lock_library(s)
+        local = await get_or_create_album(s, release_spec(release, user))
+        await s.commit()
     if not await access.owns_album(s, user, local):
         raise HTTPException(403, "Изменить названия этого альбома может администратор")
     return local
