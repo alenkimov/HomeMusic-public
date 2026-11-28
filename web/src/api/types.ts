@@ -1846,7 +1846,7 @@ export interface DownloadsOverviewOut {
 
 // --- «Наведение порядка» (hub/app/api/tidy.py) ------------------------------------------------------------------
 
-export type TidySectionId = 'names' | 'versions' | 'artists' | 'albums' | 'lyrics' | 'imports';
+export type TidySectionId = 'names' | 'twins' | 'versions' | 'artists' | 'albums' | 'lyrics' | 'imports';
 export type TidyProposalSection = Exclude<TidySectionId, 'albums'>;
 
 export interface TidySectionOut {
@@ -1869,6 +1869,36 @@ export interface TidyOverviewOut {
 }
 
 /** What a page draws of a proposal's subject; which of the keys there are depends on the kind. */
+/** A clue of a twin case: an alias in the name, recordings that sound the same, an album of one name. */
+export interface TwinClue {
+  kind: 'alias' | 'sound' | 'album';
+  text: string;
+}
+
+/** An album of a twin case as it is now. */
+export interface TwinAlbum {
+  id: number;
+  title: string;
+  artist: string;
+  tracks: number;
+  cover: string | null;
+}
+
+/** A track of a twin case: its name, artist and the file that plays. */
+export interface TwinTrack {
+  id: number;
+  title: string;
+  artist: string;
+  file: string;
+}
+
+/** What joining a twin case does to the library as it is now: each album of the one that goes into the album of
+ * that name of the one that stays, each recording of both into one track. */
+export interface TwinCase {
+  albums: { source: TwinAlbum; target: TwinAlbum }[];
+  tracks: { gone: TwinTrack; keep: TwinTrack; moves: { liked: boolean; playlists: number; plays: number } }[];
+}
+
 export interface TidyShow {
   /** two artists: «Это его проект» was the answer (accepted, not joined) */
   answer?: 'project';
@@ -1894,6 +1924,10 @@ export interface TidyShow {
   keep_album?: string | null;
   /** a double: the library track that stays */
   keep_id?: number | null;
+  /** a twin: what tells the two are one person */
+  clues?: TwinClue[];
+  /** a twin, still open: its albums and tracks as they are now */
+  case?: TwinCase;
   /** a double, still open: what of the copy's goes to the track that stays — whether it is in the asker's
    * «Любимое», in how many other playlists it stands, how many times it was listened to */
   moves?: { liked: boolean; playlists: number; plays: number };
@@ -1919,7 +1953,7 @@ export interface TidyShow {
 
 export interface TidyProposalOut {
   id: number;
-  kind: 'title' | 'cyrillic' | 'version' | 'double' | 'artist' | 'lyrics' | 'uncensor' | 'import_match';
+  kind: 'title' | 'cyrillic' | 'version' | 'double' | 'artist' | 'twin' | 'lyrics' | 'uncensor' | 'import_match';
   section: TidyProposalSection;
   subject_type: 'track' | 'album' | 'artist';
   subject_id: number;

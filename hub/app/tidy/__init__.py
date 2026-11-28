@@ -5,9 +5,12 @@ What it looks for, by the sections of its page:
 * **Названия** — what a name should not carry («(Official Video)», «[Lyrics]», the artist written in front of the
   song's name: `rules.clean_title`), and Russian names written in Latin letters («Mikhail Krug» → «Михаил Круг»,
   for artists, albums and tracks alike: the AI, `ai.cyrillic`).
+* **Двойники** — one person under two names, with their albums and tracks («Алексей Хвостенко (Хвост)» and
+  «Хвост»: an alias in the name, recordings that sound the same, an album of one name): one case, joined step by
+  step — the artist, the albums, the tracks — and taken back as one (`twins`).
 * **Версии и дубли** — a track that is another recording of a song the library has («Trampoline (Sped Up)» of
   «Trampoline»: joined to it as its version, `app.library.versions`), and a recording that is there twice (told by
-  the sound, `app.library.acoustic.doubles`: the better file stays, the other goes to the trash).
+  the sound, `app.library.acoustic.doubles`: the two are joined into one track, the better file plays).
 * **Исполнители** — two artists that are one («LSP» and «ЛСП»: by how the names read, then the AI for what looks
   alike only).
 * **Альбомы** — one album in pieces: the page of «Объединение альбомов» (`app.api.library`), shown here.
@@ -22,6 +25,7 @@ back while the subject is still what it made of it. A rejected one is not offere
 a new question. The AI is paid for by the month (`Settings.tidy_ai_usd_month`), and a question it answered «нет»
 is not paid for twice (`TidyAsked`).
 
-Modules: `rules` (what needs no AI), `ai` (what does), `kinds` (how each kind is done and undone), `scan` (the
+Modules: `rules` (what needs no AI), `ai` (what does), `twins` (the cases of one person under two names),
+`kinds` (how each kind is done and undone), `scan` (the
 look-through, a job of the queue — daily and on request), `proposals` (the list, the decisions, the journal).
 """

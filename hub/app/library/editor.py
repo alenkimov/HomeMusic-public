@@ -145,18 +145,82 @@ async def move_tracks(s: AsyncSession, track_ids: list[int], target: Album) -> l
 
 
 async def merge_albums(s: AsyncSession, source_ids: list[int], target: Album) -> Album:
-    from app.library import album_names
-
-    sources = [i for i in source_ids if i != target.id]
-    names = await album_names.listed(s, sources)
-    albums = (await s.scalars(select(Album).where(Album.id.in_(sources)))).all()
-    ids = (await s.scalars(select(Track.id).where(Track.album_id.in_(sources)))).all()
-    await move_tracks(s, list(ids), target)
-    for source in albums:
-        await album_names.add(s, target, source.title, "renamed")
-        for row in names.get(source.id, []):
-            await album_names.add(s, target, row.name, row.source)
+    """The albums of `source_ids` are `target` (`join_albums` each)."""
+    for source in (await s.scalars(select(Album).where(Album.id.in_([i for i in source_ids if i != target.id])))).all():
+        await join_albums(s, source, target)
     return target
+
+
+async def join_albums(s: AsyncSession, source: Album, target: Album) -> dict:
+    """`source` is `target`: one album in two (a release whose artist was written two ways). Its tracks move into
+    `target` (their files into its folder, under its tags and cover), its names are `target`'s, and it is no more.
+    Returns what `part_albums` needs to make it again as it was — its row, credits, names, cover and tracks."""
+    import base64
+
+    from app.library import album_names, trash
+    from app.models import AlbumArtist, AlbumName
+
+    await lock_library(s)
+    cover = await _album_cover(source)
+    names = (await album_names.listed(s, [source.id])).get(source.id, [])
+    had = set((await s.scalars(select(AlbumName.key).where(AlbumName.album_id == target.id))).all())
+    record = {
+        "album": trash.row_of(source),
+        "artists": [list(r) for r in (await s.execute(select(AlbumArtist.artist_id, AlbumArtist.position)
+                                                      .where(AlbumArtist.album_id == source.id))).all()],
+        "names": [[n.name, n.source] for n in names],
+        "cover": base64.b64encode(cover).decode() if cover else None,
+        "tracks": list((await s.scalars(select(Track.id).where(Track.album_id == source.id))).all()),
+    }
+    title = source.title
+    await move_tracks(s, record["tracks"], target)
+    if (await s.get(Album, source.id)) is not None:  # no track: `move_tracks` did not see it go
+        await s.delete(source)
+        await s.flush()
+    await album_names.add(s, target, title, "renamed")
+    for name, src in record["names"]:
+        await album_names.add(s, target, name, src)
+    await s.flush()
+    record["added_names"] = sorted(set((await s.scalars(select(AlbumName.key).where(AlbumName.album_id == target.id))).all()) - had)
+    return record
+
+
+async def part_albums(s: AsyncSession, target: Album, record: dict) -> Album:
+    """`join_albums` taken back: the album is again — under its old id while nothing has taken it — with its
+    credits, names and cover, and its tracks that are still in `target` go back into it."""
+    import base64
+
+    from sqlalchemy import delete
+    from sqlalchemy.dialects.postgresql import insert
+
+    from app.library import album_names, trash
+    from app.models import AlbumArtist, AlbumName
+
+    await lock_library(s)
+    cols = trash.back_of(Album, record["album"])
+    if await s.get(Album, cols.get("id")) is not None:
+        cols.pop("id")
+    album = Album(**cols)
+    s.add(album)
+    await s.flush()
+    for artist_id, position in record.get("artists") or []:
+        await s.execute(insert(AlbumArtist).values(album_id=album.id, artist_id=artist_id, position=position)
+                        .on_conflict_do_nothing())
+    if record.get("added_names"):
+        await s.execute(delete(AlbumName).where(AlbumName.album_id == target.id, AlbumName.key.in_(record["added_names"])))
+    for name, src in record.get("names") or []:
+        await album_names.add(s, album, name, src)
+    if record.get("cover"):
+        folder = library_abs(album_reldir(album))
+        await asyncio.to_thread(_write_cover_file, folder, base64.b64decode(record["cover"]))
+        album.cover_path = (album_reldir(album) / "cover.jpg").as_posix()
+    else:
+        album.cover_path = None
+    await s.flush()
+    back = list((await s.scalars(select(Track.id).where(Track.id.in_(record.get("tracks") or []),
+                                                        Track.album_id == target.id))).all())
+    await move_tracks(s, back, album)
+    return album
 
 
 async def update_track(s: AsyncSession, track: Track, **fields) -> Track:

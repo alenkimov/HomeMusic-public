@@ -16,13 +16,15 @@ import { Link, albumPath, artistPath, goBack, navigate, useRoute } from '../lib/
 import { dropMark } from '../lib/tidyMarks';
 import { attempt, toast } from '../lib/ui';
 import { AlbumMergeSection } from './AlbumMerge';
+import { TwinCard } from './TwinCase';
 
-const SECTIONS: TidySectionId[] = ['names', 'versions', 'artists', 'albums', 'lyrics', 'imports'];
+const SECTIONS: TidySectionId[] = ['names', 'twins', 'versions', 'artists', 'albums', 'lyrics', 'imports'];
 const isSection = (x: string | null): x is TidySectionId => !!x && (SECTIONS as string[]).includes(x);
 
 /** What a section looks for, in a line under its tabs. */
 const ABOUT: Record<TidySectionId, string> = {
   names: 'Лишнее в названиях — «(Official Video)», «[Lyrics]», имя исполнителя — и русские названия, записанные латиницей.',
+  twins: 'Один человек под двумя именами — с его альбомами и треками. Объединяется всё сразу, по порядку: исполнитель, альбомы, треки. Что не нужно — снимите галочку.',
   versions: 'Другие записи той же песни (Sped Up, Live, Remix…) — связать с оригиналом как версии. Одна запись дважды — объединить в один трек с лучшим файлом.',
   artists: 'Один исполнитель под разными написаниями — объединить. Прежние написания останутся: по ним тоже найдётся.',
   albums: '',
@@ -205,10 +207,10 @@ function Proposals({ section, sure, focus, checked, onChange }: { section: TidyP
     lit.current.scrollIntoView({ block: 'center', behavior: 'smooth' });
   });
 
-  const decide = async (p: TidyProposalOut, what: TidyDecision) => {
+  const decide = async (p: TidyProposalOut, what: TidyDecision, skip?: string[]) => {
     setBusy(p.id);
     try {
-      const next = await api.tidyDecide(p.id, what);
+      const next = await api.tidyDecide(p.id, what, skip);
       if (what === 'accept' || what === 'reject' || what === 'project') dropMark(p.id);
       setRows((xs) => (xs ?? []).map((x) => (x.id === p.id ? next : x)));
     } catch (e) {
@@ -254,7 +256,7 @@ function Proposals({ section, sure, focus, checked, onChange }: { section: TidyP
           <ul className="mt-3 space-y-2 px-2 lg:px-4">
             {shown.map((p) => (
               <li key={p.id} ref={p.id === focus ? lit : undefined}>
-                <ProposalCard p={p} lit={p.id === focus} busy={busy === p.id} onDecide={(what) => decide(p, what)}
+                <ProposalCard p={p} lit={p.id === focus} busy={busy === p.id} onDecide={(what, skip) => decide(p, what, skip)}
                   cards={tracks} />
               </li>
             ))}
@@ -275,7 +277,7 @@ const WHAT: Record<TidyProposalOut['subject_type'], string> = { track: 'Трек
 
 /** The subject as the proposal names it: its picture, what it is and whose; then «было → станет» in the kind's words. */
 export function ProposalCard({ p, busy, onDecide, journal, lit, cards }: {
-  p: TidyProposalOut; busy: boolean; onDecide: (what: TidyDecision) => void; journal?: boolean;
+  p: TidyProposalOut; busy: boolean; onDecide: (what: TidyDecision, skip?: string[]) => void; journal?: boolean;
   /** the one a mark on a page led to */
   lit?: boolean;
   /** the tracks of the list as every list shows a track (`useTrackCards`): the track it is about heads the card;
@@ -397,6 +399,16 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, cards }: {
       <Button small variant="primary" busy={busy} onClick={() => onDecide('accept')} className="max-sm:flex-1">{double ? 'Объединить' : 'Принять'}</Button>
     </span>
   );
+
+  if (p.kind === 'twin') {
+    return <TwinCard p={p} busy={busy} onDecide={onDecide} journal={journal} lit={lit} actions={journal ? actions : (
+      <span className="flex items-center gap-2 text-[13px] text-muted">
+        <button type="button" disabled={busy} onClick={() => onDecide(p.state === 'accepted' ? 'revert' : 'reopen')} className="min-h-9 px-2 underline hover:text-fg disabled:opacity-50">
+          Отменить
+        </button>
+      </span>
+    )} />;
+  }
 
   if (p.kind === 'artist' && p.show.into_id) {
     // two artists that are one: the two photos overlapping, their names and tracks, an arrow, the one they become;

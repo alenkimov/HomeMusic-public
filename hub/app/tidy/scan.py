@@ -22,7 +22,6 @@ from app.jobs.queue import handler
 from app.library import artists as artists_
 from app.library import files as library_files
 from app.library.artwork import album_cover_url
-from app.library.quality import rank
 from app.matching.normalize import has_cyrillic
 from app.models import (
     Album,
@@ -41,7 +40,7 @@ from app.models import (
     TrackFile,
     utcnow,
 )
-from app.tidy import ai, kinds, rules
+from app.tidy import ai, kinds, rules, twins
 
 log = logging.getLogger(__name__)
 
@@ -280,16 +279,12 @@ async def _doubles(s: AsyncSession) -> int:
     files = await library_files.mains(s, ids)  # the one that plays
     albums = await _albums(s)
 
-    def worth(i: int) -> tuple:
-        f = files.get(i)
-        return (rank(f.codec, f.bitrate_kbps) or 0 if f else -1, tracks[i].album_id is not None, -i)
-
     n = 0
     for group in groups:
         group = [i for i in group if i in tracks and i in files]
         if len(group) < 2:
             continue
-        keep = max(group, key=worth)
+        keep = max(group, key=lambda i: twins.better(files.get(i), tracks[i]))
         k, kf = tracks[keep], files[keep]
         for i in group:
             if i == keep or ("track", i) in busy:
@@ -310,12 +305,45 @@ def _file_word(f: TrackFile) -> str:
     return " · ".join(x for x in (codec, f"{f.bitrate_kbps} kbps" if f.bitrate_kbps else "") if x)
 
 
+# ---------------------------------------------------------------- one person under two names
+
+
+async def _twins(s: AsyncSession) -> int:
+    """One person under two names, with their albums and tracks (`app/tidy/twins.py`): one case each. The plain
+    question of joining the two (section «Исполнители»), where it was open, is the case's now."""
+    from sqlalchemy import delete, or_
+
+    from app.library import acoustic
+
+    busy = await _busy(s, "twins")
+    music = await _music_counts(s)
+    n = 0
+    for case in await twins.find(s, await acoustic.doubles(budget=0), music):
+        into, other = case["into"], case["other"]
+        if ("artist", other) in busy or ("artist", into) in busy:
+            continue
+        busy |= {("artist", other), ("artist", into)}
+        a, b = await s.get(Artist, other), await s.get(Artist, into)
+        made = await kinds.offer(
+            s, kind="twin", subject_type="artist", subject_id=other, was={"apart": True}, to={"into": into},
+            show={"what": "Исполнитель", "name": a.name, "line": _tracks_word(music.get(other, 0)), "artist_id": other,
+                  "into_name": b.name, "into_line": _tracks_word(music.get(into, 0)), "clues": case["clues"]},
+            by="rule", sure=case["sure"], why="; ".join(c["text"] for c in case["clues"]))
+        if made:
+            await s.execute(delete(TidyProposal).where(
+                TidyProposal.kind == "artist", TidyProposal.state == "open",
+                or_((TidyProposal.subject_id == other) & (TidyProposal.to_json["into"].as_integer() == into),
+                    (TidyProposal.subject_id == into) & (TidyProposal.to_json["into"].as_integer() == other))))
+            n += 1
+    return n
+
+
 # ---------------------------------------------------------------- artists
 
 
 async def _artists(s: AsyncSession, budget: ai.Budget | None) -> int:
     """Two artists who read the same in Latin letters are one (by rule); names that look alike are asked about."""
-    busy = await _busy(s, "artists")
+    busy = await _busy(s, "artists") | await _busy(s, "twins")  # a case of the two is their question
     music = await _music_counts(s)
     who = {a.id: a for a in (await s.execute(select(Artist).where(Artist.merged_into_id.is_(None), Artist.id.in_(list(music))))).scalars()}
     if len(who) < 2:
@@ -571,7 +599,7 @@ async def run() -> dict[str, Any]:
     async with session_scope() as s:
         dropped = await kinds.drop_stale(s)
     found = 0
-    for step in (_titles, _doubles):
+    for step in (_titles, _twins, _doubles):
         async with session_scope() as s:
             found += await step(s)
     use_ai = ai.available()

@@ -615,8 +615,9 @@ export const api = {
   tidyJournal: (before?: number, signal?: AbortSignal) =>
     request<TidyProposalOut[]>('GET', withQuery('/api/tidy/journal', { before }), { signal }),
   /** accept / reject / reopen (a rejection taken back) / revert (what an accepted one did, taken back) */
-  tidyDecide: (id: number, what: TidyDecision) =>
-    request<TidyProposalOut>('POST', `/api/tidy/proposals/${id}/${what}`),
+  /** `skip`: the steps of a case the listener left out (accepting a twin case): «artist», «album:<id>», «track:<id>» */
+  tidyDecide: (id: number, what: TidyDecision, skip?: string[]) =>
+    request<TidyProposalOut>('POST', `/api/tidy/proposals/${id}/${what}`, skip ? { json: { skip } } : {}),
   tidyAcceptSure: (section: TidyProposalSection) =>
     request<{ accepted: number; failed: number }>('POST', '/api/tidy/accept-sure', { json: { section } }),
   tidyScan: () => request<TidyOverviewOut>('POST', '/api/tidy/scan'),

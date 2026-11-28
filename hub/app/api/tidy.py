@@ -25,7 +25,7 @@ from app.tidy import ai, kinds, scan
 
 router = APIRouter(prefix="/api/tidy", tags=["tidy"])
 
-Section = Literal["names", "versions", "artists", "lyrics", "imports"]
+Section = Literal["names", "twins", "versions", "artists", "lyrics", "imports"]
 
 
 class TidySectionOut(BaseModel):
@@ -138,6 +138,42 @@ async def _moves(s: AsyncSession, user: User, track_ids: set[int]) -> dict[int, 
     return out
 
 
+async def _case(s: AsyncSession, user: User, p: TidyProposal) -> dict[str, Any]:
+    """A case as it is now (`twins.plan`): its albums — the one that goes and the one it goes into, each with its
+    tracks counted — and its tracks: the copy, the track that stays, what of the copy's goes to it (`_moves`)."""
+    from app.library import acoustic
+    from app.library.artwork import album_cover_url
+    from app.library.files import mains
+    from app.models import Album, Track
+    from app.tidy import twins
+
+    steps = await twins.plan(s, p.subject_id, p.to_json["into"], await acoustic.doubles(budget=0))
+    album_ids = {i for a in steps["albums"] for i in (a["source"], a["target"])}
+    albums = {a.id: a for a in (await s.execute(select(Album).where(Album.id.in_(album_ids)))).scalars()} if album_ids else {}
+    sizes = dict((await s.execute(select(Track.album_id, func.count(Track.id)).where(Track.album_id.in_(album_ids))
+                                  .group_by(Track.album_id))).all()) if album_ids else {}
+    track_ids = {i for x in steps["tracks"] for i in (x["gone"], x["keep"])}
+    tracks = {t.id: t for t in (await s.execute(select(Track).where(Track.id.in_(track_ids)))).scalars()} if track_ids else {}
+    files = await mains(s, list(track_ids)) if track_ids else {}
+    moves = await _moves(s, user, {x["gone"] for x in steps["tracks"]})
+
+    def album(i: int) -> dict[str, Any]:
+        a = albums[i]
+        return {"id": a.id, "title": a.title, "artist": a.album_artist, "tracks": sizes.get(a.id, 0), "cover": album_cover_url(a)}
+
+    def track(i: int) -> dict[str, Any]:
+        t, f = tracks[i], files.get(i)
+        return {"id": t.id, "title": t.title, "artist": t.artist,
+                "file": " ".join(x for x in ((f.codec or "").upper(), str(f.bitrate_kbps) if f.bitrate_kbps else "") if x) if f else ""}
+
+    return {
+        "albums": [{"source": album(a["source"]), "target": album(a["target"])} for a in steps["albums"]
+                   if a["source"] in albums and a["target"] in albums],
+        "tracks": [{"gone": track(x["gone"]), "keep": track(x["keep"]), "moves": moves[x["gone"]]} for x in steps["tracks"]
+                   if x["gone"] in tracks and x["keep"] in tracks],
+    }
+
+
 async def _out(s: AsyncSession, user: User, rows: list[TidyProposal]) -> list[TidyProposalOut]:
     from app.models import Track
 
@@ -165,6 +201,13 @@ async def _out(s: AsyncSession, user: User, rows: list[TidyProposal]) -> list[Ti
             show["picture"], show["into_picture"] = await _pictures(s, p.subject_id), await _pictures(s, p.to_json.get("into"))
             if p.state == "accepted" and (p.undo_json or {}).get("project"):
                 show["answer"] = "project"  # «Это его проект», not joined
+        elif p.kind == "twin":
+            show["into_id"] = p.to_json.get("into")
+            show["picture"], show["into_picture"] = await _pictures(s, p.subject_id), await _pictures(s, p.to_json.get("into"))
+            if p.state == "open":
+                show["case"] = await _case(s, user, p)
+            elif p.state == "accepted" and (p.undo_json or {}).get("project"):
+                show["answer"] = "project"
         elif p.kind == "double":
             show["keep_id"] = p.to_json.get("keep")  # the copy that stays: its own row beside the one that goes
             if p.subject_id in moves:
@@ -266,12 +309,13 @@ async def journal(section: Section | None = None, before: int | None = None, lim
     return await _out(s, user, rows)
 
 
-async def _decide(s: AsyncSession, user: User, proposal_id: int, what: str) -> TidyProposalOut:
+async def _decide(s: AsyncSession, user: User, proposal_id: int, what: str,
+                  skip: frozenset[str] = frozenset()) -> TidyProposalOut:
     p = await _proposal(s, proposal_id, user)
     after = None
     try:
         if what == "accept":
-            after = await kinds.accept(s, user, p)
+            after = await kinds.accept(s, user, p, skip)
         elif what == "reject":
             await kinds.reject(s, user, p)
         elif what == "project":
@@ -295,9 +339,15 @@ async def _decide(s: AsyncSession, user: User, proposal_id: int, what: str) -> T
     return out
 
 
+class AcceptIn(BaseModel):
+    """The steps of a case left out (`twins.apply`): «artist», «album:<id>», «track:<id>»."""
+    skip: list[str] = []
+
+
 @router.post("/proposals/{proposal_id}/accept", response_model=TidyProposalOut)
-async def accept(proposal_id: int, user: User = Depends(current_user), s: AsyncSession = Depends(get_session, scope="function")):
-    return await _decide(s, user, proposal_id, "accept")
+async def accept(proposal_id: int, body: AcceptIn | None = None, user: User = Depends(current_user),
+                 s: AsyncSession = Depends(get_session, scope="function")):
+    return await _decide(s, user, proposal_id, "accept", frozenset(body.skip) if body else frozenset())
 
 
 @router.post("/proposals/{proposal_id}/reject", response_model=TidyProposalOut)

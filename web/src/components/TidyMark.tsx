@@ -13,6 +13,7 @@ export const KIND_TITLE: Record<TidyProposalOut['kind'], string> = {
   version: 'Версия песни',
   double: 'Запись есть дважды',
   artist: 'Один исполнитель',
+  twin: 'Двойник исполнителя',
   lyrics: 'Лишние строки текста',
   uncensor: 'Слова под цензурой',
   import_match: 'Проверить совпадение',

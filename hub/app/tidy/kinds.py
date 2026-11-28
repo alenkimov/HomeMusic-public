@@ -31,8 +31,8 @@ from app.models import (
 )
 
 # the sections of the page, in its order («Альбомы» is the page of «Объединение альбомов», not proposals)
-SECTIONS = ("names", "versions", "artists", "albums", "lyrics", "imports")
-TITLES = {"names": "Названия", "versions": "Версии и дубли", "artists": "Исполнители", "albums": "Альбомы",
+SECTIONS = ("names", "twins", "versions", "artists", "albums", "lyrics", "imports")
+TITLES = {"names": "Названия", "twins": "Двойники", "versions": "Версии и дубли", "artists": "Исполнители", "albums": "Альбомы",
           "lyrics": "Тексты", "imports": "Импорт"}
 
 
@@ -128,7 +128,7 @@ async def _rename(s: AsyncSession, user: User, subject_type: str, obj: Any, name
     return added
 
 
-async def _name_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
+async def _name_apply(s: AsyncSession, user: User, p: TidyProposal, after: After, skip: frozenset[str]) -> dict[str, Any]:
     obj = await _named(s, p.subject_type, p.subject_id)
     added = await _rename(s, user, p.subject_type, obj, p.to_json["name"], after)
     return {"added_name": added}
@@ -157,7 +157,7 @@ async def _version_now(s: AsyncSession, p: TidyProposal) -> dict[str, Any] | Non
     return {"together": await _together(s, of, p.subject_id)}
 
 
-async def _version_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
+async def _version_apply(s: AsyncSession, user: User, p: TidyProposal, after: After, skip: frozenset[str]) -> dict[str, Any]:
     from app.library import versions
 
     track, of = await s.get(Track, p.subject_id), await s.get(Track, p.to_json["of"])
@@ -187,7 +187,7 @@ async def _double_now(s: AsyncSession, p: TidyProposal) -> dict[str, Any] | None
     return {"both": True} if all(i in files for i in ids) else None
 
 
-async def _double_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
+async def _double_apply(s: AsyncSession, user: User, p: TidyProposal, after: After, skip: frozenset[str]) -> dict[str, Any]:
     """The two are one track (`tracks.join`): all of the copy that is the listener's is the kept one's, its file
     goes to the trash folder as a file of the kept one — from the kept one's «Файлы трека» it comes back."""
     from app.library import access
@@ -236,7 +236,7 @@ async def _artist_now(s: AsyncSession, p: TidyProposal) -> dict[str, Any] | None
     return {"apart": True}
 
 
-async def _artist_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
+async def _artist_apply(s: AsyncSession, user: User, p: TidyProposal, after: After, skip: frozenset[str]) -> dict[str, Any]:
     from app.library import artists
 
     other, into = await s.get(Artist, p.subject_id), await s.get(Artist, p.to_json["into"])
@@ -261,6 +261,56 @@ async def _artist_revert(s: AsyncSession, user: User, p: TidyProposal, after: Af
     except ValueError as e:
         raise Changed(str(e)) from e
     after.rewrite |= {into.id, other.id}
+
+
+# ---------------------------------------------------------------- one person under two names, with their music
+
+
+async def _twin_steps(s: AsyncSession, p: TidyProposal) -> dict[str, Any]:
+    from app.library import acoustic
+    from app.tidy import twins
+
+    return await twins.plan(s, p.subject_id, p.to_json["into"], await acoustic.doubles(budget=0))
+
+
+async def _twin_apply(s: AsyncSession, user: User, p: TidyProposal, after: After, skip: frozenset[str]) -> dict[str, Any]:
+    """The case joined (`twins.apply`), what the listener did not leave out: the artist, the albums, the tracks."""
+    from app.library import access
+    from app.tidy import twins
+
+    other, into = await s.get(Artist, p.subject_id), await s.get(Artist, p.to_json["into"])
+    steps = await _twin_steps(s, p)
+    for step in steps["tracks"]:
+        if f"track:{step['gone']}" not in skip and not (await access.keeping(s, user, step["gone"]))[0]:
+            raise PermissionError("Один из файлов хранит кто-то ещё: объединить может только администратор")
+    undo = await twins.apply(s, user.id, other, into, steps, skip)
+    after.rewrite.add(into.id)
+    after.scan = bool(undo["albums"] or undo["tracks"])
+    after.playlists = {i for step in undo["tracks"] for i in step["joined"]["merged"]["playlists"]}
+    return undo
+
+
+async def _twin_revert(s: AsyncSession, user: User, p: TidyProposal, after: After) -> None:
+    from app.library import tracks as registry
+    from app.tidy import twins
+
+    other, into = await s.get(Artist, p.subject_id), await s.get(Artist, p.to_json["into"])
+    undo = p.undo_json or {}
+    if other is None or into is None:
+        raise Changed("Одного из исполнителей уже нет")
+    if undo.get("project"):  # «Его проект»: not one person, two projects of one — apart again
+        from app.library import artists
+
+        await artists.link(s, user.id, into, other, on=False)
+        return
+    if undo.get("artist") is not None and other.merged_into_id != into.id:
+        raise Changed("Исполнителей с тех пор разъединили или объединили с другими")
+    try:
+        after.playlists = await twins.revert(s, user.id, other, into, undo)
+    except (registry.Parted, ValueError) as e:
+        raise Changed(str(e)) from e
+    after.rewrite |= {into.id, other.id}
+    after.scan = bool(undo.get("albums") or undo.get("tracks"))
 
 
 # ---------------------------------------------------------------- the lines of a text that are not the song
@@ -294,7 +344,7 @@ def _unmasked(line: dict[str, Any], words: list[str]) -> dict[str, Any]:
     return out
 
 
-async def _lyrics_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
+async def _lyrics_apply(s: AsyncSession, user: User, p: TidyProposal, after: After, skip: frozenset[str]) -> dict[str, Any]:
     """Drop the lines that are not the song (`drop`), put the words a censored line hides back (`replace`: the
     line's place -> its words in order)."""
     from app.lyrics.service import _retag
@@ -348,7 +398,7 @@ async def _import_now(s: AsyncSession, p: TidyProposal) -> dict[str, Any] | None
     return {"item": item_id, "probable": True}
 
 
-async def _import_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
+async def _import_apply(s: AsyncSession, user: User, p: TidyProposal, after: After, skip: frozenset[str]) -> dict[str, Any]:
     """«Совпадает»: the match is the song — for every transfer of the listener that has it from the same service."""
     from app.imports import review
 
@@ -394,7 +444,7 @@ async def offer_imports(s: AsyncSession, user_id: int) -> int:
 class Kind:
     section: str
     now: Callable[[AsyncSession, TidyProposal], Awaitable[dict[str, Any] | None]]
-    apply: Callable[[AsyncSession, User, TidyProposal, After], Awaitable[dict[str, Any]]]
+    apply: Callable[[AsyncSession, User, TidyProposal, After, frozenset[str]], Awaitable[dict[str, Any]]]
     revert: Callable[[AsyncSession, User, TidyProposal, After], Awaitable[None]]
 
 
@@ -404,6 +454,7 @@ KINDS: dict[str, Kind] = {
     "version": Kind("versions", _version_now, _version_apply, _version_revert),
     "double": Kind("versions", _double_now, _double_apply, _double_revert),
     "artist": Kind("artists", _artist_now, _artist_apply, _artist_revert),
+    "twin": Kind("twins", _artist_now, _twin_apply, _twin_revert),  # one person under two names, with their music
     "lyrics": Kind("lyrics", _lyrics_now, _lyrics_apply, _lyrics_revert),  # lines that are not the song
     "uncensor": Kind("lyrics", _lyrics_now, _lyrics_apply, _lyrics_revert),  # words hidden by censorship
     "import_match": Kind("imports", _import_now, _import_apply, _import_revert),  # a transfer's probable match
@@ -415,8 +466,9 @@ async def holds(s: AsyncSession, p: TidyProposal) -> bool:
     return await KINDS[p.kind].now(s, p) == p.was_json
 
 
-async def accept(s: AsyncSession, user: User, p: TidyProposal) -> After:
-    """Do what the proposal says. `Changed`: the subject is not what it was made of (the proposal is gone then)."""
+async def accept(s: AsyncSession, user: User, p: TidyProposal, skip: frozenset[str] = frozenset()) -> After:
+    """Do what the proposal says — of a case of several steps, all but the `skip`ped ones (`twins.apply`).
+    `Changed`: the subject is not what it was made of (the proposal is gone then)."""
     if p.state != "open":
         raise Changed("Это предложение уже решено")
     if not await holds(s, p):
@@ -424,7 +476,7 @@ async def accept(s: AsyncSession, user: User, p: TidyProposal) -> After:
         await s.flush()
         raise Changed("С тех пор это уже изменили — предложение снято")
     after = After(rewrite=set())
-    undo = await KINDS[p.kind].apply(s, user, p, after)
+    undo = await KINDS[p.kind].apply(s, user, p, after, skip)
     if p.kind in ("lyrics", "uncensor"):
         undo["after"] = text_hash(await s.get(Lyrics, p.subject_id))
     p.undo_json, p.state, p.decided_at, p.decided_by = undo, "accepted", utcnow(), user.id
@@ -437,7 +489,7 @@ async def reject(s: AsyncSession, user: User, p: TidyProposal) -> None:
     window of either of them (`artists.apart`)."""
     if p.state != "open":
         raise Changed("Это предложение уже решено")
-    if p.kind == "artist":
+    if p.kind in ("artist", "twin"):
         from app.library import artists
 
         other, into = await s.get(Artist, p.subject_id), await s.get(Artist, p.to_json["into"])
@@ -452,7 +504,7 @@ async def project(s: AsyncSession, user: User, p: TidyProposal) -> None:
     (`artists.link`). Taken back (`revert`), they are apart again."""
     from app.library import artists
 
-    if p.kind != "artist":
+    if p.kind not in ("artist", "twin"):
         raise ValueError("Так можно ответить только про исполнителей")
     if p.state != "open":
         raise Changed("Это предложение уже решено")
@@ -468,7 +520,7 @@ async def project(s: AsyncSession, user: User, p: TidyProposal) -> None:
 
 async def _unreject(s: AsyncSession, p: TidyProposal) -> None:
     """A rejection of two artists taken back: they may be offered to be joined again (`reject`)."""
-    if p.kind == "artist":
+    if p.kind in ("artist", "twin"):
         from sqlalchemy import delete
 
         from app.models import ArtistApart
@@ -552,7 +604,8 @@ async def drop_gone(s: AsyncSession) -> int:
     if not rows:
         return 0
     models = {"track": Track, "album": Album, "artist": Artist}
-    others = {"double": ("track", "keep"), "version": ("track", "of"), "artist": ("artist", "into")}
+    others = {"double": ("track", "keep"), "version": ("track", "of"), "artist": ("artist", "into"),
+              "twin": ("artist", "into")}
     wanted: dict[str, set[int]] = {k: set() for k in models}
     for p in rows:
         if p.subject_type in wanted:
