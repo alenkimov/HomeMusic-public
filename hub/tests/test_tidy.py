@@ -227,7 +227,9 @@ async def test_a_version_is_joined_to_its_song_and_parted_again(env):
         assert (await versions.card(s, await s.get(Track, plain)))["song_id"] is None
 
 
-async def test_the_worse_of_two_copies_goes_to_the_trash_and_comes_back(env, monkeypatch):
+async def test_two_copies_become_one_track_and_part_again(env, monkeypatch):
+    """A copy (told by the sound) joined with the better one: all of it that is the listener's is the kept track's, its
+    file goes to the trash folder as a file of the kept one. Taken back, the copy is again, as it was."""
     from sqlalchemy import select
 
     from app import playlists
@@ -270,7 +272,13 @@ async def test_the_worse_of_two_copies_goes_to_the_trash_and_comes_back(env, mon
     await _scan()
     (p,) = await _open(c, "versions")
     assert (p["kind"], p["subject_id"], p["sure"], p["was"], p["to"]) == ("double", bad, True, "MP3 · 128 kbps · без альбома", "FLAC · 900 kbps · без альбома")
+    assert p["show"]["moves"] == {"liked": False, "playlists": 2, "plays": 1}  # what goes to the one that stays
     assert (await c.post(f"/api/tidy/proposals/{p['id']}/accept")).status_code == 200
+    got = (await c.get(f"/api/library/tracks/{good}/files")).json()
+    assert [f["codec"] for f in got["files"]] == ["flac"]
+    gone = got["events"][0]  # the copy's file: in the trash folder, as a file of the track that stays
+    assert (gone["kind"], gone["why"], gone["can_restore"], gone["file"]["codec"]) == ("trashed", "double", True, "mp3")
+    assert not library_abs("x/bad.mp3").exists()
     assert await places(mine_id) == [good]
     assert await places(both_id) == [good, other]  # once, at the copy's earlier place
     async with session_scope() as s:
@@ -287,6 +295,17 @@ async def test_the_worse_of_two_copies_goes_to_the_trash_and_comes_back(env, mon
                                                               TrackCatalogRef.ref == "dz:777"))).first() is None
     assert await places(mine_id) == [back.id]
     assert await places(both_id) == [back.id, other, good]  # as it was
+    assert library_abs("x/bad.mp3").is_file()
+    assert [f["codec"] for f in (await c.get(f"/api/library/tracks/{back.id}/files")).json()["files"]] == ["mp3"]
+
+    # joined again, and its file brought back to the kept one from its journal: there is no copy to part any more
+    assert (await c.post(f"/api/tidy/proposals/{p['id']}/review")).status_code == 200
+    (p,) = await _open(c, "versions")
+    assert (await c.post(f"/api/tidy/proposals/{p['id']}/accept")).status_code == 200
+    gone = (await c.get(f"/api/library/tracks/{good}/files")).json()["events"][0]
+    assert (await c.post(f"/api/library/tracks/{good}/files/restore/{gone['id']}")).status_code == 200
+    r = await c.post(f"/api/tidy/proposals/{p['id']}/revert")
+    assert r.status_code == 409 and "вернули" in r.json()["detail"]
 
 
 async def test_the_lines_of_a_text_that_are_not_the_song_are_dropped_and_come_back(env):

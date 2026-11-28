@@ -1894,6 +1894,9 @@ export interface TidyShow {
   keep_album?: string | null;
   /** a double: the library track that stays */
   keep_id?: number | null;
+  /** a double, still open: what of the copy's goes to the track that stays — whether it is in the asker's
+   * «Любимое», in how many other playlists it stands, how many times it was listened to */
+  moves?: { liked: boolean; playlists: number; plays: number };
   /** a version: the library track it is a version of */
   of_id?: number | null;
   /** an artist joined: who into */

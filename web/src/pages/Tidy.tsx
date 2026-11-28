@@ -23,7 +23,7 @@ const isSection = (x: string | null): x is TidySectionId => !!x && (SECTIONS as 
 /** What a section looks for, in a line under its tabs. */
 const ABOUT: Record<TidySectionId, string> = {
   names: 'Лишнее в названиях — «(Official Video)», «[Lyrics]», имя исполнителя — и русские названия, записанные латиницей.',
-  versions: 'Другие записи той же песни (Sped Up, Live, Remix…) — связать с оригиналом как версии. Одна запись в двух файлах — оставить лучший.',
+  versions: 'Другие записи той же песни (Sped Up, Live, Remix…) — связать с оригиналом как версии. Одна запись дважды — объединить в один трек с лучшим файлом.',
   artists: 'Один исполнитель под разными написаниями — объединить. Прежние написания останутся: по ним тоже найдётся.',
   albums: '',
   lyrics: 'Строки текста, которые не поются (ссылки, призывы подписаться, реклама), и слова, скрытые цензурой: «б***ь», «[цензура]».',
@@ -370,7 +370,8 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, cards }: {
     </>
   );
 
-  const stateWord = p.state === 'accepted' ? 'Принято' : p.state === 'rejected' ? 'Отклонено' : p.state === 'reverted' ? 'Откачено' : journal ? 'Снова на рассмотрении' : '';
+  const double = p.kind === 'double';
+  const stateWord = p.state === 'accepted' ? (double ? 'Объединено' : 'Принято') : p.state === 'rejected' ? 'Отклонено' : p.state === 'reverted' ? (double ? 'Разъединено' : 'Откачено') : journal ? 'Снова на рассмотрении' : '';
   const actions = journal ? (
     p.state !== 'open' && (
       <span className="flex flex-wrap gap-2 max-sm:w-full">
@@ -393,7 +394,7 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, cards }: {
   ) : (
     <span className="flex gap-2 max-sm:w-full">
       <Button small variant="outline" disabled={busy} onClick={() => onDecide('reject')} className="max-sm:flex-1">Отклонить</Button>
-      <Button small variant="primary" busy={busy} onClick={() => onDecide('accept')} className="max-sm:flex-1">Принять</Button>
+      <Button small variant="primary" busy={busy} onClick={() => onDecide('accept')} className="max-sm:flex-1">{double ? 'Объединить' : 'Принять'}</Button>
     </span>
   );
 
@@ -526,10 +527,11 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, cards }: {
           </>
         ) : (
           <>
-            {label(p.state === 'accepted' ? 'Удалена копия' : 'Удалить копию', p.show.file, 'text-danger')}
+            {label(p.state === 'accepted' ? 'Была копией' : 'Копия', p.show.file, 'text-muted')}
             {row(track, p.show.title_now)}
-            {label('Оставить', p.show.keep_file, 'text-accent')}
+            {label(p.state === 'accepted' ? 'Стали этим треком' : 'Остаётся', p.show.keep_file, 'text-accent')}
             {row(pair, p.show.keep_title || p.show.title_now)}
+            {!decided && <JoinedInto p={p} />}
           </>
         )}
         <div className="mt-1 flex flex-wrap items-center gap-3 px-3 sm:px-4">
@@ -604,6 +606,31 @@ export function ProposalCard({ p, busy, onDecide, journal, lit, cards }: {
 
 /** The row of a track the Hub has no more, drawn as a list draws a track: the picture, the name, whose — dimmed,
  * nothing to play. */
+/** What joining a double does, in the listener's words: the two become one track — the one that stays; what was
+ * the copy's moves to it (counted: the ♥, the playlists, the listens), the copy's file goes to the trash folder as a
+ * file of that track, brought back from its «Файлы трека». Nothing of the listener's is deleted. */
+function JoinedInto({ p }: { p: TidyProposalOut }) {
+  const m = p.show.moves;
+  const moves = [
+    m?.liked && '♥',
+    m?.playlists ? `${m.playlists} ${plural(m.playlists, ['плейлист', 'плейлиста', 'плейлистов'])}` : null,
+    m?.plays ? `${m.plays} ${plural(m.plays, ['прослушивание', 'прослушивания', 'прослушиваний'])}` : null,
+  ].filter(Boolean);
+  return (
+    <div className="mx-3 mt-2 flex gap-3 rounded-xl bg-raised px-3 py-2.5 text-[13px] sm:mx-4 sm:px-4">
+      <Icon name="merge" size={18} className="mt-0.5 shrink-0 text-accent" />
+      <div className="min-w-0 space-y-0.5">
+        <p className="font-semibold">Станут одним треком</p>
+        <p className="text-muted">{moves.length ? `Перейдут на него: ${moves.join(', ')}` : 'Всё, что есть у копии, перейдёт на него'}</p>
+        <p className="text-muted">
+          Файл копии{p.show.file ? ` (${p.show.file})` : ''} уйдёт в корзину — его можно вернуть в{' '}
+          {p.show.keep_id ? <Link to={`/file/${p.show.keep_id}`} className="underline hover:text-fg">«Файлах трека»</Link> : '«Файлах трека»'}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function GoneRow({ title, artist, cover }: { title: string; artist?: string | null; cover?: string | null }) {
   return (
     <div className="flex min-h-14 items-center gap-3 px-3 py-1.5 opacity-60 sm:px-4">

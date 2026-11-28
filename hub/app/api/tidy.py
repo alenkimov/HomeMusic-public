@@ -115,7 +115,30 @@ async def _pictures(s: AsyncSession, artist_id: int | None) -> str | None:
     return found[1] if found else None
 
 
-async def _out(s: AsyncSession, rows: list[TidyProposal]) -> list[TidyProposalOut]:
+async def _moves(s: AsyncSession, user: User, track_ids: set[int]) -> dict[int, dict[str, Any]]:
+    """What of a copy's is the listener's and goes to the track it is joined with: whether it is in their «Любимое»,
+    in how many playlists (anybody's, «Любимое» not counted) it stands, how many times it was listened to."""
+    from sqlalchemy import func
+
+    from app.models import PlayEvent, Playlist, PlaylistItem
+    from app.playlists import LIKED
+
+    out = {i: {"liked": False, "playlists": 0, "plays": 0} for i in track_ids}
+    for track_id, kind, owner, n in (await s.execute(
+            select(PlaylistItem.track_id, Playlist.kind, Playlist.user_id, func.count())
+            .join(Playlist, Playlist.id == PlaylistItem.playlist_id).where(PlaylistItem.track_id.in_(track_ids))
+            .group_by(PlaylistItem.track_id, Playlist.kind, Playlist.user_id))).all():
+        if kind == LIKED:
+            out[track_id]["liked"] |= owner == user.id
+        else:
+            out[track_id]["playlists"] += n
+    for track_id, n in (await s.execute(select(PlayEvent.track_id, func.count()).where(PlayEvent.track_id.in_(track_ids))
+                                        .group_by(PlayEvent.track_id))).all():
+        out[track_id]["plays"] = n
+    return out
+
+
+async def _out(s: AsyncSession, user: User, rows: list[TidyProposal]) -> list[TidyProposalOut]:
     from app.models import Track
 
     who = {}
@@ -126,6 +149,7 @@ async def _out(s: AsyncSession, rows: list[TidyProposal]) -> list[TidyProposalOu
     track_ids = {p.subject_id for p in rows if p.subject_type == "track"}
     if track_ids:
         titles = dict((await s.execute(select(Track.id, Track.title).where(Track.id.in_(track_ids)))).all())
+    moves = await _moves(s, user, {p.subject_id for p in rows if p.kind == "double" and p.state == "open"})
     out = []
     for p in rows:
         show = dict(p.show_json or {})
@@ -143,6 +167,8 @@ async def _out(s: AsyncSession, rows: list[TidyProposal]) -> list[TidyProposalOu
                 show["answer"] = "project"  # «Это его проект», not joined
         elif p.kind == "double":
             show["keep_id"] = p.to_json.get("keep")  # the copy that stays: its own row beside the one that goes
+            if p.subject_id in moves:
+                show["moves"] = moves[p.subject_id]
         elif p.kind == "version":
             show["of_id"] = p.to_json.get("of")  # the original: its own row above the version
         was, to = _words(p, show)
@@ -213,7 +239,7 @@ async def proposals(section: Section, user: User = Depends(current_user),
     rows = list((await s.execute(select(TidyProposal).where(TidyProposal.section == section, TidyProposal.state == "open",
                                                             _mine(user))
                                  .order_by(TidyProposal.sure.desc(), TidyProposal.id))).scalars())
-    return await _out(s, rows)
+    return await _out(s, user, rows)
 
 
 @router.get("/marks", response_model=list[TidyProposalOut])
@@ -223,7 +249,7 @@ async def marks(user: User = Depends(current_user), s: AsyncSession = Depends(ge
     await _ready(s, user)
     rows = list((await s.execute(select(TidyProposal).where(TidyProposal.state == "open", _mine(user))
                                  .order_by(TidyProposal.sure.desc(), TidyProposal.id))).scalars())
-    return await _out(s, rows)
+    return await _out(s, user, rows)
 
 
 @router.get("/journal", response_model=list[TidyProposalOut])
@@ -237,7 +263,7 @@ async def journal(section: Section | None = None, before: int | None = None, lim
     if before and (last := await s.get(TidyProposal, before)) is not None and last.decided_at is not None:
         q = q.where(tuple_(TidyProposal.decided_at, TidyProposal.id) < tuple_(last.decided_at, last.id))
     rows = list((await s.execute(q.order_by(TidyProposal.decided_at.desc(), TidyProposal.id.desc()).limit(limit))).scalars())
-    return await _out(s, rows)
+    return await _out(s, user, rows)
 
 
 async def _decide(s: AsyncSession, user: User, proposal_id: int, what: str) -> TidyProposalOut:
@@ -264,7 +290,7 @@ async def _decide(s: AsyncSession, user: User, proposal_id: int, what: str) -> T
         raise HTTPException(403, str(e)) from e
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
-    (out,) = await _out(s, [p])
+    (out,) = await _out(s, user, [p])
     await _done(s, user, after)
     return out
 

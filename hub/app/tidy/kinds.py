@@ -23,12 +23,9 @@ from app.models import (
     Import,
     ImportItem,
     Lyrics,
-    PlaylistItem,
     SongTrack,
     TidyProposal,
     Track,
-    TrackTag,
-    TrashedTrack,
     User,
     utcnow,
 )
@@ -191,58 +188,33 @@ async def _double_now(s: AsyncSession, p: TidyProposal) -> dict[str, Any] | None
 
 
 async def _double_apply(s: AsyncSession, user: User, p: TidyProposal, after: After) -> dict[str, Any]:
-    """The other copy goes to the trash, and all that was the listener's of it is the kept one's
-    (`tracks.merge_into`): its places in playlists (once each, the earlier place), tags, listens, the transfers'
-    rows, its catalog records."""
-    from app.library import access, editor
+    """The two are one track (`tracks.join`): all of the copy that is the listener's is the kept one's, its file
+    goes to the trash folder as a file of the kept one — from the kept one's «Файлы трека» it comes back."""
+    from app.library import access
     from app.library import tracks as registry
 
     gone, keep = await s.get(Track, p.subject_id), await s.get(Track, p.to_json["keep"])
     may, _others, _mine = await access.keeping(s, user, gone.id)
     if not may:
-        raise PermissionError("Этот файл хранит кто-то ещё: удалить его может только администратор")
-    merged = await registry.merge_into(s, gone, keep)
-    await editor.trash_track(s, gone, user.id)
-    await registry.bind_merged(s, keep, merged)
-    trashed = (await s.execute(select(TrashedTrack.id).where(TrashedTrack.track_id == gone.id)
-                               .order_by(TrashedTrack.id.desc()).limit(1))).scalar_one()
-    after.scan, after.playlists = True, set(merged["playlists"])
-    return {"trashed": trashed, "merged": merged}
+        raise PermissionError("Этот файл хранит кто-то ещё: объединить может только администратор")
+    joined = await registry.join(s, gone, keep, user_id=user.id)
+    after.scan, after.playlists = True, set(joined["merged"]["playlists"])
+    return {"joined": joined}
 
 
 async def _double_revert(s: AsyncSession, user: User, p: TidyProposal, after: After) -> None:
-    from sqlalchemy import delete
+    from app.library import tracks as registry
 
-    from app.library import trash
-
-    undo = p.undo_json or {}
-    row = await s.get(TrashedTrack, undo.get("trashed") or 0)
-    if row is None:
-        raise Changed("Файл уже удалён из корзины насовсем")
+    joined = (p.undo_json or {}).get("joined")
+    if joined is None:  # joined by the Hub before tracks were joined so: the copy is in «Корзина», brought back there
+        raise Changed("Копия удалена прежней версией Хаба: верните её из «Корзины»")
+    keep = await s.get(Track, p.to_json["keep"])
+    if keep is None:
+        raise Changed("Оставленного трека уже нет")
     try:
-        back = await trash.restore(s, row)
-    except ValueError as e:
+        _back, playlists = await registry.part(s, keep, joined, user_id=user.id)
+    except registry.Parted as e:
         raise Changed(str(e)) from e
-    keep = p.to_json["keep"]
-    if "merged" in undo:
-        from app.library import tracks as registry
-
-        kept = await s.get(Track, keep)
-        if kept is None:
-            raise Changed("Оставленного трека уже нет")
-        after.scan, after.playlists = True, await registry.unmerge(s, back, kept, undo["merged"])
-        return
-    # a copy deleted before the listener's all went with the places (its places and tags only)
-    playlists = set()
-    if undo.get("moved"):
-        for item in (await s.execute(select(PlaylistItem).where(PlaylistItem.id.in_(undo["moved"]),
-                                                                PlaylistItem.track_id == keep))).scalars():
-            item.track_id = back.id
-            playlists.add(item.playlist_id)
-    if undo.get("tags"):
-        await s.execute(delete(TrackTag).where(TrackTag.track_id == keep, TrackTag.tag_id.in_(undo["tags"]),
-                                               TrackTag.auto.is_(False)))
-    playlists |= set((await s.execute(select(PlaylistItem.playlist_id).where(PlaylistItem.track_id == back.id))).scalars())
     after.scan, after.playlists = True, playlists
 
 

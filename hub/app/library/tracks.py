@@ -312,6 +312,83 @@ async def unmerge(s: AsyncSession, back: Track, keep: Track, record: dict[str, A
     return set(record.get("playlists") or [])
 
 
+class Parted(ValueError):
+    """A join of two tracks that can no longer be taken back as it was: what it says."""
+
+
+async def join(s: AsyncSession, gone: Track, keep: Track, *, user_id: int | None) -> dict[str, Any]:
+    """Two tracks that are one recording (a copy told by the sound) become one: `keep`. Nothing of the listener's is
+    deleted — all of `gone` that is theirs is `keep`'s (`merge_into`: the ♥, the places in playlists, tags, listens);
+    its files are `keep`'s and go to the trash folder at once, as files of `keep` (the journal of `keep`'s files says
+    so and brings one back from there, `app.library.files`); the journal of its files is `keep`'s; its own picture is
+    `keep`'s where `keep` has none. Then the row of `gone` is no more — its album with it, when it was the album's
+    last track. Returns what `part` takes back."""
+    from sqlalchemy import func, update
+
+    from app.library import files, trash
+    from app.models import Album, TrackCover, TrackFileEvent
+
+    merged = await merge_into(s, gone, keep)
+    record: dict[str, Any] = {"merged": merged, "track": trash.row_of(gone), "album": None, "cover": False}
+    record["journal"] = list((await s.execute(update(TrackFileEvent).where(TrackFileEvent.track_id == gone.id)
+                                              .values(track_id=keep.id).returning(TrackFileEvent.id))).scalars())
+    trashed = []
+    for f in await files.of_track(s, gone.id):
+        f.track_id, f.main = keep.id, False
+        await s.flush()
+        trashed.append((await files.trash(s, f, why="double", user_id=user_id, promote=False)).id)
+    record["files"] = trashed
+    if gone.cover_key and not keep.cover_key:
+        await s.execute(update(TrackCover).where(TrackCover.track_id == gone.id).values(track_id=keep.id))
+        keep.cover_key, record["cover"] = gone.cover_key, True
+    # what stays on it after `merge_into` (its places where `keep` stands too, its tags) goes with its row: written down
+    record["hung"] = await trash.hung_on(s, gone.id)
+    album = None
+    if gone.album_id is not None and not (await s.execute(select(func.count(Track.id)).where(
+            Track.album_id == gone.album_id, Track.id != gone.id))).scalar_one():
+        album = await s.get(Album, gone.album_id)
+        record["album"] = trash.row_of(album) if album is not None else None
+    await s.delete(gone)
+    await s.flush()
+    if album is not None:  # its last track is gone: the album goes with it
+        await s.delete(album)
+        await s.flush()
+    await bind_merged(s, keep, merged)  # what it bound is in `merged`: taken back with it
+    return record
+
+
+async def part(s: AsyncSession, keep: Track, record: dict[str, Any], *, user_id: int | None) -> tuple[Track, set[int]]:
+    """`join` taken back: the track that went is again, its files back from the trash folder, its journal and all
+    that was its own its again (`unmerge`). `Parted`: a file of it is not in the trash folder any more (brought back
+    to `keep` from its journal, or stirred out). Returns the track and the playlists that changed."""
+    from sqlalchemy import update
+
+    from app.library import files, trash
+    from app.models import TrackCover, TrackFileEvent
+
+    events = [await s.get(TrackFileEvent, i) for i in record.get("files") or []]
+    if not events or any(e is None or e.track_id != keep.id or files.kept(e) is None for e in events):
+        raise Parted("Файла копии уже нет в корзине: его вернули к этому треку или он стёрт")
+    from app.library.importer import lock_library
+
+    await lock_library(s)
+    back = await trash.revive(s, record["track"], record.get("album"))
+    await s.execute(update(TrackFileEvent).where(TrackFileEvent.id.in_(record.get("journal") or []),
+                                                 TrackFileEvent.track_id == keep.id).values(track_id=back.id))
+    for e in events:
+        e.track_id = back.id
+        await s.flush()
+        await files.restore(s, e, why="revert", user_id=user_id)
+    if record.get("cover"):
+        await s.execute(update(TrackCover).where(TrackCover.track_id == keep.id).values(track_id=back.id))
+        keep.cover_key = None
+    elif back.cover_key:
+        back.cover_key = None  # its picture was not kept: `keep` had one of its own
+    await trash.hang_back(s, back, record.get("hung") or {})
+    playlists = await unmerge(s, back, keep, record["merged"])
+    return back, playlists
+
+
 async def fold(s: AsyncSession, stub: Track, into: Track) -> set[int]:
     """A track without a file (made of a catalog's record: a like, a transfer's row) found to be a track the library
     has (its download found the song there already): it becomes that track (`merge_into`) and is gone. Returns the

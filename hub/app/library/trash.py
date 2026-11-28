@@ -40,7 +40,7 @@ from app.models import (
 )
 
 
-def _row(obj: Any) -> dict[str, Any]:
+def row_of(obj: Any) -> dict[str, Any]:
     """A row as JSON: its table's columns, dates as text. What is bytes is left out (the picture of a file's sound:
     drawn again when the file is back)."""
     out = {}
@@ -52,7 +52,7 @@ def _row(obj: Any) -> dict[str, Any]:
     return out
 
 
-def _back(model: Any, data: dict[str, Any]) -> dict[str, Any]:
+def back_of(model: Any, data: dict[str, Any]) -> dict[str, Any]:
     """The columns of `model` out of what `_row` made, dates read back; a column the table has got since is left to
     its default, one it has lost is dropped."""
     out = {}
@@ -68,23 +68,45 @@ def _back(model: Any, data: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+async def hung_on(s: AsyncSession, track_id: int) -> dict[str, Any]:
+    """What hangs on a track that goes with it: its places in playlists («Любимое» among them) and its tags —
+    `{"playlists": [...], "tags": [...]}`, as `hang_back` puts them back."""
+    places = [{"playlist_id": i.playlist_id, "position": i.position, "added_at": i.added_at.isoformat()}
+              for i in (await s.execute(select(PlaylistItem).where(PlaylistItem.track_id == track_id))).scalars()]
+    tags = [{"tag_id": t.tag_id, "auto": t.auto}
+            for t in (await s.execute(select(TrackTag).where(TrackTag.track_id == track_id))).scalars()]
+    return {"playlists": places, "tags": tags}
+
+
+async def hang_back(s: AsyncSession, track: Track, hung: dict[str, Any]) -> None:
+    """What `hung_on` wrote, on the track again: the places of the playlists there still are, the tags still made."""
+    lists = set((await s.execute(select(Playlist.id).where(
+        Playlist.id.in_({p["playlist_id"] for p in hung.get("playlists") or []})))).scalars())
+    for p in hung.get("playlists") or []:
+        if p["playlist_id"] in lists:
+            s.add(PlaylistItem(playlist_id=p["playlist_id"], track_id=track.id, position=p["position"],
+                               added_at=datetime.fromisoformat(p["added_at"])))
+    tags = set((await s.execute(select(Tag.id).where(Tag.id.in_({t["tag_id"] for t in hung.get("tags") or []})))).scalars())
+    for t in hung.get("tags") or []:
+        if t["tag_id"] in tags:
+            s.add(TrackTag(track_id=track.id, tag_id=t["tag_id"], auto=bool(t.get("auto"))))
+    await s.flush()
+
+
 async def remember(s: AsyncSession, track: Track, moved: dict[int, str], user_id: int | None,
                    album: Album | None) -> None:
     """Write down a track that is being deleted. `moved`: file id -> where its file went (absolute); `album`: its
     album, when the album goes with it."""
-    files = [dict(_row(f), trash_path=moved.get(f.id)) for f in (await s.execute(
+    files = [dict(row_of(f), trash_path=moved.get(f.id)) for f in (await s.execute(
         select(TrackFile).where(TrackFile.track_id == track.id))).scalars()]
-    places = [{"playlist_id": i.playlist_id, "position": i.position, "added_at": i.added_at.isoformat()}
-              for i in (await s.execute(select(PlaylistItem).where(PlaylistItem.track_id == track.id))).scalars()]
-    tags = [{"tag_id": t.tag_id, "auto": t.auto}
-            for t in (await s.execute(select(TrackTag).where(TrackTag.track_id == track.id))).scalars()]
+    hung = await hung_on(s, track.id)
     cover = (await s.execute(select(TrackCover.image).where(TrackCover.track_id == track.id))).scalar_one_or_none()
-    journal = [_row(e) for e in await library_files.history(s, track.id)]
+    journal = [row_of(e) for e in await library_files.history(s, track.id)]
     s.add(TrashedTrack(
         track_id=track.id, title=track.title, artist=track.artist, album=track.album, deleted_by=user_id,
-        data_json={"track": _row(track), "files": files, "journal": journal, "playlists": places, "tags": tags,
+        data_json={"track": row_of(track), "files": files, "journal": journal, **hung,
                    "version_label": await versions.label_of(s, track.id),
-                   "album": _row(album) if album is not None else None},
+                   "album": row_of(album) if album is not None else None},
         cover=cover))
 
 
@@ -99,6 +121,25 @@ async def listed(s: AsyncSession) -> list[dict[str, Any]]:
              "playlists": len((t.data_json or {}).get("playlists") or [])} for t, who in rows]
 
 
+async def revive(s: AsyncSession, track: dict[str, Any], album: dict[str, Any] | None) -> Track:
+    """The row of a track that went, made again of what `row_of` wrote of it (no files, nothing that hung on it):
+    under its old id while nothing has taken it; with its album, when that went with its last track (`album`)."""
+    tr = back_of(Track, track)
+    if tr.get("album_id") and await s.get(Album, tr["album_id"]) is None:
+        if album:
+            s.add(Album(**back_of(Album, album)))  # it went with its last track: it comes back with it
+        else:
+            tr["album_id"] = None
+    if await s.get(Track, tr["id"]) is not None:  # the id was taken since: a track of its own, then
+        tr.pop("id")
+    if tr.get("ref") and (await s.execute(select(Track.id).where(Track.ref == tr["ref"]))).first():
+        tr["ref"] = None  # the song was met anew meanwhile; this is the file's track
+    out = Track(**tr)
+    s.add(out)
+    await s.flush()
+    return out
+
+
 async def restore(s: AsyncSession, row: TrashedTrack) -> Track:
     """Bring the track back: its files to where they were, and what hung on it. Raises ValueError when none of its
     files is kept any more."""
@@ -107,27 +148,14 @@ async def restore(s: AsyncSession, row: TrashedTrack) -> Track:
     if not kept:
         raise ValueError("Файл уже стёрт из корзины — вернуть нечего")
     await lock_library(s)
-    tr = _back(Track, data["track"])
-    album = data.get("album")
-    if tr.get("album_id") and await s.get(Album, tr["album_id"]) is None:
-        if album:
-            s.add(Album(**_back(Album, album)))  # it went with its last track: it comes back with it
-        else:
-            tr["album_id"] = None
-    if await s.get(Track, tr["id"]) is not None:  # the id was taken since: a track of its own, then
-        tr.pop("id")
-    if tr.get("ref") and (await s.execute(select(Track.id).where(Track.ref == tr["ref"]))).first():
-        tr["ref"] = None  # the song was met anew meanwhile; this is the file's track
-    track = Track(**tr)
-    s.add(track)
-    await s.flush()
+    track = await revive(s, data["track"], data.get("album"))
     new_ids: dict[int, int] = {}
     for f in kept:
         dest = library_abs(f["path"])
         if dest.exists():
             dest = unique_path(dest.parent, dest.name)
         await asyncio.to_thread(_move, Path(f["trash_path"]), dest)
-        cols = _back(TrackFile, f)
+        cols = back_of(TrackFile, f)
         cols.pop("id", None)
         cols.update(track_id=track.id, path=dest.relative_to(library_abs("")).as_posix(), nd_song_id=None, main=False)
         back = TrackFile(**cols)
@@ -139,7 +167,7 @@ async def restore(s: AsyncSession, row: TrashedTrack) -> Track:
     journal = data.get("journal") or []
     people = set((await s.execute(select(User.id).where(User.id.in_({e["user_id"] for e in journal if e.get("user_id")})))).scalars())
     for e in reversed(journal):  # written latest first
-        cols = _back(TrackFileEvent, e)
+        cols = back_of(TrackFileEvent, e)
         cols.pop("id", None)
         cols.update(track_id=track.id, file_id=new_ids.get(e.get("file_id")), download_item_id=None, star_from=None,
                     user_id=e.get("user_id") if e.get("user_id") in people else None)
@@ -149,16 +177,7 @@ async def restore(s: AsyncSession, row: TrashedTrack) -> Track:
     main.main = True
     await s.flush()
     await library_files.note(s, track.id, "restored", file=main, why="listener")
-    lists = set((await s.execute(select(Playlist.id).where(
-        Playlist.id.in_({p["playlist_id"] for p in data.get("playlists") or []})))).scalars())
-    for p in data.get("playlists") or []:
-        if p["playlist_id"] in lists:
-            s.add(PlaylistItem(playlist_id=p["playlist_id"], track_id=track.id, position=p["position"],
-                               added_at=datetime.fromisoformat(p["added_at"])))
-    tags = set((await s.execute(select(Tag.id).where(Tag.id.in_({t["tag_id"] for t in data.get("tags") or []})))).scalars())
-    for t in data.get("tags") or []:
-        if t["tag_id"] in tags:
-            s.add(TrackTag(track_id=track.id, tag_id=t["tag_id"], auto=bool(t.get("auto"))))
+    await hang_back(s, track, data)
     if row.cover and track.cover_key:
         s.add(TrackCover(track_id=track.id, image=row.cover))
     elif track.cover_key:

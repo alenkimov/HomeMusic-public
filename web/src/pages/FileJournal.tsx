@@ -138,7 +138,10 @@ function said(e: FileEventOut, first: boolean): string {
     case 'main':
       return e.why === 'listener' ? 'Сделан главным' : 'Стал главным';
     case 'trashed':
-      return e.why === 'picked' || e.why === 'upgrade' ? 'Заменён, убран в корзину' : e.why === 'revert' ? 'Отменена замена: убран в корзину' : 'Убран в корзину';
+      return e.why === 'picked' || e.why === 'upgrade' ? 'Заменён, убран в корзину'
+        : e.why === 'revert' ? 'Отменена замена: убран в корзину'
+        : e.why === 'double' ? 'Был у копии трека: при объединении убран в корзину'
+        : 'Убран в корзину';
     case 'restored':
       return 'Возвращён из корзины';
     case 'lost':
