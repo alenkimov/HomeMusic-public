@@ -66,6 +66,44 @@ async def test_localized_release_and_track_names_survive_catalog_results(db, mon
             assert [(t.ref, t.library_track_id) for t in tracks] == [(spotify.tracks[0].ref, local_id)]
 
 
+def album(source, id_, name, songs, lengths, *, day=date(2026, 3, 31), isrc=False):
+    """A release of several songs, as a catalog gives it: in order, each of its length."""
+    ref = f"{source}:{id_}"
+    return CatalogAlbum(
+        source=source, id=id_, ref=ref, title=name, artist="DECO*27", artist_ref=f"{source}:artist",
+        record_type="album", release_date=day, nb_tracks=len(songs),
+        tracks=[CatalogTrack(source=source, id=f"{id_}t{n}", ref=f"{ref}t{n}", title=song, artist="DECO*27",
+                             album_ref=ref, album_title=name, duration_s=length, track_no=n,
+                             isrc=f"JP92Q26004{n:02d}" if isrc else None)
+                for n, (song, length) in enumerate(zip(songs, lengths, strict=True), 1)],
+    )
+
+
+async def test_a_release_named_in_two_languages_is_one_by_its_lengths_and_cover():
+    """Deezer names the songs in Latin letters, Spotify in Japanese, and gives no recording codes: one release all
+    the same — one day, as many songs, each as long as the one in its place (a second apart: the catalogs round
+    differently), one cover. Another cover, or one song of another length, and it is not."""
+    deezer = album("dz", "942251601", "DecoMiku LIVE starring Hatsune Miku",
+                   ["Reunion -Hello ver.-", "Android Girl -Hello ver.-", "Ghost Rule -Hello ver.-"], [77, 210, 209], isrc=True)
+    spotify = album("sp", "7baxaElOHbWQiEDRZb1xsP", "デコミク LIVE starring 初音ミク『Hello』",
+                    ["Reunion -Hello ver.-", "アンドロイドガール -Hello ver.-", "ゴーストルール -Hello ver.-"], [78, 211, 210])
+    covers = {deezer.ref: bytes([120] * 768), spotify.ref: bytes([121] * 768)}
+
+    async def cover(a):
+        return covers[a.ref]
+
+    assert release_matches.compatible(deezer, spotify)
+    assert await release_matches._confirmed(deezer, spotify, cover)
+
+    covers[spotify.ref] = bytes([30] * 768)  # another picture
+    assert not await release_matches._confirmed(deezer, spotify, cover)
+
+    covers[spotify.ref] = bytes([121] * 768)
+    longer = album("sp", "other", spotify.title, [t.title for t in spotify.tracks], [78, 240, 210])
+    covers[longer.ref] = covers[spotify.ref]
+    assert not await release_matches._confirmed(deezer, longer, cover)
+
+
 async def test_distinct_editions_and_conflicting_recording_codes(db, monkeypatch):
     original = release("dz", "original", "Rejected Diva", "Rejected Diva", upc="4550756199610", isrc="AAA000000001")
     others = [

@@ -101,14 +101,16 @@ def _ordered(a: CatalogAlbum) -> list[CatalogTrack]:
     return rows
 
 
-def _tracklist(a: CatalogAlbum, b: CatalogAlbum) -> tuple[bool, bool] | None:
-    """On a complete ordered tracklist, report whether all ISRCs or all titles agree."""
+def _tracklist(a: CatalogAlbum, b: CatalogAlbum) -> bool | None:
+    """Two complete ordered tracklists that may be one: each track as long as the one in its place (or of the same
+    recording code), of the same version, disc and number. Returns whether every track's recording code agreed;
+    None: they are not one."""
     left, right = _ordered(a), _ordered(b)
     if not left or len(left) != _count(a) or len(right) != _count(b) or len(left) != len(right):
         return None
     if len({t.ref for t in left}) != len(left) or len({t.ref for t in right}) != len(right):
         return None
-    codes_equal = titles_equal = True
+    codes_equal = True
     for t, u in zip(left, right, strict=True):
         has_codes = bool(t.isrc and u.isrc)
         if has_codes and t.isrc.upper() != u.isrc.upper():
@@ -127,16 +129,22 @@ def _tracklist(a: CatalogAlbum, b: CatalogAlbum) -> tuple[bool, bool] | None:
         elif not has_codes:
             return None
         codes_equal &= has_codes
-        titles_equal &= bool(nt.text and nt.text == nu.text)
-    return codes_equal, titles_equal
+    return codes_equal
 
 
-def _pixels(data: bytes) -> bytes:
+def pixels(data: bytes) -> bytes:
+    """A picture as little as it is compared (`same_picture`): 16×16, its colours."""
     with Image.open(io.BytesIO(data)) as image:
         if image.width * image.height > 16_000_000:
             raise ValueError("cover dimensions")
         square = ImageOps.fit(image.convert("RGB"), (16, 16), Image.Resampling.LANCZOS)
         return square.tobytes()
+
+
+def same_picture(left: bytes | None, right: bytes | None) -> bool:
+    """Two covers (`pixels`) that are one picture — however each catalog sized and compressed it."""
+    return bool(left and right and len(left) == len(right)
+                and sum(abs(x - y) for x, y in zip(left, right, strict=True)) <= 6 * len(left))
 
 
 async def _cover(album: CatalogAlbum) -> bytes | None:
@@ -146,26 +154,26 @@ async def _cover(album: CatalogAlbum) -> bytes | None:
     if not allowed(url):
         return None
     data = await fetch_cover(url, max_bytes=2_000_000)
-    return await asyncio.to_thread(_pixels, data) if data else None
+    return await asyncio.to_thread(pixels, data) if data else None
 
 
 async def _confirmed(a: CatalogAlbum, b: CatalogAlbum, cover: Callable[[CatalogAlbum], Awaitable[bytes | None]]) -> bool:
-    comparison = _tracklist(a, b)
-    if comparison is None:
+    codes_equal = _tracklist(a, b)
+    if codes_equal is None:
         return False
-    codes_equal, titles_equal = comparison
     if _upc(a) and _upc(a) == _upc(b):
         return True
     if not a.release_date or a.release_date != b.release_date:
         return False
     if codes_equal:
         return True
-    # Without product or recording codes, a localized single still supplies a complete
-    # one-track signature. A longer release must also agree on all its ordered song names.
-    if not titles_equal and (_kind(a) != "single" or _count(a) != 1):
-        return False
+    # Without product or recording codes, one release in two catalogs is told by its signature: the same day, the
+    # same number of tracks, each as long as the one in its place (`_tracklist`), and the same cover. The song names
+    # are not asked to agree — a catalog writes them in its own language («Android Girl» / «アンドロイドガール»),
+    # and the lengths in their order say more than names: two releases of an artist that came out on one day with
+    # as many songs, each as long, under one picture, are one.
     left, right = await asyncio.gather(cover(a), cover(b))
-    return bool(left and right and sum(abs(x - y) for x, y in zip(left, right, strict=True)) <= 6 * len(left))
+    return same_picture(left, right)
 
 
 async def groups_for(s: AsyncSession, refs: Iterable[str]) -> dict[str, list[CatalogAlbum]]:

@@ -17,7 +17,8 @@ def test_an_alias_in_brackets_is_read():
     assert twins.ALIAS.match("Хвост") is None
 
 
-async def _album(title: str, artist: str, songs: list[str]) -> list[int]:
+async def _album(title: str, artist: str, songs: list[str], lengths: list[int] | None = None,
+                 cover: bytes | None = None) -> list[int]:
     """An album of the library and its tracks, each with a file that can be tagged and moved."""
     import uuid
 
@@ -31,12 +32,18 @@ async def _album(title: str, artist: str, songs: list[str]) -> list[int]:
         s.add(album)
         await s.flush()
         await artists.credit_album(s, album)
+        if cover is not None:
+            folder = library_abs(album_reldir(album))
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "cover.jpg").write_bytes(cover)
+            album.cover_path = (album_reldir(album) / "cover.jpg").as_posix()
         ids = []
         for n, song in enumerate(songs, 1):
             rel = (album_reldir(album) / f"{n:02d} - {song}.mp3").as_posix()
             library_abs(rel).parent.mkdir(parents=True, exist_ok=True)
             make_mp3(library_abs(rel), seconds=2)
             t = Track(artist=artist, title=song, album=title, album_artist=artist, album_id=album.id, track_no=n,
+                      duration_s=lengths[n - 1] if lengths else None,
                       fingerprint=f"{artist}|{song}".casefold(),
                       files=[TrackFile(uid=str(uuid.uuid4()), path=rel, codec="mp3", bitrate_kbps=320, main=True)])
             s.add(t)
@@ -145,3 +152,39 @@ async def test_two_people_are_not_asked_about_again(env, monkeypatch):
         assert await s.get(ArtistApart, (low, high)) is not None
     await _scan()
     assert not await _open(c, "twins") and not await _open(c, "artists")
+
+
+def _jpeg(color: tuple[int, int, int], quality: int) -> bytes:
+    import io
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    image = Image.new("RGB", (300, 300), color)
+    image.paste((255, 255, 255), (40, 40, 160, 160))
+    image.save(out, "JPEG", quality=quality)
+    return out.getvalue()
+
+
+async def test_an_album_named_in_another_language_is_the_same_by_its_tracks_and_cover(env, monkeypatch):
+    """One release under both names, each catalog naming it its own way: as many tracks, each as long as the one
+    in its place, under one cover (compressed otherwise) — it is the same album; another cover, and it is not."""
+    from app.library import acoustic
+
+    async def doubles(s=None, *, budget=None):
+        return []
+
+    monkeypatch.setattr(acoustic, "doubles", doubles)
+    c = env["client"]
+    await _album("DecoMiku LIVE starring Hatsune Miku", "DECO*27", ["Reunion", "Android Girl", "Ghost Rule"],
+                 [77, 210, 209], _jpeg((40, 160, 220), 90))
+    await _album("Hello", "DECO*27", ["Hello", "Vampire", "Rabbit Hole"], [180, 190, 200])  # more music: the one who stays
+    await _album("デコミク LIVE starring 初音ミク『Hello』", "デコニーナ (DECO*27)",
+                         ["Reunion", "アンドロイドガール", "ゴーストルール"], [78, 211, 210], _jpeg((40, 160, 220), 60))
+    await _album("Another", "デコニーナ (DECO*27)", ["Other", "More"], [100, 120], _jpeg((200, 30, 30), 90))  # not that one
+    await _scan()
+    (p,) = await _open(c, "twins")
+    assert [k["kind"] for k in p["show"]["clues"]] == ["alias", "album"]
+    assert "те же треки по длительности и обложка" in p["show"]["clues"][1]["text"]
+    (pair,) = p["show"]["case"]["albums"]
+    assert (pair["source"]["title"], pair["target"]["title"]) == ("デコミク LIVE starring 初音ミク『Hello』", "DecoMiku LIVE starring Hatsune Miku")

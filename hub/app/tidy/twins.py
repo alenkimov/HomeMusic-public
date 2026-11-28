@@ -6,7 +6,9 @@ What tells it (the clues of a pair of artists):
 - an alias in the name: «Алексей Хвостенко (Хвост)» — the part in brackets is the other's name;
 - one recording under both (told by the sound, `acoustic.doubles`): a track of one and a track of the other sound the
   same, where nobody else's credit tells them apart;
-- one album under both: an album of each of the same name (the same cover said so, where both have one).
+- one album under both: an album of each of the same name (the same cover said so, where both have one) — or
+  named otherwise (a catalog's own language: «DecoMiku LIVE» / «デコミク LIVE») but the same by its signature: as
+  many tracks, each as long as the one in its place, under the same cover.
 
 A pair with enough of them is a case (`find`). What joining it does is drawn from the library as it is when it is
 looked at (`plan`): the artist, then each album of the one that goes into the album of that name of the one that
@@ -17,7 +19,6 @@ written down, and taken back the other way round (`revert`). The listener may le
 
 from __future__ import annotations
 
-import hashlib
 import re
 from collections import defaultdict
 from typing import Any
@@ -72,15 +73,64 @@ def _recordings(groups: list[list[int]], credits: dict[int, set[int]]) -> dict[t
     return out
 
 
-async def _cover_digest(album: Album) -> str | None:
+async def _cover(album: Album) -> bytes | None:
+    """The album's cover as covers are compared (`release_matches.pixels`); None: it has none."""
     import asyncio
 
+    from app.catalog.release_matches import pixels
     from app.library.importer import album_reldir, library_abs
 
     p = library_abs(album_reldir(album)) / "cover.jpg"
     if not await asyncio.to_thread(p.is_file):
         return None
-    return hashlib.sha1(await asyncio.to_thread(p.read_bytes)).hexdigest()
+    try:
+        return await asyncio.to_thread(pixels, await asyncio.to_thread(p.read_bytes))
+    except (OSError, ValueError):
+        return None
+
+
+async def _lengths(s: AsyncSession, album_ids: list[int]) -> dict[int, list[int | None]]:
+    """Album -> the lengths of its tracks in their order (disc, number)."""
+    out: dict[int, list[int | None]] = defaultdict(list)
+    for album_id, length in (await s.execute(select(Track.album_id, Track.duration_s).where(Track.album_id.in_(album_ids))
+                                             .order_by(Track.album_id, Track.disc_no, Track.track_no, Track.id))).all():
+        out[album_id].append(length)
+    return out
+
+
+def _same_lengths(x: list[int | None], y: list[int | None]) -> bool:
+    """Two tracklists of one release: as many tracks (two at least), each as long as the one in its place."""
+    return len(x) == len(y) >= 2 and all(a and b and abs(a - b) <= 2 for a, b in zip(x, y, strict=True))
+
+
+async def same_albums(s: AsyncSession, goes: list[Album], stays: list[Album]) -> list[tuple[Album, Album, bool]]:
+    """Each album of `goes` and the album of `stays` it is — `(goes, stays, same_cover)`: by its name (of several,
+    the one with more tracks), else by its signature (as many tracks, each as long, under the same cover)."""
+    from app.catalog.release_matches import same_picture
+
+    ids = [a.id for a in (*goes, *stays)]
+    lengths = await _lengths(s, ids) if ids else {}
+    covers: dict[int, bytes | None] = {}
+
+    async def cover(a: Album) -> bytes | None:
+        if a.id not in covers:
+            covers[a.id] = await _cover(a)
+        return covers[a.id]
+
+    named: dict[str, Album] = {}
+    for a in sorted(stays, key=lambda a: (len(lengths.get(a.id, [])), -a.id)):
+        named[album_key(a.title)] = a
+    out = []
+    for a in sorted(goes, key=lambda a: a.id):
+        if (b := named.get(album_key(a.title))) is not None and b.id != a.id:
+            out.append((a, b, same_picture(await cover(a), await cover(b))))
+            continue
+        for b in stays:
+            if (b.id != a.id and _same_lengths(lengths.get(a.id, []), lengths.get(b.id, []))
+                    and same_picture(await cover(a), await cover(b))):
+                out.append((a, b, True))
+                break
+    return out
 
 
 async def find(s: AsyncSession, groups: list[list[int]], music: dict[int, int]) -> list[dict[str, Any]]:
@@ -125,14 +175,12 @@ async def find(s: AsyncSession, groups: list[list[int]], music: dict[int, int]) 
             by_artist[artist_id].append(album)
     for pair in list(clues):
         a, b = pair
-        theirs = {album_key(x.title): x for x in by_artist.get(b, [])}
-        for x in by_artist.get(a, []):
-            y = theirs.get(album_key(x.title))
-            if y is None or y.id == x.id:
-                continue
-            same_cover = (dx := await _cover_digest(x)) is not None and dx == await _cover_digest(y)
-            clues[pair].append({"kind": "album", "text": f"Альбом «{y.title}»: " + ("та же обложка и название" if same_cover else "то же название")})
-            break
+        for x, y, same_cover in (await same_albums(s, by_artist.get(a, []), by_artist.get(b, [])))[:1]:
+            if album_key(x.title) == album_key(y.title):
+                text = f"Альбом «{y.title}»: " + ("та же обложка и название" if same_cover else "то же название")
+            else:
+                text = f"«{x.title}» и «{y.title}» — один альбом: те же треки по длительности и обложка"
+            clues[pair].append({"kind": "album", "text": text})
 
     out = []
     for (a, b), found in clues.items():
@@ -155,25 +203,17 @@ def _records(n: int) -> str:
 
 async def plan(s: AsyncSession, other: int, into: int, groups: list[list[int]]) -> dict[str, Any]:
     """What joining the two does to the library as it is now: `{"albums": [{"source", "target"}], "tracks":
-    [{"gone", "keep"}]}` — each album of `other` into the album of that name of `into` (the one with more tracks,
-    of several), each recording of both into one track (the better file stays)."""
-    from sqlalchemy import func
-
+    [{"gone", "keep"}]}` — each album of `other` into the album of `into` it is (`same_albums`), each recording of
+    both into one track (the better file stays)."""
     from app.library import files as library_files
 
     owned: dict[int, list[Album]] = defaultdict(list)
     for album, artist_id in (await s.execute(select(Album, AlbumArtist.artist_id).join(AlbumArtist, AlbumArtist.album_id == Album.id)
                                              .where(AlbumArtist.artist_id.in_((other, into))))).all():
         owned[artist_id].append(album)
-    album_ids = [a.id for x in owned.values() for a in x]
-    sizes = dict((await s.execute(select(Track.album_id, func.count(Track.id)).where(Track.album_id.in_(album_ids))
-                                  .group_by(Track.album_id))).all()) if album_ids else {}
-    targets: dict[str, Album] = {}
-    for a in sorted(owned.get(into, []), key=lambda a: (sizes.get(a.id, 0), -a.id)):
-        targets[album_key(a.title)] = a
     mine = {a.id for a in owned.get(into, [])}
-    albums = [{"source": a.id, "target": t.id} for a in sorted(owned.get(other, []), key=lambda a: a.id)
-              if a.id not in mine and (t := targets.get(album_key(a.title))) is not None]
+    albums = [{"source": a.id, "target": b.id}
+              for a, b, _ in await same_albums(s, [a for a in owned.get(other, []) if a.id not in mine], owned.get(into, []))]
 
     ids = {i for g in groups for i in g}
     pairs = _recordings(groups, await _credits(s, ids)).get(_pair(other, into), []) if ids else []
