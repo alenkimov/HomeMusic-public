@@ -274,13 +274,14 @@ class TrackFile(Base):
     files is written in their journal (`TrackFileEvent`, `app.library.files`)."""
 
     __tablename__ = "track_files"
-    __table_args__ = (Index("uq_track_files_main", "track_id", unique=True, postgresql_where=text("main")),)
+    __table_args__ = (Index("uq_track_files_main", "track_id", unique=True, postgresql_where=text("main")),
+                      UniqueConstraint("nd_song_id", name="uq_track_files_nd_song_id"))  # a song of Navidrome is one file
 
     id: Mapped[int] = mapped_column(primary_key=True)
     track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), index=True)
     uid: Mapped[str] = mapped_column(String(36), unique=True)
     path: Mapped[str] = mapped_column(String(1024), unique=True)  # relative to library/, forward slashes
-    nd_song_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    nd_song_id: Mapped[str | None] = mapped_column(String(64))
     bitrate_kbps: Mapped[int | None] = mapped_column(Integer)
     codec: Mapped[str | None] = mapped_column(String(16))
     source: Mapped[str | None] = mapped_column(String(32))  # hitmoz/hitmos_fm/ytdlp/upload/manual

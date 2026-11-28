@@ -950,39 +950,34 @@ def _same_path(nd_path: str | None, rel: str) -> bool:
 
 
 async def link_unlinked(nd) -> int:
-    """Find Navidrome song ids for files that don't have one yet (search3 by title, match by real path)."""
+    """Find Navidrome song ids for files that don't have one yet: search3 by title (else album, artist), the song
+    whose real path is the file's. By the path alone — a song of Navidrome is one file: a song of the same title,
+    album and length is somebody else's as often as not (two artists' «Run Rabbit», singles both), and a file given
+    another's song is drawn, played and liked as that one. Not found yet (Navidrome has not scanned it): the next
+    scan's pass looks again. A song a row of another file still names (a file Navidrome now has at that path) is
+    this file's: the other one is unlinked, to be looked for anew."""
     async with session_scope() as s:
         rows = (await s.execute(select(TrackFile, Track).join(Track, Track.id == TrackFile.track_id)
                                 .where(TrackFile.nd_song_id.is_(None)).limit(500))).all()
-        taken: set[str] = set()
         n = 0
         for f, t in rows:
             hit = None
             # NFC: Navidrome finds nothing by a decomposed title («и» + U+0306 for «й»); its album and artist are
             # asked next for a title it still can't find
-            for i, q in enumerate(dict.fromkeys(_nfc(x) for x in (t.title, t.album, t.artist) if x and x.strip())):
+            for q in dict.fromkeys(_nfc(x) for x in (t.title, t.album, t.artist) if x and x.strip()):
                 try:
                     res = await nd.search3(q, song_count=100)
                 except Exception as e:
                     log.warning("search3 failed for track %s: %r", t.id, e)
                     continue
-                songs = res.get("song", [])
-                hit = next((x for x in songs if _same_path(x.get("path"), f.path)), None)
-                if hit is None and i == 0:
-                    hit = next(
-                        (
-                            x for x in songs
-                            if _nfc(x.get("title")) == _nfc(t.title) and _nfc(x.get("album")) == _nfc(t.album)
-                            and (t.duration_s is None or abs((x.get("duration") or 0) - t.duration_s) <= 2)
-                            and x["id"] not in taken
-                        ),
-                        None,
-                    )
+                hit = next((x for x in res.get("song", []) if _same_path(x.get("path"), f.path)), None)
                 if hit:
                     break
             if hit:
+                await s.execute(update(TrackFile).where(TrackFile.nd_song_id == hit["id"], TrackFile.id != f.id)
+                                .values(nd_song_id=None))
                 f.nd_song_id = hit["id"]
-                taken.add(hit["id"])
+                await s.flush()
                 n += 1
         return n
 

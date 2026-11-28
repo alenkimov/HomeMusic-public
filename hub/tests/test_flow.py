@@ -775,6 +775,32 @@ async def test_a_decomposed_title_is_linked_by_its_album(env):
         assert (await s.get(Track, tid)).nd_song_id == "ndZ"
 
 
+async def test_a_song_of_the_same_title_album_and_length_is_not_another_files(env):
+    """Two artists' «Run Rabbit», singles both, of one length: Navidrome has scanned one of them only. The other
+    file is not given that one's song — it waits for its own; a song is one file, whose path it is."""
+    from app.db import session_scope
+    from app.jobs.downloads import link_unlinked
+    from app.models import Track
+
+    mollie = "Mollie Elizabeth/Run Rabbit/1-01 - Run Rabbit.mp3"
+    alt = "ALT BLK ERA/2025 - Run Rabbit/1-01 - Run Rabbit.mp3"
+    first = await add_unlinked(mollie, "Run Rabbit", album="Run Rabbit", artist="Mollie Elizabeth")
+    second = await add_unlinked(alt, "Run Rabbit", album="Run Rabbit", artist="ALT BLK ERA")
+    songs = [{"id": "ndM", "title": "Run Rabbit", "album": "Run Rabbit", "path": "/music/" + mollie, "duration": 4}]
+
+    class Nd:
+        async def search3(self, q: str, song_count: int = 20) -> dict:
+            return {"song": list(songs)}
+
+    assert await link_unlinked(Nd()) == 1
+    async with session_scope() as s:
+        assert (await s.get(Track, first)).nd_song_id == "ndM" and (await s.get(Track, second)).nd_song_id is None
+    songs.append({"id": "ndA", "title": "Run Rabbit", "album": "Run Rabbit", "path": "/music/" + alt, "duration": 4})
+    assert await link_unlinked(Nd()) == 1  # scanned now: its own song
+    async with session_scope() as s:
+        assert (await s.get(Track, second)).nd_song_id == "ndA"
+
+
 async def test_a_track_navidrome_never_finds_stops_the_scans_after_a_few_passes(env):
     from sqlalchemy import func, select
 
